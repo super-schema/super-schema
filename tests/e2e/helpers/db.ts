@@ -599,6 +599,78 @@ export async function setFieldGovernance(
 }
 
 // ---------------------------------------------------------------------------
+// Rows for the screenshot spec (visual.spec.ts): a tenant of its own with fixed names, so a page lists the same things in every run.
+// ---------------------------------------------------------------------------
+
+export interface VisualFixtures {
+  tenantId: string;
+  /** Fixed: "Billing" (with the products Invoicing and Payments) and "Customers" (with Profiles). */
+  domains: { billing: { id: string; slug: string }; customers: { id: string; slug: string } };
+  /** Payments has no entity: the empty product. */
+  products: { invoicing: { id: string; slug: string }; payments: { id: string; slug: string }; profiles: { id: string; slug: string } };
+  /** Customer, in Invoicing, with six fields. */
+  entity: { id: string; slug: string; url: string };
+}
+
+/**
+ * A tenant, "Visual Fixtures", with the domains, products and one entity named in `VisualFixtures`: what a screenshot of the domain grid,
+ * an empty product and an entity page shows is then the same in every run (the names are fixed; only the ids, which a page does not show,
+ * and the timestamps, which the spec masks, are not). The viewed tenant is chosen by the `active_tenant` cookie the spec sets.
+ * The tenant's name is unique: one set at a time, so the spec that uses it runs its tests in order, in one worker.
+ * Remove with `deleteVisualFixtures`.
+ */
+export async function createVisualFixtures(): Promise<VisualFixtures> {
+  const db = pg();
+  const ownerId = await seededOwnerId();
+  // A set left by a run that did not clean up (a database that is not throwaway) goes first.
+  await db.query(`DELETE FROM tenants WHERE slug = 'visual-fixtures'`);
+  const tenantId = newId();
+  const domain = (slug: string) => ({ id: newId(), slug });
+  const rows: VisualFixtures = {
+    tenantId,
+    domains: { billing: domain("billing"), customers: domain("customers") },
+    products: { invoicing: domain("invoicing"), payments: domain("payments"), profiles: domain("profiles") },
+    entity: { id: newId(), slug: "customer", url: "/schemas/billing/invoicing/customer" },
+  };
+  try {
+    await db.query(`INSERT INTO tenants (id, name, slug, description, "isActive", "updatedAt") VALUES ($1, 'Visual Fixtures', 'visual-fixtures', 'Fixed data for the screenshot tests', true, now())`, [tenantId]);
+    for (const [slug, name, description] of [["billing", "Billing", "Invoices and payments"], ["customers", "Customers", "Who buys"]] as const) {
+      const row = slug === "billing" ? rows.domains.billing : rows.domains.customers;
+      await db.query(`INSERT INTO domains (id, name, slug, description, "tenantId", "updatedAt") VALUES ($1, $2, $3, $4, $5, now())`, [row.id, name, slug, description, tenantId]);
+    }
+    for (const [slug, name, domainId] of [
+      ["invoicing", "Invoicing", rows.domains.billing.id],
+      ["payments", "Payments", rows.domains.billing.id],
+      ["profiles", "Profiles", rows.domains.customers.id],
+    ] as const) {
+      await db.query(`INSERT INTO products (id, name, slug, "domainId", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [rows.products[slug].id, name, slug, domainId]);
+    }
+    await db.query(
+      `INSERT INTO entities (id, name, slug, "tenantId", "domainId", "productId", "ownerId", description, "updatedAt") VALUES ($1, 'Customer', 'customer', $2, $3, $4, $5, 'Somebody who buys from us', now())`,
+      [rows.entity.id, tenantId, rows.domains.billing.id, rows.products.invoicing.id, ownerId],
+    );
+    await db.query(`INSERT INTO fields (id, "entityId", name, slug, type, nullable, "isKey", "sortOrder", "updatedAt") VALUES ($1, $2, 'id', 'id', 'string', false, true, 0, now())`, [newId(), rows.entity.id]);
+    await createFieldRow(rows.entity.id, { name: "name", type: "string", sortOrder: 1 });
+    await createFieldRow(rows.entity.id, { name: "email", type: "string", classification: "PII", sortOrder: 2 });
+    await createFieldRow(rows.entity.id, { name: "age", type: "integer", sortOrder: 3 });
+    await createFieldRow(rows.entity.id, { name: "active", type: "boolean", sortOrder: 4 });
+    await createFieldRow(rows.entity.id, { name: "balance", type: "decimal", sortOrder: 5 });
+  } catch (error) {
+    await deleteVisualFixtures(rows);
+    throw error;
+  }
+  return rows;
+}
+
+/** Remove the tenant and everything of `createVisualFixtures` under it. Safe to call twice. */
+export async function deleteVisualFixtures(rows: VisualFixtures | undefined): Promise<void> {
+  if (!rows) return;
+  const db = pg();
+  await db.query(`DELETE FROM schema_references WHERE "fromId" IN (SELECT ev.id FROM entity_versions ev WHERE ev."entityId" = $1)`, [rows.entity.id]);
+  await db.query(`DELETE FROM tenants WHERE id = $1`, [rows.tenantId]);
+}
+
+// ---------------------------------------------------------------------------
 // Rows for the REST API spec (api-v1.spec.ts): entities in a second product, webhook endpoints and their deliveries.
 // ---------------------------------------------------------------------------
 

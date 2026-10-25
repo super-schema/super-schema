@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs a tier of the browser suite as the `playwright test` commands it needs, one per phase, and combines their exit codes.
 //
-//   node scripts/e2e-phases.mjs <smoke|regression|nightly|serial> [--no-serial] [playwright arguments...]
+//   node scripts/e2e-phases.mjs <smoke|regression|nightly|serial|visual> [--no-serial] [playwright arguments...]
 //
 // Two of the arguments are read by the planner and not just passed on: `--project <name>` NARROWS the tier to that project (a phase none of
 // whose projects it names is skipped; a bare `playwright test --project x` would add x to the tier's own), and `--list` lists the tests of
@@ -66,7 +66,7 @@ import {
   watchForStall,
 } from "./e2e-process.mjs";
 
-export const TIERS = ["smoke", "regression", "nightly", "serial"];
+export const TIERS = ["smoke", "regression", "nightly", "serial", "visual"];
 
 /** A saved login older than this is not trusted by a phase that does not run the `setup` project (a session can expire). */
 export const MAX_AUTH_AGE_MS = 6 * 60 * 60 * 1000;
@@ -153,6 +153,10 @@ export function planPhases({ tier, noSerial = false, extraArgs = [], authState, 
         { name: "setup", args: ["--project=setup"] },
         { name: "serial", args: ["--project=serial-after", "--no-deps"] },
       ];
+      break;
+    case "visual":
+      // The screenshot comparisons: only inside the Playwright Docker image, where the project exists (playwright.config.ts, E2E_VISUAL_IN_DOCKER).
+      plan = [{ name: "main", args: ["--project=visual"] }];
       break;
     default:
       throw new Error(`unknown tier "${tier}"`);

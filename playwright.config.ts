@@ -23,7 +23,11 @@ import { decideForThisProcess } from "./scripts/e2e-browser.cjs";
  *   - `firefox-smoke`, `webkit-smoke`   only the @smoke tests, on the other two engines (`npx playwright install firefox webkit`);
  *   - `serial-after`   the specs that cannot run next to the others (below);
  *   - `visual`, `a11y` Chromium-only screenshot comparisons / axe scans of a few pages (visual.spec.ts, a11y.spec.ts). Both are kept
- *                      out of `chromium` so they run once, where they are meant to (visual snapshots only in the Playwright Docker image).
+ *                      out of `chromium` so they run once, where they are meant to. `visual` EXISTS ONLY INSIDE THE PLAYWRIGHT DOCKER IMAGE
+ *                      (`E2E_VISUAL_IN_DOCKER=1`, which scripts/e2e-visual-docker.mjs sets): outside it the project is not defined, and a run that
+ *                      names it is told why (below), so no snapshot is ever taken or compared on a macOS or a bare Linux machine.
+ *                      `npm run test:e2e:update-snapshots` (and `test:e2e:visual` to only compare) runs the release runner with the browser
+ *                      run in that image; docs/testing/e2e.md.
  *
  * THE BROWSER of `chromium`, `serial-after` and `a11y` is the Google Chrome of the machine (`channel: "chrome"`) or the Chromium
  * Playwright downloads, decided by scripts/e2e-browser.cjs (docs/testing/e2e.md): `E2E_BROWSER_CHANNEL=chrome|chromium` says it; without it
@@ -66,6 +70,18 @@ const RUN_ALONE_AFTER_THE_REST = ["navigation.spec.ts", "events-external-refs.sp
 
 /** Specs of their own projects: `chromium` and the smoke projects leave them out. */
 const OWN_PROJECT = ["visual.spec.ts", "a11y.spec.ts"];
+
+/**
+ * The `visual` project is defined only where its snapshots are made and compared: the Playwright Docker image (scripts/e2e-visual-docker.mjs
+ * sets E2E_VISUAL_IN_DOCKER=1 in the container). Screenshots of one page differ between operating systems, so a snapshot taken anywhere else
+ * would fail everywhere else; this is a project that is not there, not a test that skips itself.
+ */
+const VISUAL_IN_DOCKER = process.env.E2E_VISUAL_IN_DOCKER === "1";
+if (!VISUAL_IN_DOCKER && process.env.TEST_WORKER_INDEX === undefined && process.argv.some((arg) => /^--project[= ]?visual$|^visual$|visual\.spec/.test(arg))) {
+  console.warn(
+    "[playwright.config] the `visual` project exists only inside the Playwright Docker image (E2E_VISUAL_IN_DOCKER=1): screenshots made on this machine would not match anyone else's. Use npm run test:e2e:update-snapshots (or npm run test:e2e:visual to only compare); docs/testing/e2e.md.",
+  );
+}
 
 /** E2E_BASE_URL points the specs at an already-running server (no build, no webServer): `E2E_BASE_URL=http://localhost:3107`. */
 const EXTERNAL_BASE_URL = process.env.E2E_BASE_URL;
@@ -121,7 +137,14 @@ export default defineConfig({
   // eight workers use the one server, which is what made specs fail now and then on a laptop with the 5 s default. An assertion that
   // holds still returns at once; only a failing one waits longer. A page's hydration, a load, waits 30 s on its own
   // (tests/e2e/helpers/hydration.ts).
-  expect: { timeout: 15_000 },
+  expect: {
+    timeout: 15_000,
+    // Screenshots (visual.spec.ts, in the Playwright image only): animations and the caret are off so a frame is the same every time.
+    // `threshold` is how different two pixels may be (pixelmatch's YIQ distance; Playwright's default 0.2 does not see a change of hue at the
+    // same brightness: a purple turned copper passed), `maxDiffPixelRatio` how many may differ (0.05%, about 500 of 1280x800: the edge of a
+    // glyph, not a button). The same image on the same machine differs by 0 pixels.
+    toHaveScreenshot: { animations: "disabled", caret: "hide", threshold: 0.1, maxDiffPixelRatio: 0.0005 },
+  },
   fullyParallel: true,
   forbidOnly: CI,
   retries: CI ? 1 : 0,
@@ -170,13 +193,20 @@ export default defineConfig({
       workers: 1,
       dependencies: ["setup", "chromium"],
     },
-    {
-      name: "visual",
-      // No channel, whatever the run uses elsewhere: the snapshots are of the bundled Chromium in the Playwright Docker image.
-      use: { ...devices["Desktop Chrome"], ...loggedIn },
-      testMatch: "visual.spec.ts",
-      dependencies: ["setup"],
-    },
+    ...(VISUAL_IN_DOCKER
+      ? [
+          {
+            name: "visual",
+            // No channel, whatever the run uses elsewhere: the snapshots are of the bundled Chromium in the Playwright Docker image.
+            use: { ...devices["Desktop Chrome"], ...loggedIn },
+            testMatch: "visual.spec.ts",
+            // The file's tests share one tenant of fixed names (createVisualFixtures): they run in one worker, in order, and a failing one does not
+            // skip the others (a `serial` describe would): every page that changed is reported.
+            fullyParallel: false,
+            dependencies: ["setup"],
+          },
+        ]
+      : []),
     {
       name: "a11y",
       use: { ...devices["Desktop Chrome"], ...channelUse, ...loggedIn },

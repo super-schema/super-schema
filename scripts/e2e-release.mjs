@@ -2,12 +2,13 @@
 // The release check of the browser suite, as one command: it makes a database and an app of its own, runs a tier of the suite against
 // them, and removes everything again, whether the run passed, failed, was interrupted or crashed.
 //
-//   node scripts/e2e-release.mjs --tier smoke|regression|nightly|serial [--keep] [--reuse-build] [--shard i/n] [--project name]
-//                                [--list-only] [--output-root dir] [-- playwright arguments...]
+//   node scripts/e2e-release.mjs --tier smoke|regression|nightly|serial|visual [--keep] [--reuse-build] [--shard i/n] [--project name]
+//                                [--list-only] [--output-root dir] [--docker-image image] [-- playwright arguments...]
 //
 //   npm run test:e2e:release             --tier nightly (everything)
 //   npm run test:e2e:release:smoke       --tier smoke   (the pull-request tier)
 //   npm run test:e2e:release -- --tier regression --shard 2/4
+//   npm run test:e2e:update-snapshots    the visual tier, its browser run inside the Playwright Docker image (scripts/e2e-update-snapshots.mjs)
 //
 // What a run does, in this order (docs/testing/e2e.md has the long version):
 //   1. refuses when Docker is not running;
@@ -30,6 +31,11 @@
 //      (`docker rm -f`; --keep leaves it and says how to connect), the temp directory. It runs in a `finally`, and on SIGINT / SIGTERM /
 //      SIGHUP (exit code 128 + the signal's number).
 //
+// THE VISUAL TIER (`--tier visual`, with `--docker-image <image>`): steps 2 to 5 are the same, on the host; step 6 is `docker run` of that image
+// (scripts/e2e-visual-docker.mjs), which runs the phases script INSIDE it, because screenshots are only compared where they were taken:
+// the Playwright image's Chromium on Linux. The app and the database stay on the host. The image has to be there already (it is about
+// 2 GB: `docker pull` it yourself; the runner never pulls it), and the container, `ss-e2e-visual-<id>`, is removed in the teardown.
+//
 // Never touched: a developer's `.env` database, `data/pglite`, a dev server on :3000 or any other port. The children get an environment
 // made for them (scripts/e2e-env.mjs: every name the app reads is SET to the run's value, BLANKED as "", DROPPED, or ALLOWED on purpose;
 // a name that is only missing from the shell would be filled in by the checkout's `.env`), every port is random and free at the time,
@@ -46,7 +52,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes, randomInt } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
@@ -57,6 +63,7 @@ import { hashBuildInputs } from "./e2e-build-inputs.mjs";
 import { appEnvironment, hermeticEnv, phasesEnvironment, runnerKnobs } from "./e2e-env.mjs";
 import { describeNode, nodeProblem } from "./e2e-node.mjs";
 import { isEntryPoint, parseCli, planPhases } from "./e2e-phases.mjs";
+import { dockerVisualArgs, extraMounts, visualContainerName } from "./e2e-visual-docker.mjs";
 import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, parseMillis, signalGroup, spawnGroup, terminateGroup } from "./e2e-process.mjs";
 
 /**
@@ -67,7 +74,8 @@ import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, parseMillis, sig
  *   root: string, tmpDir: string, outputRoot: string, serverLog: string, authState: string,
  *   baseEnv: Record<string, string>, bins: { prisma: string, next: string }, phasesArgv: string[],
  *   browser: import("./e2e-browser.cjs").BrowserDecision, nodeText: string, knobs: Record<string, string>,
- * }} FixedPlan the part of a plan that does not depend on the ports
+ *   visual?: { image: string, containerName: string, uid: number, gid: number, platform: string, mounts: Array<{ path: string, readOnly: boolean }> },
+ * }} FixedPlan the part of a plan that does not depend on the ports (`visual`: the browser run is a `docker run` of that image)
  * @typedef {FixedPlan & {
  *   ports: { app: number, db: number }, databaseUrl: string, baseUrl: string,
  *   env: { db: Record<string, string>, app: Record<string, string>, phases: Record<string, string> },
@@ -78,7 +86,7 @@ import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, parseMillis, sig
 // `serial` is the phases script's tier of the same name: a login, then the `serial-after` project alone (--no-deps), with the caller's
 // arguments for that last phase. It exists for the one thing the other tiers cannot select: the @slow / @external specs of
 // `serial-after` without Playwright running all of `chromium` first as its dependency (the release workflow's nightly job).
-export const RELEASE_TIERS = ["smoke", "regression", "nightly", "serial"];
+export const RELEASE_TIERS = ["smoke", "regression", "nightly", "serial", "visual"];
 
 /** 0 passed (the phases script's own codes pass through), 2 bad arguments, 3 the environment could not be set up. */
 export const EXIT = { ok: 0, usage: 2, setup: 3 };
@@ -116,23 +124,25 @@ class Interrupted extends Error {}
 
 export const USAGE = `usage: node scripts/e2e-release.mjs --tier <${RELEASE_TIERS.join("|")}> [options] [-- playwright arguments...]
 
-  --tier <name>        smoke (pull requests), regression (every functional spec, Chromium), nightly (everything), serial (the serial-after specs alone)
+  --tier <name>        smoke (pull requests), regression (every functional spec, Chromium), nightly (everything), serial (the serial-after specs alone),
+                       visual (the screenshot comparisons: needs --docker-image, or to run inside that image: npm run test:e2e:update-snapshots)
   --shard <i/n>        run slice i of n (regression is run as 4 slices in CI)
   --project <name>     narrow the tier to a Playwright project (repeatable): chromium, firefox-smoke, a11y ...
   --reuse-build        skip \`next build\` when .next was built by this runner from the same inputs (sources, config, lockfile, public/, NEXT_PUBLIC_ values)
   --keep               leave the database container running afterwards (it prints how to connect and how to remove it)
   --list-only          provision, build and start everything, but only LIST the tests of the tier (a dry run)
   --output-root <dir>  where the reports and server.log go (default: $E2E_OUTPUT_ROOT, else test-results/run-<id>)
+  --docker-image <img> run the browser run inside this Docker image (the Playwright image of the installed version); the image must be local
   --help               this text
 
 Playwright's own options (a spec file, --headed, --grep ...) go after --.`;
 
 /**
  * @param {string[]} argv the arguments after the script name
- * @returns {{ tier: string, keep: boolean, reuseBuild: boolean, listOnly: boolean, shard?: string, projects: string[], outputRoot?: string, extra: string[], help: boolean }}
+ * @returns {{ tier: string, keep: boolean, reuseBuild: boolean, listOnly: boolean, shard?: string, projects: string[], outputRoot?: string, dockerImage?: string, extra: string[], help: boolean }}
  */
 export function parseArgs(argv) {
-  const out = { tier: undefined, keep: false, reuseBuild: false, listOnly: false, shard: undefined, projects: [], outputRoot: undefined, extra: [], help: false };
+  const out = { tier: undefined, keep: false, reuseBuild: false, listOnly: false, shard: undefined, projects: [], outputRoot: undefined, dockerImage: undefined, extra: [], help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--") {
@@ -162,6 +172,9 @@ export function parseArgs(argv) {
       case "--output-root":
         out.outputRoot = value();
         break;
+      case "--docker-image":
+        out.dockerImage = value();
+        break;
       case "--keep":
         out.keep = true;
         break;
@@ -188,6 +201,7 @@ export function parseArgs(argv) {
       throw new UsageError(`--shard must be i/n with 1 <= i <= n (got "${out.shard}")`);
     }
   }
+  if (out.dockerImage !== undefined && !/^[\w][\w.-]*(\/[\w.-]+)*(:[\w][\w.-]*)?$/.test(out.dockerImage)) throw new UsageError(`--docker-image is not an image name: "${out.dockerImage}"`);
   out.projects = [...new Set(out.projects)];
   return out;
 }
@@ -226,6 +240,46 @@ function resolveBins(root) {
   return { prisma: bin("prisma", "prisma"), next: bin("next", "next") };
 }
 
+/** The real path of the checkout's node_modules (a git worktree's is a symlink into another checkout), or undefined when there is none. */
+function realNodeModules(root) {
+  try {
+    return realpathSync(path.join(root, "node_modules"));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The browser run of the visual tier: `docker run` of the Playwright image, which runs the phases script in the container (it has Node
+ * 24, which the Node guard does not list: scripts/e2e-visual-docker.mjs tells it so). The `docker` process gets the environment of the browser run
+ * and passes the `E2E_*` names on by name, so no secret is in its arguments.
+ *
+ * @param {FixedPlan} fixed
+ * @param {{ app: number, db: number }} ports
+ * @param {Record<string, string>} phases the environment of the browser run on the host
+ * @returns {CommandSpec}
+ */
+function visualPhasesCommand(fixed, ports, phases) {
+  const visual = /** @type {NonNullable<FixedPlan["visual"]>} */ (fixed.visual);
+  return {
+    command: "docker",
+    args: dockerVisualArgs({
+      image: visual.image,
+      containerName: visual.containerName,
+      root: fixed.root,
+      uid: visual.uid,
+      gid: visual.gid,
+      platform: visual.platform,
+      env: phases,
+      ports,
+      mounts: visual.mounts,
+      command: ["node", "scripts/e2e-phases.mjs", ...fixed.phasesArgv],
+    }),
+    env: phases,
+    cwd: fixed.root,
+  };
+}
+
 /**
  * Everything that depends on the ports, derived from the plan's fixed part (a run that finds a chosen port taken calls this again).
  *
@@ -250,7 +304,9 @@ export function withPorts(fixed, ports) {
       seed: { command: "npm", args: ["run", "db:seed"], env: app, cwd: fixed.root },
       build: { command: "npm", args: ["run", "build", "--", "--webpack"], env: app, cwd: fixed.root },
       server: { command: node, args: [fixed.bins.next, "start", "-p", String(ports.app), "-H", "127.0.0.1"], env: app, cwd: fixed.root },
-      phases: { command: node, args: [path.join(fixed.root, "scripts", "e2e-phases.mjs"), ...fixed.phasesArgv], env: phases, cwd: fixed.root },
+      phases: fixed.visual
+        ? visualPhasesCommand(fixed, ports, phases)
+        : { command: node, args: [path.join(fixed.root, "scripts", "e2e-phases.mjs"), ...fixed.phasesArgv], env: phases, cwd: fixed.root },
     },
   };
 }
@@ -261,7 +317,7 @@ export function withPorts(fixed, ports) {
  *
  * @param {string[]} argv the arguments after the script name
  * @param {Record<string, string | undefined>} [env]
- * @param {{ root?: string, tmpdir?: string, bins?: { prisma: string, next: string }, randomHex?: (bytes: number) => string, randomPort?: () => number, chromePath?: string | undefined, nodeVersions?: { node: string } }} [options]
+ * @param {{ root?: string, tmpdir?: string, bins?: { prisma: string, next: string }, randomHex?: (bytes: number) => string, randomPort?: () => number, chromePath?: string | undefined, nodeVersions?: { node: string }, platform?: string, uid?: number, gid?: number, nodeModulesTarget?: string | undefined }} [options]
  *   `chromePath` is the Google Chrome of the machine (the key present with `undefined`: there is none); the machine is asked when it is not given.
  *   `nodeVersions` is this process's `process.versions` unless a test says another Node
  * @returns {RunPlan}
@@ -272,8 +328,14 @@ export function planRun(argv, env = process.env, options = {}) {
   const randomHex = options.randomHex ?? ((bytes) => randomBytes(bytes).toString("hex"));
   const runId = randomHex(4);
   const outputRoot = path.resolve(args.outputRoot ?? env.E2E_OUTPUT_ROOT ?? path.join(root, "test-results", `run-${runId}`));
-  const tmpDir = path.join(options.tmpdir ?? os.tmpdir(), `${CONTAINER_PREFIX}${runId}`);
+  // The browser run of the visual tier is in a container that sees the checkout and nothing else of the host: the login file lives under the output root.
+  const tmpDir = args.dockerImage ? path.join(outputRoot, "tmp") : path.join(options.tmpdir ?? os.tmpdir(), `${CONTAINER_PREFIX}${runId}`);
   const baseEnv = hermeticEnv(env);
+  if (args.tier === "visual" && !args.dockerImage && env.E2E_VISUAL_IN_DOCKER !== "1") {
+    throw new UsageError(
+      "the visual tier takes and compares screenshots only inside the Playwright Docker image (macOS and Linux render the same page differently): run it with npm run test:e2e:update-snapshots (it passes --docker-image), or run the release runner itself inside the image with E2E_VISUAL_IN_DOCKER=1",
+    );
+  }
   // The Node and the runner's knobs, before anything else is decided or provisioned. A listing runs no test and cannot stall: any Node may list.
   const nodeVersions = options.nodeVersions ?? process.versions;
   const problem = args.listOnly ? null : nodeProblem(nodeVersions, env);
@@ -286,12 +348,17 @@ export function planRun(argv, env = process.env, options = {}) {
   // The browser is decided here, once, before anything is provisioned: an explicit chrome that this machine cannot give is a usage error
   // (not a run that fails at its last step), and every later step reads the same decision.
   let browser;
-  try {
-    browser = decideBrowser({ env, ci: Boolean(env.CI), chromePath: "chromePath" in options ? options.chromePath : detectChrome() });
-  } catch (error) {
-    throw new UsageError(error instanceof Error ? error.message : String(error));
+  if (args.dockerImage) {
+    // Not the host's: the image's own bundled Chromium, whatever E2E_BROWSER_CHANNEL or the machine's Google Chrome say.
+    browser = { channel: "chromium", source: "env", reason: `the bundled Chromium of ${args.dockerImage}`, chromePath: undefined };
+  } else {
+    try {
+      browser = decideBrowser({ env, ci: Boolean(env.CI), chromePath: "chromePath" in options ? options.chromePath : detectChrome() });
+    } catch (error) {
+      throw new UsageError(error instanceof Error ? error.message : String(error));
+    }
+    if (browser.problem) throw new UsageError(browser.problem);
   }
-  if (browser.problem) throw new UsageError(browser.problem);
   const phasesArgv = [
     args.tier,
     ...(args.shard ? [`--shard=${args.shard}`] : []),
@@ -327,6 +394,18 @@ export function planRun(argv, env = process.env, options = {}) {
     browser,
     nodeText: describeNode(nodeVersions, env),
     knobs: runnerKnobs(env),
+    ...(args.dockerImage
+      ? {
+          visual: {
+            image: args.dockerImage,
+            containerName: visualContainerName(randomHex(4)),
+            uid: options.uid ?? process.getuid?.() ?? 1000,
+            gid: options.gid ?? process.getgid?.() ?? 1000,
+            platform: options.platform ?? process.platform,
+            mounts: extraMounts({ root, outputRoot, nodeModulesTarget: "nodeModulesTarget" in options ? options.nodeModulesTarget : realNodeModules(root) }),
+          },
+        }
+      : {}),
   };
   return withPorts(fixed, pickPorts(options.randomPort));
 }
@@ -476,6 +555,15 @@ export async function runRelease(initialPlan, deps) {
     deps.log(`[e2e-release] ${plan.nodeText}`);
     deps.log(`[e2e-release] browser: ${browserText}`);
 
+    if (plan.visual) {
+      const visual = plan.visual;
+      await step(`checking that the Playwright image ${visual.image} is here`, async () => {
+        const image = await deps.checkVisualImage(visual.image);
+        if (!image.ok) throw new SetupError(image.message ?? `the image ${visual.image} is not here`);
+      });
+      // The container of the browser run is removed at the end whatever happened: `--rm` does it when it ends by itself.
+      undo.push({ name: `remove the container ${visual.containerName}`, undo: () => deps.removeVisualContainer(visual.containerName), hint: () => `docker rm -f ${visual.containerName}` });
+    }
     undo.push({ name: "remove the temp directory", undo: () => deps.removeTmp(plan), hint: () => `rm -rf ${plan.tmpDir}` });
     await step("making the run's directories", () => deps.makeDirs(plan));
     madeDirs = true;
@@ -555,7 +643,10 @@ export async function runRelease(initialPlan, deps) {
       }
     }
 
-    code = await step(`running the ${plan.tier} tier${plan.listOnly ? " (list only)" : ""}: node scripts/e2e-phases.mjs ${plan.phasesArgv.join(" ")}`, () => deps.runPhases(plan, ctx));
+    code = await step(
+      `running the ${plan.tier} tier${plan.listOnly ? " (list only)" : ""}${plan.visual ? ` in ${plan.visual.image} as ${plan.visual.containerName}` : ""}: node scripts/e2e-phases.mjs ${plan.phasesArgv.join(" ")}`,
+      () => deps.runPhases(plan, ctx),
+    );
   } catch (error) {
     if (!received) {
       if (error instanceof SetupError) deps.error(`[e2e-release] ${error.message}`);
@@ -724,10 +815,11 @@ export function createRealDeps({ log = console.log, error = console.error } = {}
     graceMs: 60_000,
   });
   /** What a crash must still clean up synchronously (process 'exit'): the app's group and a container that is not kept. */
-  const live = { container: undefined, server: undefined };
+  const live = { container: undefined, server: undefined, visual: undefined };
   process.on("exit", () => {
     if (live.server?.pid) signalGroup(live.server, "SIGKILL");
     if (live.container) spawnSync("docker", ["rm", "-f", live.container], { stdio: "ignore", timeout: 30_000 });
+    if (live.visual) spawnSync("docker", ["rm", "-f", live.visual], { stdio: "ignore", timeout: 30_000 });
   });
 
   /** A step that shows its output, and that a signal reaches. */
@@ -853,8 +945,23 @@ export function createRealDeps({ log = console.log, error = console.error } = {}
     },
 
     exec: (_label, spec) => runStep(spec),
-    runPhases: (plan) => runStep(plan.commands.phases),
-    describeBrowser: (plan) => describeBrowser(plan.browser, realProbes()),
+    runPhases: (plan) => {
+      if (plan.visual) live.visual = plan.visual.containerName;
+      return runStep(plan.commands.phases);
+    },
+    describeBrowser: (plan) => (plan.visual ? `Chromium of ${plan.visual.image} (in Docker, on Linux)` : describeBrowser(plan.browser, realProbes())),
+
+    /** The Playwright image has to be local: it is about 2 GB, and a run that pulls it on its own is a surprise nobody asked for. */
+    async checkVisualImage(image) {
+      const present = await capture("docker", ["image", "inspect", image], { timeoutMs: 30_000 });
+      if (present.code === 0) return { ok: true };
+      return { ok: false, message: `the Playwright image ${image} is not on this machine. It is about 2 GB, so the runner does not pull it for you: docker pull ${image}` };
+    },
+    async removeVisualContainer(name) {
+      const result = await capture("docker", ["rm", "-f", name], { timeoutMs: DOCKER_RM_TIMEOUT_MS });
+      if (result.code !== 0 && !/no such container/i.test(result.stderr)) throw new Error(`docker rm -f ${name} failed: ${result.stderr.trim()}`);
+      live.visual = undefined;
+    },
 
     buildDecision(plan) {
       const nextDir = path.join(plan.root, ".next");

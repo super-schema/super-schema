@@ -170,15 +170,17 @@ describe("what is said about the browser", () => {
 });
 
 describe("playwright.config.ts and the channel", () => {
-  const saved = { channel: process.env.E2E_BROWSER_CHANNEL, ci: process.env.CI, baseUrl: process.env.E2E_BASE_URL };
+  const saved = { channel: process.env.E2E_BROWSER_CHANNEL, ci: process.env.CI, baseUrl: process.env.E2E_BASE_URL, visual: process.env.E2E_VISUAL_IN_DOCKER };
 
   beforeEach(() => {
     vi.resetModules();
     process.env.E2E_BASE_URL = "http://localhost:1"; // no webServer: the config is only read
+    // The `visual` project exists only inside the Playwright image; these tests read it as it is there.
+    process.env.E2E_VISUAL_IN_DOCKER = "1";
   });
 
   afterEach(() => {
-    for (const [name, value] of [["E2E_BROWSER_CHANNEL", saved.channel], ["CI", saved.ci], ["E2E_BASE_URL", saved.baseUrl]] as const) {
+    for (const [name, value] of [["E2E_BROWSER_CHANNEL", saved.channel], ["CI", saved.ci], ["E2E_BASE_URL", saved.baseUrl], ["E2E_VISUAL_IN_DOCKER", saved.visual]] as const) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
@@ -222,6 +224,15 @@ describe("playwright.config.ts and the channel", () => {
 
   it("never gives `visual` the channel: its snapshots are taken in the bundled Chromium of the Playwright Docker image", async () => {
     expect((await projects({ channel: "chrome" })).visual.use?.channel).toBeUndefined();
+  });
+
+  it("has no `visual` project outside the Playwright Docker image: a screenshot is never taken or compared on a machine of its own", async () => {
+    delete process.env.E2E_VISUAL_IN_DOCKER;
+    const names = Object.keys(await projects({ channel: "chromium" }));
+    expect(names).toEqual(["setup", "chromium", "firefox-smoke", "webkit-smoke", "serial-after", "a11y"]);
+    process.env.E2E_VISUAL_IN_DOCKER = "0";
+    vi.resetModules();
+    expect(Object.keys(await projects({ channel: "chromium" }))).not.toContain("visual");
   });
 
   it("refuses a value that is not a channel", async () => {

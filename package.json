@@ -18,6 +18,8 @@
     "test:e2e:regression": "node scripts/e2e-phases.mjs regression",
     "test:e2e:nightly": "node scripts/e2e-phases.mjs nightly",
     "test:e2e:serial": "node scripts/e2e-phases.mjs serial",
+    "test:e2e:visual": "node scripts/e2e-update-snapshots.mjs --check",
+    "test:e2e:update-snapshots": "node scripts/e2e-update-snapshots.mjs",
     "test:e2e:release": "node scripts/e2e-release.mjs --tier nightly",
     "test:e2e:release:smoke": "node scripts/e2e-release.mjs --tier smoke",
     "db:generate": "prisma generate",

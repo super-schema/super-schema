@@ -162,8 +162,7 @@ describe("a fake developer environment never reaches a child", () => {
     expect(phases.E2E_API_KEY).toBe(RUN.apiKey);
     expect(phases).not.toHaveProperty("API_KEY");
     expect(app).not.toHaveProperty("E2E_API_KEY");
-    const { apiKey: _none, ...withoutKey } = RUN;
-    expect(phasesEnvironment(base, { ...withoutKey, outputRoot: "/out", authState: "/a.json" })).not.toHaveProperty("E2E_API_KEY");
+    expect(phasesEnvironment(base, { ...RUN, apiKey: undefined, outputRoot: "/out", authState: "/a.json" })).not.toHaveProperty("E2E_API_KEY");
   });
 
   it("nothing of the developer's values is left in any child's environment", () => {

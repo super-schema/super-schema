@@ -482,6 +482,8 @@ function fakeDeps(
     verify?: { ok: boolean; message?: string };
     /** What the browser probe says; "throw" makes it fail. */
     browser?: string;
+    /** The visual tier's Playwright image is not on this machine. */
+    imageMissing?: boolean;
   } = {},
 ) {
   const events: string[] = [];
@@ -527,6 +529,11 @@ function fakeDeps(
       return { ok: true };
     },
     removeContainer: async () => record("remove container"),
+    checkVisualImage: async (image: string) => {
+      events.push("check visual image");
+      return options.imageMissing ? { ok: false, message: `the Playwright image ${image} is not on this machine: docker pull ${image}` } : { ok: true };
+    },
+    removeVisualContainer: async (name: string) => record(`remove visual container ${name}`),
     waitForDb: async () => record("wait db"),
     exec: async (label: string, _spec: unknown, ctx: { signal: AbortSignal }) => {
       events.push(`exec ${label}`);
@@ -820,5 +827,84 @@ describe("runRelease", () => {
     expect(await done).toBe(130);
     expect(events.filter((e) => e === "remove container")).toHaveLength(1);
     expect(events.filter((e) => e === "stop server")).toHaveLength(1);
+  });
+});
+
+describe("the visual tier: the browser run inside the Playwright image", () => {
+  const IMAGE = "mcr.microsoft.com/playwright:v1.59.1-jammy";
+  const visualPlan = (extra: string[] = [], env: Record<string, string> = DEVELOPER) =>
+    plan(["--tier", "visual", "--docker-image", IMAGE, ...extra], env, { platform: "darwin", uid: 502, gid: 20, nodeModulesTarget: "/repo/node_modules" });
+
+  it("is a tier of the release runner and of the phases script, which run the visual project alone", () => {
+    expect(RELEASE_TIERS).toContain("visual");
+    expect(parseArgs(["--tier", "visual", "--docker-image", IMAGE]).dockerImage).toBe(IMAGE);
+    const planned = planPhases({ ...parseCli(["visual"]), authState: "/a.json", outputRoot: "/out" });
+    expect(planned.phases.map((phase) => phase.name)).toEqual(["main"]);
+    expect(planned.phases[0].args.filter((arg: string) => arg.startsWith("--project"))).toEqual(["--project=visual"]);
+    expect(planned.phases[0].args.some((arg: string) => arg.startsWith("--grep"))).toBe(false);
+  });
+
+  it("is refused outside the image unless it is told to use one: screenshots are only compared where they were taken", () => {
+    expect(() => plan(["--tier", "visual"])).toThrow(UsageError);
+    expect(() => plan(["--tier", "visual"])).toThrow(/Playwright Docker image/);
+    expect(() => plan(["--tier", "visual"])).toThrow(/test:e2e:update-snapshots/);
+    // Inside the image (E2E_VISUAL_IN_DOCKER=1: the runner is itself in the container) it is the plain tier.
+    expect(plan(["--tier", "visual"], { ...DEVELOPER, E2E_VISUAL_IN_DOCKER: "1" }).visual).toBeUndefined();
+    expect(() => parseArgs(["--tier", "smoke", "--docker-image", "not an image"])).toThrow(/not an image name/);
+    expect(() => parseArgs(["--tier", "smoke", "--docker-image"])).toThrow(/needs a value/);
+  });
+
+  it("runs the browser run as docker run of that image, in a container named ss-e2e-visual-<id>, with the checkout mounted and the host user", () => {
+    const p = visualPlan();
+    expect(p.visual?.image).toBe(IMAGE);
+    expect(p.visual?.containerName).toMatch(/^ss-e2e-visual-[0-9a-f]{8}$/);
+    const spec = p.commands.phases;
+    expect(spec.command).toBe("docker");
+    expect(spec.args.slice(0, 4)).toEqual(["run", "--rm", "--name", p.visual?.containerName]);
+    expect(spec.args).toContain(IMAGE);
+    expect(spec.args[spec.args.indexOf("--user") + 1]).toBe("502:20");
+    expect(spec.args[spec.args.indexOf("-v") + 1]).toBe("/repo:/repo");
+    const afterImage = spec.args.slice(spec.args.indexOf(IMAGE) + 1);
+    expect(afterImage.slice(0, 6)).toEqual(["node", "scripts/e2e-in-docker.mjs", "--forward", `${p.ports.app},${p.ports.db}`, "--target", "host.docker.internal"]);
+    expect(afterImage.slice(afterImage.indexOf("--") + 1)).toEqual(["node", "scripts/e2e-phases.mjs", "visual"]);
+  });
+
+  it("passes the run's environment to the container by name, so the database password and the API key are in no argument", () => {
+    const p = visualPlan();
+    const text = JSON.stringify(p.commands.phases.args);
+    expect(text).not.toContain(p.dbPassword);
+    expect(text).not.toContain(p.apiKey);
+    expect(p.commands.phases.env.E2E_API_KEY).toBe(p.apiKey);
+    expect(p.commands.phases.env.E2E_DATABASE_URL).toBe(p.databaseUrl);
+    // The URLs are the host's: the container forwards its loopback ports, so the app's own origin (AUTH_URL) stays right.
+    expect(p.commands.phases.env.E2E_BASE_URL).toBe(p.baseUrl);
+    expect(p.env.app.AUTH_URL).toBe(p.baseUrl);
+  });
+
+  it("uses the image's Chromium whatever the machine or the shell says, and keeps the login file under the output root (the container sees the checkout only)", () => {
+    const p = visualPlan([], { ...DEVELOPER, E2E_BROWSER_CHANNEL: "chrome" });
+    expect(p.browser.channel).toBe("chromium");
+    expect(p.env.phases.E2E_BROWSER_CHANNEL).toBe("chromium");
+    expect(p.tmpDir.startsWith(p.outputRoot)).toBe(true);
+    expect(p.authState.startsWith(p.outputRoot)).toBe(true);
+  });
+
+  it("stops before anything is provisioned when the image is not on the machine, and says how to get it", async () => {
+    const { deps, events } = fakeDeps({ imageMissing: true });
+    expect(await runRelease(visualPlan(), deps)).toBe(EXIT.setup);
+    expect(events).toEqual(["check docker", "check visual image", "signals off"]);
+  });
+
+  it("removes the Playwright container in the teardown, after the app, whatever the run did", async () => {
+    const { deps, events } = fakeDeps({ phasesCode: 1 });
+    const p = visualPlan();
+    expect(await runRelease(p, deps)).toBe(1);
+    expect(events.slice(-6)).toEqual(["stop server", "unregister run", "remove container", "remove tmp", `remove visual container ${p.visual?.containerName}`, "signals off"]);
+  });
+
+  it("is the same run as any other tier for a plan without an image (nothing of the visual side)", () => {
+    const p = plan(["--tier", "smoke"]);
+    expect(p.visual).toBeUndefined();
+    expect(p.commands.phases.command).not.toBe("docker");
   });
 });
