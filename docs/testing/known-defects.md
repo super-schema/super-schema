@@ -375,3 +375,12 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - where: `src/app/(auth)/register/actions.ts`, `src/lib/admin-bootstrap.ts`, `prisma/seed.ts`, `src/lib/access-control.ts`.
 - cost to fix: the access-control work: closed or invitation-only registration, an explicit first-administrator step (an environment variable or a command, not "whoever is first"), no
   default password in a seed that a deployment can run, and no e-mail fallback in the identity resolution.
+
+## KD-039: the lineage graph's first view is fitted once, 50 ms after it starts, and not again when a node changes size
+
+- status: no-test (cosmetic and load dependent: the first view is a few percent off what the Fit button gives; a test that pinned it would fail only on a loaded machine)
+- symptom: `/lineage` fits the graph to the panel once (`fitView` 50 ms after `onInit`) and never again. When a node changes size after that (a font that arrives late on a slow or loaded
+  machine), the first view keeps the scale it computed: in the first run of the whole nightly tier it was 1.502 where the Fit button gave 1.441 for the same graph (the "'Fit' brings the viewport
+  back" test of `glossary-lineage.spec.ts` read both; its baseline is now what Fit gives, not the first view).
+- where: `LineageGraph` (`src/features/lineage/LineageGraph.tsx`: `onInit`, the `fitView` prop).
+- cost to fix: fit again when the nodes' measured sizes settle (`useNodesInitialized` plus a re-fit on a size change that the user has not zoomed away from), or drop the timer and rely on the `fitView` prop.

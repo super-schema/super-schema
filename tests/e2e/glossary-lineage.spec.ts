@@ -381,19 +381,28 @@ test.describe("lineage", () => {
     await createReferenceFieldRow(workspace.entities[0].id, workspace.entities[1]);
     await openLineage(page);
     await expect(node(page, workspace.entities[0].id)).toBeVisible();
-    // The initial fit runs 50 ms after the graph is ready: the viewport has settled when two reads, 300 ms apart, are the same.
-    let fitted = "";
-    await expect
-      .poll(
-        async () => {
-          const current = (await viewport(page).getAttribute("style")) ?? "";
-          const settled = current !== "" && current === fitted;
-          fitted = current;
-          return settled;
-        },
-        { intervals: [300] },
-      )
-      .toBe(true);
+    // The viewport has settled when two reads, 300 ms apart, are the same.
+    const settled = async () => {
+      let previous = "";
+      await expect
+        .poll(
+          async () => {
+            const current = (await viewport(page).getAttribute("style")) ?? "";
+            const same = current !== "" && current === previous;
+            previous = current;
+            return same;
+          },
+          { intervals: [300] },
+        )
+        .toBe(true);
+      return previous;
+    };
+    // The first view is fitted ONCE, 50 ms after the graph is ready (LineageGraph `onInit`), and not again when a node changes size after that
+    // (a font that arrives late, on a loaded machine: the first run of the whole nightly tier read a scale of 1.502 here and 1.441 after Fit).
+    // So the baseline is what the Fit button gives on the settled graph, not what the first fit happened to give.
+    await settled();
+    await centerPanel(page).getByTestId("fit-to-view").click();
+    const fitted = await settled();
 
     const pane = centerPanel(page).locator(".react-flow__pane");
     const box = (await pane.boundingBox())!;
@@ -402,7 +411,7 @@ test.describe("lineage", () => {
     await expect(viewport(page)).not.toHaveAttribute("style", fitted);
 
     await centerPanel(page).getByTestId("fit-to-view").click();
-    // Fitting animates for 300 ms and ends where the first fit did.
+    // Fitting animates for 300 ms and ends where the Fit button put the view before the zoom.
     await expect(viewport(page)).toHaveAttribute("style", fitted);
   });
 
