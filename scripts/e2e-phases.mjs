@@ -229,6 +229,9 @@ export function planPhases({ tier, noSerial = false, extraArgs = [], authState, 
         E2E_FLAKY_FILE: path.join(results(step.name), "flaky-tests.json"),
         E2E_HEARTBEAT_FILE: path.join(results(step.name), "heartbeat"),
         E2E_SKIPPED_FILE: path.join(results(step.name), "skipped-tests.json"),
+        // What the specs leave to be looked at (screenshots, generated text, step tables): one directory per RUN, in its test-results, so two runs
+        // never write the same files (tests/e2e/helpers/evidence.ts). Shared by the phases of a run; each spec has a subdirectory of its own.
+        E2E_EVIDENCE_DIR: path.join(outputRoot, "test-results", "evidence"),
       },
     });
   });

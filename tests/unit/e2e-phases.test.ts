@@ -99,6 +99,7 @@ describe("planPhases", () => {
       E2E_FLAKY_FILE: path.join("test-results", "main", "flaky-tests.json"),
       E2E_HEARTBEAT_FILE: path.join("test-results", "main", "heartbeat"),
       E2E_SKIPPED_FILE: path.join("test-results", "main", "skipped-tests.json"),
+      E2E_EVIDENCE_DIR: path.join("test-results", "evidence"),
     });
     expect(serial.env.PLAYWRIGHT_HTML_OUTPUT_DIR).toBe(path.join("playwright-report", "serial"));
     expect(serial.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE).toBe(path.join("test-results", "serial", "junit.xml"));
@@ -120,6 +121,8 @@ describe("planPhases", () => {
       expect(phase.env.E2E_HEARTBEAT_FILE).toBe(path.join("/runs/42", "test-results", phase.name, "heartbeat"));
       // The skipped-test list the gate reads: a file of the phase's own, next to its junit file.
       expect(phase.env.E2E_SKIPPED_FILE).toBe(path.join("/runs/42", "test-results", phase.name, "skipped-tests.json"));
+      // The evidence of the specs: one directory under the run's own output root, so two runs never write the same files.
+      expect(phase.env.E2E_EVIDENCE_DIR).toBe(path.join("/runs/42", "test-results", "evidence"));
       expect(phase.args).toContain(`--output=${path.join("/runs/42", "test-results", phase.name, "artifacts")}`);
     }
   });

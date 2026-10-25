@@ -593,7 +593,7 @@ test.describe("notification history", () => {
   });
 
   // KD-019: Next is enabled whenever the page is full (`notifications.length < pageSize`), so with exactly 25 it leads to an empty page 2.
-  test.fail("[KD-019 Next is enabled on a last page that is exactly full] with exactly 25 notifications Next is disabled", { tag: ["@regression"] }, async ({
+  test("[KD-019 Next is enabled on a last page that is exactly full] with exactly 25 notifications Next is disabled", { tag: ["@regression"] }, async ({
     browser,
     baseURL,
   }) => {
@@ -604,7 +604,12 @@ test.describe("notification history", () => {
       );
       const page = user.page;
       await openHistory(page);
+      // PRECONDITIONS, before the expectation of failure: a declarative `test.fail` also passed when the page was slow, and the first
+      // `toHaveCount(25)` timed out under load, which is not KD-019. The 25 rows are rendered and Next is on the page BEFORE `test.fail()` is
+      // called, so a page that did not render in time fails this test loudly; only the last assertion is the expected failure.
       await expect(rows(page)).toHaveCount(25);
+      await expect(page.getByTestId("notifications-next")).toBeVisible();
+      test.fail(); // from here on, the one thing that may fail is Next being enabled on the exactly-full last page
       await expect(page.getByTestId("notifications-next")).toBeDisabled({ timeout: 3000 });
     });
   });

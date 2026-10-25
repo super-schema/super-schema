@@ -7,7 +7,7 @@
  *   3. TypeSpec pasted (decorators, an enum, an entity extension): the multi-model review.
  *   4. A blank entity whose TypeSpec source is then written by hand in the TypeSpec tab (extension + decorators + enum) and synced.
  *
- * Artifacts and a step table are written to /tmp/e2e-evidence/authored. Steps are independent where they can be (a failed step is
+ * Artifacts and a step table are written to <E2E_EVIDENCE_DIR>/authored (one directory per run: helpers/evidence.ts). Steps are independent where they can be (a failed step is
  * recorded, the next still runs); the test fails with every failed step listed.
  */
 
@@ -31,8 +31,9 @@ import {
   saveTypeSpecSource,
   type Generated,
 } from "./helpers/lifecycle";
+import { evidenceDir } from "./helpers/evidence";
 
-const EVIDENCE = "/tmp/e2e-evidence/authored";
+const EVIDENCE = evidenceDir("authored");
 
 interface StepResult {
   step: string;

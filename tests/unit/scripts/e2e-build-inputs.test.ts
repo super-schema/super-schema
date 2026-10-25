@@ -2,11 +2,11 @@
  * scripts/e2e-build-inputs.mjs: the hash a reused build must still match. What is pinned: every input of the build changes it, nothing
  * that is not an input does, and the same checkout hashes the same (a hash that moved on its own would rebuild every time).
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { hashBuildInputs, nextPublicOf } from "../../../scripts/e2e-build-inputs.mjs";
+import { fileDependencies, hashBuildInputs, nextPublicOf } from "../../../scripts/e2e-build-inputs.mjs";
 
 let root: string;
 const put = (file: string, text: string) => {
@@ -93,5 +93,94 @@ describe("nextPublicOf", () => {
     expect(
       nextPublicOf(['NEXT_PUBLIC_A=1', 'export NEXT_PUBLIC_B="two words"', "NEXT_PUBLIC_C='3'", "NEXT_PUBLIC_D=4 # note", "# NEXT_PUBLIC_E=5", "OTHER=6", ""].join("\n")),
     ).toEqual({ NEXT_PUBLIC_A: "1", NEXT_PUBLIC_B: "two words", NEXT_PUBLIC_C: "3", NEXT_PUBLIC_D: "4" });
+  });
+});
+
+describe("the vendored package and the built output of `file:` dependencies are inputs of the build", () => {
+  it("changes when a file of vendor/typespec-enterprise changes, or appears (and is the same when the directory is missing)", () => {
+    const without = hash();
+    put("vendor/typespec-enterprise/src/index.ts", "export const a = 1;");
+    const first = hash();
+    expect(first).not.toBe(without);
+    put("vendor/typespec-enterprise/src/index.ts", "export const a = 2;");
+    expect(hash()).not.toBe(first);
+    put("vendor/typespec-enterprise/lib/extra.js", "x");
+    expect(hash()).not.toBe(first);
+  });
+
+  describe("fileDependencies", () => {
+    it("lists the `file:` entries of every dependency group, sorted, and nothing else", () => {
+      put(
+        "package.json",
+        JSON.stringify({
+          dependencies: { b: "file:../b", react: "^19.0.0", a: "file:vendor/a" },
+          devDependencies: { c: "file:../c", vitest: "^4.0.0" },
+          optionalDependencies: { d: "file:../d" },
+        }),
+      );
+      expect(fileDependencies(root).map((d) => [d.name, d.spec])).toEqual([["a", "file:vendor/a"], ["b", "file:../b"], ["c", "file:../c"], ["d", "file:../d"]]);
+    });
+
+    it("finds a package through node_modules (a link to the sibling repository, which does not exist beside a worktree), else through the path of the `file:`", () => {
+      const sibling = mkdtempSync(path.join(tmpdir(), "e2e-sibling-"));
+      try {
+        mkdirSync(path.join(sibling, "avro", "dist"), { recursive: true });
+        mkdirSync(path.join(root, "node_modules", "@x"), { recursive: true });
+        symlinkSync(path.join(sibling, "avro"), path.join(root, "node_modules", "@x", "avro"));
+        put("package.json", JSON.stringify({ dependencies: { "@x/avro": "file:../nowhere/avro", direct: `file:${path.relative(root, path.join(sibling, "avro"))}`, gone: "file:../gone" } }));
+        const found = Object.fromEntries(fileDependencies(root).map((d) => [d.name, d.dir]));
+        expect(found["@x/avro"]).toBe(path.join(realpathSync(sibling), "avro"));
+        expect(found.direct).toBe(path.join(realpathSync(sibling), "avro"));
+        expect(found.gone).toBeUndefined();
+      } finally {
+        rmSync(sibling, { recursive: true, force: true });
+      }
+    });
+
+    it("is empty without a readable manifest", () => {
+      rmSync(path.join(root, "package.json"));
+      expect(fileDependencies(root)).toEqual([]);
+    });
+  });
+
+  describe("the hash follows the dist of a `file:` dependency", () => {
+    let sibling: string;
+    beforeEach(() => {
+      sibling = mkdtempSync(path.join(tmpdir(), "e2e-sibling-"));
+      mkdirSync(path.join(sibling, "avro", "dist"), { recursive: true });
+      writeFileSync(path.join(sibling, "avro", "dist", "index.js"), "export const emit = 1;");
+      writeFileSync(path.join(sibling, "avro", "src.ts"), "// the source: not what the app runs");
+      put("package.json", JSON.stringify({ dependencies: { "@typespec/avro": `file:${path.relative(root, path.join(sibling, "avro"))}` } }));
+    });
+    afterEach(() => rmSync(sibling, { recursive: true, force: true }));
+
+    it("changes when the dependency is built again with other output, and when a file of its dist appears or goes", () => {
+      const before = hash();
+      writeFileSync(path.join(sibling, "avro", "dist", "index.js"), "export const emit = 2;");
+      const rebuilt = hash();
+      expect(rebuilt).not.toBe(before);
+      writeFileSync(path.join(sibling, "avro", "dist", "emitter.js"), "x");
+      const added = hash();
+      expect(added).not.toBe(rebuilt);
+      rmSync(path.join(sibling, "avro", "dist", "emitter.js"));
+      expect(hash()).toBe(rebuilt);
+    });
+
+    it("does not change for what is not the built output (its source, a README), nor for a touch without a change", () => {
+      const before = hash();
+      writeFileSync(path.join(sibling, "avro", "src.ts"), "// another source");
+      writeFileSync(path.join(sibling, "avro", "README.md"), "docs");
+      writeFileSync(path.join(sibling, "avro", "dist", "index.js"), "export const emit = 1;");
+      expect(hash()).toBe(before);
+    });
+
+    it("changes when the dist goes away, or the whole directory does (a sibling repository that was not built is not the same build)", () => {
+      const before = hash();
+      rmSync(path.join(sibling, "avro", "dist"), { recursive: true });
+      const noDist = hash();
+      expect(noDist).not.toBe(before);
+      rmSync(path.join(sibling, "avro"), { recursive: true });
+      expect(hash()).not.toBe(noDist);
+    });
   });
 });

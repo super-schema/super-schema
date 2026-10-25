@@ -14,7 +14,7 @@
  *   4. x-securityClassification: the level on every field in the editor.
  *   5. The syntax-highlighted paste box (CodeMirror tokens for JSON, coloured layer for TypeSpec).
  *
- * Screenshots go to /tmp/e2e-evidence/A. The successful URL import needs outbound https: an @external NETWORK precondition, which skips
+ * Screenshots go to <E2E_EVIDENCE_DIR>/A (one directory per run: helpers/evidence.ts). The successful URL import needs outbound https: an @external NETWORK precondition, which skips
  * with a reason that says so when the machine is offline (the skipped-test gate allows an @external skip and lists it).
  * PREREQS: see helpers/auth.ts.
  */
@@ -34,8 +34,9 @@ import {
   ENABLED_TARGETS,
 } from "./helpers/lifecycle";
 import { fillWorkbenchPaste } from "./helpers/workbench";
+import { evidenceDir } from "./helpers/evidence";
 
-const SHOTS = "/tmp/e2e-evidence/A";
+const SHOTS = evidenceDir("A");
 mkdirSync(SHOTS, { recursive: true });
 const shot = (page: import("@playwright/test").Page, name: string) => page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true });
 const label = (key: string) => ENABLED_TARGETS.find((t) => t.key === key)!.displayName;

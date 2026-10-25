@@ -31,6 +31,10 @@
 //      (`docker rm -f`; --keep leaves it and says how to connect), the temp directory. It runs in a `finally`, and on SIGINT / SIGTERM /
 //      SIGHUP (exit code 128 + the signal's number).
 //
+// PRUNING: `test-results/run-<id>` (the default output root) accumulated for ever. When a run starts it removes the run directories that are older
+// than 7 days, except the newest five (`E2E_KEEP_RUNS`, a positive whole number: more or fewer), says what it removed, and touches nothing that is
+// not a `run-<8 hex>` directory of `test-results` (scripts/e2e-prune.mjs). A prune that fails never fails the run.
+//
 // THE SECOND APP (`--second-app`, and by itself for the tiers that include the @external tests: nightly): the git-host import has a mode, read
 // from the environment when the app starts (SCHEMA_IMPORT_GIT_MODE, "restricted" by default), and a test that checks the `any` mode needs a
 // server of its own. After the first app is healthy the runner starts a SECOND `next start` of the same build on another free port with
@@ -71,6 +75,7 @@ import { appEnvironment, hermeticEnv, phasesEnvironment, runnerKnobs, secondAppE
 import { describeNode, nodeProblem } from "./e2e-node.mjs";
 import { isEntryPoint } from "./e2e-entry.mjs";
 import { parseCli, planPhases } from "./e2e-phases.mjs";
+import { parseKeepRuns, pruneRuns } from "./e2e-prune.mjs";
 import { dockerVisualArgs, extraMounts, updatesSnapshots, visualContainerName } from "./e2e-visual-docker.mjs";
 import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, parseMillis, signalGroup, spawnGroup, terminateGroup } from "./e2e-process.mjs";
 
@@ -79,7 +84,7 @@ import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, parseMillis, sig
  * @typedef {{
  *   tier: string, keep: boolean, reuseBuild: boolean, listOnly: boolean, shard?: string, projects: string[], extra: string[],
  *   runId: string, containerName: string, image: string, dbPassword: string, authSecret: string, apiKey: string,
- *   root: string, tmpDir: string, outputRoot: string, serverLog: string, secondServerLog: string, secondApp: boolean, authState: string,
+ *   root: string, tmpDir: string, outputRoot: string, serverLog: string, secondServerLog: string, secondApp: boolean, keepRuns: number, authState: string,
  *   baseEnv: Record<string, string>, bins: { prisma: string, next: string }, phasesArgv: string[],
  *   browser: import("./e2e-browser.cjs").BrowserDecision, nodeText: string, knobs: Record<string, string>,
  *   visual?: { image: string, containerName: string, uid: number, gid: number, platform: string, mounts: Array<{ path: string, readOnly: boolean }>, snapshotsDir: string, updateSnapshots: boolean },
@@ -430,8 +435,10 @@ export function planRun(argv, env = process.env, options = {}) {
   const nodeVersions = options.nodeVersions ?? process.versions;
   const problem = args.listOnly ? null : nodeProblem(nodeVersions, env);
   if (problem) throw new UsageError(problem);
+  let keepRuns;
   try {
     for (const name of ["E2E_STALL_MS", "E2E_GLOBAL_TIMEOUT_MS"]) parseMillis(name, env[name]);
+    keepRuns = parseKeepRuns(env.E2E_KEEP_RUNS);
   } catch (error) {
     throw new UsageError(error instanceof Error ? error.message : String(error));
   }
@@ -479,6 +486,7 @@ export function planRun(argv, env = process.env, options = {}) {
     serverLog: path.join(outputRoot, "server.log"),
     secondServerLog: path.join(outputRoot, "server-git-any.log"),
     secondApp: wantsSecondApp({ tier: args.tier, secondApp: args.secondApp, listOnly: args.listOnly }),
+    keepRuns,
     authState: path.join(tmpDir, "admin.json"),
     baseEnv,
     bins: options.bins ?? resolveBins(root),
@@ -670,6 +678,12 @@ export async function runRelease(initialPlan, deps) {
     undo.push({ name: "remove the temp directory", undo: () => deps.removeTmp(plan), hint: () => `rm -rf ${plan.tmpDir}` });
     await step("making the run's directories", () => deps.makeDirs(plan));
     madeDirs = true;
+    // test-results/run-<id> accumulates: the old ones go, the newest `keepRuns` stay. It says what it did and never fails the run.
+    try {
+      deps.pruneOldRuns?.(plan);
+    } catch (error) {
+      deps.log(`[e2e-release] prune: skipped (${error instanceof Error ? error.message : String(error)})`);
+    }
 
     plan = await step("choosing free ports", async () => {
       const ports = await deps.freePorts(plan.ports);
@@ -1005,6 +1019,7 @@ export function createRealDeps({ log: write = console.log, error: writeError = c
     },
 
     makeDirs: (plan) => makeRunDirs(plan, createdDirs),
+    pruneOldRuns: (plan) => pruneRuns({ root: plan.root, keep: plan.keepRuns, log }),
     removeTmp: (plan) => removeRunTmp(plan, createdDirs),
 
     async freePorts(ports) {

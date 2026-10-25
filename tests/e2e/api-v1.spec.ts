@@ -751,10 +751,15 @@ test.describe("webhooks", () => {
   });
 
   test("[KD-024 POST /api/v1/webhooks cannot create an endpoint: the key's user is no row of users, so the insert fails] a key creates an endpoint", { tag: ["@regression"] }, async ({ api }) => {
-    test.fail();
+    // PRECONDITIONS, before the expectation of failure: a bare `test.fail()` at the top passes (as the expected failure) for ANY reason, a run with
+    // no API key included (`api.key` throws then), a key the app does not accept, or a request that never got an answer. None of that is KD-024,
+    // so each of them runs first and fails this test loudly; only the assertion about the 201 below is the expected failure.
+    const listed = await api.key.get(`${API}/webhooks`);
+    expect(listed.status(), `the run's API key is not accepted by this server, which is not KD-024: ${await listed.text()}`).toBe(200);
     const url = `https://e2e-hook-${unique("create-")}.example.invalid/hook`;
     const response = await api.key.post(`${API}/webhooks`, asJson({ url, events: [WEBHOOK_EVENT] }));
     const text = await response.text();
+    test.fail(); // from here on, the one thing that may fail is the endpoint not being created (a 201 with the endpoint)
     try {
       expect(response.status(), text).toBe(201);
       const body = JSON.parse(text) as { data: Webhook; summary: string };

@@ -1180,3 +1180,40 @@ describe("the second app: git import in `any` mode, for the @external test that 
     });
   });
 });
+
+describe("pruning the old run directories", () => {
+  it("reads E2E_KEEP_RUNS (5 by default) when the plan is made, and refuses a value that is not a positive whole number (exit 2, a usage error)", () => {
+    expect(plan(["--tier", "smoke"]).keepRuns).toBe(5);
+    expect(plan(["--tier", "smoke"], { ...DEVELOPER, E2E_KEEP_RUNS: "12" }).keepRuns).toBe(12);
+    expect(() => plan(["--tier", "smoke"], { ...DEVELOPER, E2E_KEEP_RUNS: "0" })).toThrow(/E2E_KEEP_RUNS must be a positive whole number/);
+    expect(() => plan(["--tier", "smoke"], { ...DEVELOPER, E2E_KEEP_RUNS: "many" })).toThrow(UsageError);
+  });
+
+  it("prunes once the run's own directories exist (so the newest run, this one, is among the kept), before the database starts", async () => {
+    const { deps, events } = fakeDeps();
+    const pruned: unknown[] = [];
+    const withPrune = {
+      ...deps,
+      makeDirs: async () => void events.push("make dirs"),
+      pruneOldRuns: (p: { keepRuns: number }) => {
+        events.push("prune");
+        pruned.push(p.keepRuns);
+      },
+    };
+    expect(await runRelease(plan(), withPrune)).toBe(0);
+    expect(events.slice(0, 4)).toEqual(["check docker", "make dirs", "prune", "free ports"]);
+    expect(pruned).toEqual([5]);
+  });
+
+  it("never fails the run when the prune throws: it says it was skipped", async () => {
+    const { deps, messages } = fakeDeps();
+    const failing = {
+      ...deps,
+      pruneOldRuns: () => {
+        throw new Error("EACCES");
+      },
+    };
+    expect(await runRelease(plan(), failing)).toBe(0);
+    expect(messages.join("\n")).toContain("[e2e-release] prune: skipped (EACCES)");
+  });
+});

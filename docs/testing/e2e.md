@@ -181,7 +181,7 @@ A build is reused only when `.next/BUILD_ID` exists and the stamp the runner wro
 the same **hash of the build's inputs** as now: the content of every file under `src` (not `src/generated`, which `prebuild` derives from
 the schema and the lockfile) and `public`, `package.json`, `package-lock.json`, `tsconfig.json`, `postcss.config.mjs`, `next.config.*`,
 `prisma/schema.prisma`, `scripts/build-parser-worker.mjs`, the `NEXT_PUBLIC_*` values (the `.env`, `.env.production`, `.env.local` and
-`.env.production.local` files', and your shell's, which win), the build mode and the major version of Node. No modification times: a
+`.env.production.local` files', and your shell's, which win), the build mode and the major version of Node, the content of `vendor/typespec-enterprise` (a `file:` package inside the checkout), and the content of the **built `dist` directory of every `file:` dependency** of `package.json` (`@typespec/avro`, `@typespec/bigquery`, `@typespec/java-pojo`, `@typespec/postgres`, `@typespec/spanner` from the sibling `typespec` repository: found through `node_modules`, since in a worktree `file:../typespec` is not beside the checkout): rebuilding one of them changes the app, and a hash that only saw this repository's files would reuse a stale build. No modification times: a
 checkout of an older commit changes the hash. The hash is taken before the build; if an input changes while it builds, the build is not
 recorded for reuse. Anything else is a fresh build, and the runner prints which condition decided
 (`tests/unit/scripts/e2e-build-inputs.test.ts` changes each input in turn). The database is not part of the check: the app reads it at
@@ -301,13 +301,16 @@ Everything of a run is under its output root (printed at the start and at the en
 | junit | `<root>/test-results/<phase>/junit.xml` (retries included: a test that passed on a retry has a `<flakyFailure>`) |
 | flaky tests | `<root>/test-results/<phase>/flaky-tests.json`, a FLAKY block in the console, a warning annotation and a table in the job summary on GitHub |
 | skipped tests | `<root>/test-results/<phase>/skipped-tests.json` (written on every run, with or without `CI`; an empty list when nothing was skipped), a SKIPPED block in the console and in the phases summary, and a table in the job summary on GitHub |
+| evidence of the specs | `<root>/test-results/evidence/<spec>/`: the generated text of every target, a step table, screenshots of the three specs that leave them (`E2E_EVIDENCE_DIR`, set by the phases script; one directory per run, where they used to share `/tmp/e2e-evidence`; helpers/evidence.ts) |
 | traces, screenshots, video of failures | `<root>/test-results/<phase>/artifacts/<test>/`: `npx playwright show-trace <trace.zip>` |
 | the app's log | `<root>/server.log` (kept whatever the result) |
 
 The phases are `main` (and `serial` for the regression tier, which runs `serial-after` as its own command; `setup` and `serial` for the `serial` tier). The summary at the end of
 the run lists each phase's result and the report paths that exist. A test that passes only on a retry does not fail the run and is never
-hidden: it is listed as flaky in all of the above. Old runs stay in `test-results/run-<id>`; delete them when you do not need them
-(`test-results` is ignored by version control).
+hidden: it is listed as flaky in all of the above. Old runs stay in `test-results/run-<id>` (ignored by version control), and the release runner **prunes** them when a run starts:
+it removes the run directories older than 7 days, except the newest five, which always stay (`E2E_KEEP_RUNS=<n>` changes the five; a value that is not
+a positive whole number is exit 2), says what it removed (`[e2e-release] prune: ...`), and touches only a `run-<8 hex>` directory of `test-results`: another
+directory, a file, a phase's own results and an `--output-root` somewhere else are never selected. A prune that fails never fails the run.
 
 ### Skipped tests are never invisible
 

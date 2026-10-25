@@ -4,7 +4,7 @@
 // inputs does. Dependency-free; unit tested in tests/unit/scripts/e2e-build-inputs.test.ts.
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 /** Files, relative to the checkout, that `next build` (and its `prebuild`: prisma generate, the parser worker bundle) reads. `next.config.*` is added by pattern. */
@@ -17,8 +17,12 @@ export const BUILD_INPUT_FILES = Object.freeze([
   "scripts/build-parser-worker.mjs",
 ]);
 
-/** Directories, relative to the checkout, read whole (every file's content): the app's sources and its static files. */
-export const BUILD_INPUT_DIRS = Object.freeze(["src", "public"]);
+/**
+ * Directories, relative to the checkout, read whole (every file's content): the app's sources and its static files, and the vendored
+ * `@superschema/typespec-enterprise` package (a `file:` dependency inside the checkout: its source is part of what the build bundles; it is
+ * left out when the checkout has none).
+ */
+export const BUILD_INPUT_DIRS = Object.freeze(["src", "public", "vendor/typespec-enterprise"]);
 
 /** Left out of a directory walk: `src/generated` is the prisma client that `prebuild` writes (derived from the schema and the lockfile, both inputs). */
 const SKIPPED = (relative) => relative === path.join("src", "generated") || path.basename(relative) === "node_modules" || path.basename(relative) === ".next";
@@ -44,6 +48,36 @@ export function nextPublicOf(text) {
 
 const sha = (data) => createHash("sha1").update(data).digest("hex");
 
+/**
+ * The `file:` dependencies of the manifest (`"@typespec/avro": "file:../typespec/packages/avro"`), each with the directory it is installed from:
+ * the package in `node_modules` (resolved to its real path: it is a link to the sibling repository, and in a git worktree `file:../typespec` does
+ * not even exist beside the checkout), else the path the `file:` says, relative to the checkout. Sorted by name; a dependency whose directory
+ * is nowhere has `dir: undefined`.
+ *
+ * @param {string} root
+ * @returns {Array<{ name: string, spec: string, dir: string | undefined }>}
+ */
+export function fileDependencies(root) {
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  } catch {
+    return [];
+  }
+  /** @type {Map<string, string>} */
+  const found = new Map();
+  for (const group of ["dependencies", "devDependencies", "optionalDependencies"]) {
+    for (const [name, spec] of Object.entries(manifest[group] ?? {})) if (typeof spec === "string" && spec.startsWith("file:")) found.set(name, spec);
+  }
+  return [...found.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, spec]) => {
+      const candidates = [path.join(root, "node_modules", name), path.resolve(root, spec.slice("file:".length))];
+      const dir = candidates.find((candidate) => existsSync(candidate));
+      return { name, spec, dir: dir === undefined ? undefined : realpathSync(dir) };
+    });
+}
+
 /** Every file under `dir` (relative paths, sorted), without the skipped directories. */
 function walk(root, relativeDir) {
   const dir = path.join(root, relativeDir);
@@ -65,7 +99,8 @@ function walk(root, relativeDir) {
 }
 
 /**
- * The hash of everything a build is made from: the content of every input file, the NEXT_PUBLIC_* values that `next build` would bake
+ * The hash of everything a build is made from: the content of every input file (the vendored typespec-enterprise package included), the built `dist`
+ * of every `file:` dependency, the NEXT_PUBLIC_* values that `next build` would bake
  * in (the `.env` files' and the shell's, which win), the build mode and the major version of Node.
  *
  * @param {{ root: string, env?: Record<string, string | undefined>, nodeVersion?: string }} input
@@ -80,6 +115,15 @@ export function hashBuildInputs({ root, env = {}, nodeVersion = process.versions
   for (const file of [...files].sort()) {
     const full = path.join(root, file);
     hash.update(`file ${file} ${existsSync(full) ? sha(readFileSync(full)) : "missing"}\n`);
+  }
+
+  // The BUILT output of the packages that are `file:` dependencies (the typespec emitters of the sibling repository, the vendored enterprise
+  // package): the app runs their `dist`, which a change to the sibling repository rewrites without touching a file of this one. Its source
+  // being the same means nothing when it was built again.
+  for (const dependency of fileDependencies(root)) {
+    const files = dependency.dir === undefined ? [] : walk(dependency.dir, "dist");
+    const content = files.map((file) => `${file} ${sha(readFileSync(path.join(/** @type {string} */ (dependency.dir), file)))}`).join("\n");
+    hash.update(`dep ${dependency.name} ${dependency.dir === undefined ? "missing" : files.length === 0 ? "no dist" : sha(content)}\n`);
   }
 
   /** @type {Record<string, string>} */

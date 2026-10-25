@@ -92,17 +92,34 @@ function propertyNames(object: ts.ObjectLiteralExpression): string[] {
   return object.properties.flatMap((p) => (p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) ? [p.name.text] : []));
 }
 
-/** The local names `test` goes by in this file: `test`, and whatever `import { test as X } from "@playwright/test"` renames it to. */
+/**
+ * Whether an import of `test` from this module is Playwright's `test`: the package itself, or a LOCAL module (`./helpers/fixtures` re-exports it,
+ * extended with the suite's fixtures; any relative path is followed, so a new helper that re-exports it is covered without a change here).
+ */
+const isPlaywrightTestModule = (specifier: string) => specifier === "@playwright/test" || specifier.startsWith(".");
+
+/**
+ * The local names `test` goes by in this file: `test`, whatever `import { test as X } from "@playwright/test"` renames it to, and the same from a local
+ * module that re-exports it (`import { test as t } from "./helpers/fixtures"`: an alias there used to escape every rule below), and `ns.test` for
+ * `import * as ns from ...` of either. Each name is returned as it is written in a call (`t`, `pw.test`).
+ */
 function testNames(sf: ts.SourceFile): string[] {
   const names = new Set(["test"]);
   for (const statement of sf.statements) {
-    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== "@playwright/test") continue;
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || !isPlaywrightTestModule(statement.moduleSpecifier.text)) continue;
     const bindings = statement.importClause?.namedBindings;
-    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    if (!bindings) continue;
+    if (ts.isNamespaceImport(bindings)) {
+      names.add(`${bindings.name.text}.test`);
+      continue;
+    }
     for (const element of bindings.elements) if ((element.propertyName ?? element.name).text === "test") names.add(element.name.text);
   }
   return [...names];
 }
+
+/** A name as a regular-expression source (`pw.test` must not let the dot match any character). */
+const nameSource = (name: string) => name.replace(/[$.]/g, "\\$&");
 
 const scriptKindOf = (file: string): ts.ScriptKind =>
   file.endsWith(".tsx") ? ts.ScriptKind.TSX : /\.(m|c)?js$/.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
@@ -115,7 +132,7 @@ function scanSource(file: string, source: string, insideHelpers = false): Proble
     problems.push({ kind, file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, message });
   const titleOf = (call: ts.CallExpression) => call.arguments[0]?.getText(sf).slice(0, 70) ?? "(no title)";
   const names = testNames(sf);
-  const escaped = names.map((n) => n.replace(/[$]/g, "\\$&")).join("|");
+  const escaped = names.map(nameSource).join("|");
   const skipOrFixme = new RegExp(`^(${escaped})(\\.describe)?\\.(skip|fixme)$`);
   // Not declaratively (inside a test, a step, a hook, a describe): `fail` / `fixme` (a conditional `skip(cond, "why")` is an environment's
   // reason, not a defect: rule c). Declaratively, with a title (a test or a whole group): all three.
@@ -217,7 +234,7 @@ function scanSource(file: string, source: string, insideHelpers = false): Proble
 function pinnedDefectIds(file: string, source: string): string[] {
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKindOf(file));
   const names = testNames(sf);
-  const callee = new RegExp(`^(${names.map((n) => n.replace(/[$]/g, "\\$&")).join("|")})(\\.describe)?(\\.(fail|fixme|skip))?$`);
+  const callee = new RegExp(`^(${names.map(nameSource).join("|")})(\\.describe)?(\\.(fail|fixme|skip))?$`);
   const ids: string[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && callee.test(node.expression.getText(sf)) && node.arguments[0] && isStringLike(node.arguments[0])) {
@@ -312,6 +329,27 @@ describe("the browser suite scanner", () => {
     expect(scan(`${aliased}setup.use({ trace: "on" });`, false, "auth.setup.ts")).toEqual(["config-owned-use"]);
     expect(scan(`import { test } from "@playwright/test";\ntest("a", async () => {});`, false, "x.js")).toEqual(["untagged-test"]);
     expect(scan(`import { test as base } from "@playwright/test";\nexport const test = base.extend({});`, true, "fixtures.ts")).toEqual([]);
+  });
+
+  it("follows `test` through an alias of a LOCAL module that re-exports it (./helpers/fixtures), so `import { test as t }` cannot escape a rule", () => {
+    const aliased = `import { test as t } from "./helpers/fixtures";\n`;
+    expect(scan(`${aliased}t("a", async () => {});`)).toEqual(["untagged-test"]);
+    expect(scan(`${aliased}t("a", { tag: ["@regression"] }, async () => {});`)).toEqual([]);
+    expect(scan(`${aliased}t("a", { tag: ["@smoke", "@slow"] }, async () => {});`)).toEqual(["bad-tiers"]);
+    // the rules about the calls inside a test, and the rules of a hidden test or a defect marker, follow the alias too
+    expect(scan(`${aliased}t("a", { tag: ["@regression"] }, async ({ page }) => { await page.waitForTimeout(5); });`)).toEqual(["sleep"]);
+    expect(scan(`${aliased}t.use({ trace: "on" });`)).toEqual(["config-owned-use"]);
+    expect(scan(`${aliased}t.fixme("emit", async () => {});`)).toEqual(expect.arrayContaining(["hidden-test", "defect-pin"]));
+    expect(scan(`${aliased}t("a", { tag: ["@regression"] }, async () => { t.fail(); });`)).toEqual(["defect-pin"]);
+    expect(scan(`${aliased}t("a [KD-001 the thing is broken]", { tag: ["@regression"] }, async () => { t.fail(); });`)).toEqual([]);
+    // other relative paths, and a namespace import, are followed the same way
+    expect(scan(`import { test as spec } from "../helpers/other";\nspec("a", async () => {});`)).toEqual(["untagged-test"]);
+    expect(scan(`import * as pw from "./helpers/fixtures";\npw.test("a", async () => {});`)).toEqual(["untagged-test"]);
+    expect(scan(`import * as pw from "@playwright/test";\npw.test("a", { tag: ["@smoke"] }, async () => {});`)).toEqual([]);
+    // an import of `test` from a package that is not Playwright's is nobody's test
+    expect(scan(`import { test as t } from "node:test";\nt("a", async () => {});`)).toEqual([]);
+    // and the alias is the name of the file's own import: another file's `t` is not affected
+    expect(scan(`t("a", async () => {});`)).toEqual([]);
   });
 
   it("refuses a test that is tagged @smoke and @slow / @external", () => {

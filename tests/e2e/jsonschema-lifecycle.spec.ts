@@ -6,7 +6,7 @@
  *   the editor -> regenerate -> edit the TypeSpec source and Save (sync) -> regenerate -> extensions / classification survived.
  *
  * Each variation is one independent test (own domain + product). A step failing is recorded and the next steps still run
- * where they can, so the matrix (written to /tmp/e2e-evidence/lifecycle/<id>.json) shows every broken step at once.
+ * where they can, so the matrix (written to <E2E_EVIDENCE_DIR>/lifecycle/<id>.json: one directory per run, helpers/evidence.ts) shows every broken step at once.
  * Known, accepted open defects are declared per target in the table and REQUIRED to fail (a stale expectation fails the test).
  *
  * Corpus-level validity of the generated text (JSON Schema meta-schema, Avro parse, DDL on emulators) is
@@ -36,8 +36,9 @@ import {
   type Generated,
 } from "./helpers/lifecycle";
 import { VARIATIONS, type Variation } from "./fixtures/jsonschema-variations";
+import { evidenceDir } from "./helpers/evidence";
 
-const EVIDENCE = "/tmp/e2e-evidence/lifecycle";
+const EVIDENCE = evidenceDir("lifecycle");
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 // `canon` (compact JSON of the artifact) and `requiredOf` (the entity's `required` list) read a multi-file artifact file by file:
