@@ -365,16 +365,17 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   commit the x86-64 set (one set per architecture) or widen the threshold with the measurement written in the config comment; run the a11y tier once on `ubuntu-latest` and compare its
   violations with the baseline.
 
-## KD-038: registration is open, the first registrant of an unseeded database becomes ADMIN, and a seeded database ships admin@admin.com / admin
+## KD-038: registration is open and a non-production seed ships admin@admin.com / admin
 
-- status: no-test (the access-control project replaces all three; `docs/auth-ops.md` says what to do until then, and nothing in the suite should pin an insecure default)
+- status: no-test (the access-control project is replacing what is left; `docs/auth-ops.md` says what to do until then, and nothing in the suite should pin an insecure default)
 - symptom: `/register` creates an account for anyone who can reach the app (no invitation, no throttling; bcrypt cost 12 is about 340 ms of CPU per attempt, so it is also a way to load the
-  server). `ensureFirstAdminAssignment` (`src/lib/admin-bootstrap.ts`) makes the earliest registered user the global ADMIN, so whoever registers first on a fresh deployment owns it.
-  `npm run db:seed` creates `admin@admin.com` with the password `admin` as the ADMIN (the e2e suite relies on it). A forged session token that carries a known administrator's e-mail maps to
+  server); the account holds no role. `npm run db:seed` creates `admin@admin.com` with the password `admin` as the global ADMIN unless `NODE_ENV` is `production` or
+  `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` are set (the e2e suite relies on the default). A forged session token that carries a known administrator's e-mail maps to
   that administrator through `resolveCurrentUserId`'s e-mail fallback, so the session secret is the whole boundary (a production server now refuses a weak one: `docs/auth-ops.md`).
-- where: `src/app/(auth)/register/actions.ts`, `src/lib/admin-bootstrap.ts`, `prisma/seed.ts`, `src/lib/access-control.ts`.
-- cost to fix: the access-control work: closed or invitation-only registration, an explicit first-administrator step (an environment variable or a command, not "whoever is first"), no
-  default password in a seed that a deployment can run, and no e-mail fallback in the identity resolution.
+  Fixed already: the first registrant no longer becomes the ADMIN (no request creates an administrator: `src/lib/admin-bootstrap.ts` is called by the seed and `npm run admin:create` only), and
+  production has no default password.
+- where: `src/app/(auth)/register/actions.ts`, `prisma/seed.ts`, `src/lib/current-user.ts`.
+- cost to fix: the rest of the access-control work: closed or invitation-only registration (`AUTH_REGISTRATION`), throttling, and no e-mail fallback in the identity resolution.
 
 ## KD-039: the lineage graph's first view is fitted once, 50 ms after it starts, and not again when a node changes size
 

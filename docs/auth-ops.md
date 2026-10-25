@@ -45,19 +45,26 @@ the app is reached at one address only. Directly on the internet, set `AUTH_URL`
 
 - `/register` is **open**: anyone who can reach the app can create an account. There is no invitation, no email check, no throttling on
   registration or login (a bcrypt hash at cost 12 is about 340 ms of CPU, so many attempts are also a way to load the server).
-- **The first user to register in an unseeded database becomes the global ADMIN** (`ensureFirstAdminAssignment`, `src/lib/admin-bootstrap.ts`: the
-  earliest user owns the initial Admin role). Whoever registers first on a fresh deployment owns it.
-- **A seeded database ships a known administrator: `admin@admin.com` with the password `admin`** (`npm run db:seed`). The e2e suite relies on it.
+- **Nobody becomes the administrator by registering first any more.** A registered account holds no role. The first administrator is made by the seed
+  or by a command, never by a request (`src/lib/admin-bootstrap.ts`).
+- **The seed's administrator.** `npm run db:seed` creates `admin@admin.com` with the password `admin` as the global ADMIN **only when `NODE_ENV` is not
+  `production`** (the e2e suite and a laptop rely on it). With `NODE_ENV=production` the seed creates no administrator unless **both**
+  `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` are set, and then it creates that one instead (in any environment); setting only one of them stops
+  the seed with a message. The password must be 12 to 72 bytes. Running the seed again changes nothing for an administrator that exists, and never resets
+  a password; it gives the global role to an existing account only when the password you supply is that account's own.
+- **`npm run admin:create`** makes one global administrator without seeding anything: `npm run admin:create -- --email you@example.com` and type the
+  password at the prompt (not shown), or pipe it on standard input, or set `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD`. It refuses a password
+  outside 12 to 72 bytes and an e-mail that already has an account (it never promotes an existing account), says why, and changes nothing.
 - Every signed-in user can currently read what the app shows: a role limits what a user may change, not which tenant (a tenant is a cookie and an
   organisational label: KD-034 in `docs/testing/known-defects.md`).
 
 What to do meanwhile, on any deployment that is not a laptop:
 
-1. Do not seed a deployment that others can reach, or change the password of `admin@admin.com` straight after (there is no UI for it yet: update the
-   `User.password` bcrypt hash in the database, or delete the user once you have registered your own administrator).
-2. Register your own account first (that makes you the administrator of an unseeded database) before the address is shared.
-3. Keep the app on a private network, or behind an authenticating proxy (SSO, a VPN), until registration can be closed.
-4. Put a rate limit on `/register` and `/api/auth/*` at the proxy.
+1. Run the seed with `NODE_ENV=production` (or do not seed) and make your administrator with `npm run admin:create` or the two `BOOTSTRAP_ADMIN_*` variables.
+   A database that was seeded earlier keeps `admin@admin.com` / `admin`: change that password straight away (there is no UI for it yet: update the
+   `User.password` bcrypt hash in the database, or delete the user once you have another administrator).
+2. Keep the app on a private network, or behind an authenticating proxy (SSO, a VPN), until registration can be closed.
+3. Put a rate limit on `/register` and `/api/auth/*` at the proxy.
 
 ## Health endpoint
 
