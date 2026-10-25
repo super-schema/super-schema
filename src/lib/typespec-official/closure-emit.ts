@@ -26,7 +26,7 @@
  */
 
 import { compileEntity, type PrismaEntityInput, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
-import { CLOSURE_ROOT_NAMESPACE, generateClosureTypeSpec, type ClosureTypeSpec } from "@/lib/compiler/closure-source";
+import { CLOSURE_ROOT_NAMESPACE, builtInQualificationNotes, generateClosureTypeSpec, type ClosureTypeSpec } from "@/lib/compiler/closure-source";
 import { DEFAULT_MAX_CLOSURE_ENTITIES, type ReferenceClosure } from "@/lib/references/closure";
 import { TENANT_PLACEHOLDER, qualifiedName, type EntityRef } from "@/lib/references/entity-reference";
 import type { TargetId } from "@/lib/schema-targets/catalog";
@@ -324,7 +324,7 @@ function combinedPlan(closure: Closure, models: SuperSchemaModel[], key: string)
     places.push({ entityId: entity.entityId, entityName: entity.entity.name, model: models[i], namespace: qualified.slice(0, dot), modelName: qualified.slice(dot + 1) });
   });
 
-  const warnings: string[] = [];
+  const warnings: string[] = [...builtInQualificationNotes(entities.map((entity) => entity.ref))];
   // A .proto message field cannot be a union: the source types it string (generateClosureTypeSpec), and each such field is reported.
   if (key === "protobuf") {
     models.forEach((model, i) => warnings.push(...withUnionFieldsAsString(model).warnings.map((w) => (multi ? `${entities[i].entity.name}: ${w}` : w))));

@@ -128,6 +128,28 @@ function builtInSafe(identifier: string): string {
   return builtInNameConflict(identifier) ? `${identifier}${BUILT_IN_NAME_SUFFIX}` : identifier;
 }
 
+/**
+ * What an emission tells about a name it qualifies: a domain, a product or an entity named like a built-in type is written with the
+ * `_Entity` suffix in every generated namespace, package, directory and file name, so renaming a product `Record` moves its files (a
+ * consumer of the published output sees new paths). One line per name, however many entities live in it. Closure emission only: the
+ * stand-alone path does not qualify.
+ */
+export function builtInQualificationNotes(refs: readonly EntityRef[]): string[] {
+  const seen = new Set<string>();
+  const notes: string[] = [];
+  for (const ref of refs) {
+    for (const [kind, name] of [["domain", ref.domain], ["product", ref.product], ["entity", ref.entity]] as const) {
+      const identifier = sanitizeIdentifier(name);
+      if (!builtInNameConflict(identifier) || seen.has(`${kind}\u0000${name}`)) continue;
+      seen.add(`${kind}\u0000${name}`);
+      notes.push(
+        `The ${kind} "${name}" is a built-in type name, so its namespace, package, directory and file names say "${identifier}${BUILT_IN_NAME_SUFFIX}" (a namespace named like a built-in type would hide it from the models inside). Rename the ${kind} to keep the plain name.`
+      );
+    }
+  }
+  return notes;
+}
+
 /** A namespace segment: sanitized (keywords prefixed, invalid characters replaced), never equal to the reserved root or a built-in type name. */
 function namespaceSegment(segment: string): string {
   const safe = builtInSafe(sanitizeIdentifier(segment));

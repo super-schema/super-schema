@@ -114,6 +114,36 @@ describe("an entity named like a built-in scalar that another entity's field use
   });
 });
 
+// M6: the suffix changes generated namespaces, packages and file paths (a product named `Record` moves every file of the product), so the
+// emission SAYS so, once per name, instead of changing paths without a word.
+describe("the note that a built-in name is qualified", () => {
+  const warningsOf = async (closure: ReferenceClosure, target: (typeof TARGETS)[number] = "json-schema") => {
+    const result = await emitClosure(closure, target);
+    if (!result.success) throw new Error(result.error.message);
+    return result.data.warnings.filter((w) => w.includes("built-in type name"));
+  };
+
+  it("names the domain, the product and the entity that are qualified, once each, with the name they get", async () => {
+    const closure = closureOf([
+      member("o", "Order", [field("ref", "reference", 1, refTo("b", "Address", "url", "string")), field("ref2", "reference", 2, refTo("c", "url"))]),
+      member("b", "Address", [field("zip", "string", 1)], "url", "string"),
+      member("c", "url", [field("note", "string", 1)]),
+      member("d", "Other", [field("zip", "string", 1)], "url", "string"),
+    ]);
+    const notes = await warningsOf(closure);
+    expect(notes).toHaveLength(3);
+    expect(notes.find((n) => n.startsWith('The domain "url"'))).toContain('"url_Entity"');
+    expect(notes.find((n) => n.startsWith('The product "string"'))).toContain('"string_Entity"');
+    expect(notes.find((n) => n.startsWith('The entity "url"'))).toContain('"url_Entity"');
+    // one line per name, however many entities live in it (Address and Other are both in url / string)
+    expect(notes.filter((n) => n.startsWith('The domain "url"'))).toHaveLength(1);
+  });
+
+  it("says nothing when no name is a built-in", async () => {
+    expect(await warningsOf(closureFor("Customer", "url"))).toEqual([]);
+  });
+});
+
 describe("Java: an entity named like a java.lang type", () => {
   const closure = () =>
     closureOf([
