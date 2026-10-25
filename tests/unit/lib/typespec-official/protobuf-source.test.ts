@@ -146,10 +146,10 @@ describe("protobuf mapping-table notes for hazards the projection cannot remove"
     expect(row?.lossDescription).toMatch(/wire-breaking/i);
   });
 
-  it("flags reference as not emitted yet because of the cross-entity gap", () => {
+  it("no longer says a reference is not emitted: it is the referenced entity's message, imported from its own file (multi-entity emission)", () => {
     const row = getDefaultMapping("reference", "protobuf");
-    expect(row?.isLossy).toBe(true);
-    expect(row?.lossDescription).toMatch(/cross-entity/i);
-    expect(row?.lossDescription).toMatch(/Unknown identifier/);
+    expect(row).toMatchObject({ mappedType: "message", isLossy: false });
+    // the retired 'cross-entity gap' wording must not come back with the mapping
+    expect(row?.lossDescription).toBeUndefined();
   });
 });
