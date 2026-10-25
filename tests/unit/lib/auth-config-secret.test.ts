@@ -61,15 +61,13 @@ describe("src/lib/auth.ts: the secret it signs with", () => {
 
 describe("src/instrumentation.ts: the server refuses to start in production with a weak secret", () => {
   const names = ["NODE_ENV", "NEXT_RUNTIME", "NEXT_PHASE", "AUTH_SECRET", "NEXTAUTH_SECRET"] as const;
-  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
   beforeEach(() => {
     for (const name of names) vi.stubEnv(name, undefined as unknown as string);
     vi.stubEnv("NEXT_RUNTIME", "nodejs");
     vi.stubEnv("NODE_ENV", "production");
   });
   afterEach(() => {
-    vi.unstubAllEnvs();
-    for (const name of names) if (saved[name] !== undefined) process.env[name] = saved[name];
+    vi.unstubAllEnvs(); // puts every stubbed name back the way it was
   });
 
   it("throws with the reason in production on the Node runtime", async () => {
