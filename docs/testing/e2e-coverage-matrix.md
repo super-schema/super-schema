@@ -89,4 +89,18 @@ when a test is added or removed: the unit test compares the two.
 ## The last full run
 
 <!-- final-run:begin -->
+The release check of 2026-10-25, on an Apple Silicon laptop, Node 20.19.4, Google Chrome 155 for the Chromium projects, from the commit that carries this table. **Firefox and WebKit were not installed on that
+machine and could not be: their 40 smoke runs (20 tests x 2 browsers) were not run**, so the three-browser claim of the smoke tier is untested here.
+
+| Run | Command | Result | Time |
+| --- | --- | --- | --- |
+| Unit tests | `npx vitest run tests/unit` | 654 files, 12,751 passed, 1 expected failure (the `it.fails` pin of KD-032); the first run had one load flake (a scan of `src` that timed out at 5 s with the whole suite running: fixed) | 154 s |
+| Corpus | `npm run test:corpus` | 306 cases x 8 targets: 329 tests passed; every failure is a known one (json-schema 14, openapi3 14, avro 13, protobuf 10, java-pojo 15, postgresql 4, spanner 4, bigquery 9) | 543 s |
+| Nightly tier, Chromium + `a11y` + `serial-after` | `node scripts/e2e-release.mjs --tier nightly --project chromium --project a11y --project serial-after` | **384 passed, 0 failed, 0 flaky, 0 skipped** (the two `@external` tests ran: the network import, and the git-mode `any` test on the second app), on two runs in a row. The first run of the day had 374 passed, 1 failed (the lineage Fit test, a load flake: its baseline is now the Fit button's own view, KD-039) and 9 `serial-after` tests that did not run because their dependency failed: the skipped-test gate listed them as NOT ALLOWED | 12 min 04 s and 11 min 40 s (the build 1 min 17 s) |
+| Visual tier | `npm run test:e2e:visual` | 10 passed (nine screenshots and the login), in the Playwright image | 1 min 47 s |
+| Smoke tier, Chromium only | `node scripts/e2e-release.mjs --tier smoke --project chromium` | 21 passed on every run (also with the bundled Chromium, three times). Two of four runs with Google Chrome and a fresh build then sat idle for 11 minutes after the last test before the Playwright process ended on its own (docs/testing/e2e.md, "A run that stalls") | 30 s to 12 min 45 s |
+
+Expected failures that keep the run green (the `[KD-nnn ...]` tests of the guard): KD-014, KD-015, KD-017, KD-019 and KD-024 each fail as stated, and the run reports them as passed.
+
+Known defects at this release (`docs/testing/known-defects.md`): **5 open**, each pinned by a test that fails as stated (KD-014, KD-015, KD-017, KD-019, KD-024), 27 `no-test` (a gap or a design limit that nothing in the suite pins: KD-034 to KD-039 are new this wave) and 3 `dead-code` (KD-004, KD-005, KD-022).
 <!-- final-run:end -->
