@@ -11,7 +11,7 @@
 //   - UNTESTED    Node 24 (the Active LTS, and what Playwright's Docker image ships): allowed, with a one-line warning, because nothing is known
 //                 against it: the app is not tested on it by this suite;
 //   - REFUSED     everything else: Node 25 and 26 (a run of the full regression tier on Node 26.3.1, the default of a Homebrew machine, stopped after
-//                 its last test with every Playwright worker idle and never ended: seen four times, never on Node 20.19.4), the odd-numbered
+//                 its last test with every Playwright worker idle and never ended: seen four times, and once on Node 20.19.4: the watchdog is what ends such a run), the odd-numbered
 //                 releases between, and anything below 20.9. Refused before anything is provisioned, with the commands that fix it.
 //                 `E2E_ALLOW_UNSUPPORTED_NODE=1` is the way to try another one anyway (the stall watchdog of scripts/e2e-process.mjs still ends a
 //                 run that hangs). Only the e2e guard refuses: the application itself runs on what `engines` allows.

@@ -24,11 +24,11 @@ Before a release, on a machine with Docker running, **in this order**. The exit 
 
 | # | Command | What it covers | Expected |
 | --- | --- | --- | --- |
-| 1 | `npm run test:e2e:release:smoke` | the smoke tier on **three browsers** (Chromium, Firefox, WebKit): login, the page sweep, the basic create flows, one generate | exit 0; `RELEASE_SMOKE_DURATION` |
-| 2 | `npm run test:e2e:release` | the **nightly tier**: EVERYTHING EXCEPT the visual tier and the corpus. That is the regression tests, the `@slow` ones (the JSON Schema matrix, the navigation crawl, external event references), the `@external` ones (the network import, the git-mode `any` test on a second app the runner starts), the accessibility scan, and the smoke tests on Firefox and WebKit. No retries, a local run | exit 0, 0 flaky, **no skipped test that is not `@external`**; `RELEASE_NIGHTLY_DURATION` |
-| 3 | `npm run test:e2e:visual` | the nine screenshots, compared in the Playwright image. A change you meant: `npm run test:e2e:update-snapshots`, look at every image (`git diff --stat tests/e2e/visual.spec.ts-snapshots`), commit them | exit 0; `RELEASE_VISUAL_DURATION` |
-| 4 | `npm run test:corpus` | the corpus: every case against every enabled target, with the LocalCloud emulators and `javac`. It **rewrites** `docs/superpowers/reports/2026-10-22-corpus-matrix.md`: commit the change | exit 0; every failure is a known one in the report; `RELEASE_CORPUS_DURATION` |
-| 5 | `npx vitest run tests/unit` | the unit tests. Not `npm test`: that is `vitest` in watch mode and never ends | exit 0 |
+| 1 | `npm run test:e2e:release:smoke` | the smoke tier on **three browsers** (Chromium, Firefox, WebKit): login, the page sweep, the basic create flows, one generate | exit 0. Measured on an Apple Silicon laptop, Chromium (Google Chrome) only, a fresh build: **1 min 50 s** (the build 1 min 17 s, 21 tests in 25 s; with `--reuse-build` 30 s). Firefox and WebKit were not installed on that machine: the three-browser figure is not measured |
+| 2 | `npm run test:e2e:release` | the **nightly tier**: EVERYTHING EXCEPT the visual tier and the corpus. That is the regression tests, the `@slow` ones (the JSON Schema matrix, the navigation crawl, external event references), the `@external` ones (the network import, the git-mode `any` test on a second app the runner starts), the accessibility scan, and the smoke tests on Firefox and WebKit. No retries, a local run | exit 0, 0 flaky, **no skipped test that is not `@external`**. Measured on the same laptop with Chromium, `a11y` and `serial-after` (Firefox and WebKit not installed): **12 min** end to end (the build 1 min 17 s, the 384 tests on 8 workers 10 min 38 s); the 40 smoke runs on Firefox and WebKit come on top |
+| 3 | `npm run test:e2e:visual` | the nine screenshots, compared in the Playwright image. A change you meant: `npm run test:e2e:update-snapshots`, look at every image (`git diff --stat tests/e2e/visual.spec.ts-snapshots`), commit them | exit 0. Measured: **1 min 47 s** (nine screenshots and the login, in the image) |
+| 4 | `npm run test:corpus` | the corpus: every case against every enabled target, with the LocalCloud emulators and `javac`. It **rewrites** `docs/superpowers/reports/2026-10-22-corpus-matrix.md`: commit the change | exit 0; every failure is a known one in the report. Measured: **9 min** (543 s for 306 cases x 8 targets, against the emulators) |
+| 5 | `npx vitest run tests/unit` | the unit tests. Not `npm test`: that is `vitest` in watch mode and never ends | exit 0. Measured: **2 min 40 s** (654 files, about 12,750 tests) |
 
 Step 2 is `npm run test:e2e:release`, which is `node scripts/e2e-release.mjs --tier nightly`: it is **not** "everything" (no visual tier, no corpus, no unit tests), which is why steps 3 to 5 exist.
 Steps 1 and 2 can be one run (the nightly tier includes the smoke tests, on all three browsers) when the browsers are installed; step 1 is the quick answer.
@@ -228,7 +228,7 @@ recorded for reuse. Anything else is a fresh build, and the runner prints which 
 (`tests/unit/scripts/e2e-build-inputs.test.ts` changes each input in turn). The database is not part of the check: the app reads it at
 run time (the routes `next build` prerenders are client shells that fetch their data in the browser; a page that queried the database
 during the build would bake the data of the build's database into the build, and a release run should then go without `--reuse-build`).
-Measured on a laptop: a whole smoke run on Chromium with a fresh build takes about 90 s, and 20 to 30 s with `--reuse-build`.
+Measured on a laptop: a whole smoke run on Chromium with a fresh build takes about 110 s, and 30 s with `--reuse-build`.
 
 ### Two runs at the same time
 
@@ -554,7 +554,7 @@ that. Until a week of nightly runs says that it never fails by itself, `e2e-visu
   `nvm use 20`. `ls ~/.nvm/versions/node` lists the ones you have; the build is made once per Node major, it is part of the reuse hash.
   `E2E_ALLOW_UNSUPPORTED_NODE=1` overrides the refusal (Node 25 and 26 are not verified; Node 26.3.1 is the one that stalled).
 - **A run that stalls**: a run that never ends, with every Playwright worker idle (the list shows the last test or no test at all, no summary, no
-  CPU, no sockets), was seen four times on Node 26.3.1 (Homebrew) with a suite of about a hundred tests, never on Node 20.19.4. The Node guard keeps
+  CPU, no sockets), was seen four times on Node 26.3.1 (Homebrew) with a suite of about a hundred tests, and **once on Node 20.19.4** (2026-10-25: a smoke run whose 21 tests passed in 25 s and which then sat for 11 minutes with its three remaining workers and the Playwright process all idle, until it ended by itself; the next run of the same command took 25 s). So the guard is not the whole answer, and the watchdog below is what makes a run that hangs end. The Node guard keeps
   that Node away, and a watchdog covers whatever else makes a run hang: the phases script gives each phase a heartbeat file
   (`<output root>/test-results/<phase>/heartbeat`, rewritten by `tests/e2e/reporters/heartbeat-reporter.ts` at every test start and end and at the
   end of the run) and polls its modification time every 15 s. With no heartbeat for `E2E_STALL_MS` (**20 minutes** by default) it prints `stalled: no test finished for N min, workers idle, likely a Node/Playwright incompatibility (node <version>)`, ends Playwright (SIGTERM to

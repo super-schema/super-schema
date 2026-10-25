@@ -16,7 +16,7 @@ forge a session for any user, an administrator included.
 Rules, the same in the middleware (which verifies the cookie) and in the Auth.js configuration (which signs it): `AUTH_SECRET`, else
 `NEXTAUTH_SECRET`; **a name set to the empty string counts as not set** (`src/lib/auth-secret.ts`).
 
-**In production** (`NODE_ENV=production`: `next start`, the Docker image) the server **refuses to start** with a secret that is missing, shorter than
+**In production** (`NODE_ENV=production`: `next start`, the Docker image) the server **refuses to start** (the process writes the reason and exits with code 1; it does not stay up answering 500) with a secret that is missing, shorter than
 32 characters, or a known development value or placeholder (`dev-secret-change-in-production`, `your-secret-here`, `secret`, `changeme` ...). The
 message says why and how to make one. Development and test accept any value.
 

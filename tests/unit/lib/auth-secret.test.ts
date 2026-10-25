@@ -3,7 +3,7 @@
  * production server refuses to start with a missing, short or known development secret. Development and test are never affected.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MIN_PRODUCTION_SECRET_LENGTH, assertProductionAuthSecret, productionSecretProblem, resolveAuthSecret } from "@/lib/auth-secret";
+import { MIN_PRODUCTION_SECRET_LENGTH, assertProductionAuthSecret, productionSecretProblem, refuseToStartWithoutProductionSecret, resolveAuthSecret } from "@/lib/auth-secret";
 
 const STRONG = "k3Jx9aP0Qm7Vb2Lr5Tz8Wd1Yn4Hc6Gf0Se3Uo9Ai2Bm="; // 44 characters, what `openssl rand -base64 32` looks like
 
@@ -114,6 +114,56 @@ describe("assertProductionAuthSecret", () => {
       expect(() => assertProductionAuthSecret({ NODE_ENV, NEXTAUTH_SECRET: "your-secret-here" })).not.toThrow();
       expect(() => assertProductionAuthSecret({ NODE_ENV })).not.toThrow();
     }
+  });
+});
+
+describe("refuseToStartWithoutProductionSecret: the process ends, it does not stay up answering 500", () => {
+  // A hook of Next that throws leaves `next start` listening and answering 500 to every request (seen with a real build): the process stays
+  // alive, an orchestrator that restarts on exit never sees one, and a health check that only opens the port passes. So the refusal ends the process.
+  const run = (env: Record<string, string | undefined>) => {
+    const written: string[] = [];
+    const exits: number[] = [];
+    refuseToStartWithoutProductionSecret(env, {
+      write: (text, done) => {
+        written.push(text);
+        done();
+      },
+      exit: (code) => void exits.push(code),
+    });
+    return { written, exits };
+  };
+
+  it("writes the reason, then exits with code 1, for a weak or missing secret in production", () => {
+    for (const env of [{ NODE_ENV: "production", NEXTAUTH_SECRET: "dev-secret-change-in-production" }, { NODE_ENV: "production", AUTH_SECRET: "short" }, { NODE_ENV: "production" }]) {
+      const { written, exits } = run(env);
+      expect(written.join(""), JSON.stringify(env)).toContain("Refusing to start in production:");
+      expect(written.join("")).toContain("openssl rand -base64 32");
+      expect(exits).toEqual([1]);
+    }
+  });
+
+  it("does nothing for a strong secret in production, and for development and test whatever the secret", () => {
+    for (const env of [{ NODE_ENV: "production", AUTH_SECRET: STRONG }, { NODE_ENV: "development", NEXTAUTH_SECRET: "secret" }, { NODE_ENV: "test" }, {}]) {
+      expect(run(env), JSON.stringify(env)).toEqual({ written: [], exits: [] });
+    }
+  });
+
+  it("exits only after the message was flushed (a process.exit right after an asynchronous write can lose it)", () => {
+    const order: string[] = [];
+    let flush: () => void = () => {};
+    refuseToStartWithoutProductionSecret(
+      { NODE_ENV: "production" },
+      {
+        write: (_text, done) => {
+          order.push("write");
+          flush = done;
+        },
+        exit: () => void order.push("exit"),
+      },
+    );
+    expect(order).toEqual(["write"]);
+    flush();
+    expect(order).toEqual(["write", "exit"]);
   });
 });
 

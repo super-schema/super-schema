@@ -70,16 +70,40 @@ describe("src/instrumentation.ts: the server refuses to start in production with
     vi.unstubAllEnvs(); // puts every stubbed name back the way it was
   });
 
-  it("throws with the reason in production on the Node runtime", async () => {
+  const stubExit = () => {
+    const written: string[] = [];
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(((text: string, done?: () => void) => {
+      written.push(String(text));
+      done?.();
+      return true;
+    }) as never);
+    return { written, exit, restore: () => (exit.mockRestore(), write.mockRestore()) };
+  };
+
+  it("ends the process with the reason in production on the Node runtime (a throw would leave the server up, answering 500)", async () => {
     vi.stubEnv("NEXTAUTH_SECRET", "dev-secret-change-in-production");
-    const { register } = await import("@/instrumentation");
-    await expect(register()).rejects.toThrow(/Refusing to start in production: the session secret is a known development value/);
+    const { written, exit, restore } = stubExit();
+    try {
+      const { register } = await import("@/instrumentation");
+      await register();
+      expect(written.join("")).toMatch(/Refusing to start in production: the session secret is a known development value/);
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      restore();
+    }
   });
 
   it("starts with a strong secret", async () => {
     vi.stubEnv("AUTH_SECRET", "k3Jx9aP0Qm7Vb2Lr5Tz8Wd1Yn4Hc6Gf0Se3Uo9Ai2Bm=");
     const { register } = await import("@/instrumentation");
-    await expect(register()).resolves.toBeUndefined();
+    const { exit, restore } = stubExit();
+    try {
+      await expect(register()).resolves.toBeUndefined();
+      expect(exit).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
   });
 
   it("does nothing in development or test, during `next build`, or on the edge runtime", async () => {
