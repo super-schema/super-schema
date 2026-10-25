@@ -174,6 +174,18 @@ describe("OpenAPI import action guards (final-review D-I1)", () => {
     expect(compileTypeSpecDocument).not.toHaveBeenCalled();
   });
 
+  it("refuses a YAML alias fan-out (a small file naming a huge value 40 times) before the converter or the compiler see it", async () => {
+    const big = `[${Array.from({ length: 20_000 }, () => "1").join(",")}]`;
+    const many = `[${Array.from({ length: 40 }, () => "*b").join(",")}]`;
+    const bomb = `openapi: "3.0.0"\ninfo: {title: T, version: "1"}\npaths: {}\nx-big: &b ${big}\nx-many: ${many}\n`;
+    const started = Date.now();
+    const result = await importOpenApiDocumentAction(bomb);
+    expect(result).toMatchObject({ success: false, error: { code: "PARSE_ERROR" } });
+    expect(!result.success && result.error.message).toMatch(/OpenAPI document .*alias/i);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(compileTypeSpecDocument).not.toHaveBeenCalled();
+  });
+
   it("measures the cap in bytes, not characters", async () => {
     const multibyte = "é".repeat(MAX_IMPORT_CONTENT_BYTES / 2 + 1); // fewer characters than the cap, more bytes
     expect(multibyte.length).toBeLessThan(MAX_IMPORT_CONTENT_BYTES);

@@ -21,7 +21,7 @@
  * Never throws: every failure is an `err` Result or a warning. Plain objects are never written with user keys.
  */
 import { randomBytes } from "node:crypto";
-import { parse as parseYaml } from "yaml";
+import { parseYamlBounded } from "./safe-yaml";
 import { err, ok, type Result } from "@/types/result";
 import { setOwn } from "@/lib/compiler/governance-decorators";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
@@ -335,11 +335,8 @@ function parseLoose(content: string): unknown {
   try {
     return JSON.parse(stripBom(content));
   } catch {
-    try {
-      return parseYaml(stripBom(content));
-    } catch {
-      return undefined;
-    }
+    const parsed = parseYamlBounded(stripBom(content));
+    return parsed.ok ? parsed.value : undefined;
   }
 }
 
@@ -410,7 +407,9 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
     const built = buildFile(d.uri, d.doc, d.original, tokens, budget);
     if (!built.ok) {
       if (d.isRoot) {
-        const why = built.reason;
+        // The resolver could not read the root at all (a YAML alias fan-out, a syntax error): its own reason is the one worth showing.
+        const resolverReason = entries.length === 0 ? [...unreachable.values()][0] : undefined;
+        const why = resolverReason ?? built.reason;
         return fail("PARSE_ERROR", `The root document could not be imported: ${why}`, "Check that the URL points at a JSON Schema object.");
       }
       failedByUri.set(hrefOf(d.uri), built.reason);

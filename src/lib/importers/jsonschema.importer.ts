@@ -35,7 +35,7 @@
  * `parseJsonSchema()` keeps the single-entity contract: the root entity.
  */
 
-import { parse as parseYaml } from "yaml";
+import { parseYamlBounded } from "./safe-yaml";
 import { collidingFieldNames } from "@/lib/typespec-official/name-collisions";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
@@ -1335,17 +1335,16 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
 }
 
 /** JSON first; anything that is not JSON-shaped is tried as YAML (JSON Schema is often authored in YAML). */
-function parseStructured(content: string): JsonSchemaNode | null {
+function parseStructured(content: string): { value: JsonSchemaNode | null; message?: string } {
   try {
-    return JSON.parse(content);
+    return { value: JSON.parse(content) };
   } catch {
     const trimmed = content.trim();
-    if (!trimmed || trimmed.startsWith("{") || trimmed.startsWith("[")) return null;
-    try {
-      return parseYaml(trimmed) as JsonSchemaNode;
-    } catch {
-      return null;
-    }
+    if (!trimmed || trimmed.startsWith("{") || trimmed.startsWith("[")) return { value: null };
+    // Bounded parse: a YAML alias fan-out is refused with its own message, never expanded (see safe-yaml.ts).
+    const parsed = parseYamlBounded(trimmed);
+    if (parsed.ok) return { value: parsed.value as JsonSchemaNode };
+    return parsed.kind === "syntax" ? { value: null } : { value: null, message: parsed.message };
   }
 }
 
@@ -1409,12 +1408,14 @@ function parseGuarded(rawContent: string, outIndex?: Map<string, DefinitionIndex
 }
 
 function importJsonSchemaDocument(content: string, outIndex?: Map<string, DefinitionIndexEntry>, budget?: ResolveBudget): Result<MultiEntityImportResult> {
-  const schema = parseStructured(content);
+  const { value: schema, message: rejected } = parseStructured(content);
   if (schema === null) {
     return err({
       code: "PARSE_ERROR",
-      message: "Invalid JSON: could not parse JSON Schema",
-      suggestedFix: "Ensure the content is a valid JSON Schema document (JSON or YAML).",
+      message: rejected ?? "Invalid JSON: could not parse JSON Schema",
+      suggestedFix: rejected
+        ? "Write the repeated parts out in full instead of using YAML aliases, or use $ref to a definition."
+        : "Ensure the content is a valid JSON Schema document (JSON or YAML).",
     });
   }
 

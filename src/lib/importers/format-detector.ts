@@ -8,7 +8,7 @@
  * Returns null if format cannot be determined.
  */
 
-import { parse as parseYaml } from "yaml";
+import { parseYamlBounded } from "./safe-yaml";
 import type { ImportFormat } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -55,13 +55,11 @@ function detectByContent(content: string): ImportFormat | null {
   // Check for OpenAPI (JSON or YAML): has an `openapi: "3.x"` version field
   // plus a `paths` map. YAML is a superset of JSON, so one parse covers both.
   if (/"openapi"\s*:\s*"3\./.test(trimmed) || /(^|\n)\s*openapi\s*:\s*["']?3\./m.test(trimmed)) {
-    try {
-      const parsed = parseYaml(trimmed) as Record<string, unknown> | null;
-      if (parsed && typeof parsed === "object" && parsed.paths) {
-        return "openapi";
-      }
-    } catch {
-      // Not valid YAML/JSON, continue checking other formats
+    // Bounded parse (an alias fan-out is refused, never expanded: see safe-yaml.ts). Not valid YAML/JSON: continue checking other formats.
+    const parsedYaml = parseYamlBounded(trimmed);
+    const parsed = parsedYaml.ok ? (parsedYaml.value as Record<string, unknown> | null) : null;
+    if (parsed && typeof parsed === "object" && parsed.paths) {
+      return "openapi";
     }
   }
 
@@ -81,13 +79,10 @@ function detectByContent(content: string): ImportFormat | null {
     }
   } else if (YAML_JSON_SCHEMA_KEYS.test(trimmed)) {
     // JSON Schema authored in YAML (top-level `properties:` / `$schema:` / `$defs:`).
-    try {
-      const parsed = parseYaml(trimmed) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        if (looksLikeJsonSchema(parsed as Record<string, unknown>)) return "json-schema";
-      }
-    } catch {
-      // Not valid YAML, continue checking
+    const parsedYaml = parseYamlBounded(trimmed);
+    const parsed = parsedYaml.ok ? parsedYaml.value : undefined;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      if (looksLikeJsonSchema(parsed as Record<string, unknown>)) return "json-schema";
     }
   }
 

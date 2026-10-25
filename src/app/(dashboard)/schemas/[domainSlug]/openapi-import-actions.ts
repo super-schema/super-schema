@@ -19,7 +19,8 @@
  * server-side, and anything unexpected becomes the generic message (`sanitizeActionError`).
  */
 
-import { parse as parseYaml, YAMLParseError } from "yaml";
+import { YAMLParseError } from "yaml";
+import { parseYamlBounded } from "@/lib/importers/safe-yaml";
 import { convertOpenAPI3Document } from "@typespec/openapi3";
 import type { Result } from "@/types/result";
 import { ok, err } from "@/types/result";
@@ -61,17 +62,24 @@ async function runOpenApiImport(content: string): Promise<Result<TypeSpecImportR
   const size = checkImportSize(content, "OpenAPI document");
   if (!size.success) return size;
 
-  let openApiDoc: unknown;
-  try {
-    openApiDoc = parseYaml(content);
-  } catch (e) {
-    console.error(`[${LABEL}] OpenAPI document did not parse`, e);
+  // Bounded parse: an alias fan-out (a small file naming a huge value many times) is refused before anything expands it.
+  const parsed = parseYamlBounded(content);
+  if (!parsed.ok && parsed.kind !== "syntax") {
     return err({
       code: "PARSE_ERROR",
-      message: describeYamlError(e),
+      message: parsed.message.replace("The YAML document", "The OpenAPI document"),
+      suggestedFix: "Write the repeated parts out in full instead of using YAML aliases, or use $ref to components.",
+    });
+  }
+  if (!parsed.ok) {
+    console.error(`[${LABEL}] OpenAPI document did not parse`, parsed.error);
+    return err({
+      code: "PARSE_ERROR",
+      message: describeYamlError(parsed.error),
       suggestedFix: "Ensure the content is valid YAML or JSON.",
     });
   }
+  const openApiDoc: unknown = parsed.value;
 
   const converted = await withCompileTimeout(async () => {
     try {

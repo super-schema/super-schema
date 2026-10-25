@@ -20,7 +20,7 @@
 import { execFile } from "node:child_process";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { $RefParser } from "@apidevtools/json-schema-ref-parser";
-import { parse as parseYaml } from "yaml";
+import { parseYamlBounded } from "./safe-yaml";
 import { gitRootRefusal, readGitImportConfig, type GitImportConfig } from "./git-import-config";
 import { setOwn } from "@/lib/compiler/governance-decorators";
 import {
@@ -217,11 +217,12 @@ function parseDoc(content: string): { ok: true; value: object } | { ok: false; r
   try {
     value = JSON.parse(content);
   } catch {
-    try {
-      value = parseYaml(content);
-    } catch (err) {
-      return { ok: false, reason: `document could not be parsed: ${sanitizeReason(err)}` };
+    // Bounded YAML: an alias fan-out would be expanded by the `JSON.stringify` below and in every later copy (see safe-yaml.ts).
+    const parsed = parseYamlBounded(content);
+    if (!parsed.ok) {
+      return { ok: false, reason: `document could not be parsed: ${parsed.kind === "syntax" ? sanitizeReason(parsed.error) : parsed.message}` };
     }
+    value = parsed.value;
   }
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return { ok: false, reason: "document is not a JSON object" };
