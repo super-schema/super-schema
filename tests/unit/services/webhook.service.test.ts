@@ -642,5 +642,21 @@ describe("Webhook Service", () => {
       const result = await getDeliveries("any-id", userCtx);
       expect(result.success).toBe(false);
     });
+
+    it("an endpoint that does not exist is NOT_FOUND, not an empty history", async () => {
+      const result = await getDeliveries("no-such-endpoint", adminCtx);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("NOT_FOUND");
+        expect(result.error.message).toBe('Webhook endpoint "no-such-endpoint" not found');
+      }
+    });
+
+    it("an endpoint that exists and has no deliveries has an empty history", async () => {
+      const created = await createEndpoint(makeEndpointInput(), adminCtx);
+      if (!created.success) throw new Error("the endpoint was not created");
+      const result = await getDeliveries(created.data.id, adminCtx);
+      expect(result).toEqual({ success: true, data: [] });
+    });
   });
 });

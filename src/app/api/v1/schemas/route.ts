@@ -13,6 +13,7 @@ import {
   apiServerError,
 } from "@/app/api/v1/error-handler";
 import { getEntities } from "@/services/entity.service";
+import { EntityFiltersSchema } from "@/types/schemas/entity.schema";
 
 export async function GET(request: Request) {
   // Authenticate
@@ -23,13 +24,21 @@ export async function GET(request: Request) {
 
   try {
     const url = new URL(request.url);
-    const filters: import("@/types/schemas/entity.schema").EntityFilters = {
+    // A status that is none of the four is the caller's mistake (400), not a query for the database to refuse (500).
+    const parsed = EntityFiltersSchema.safeParse({
       domainId: url.searchParams.get("domain") ?? undefined,
-      status: (url.searchParams.get("status") ?? undefined) as "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED" | undefined,
+      status: url.searchParams.get("status") ?? undefined,
       search: url.searchParams.get("search") ?? undefined,
-    };
+    });
+    if (!parsed.success) {
+      return apiError({
+        code: "VALIDATION_ERROR",
+        message: parsed.error.issues[0].message,
+        suggestedFix: "status is one of DRAFT, ACTIVE, DEPRECATED, RETIRED.",
+      });
+    }
 
-    const result = await getEntities(filters, authResult.context);
+    const result = await getEntities(parsed.data, authResult.context);
 
     if (!result.success) {
       return apiError(result.error);

@@ -10,6 +10,7 @@ import {
   apiUnauthorized,
   apiServerError,
 } from "@/app/api/v1/error-handler";
+import { isUsableId, readJsonBody, unusableIdNotFound } from "@/app/api/v1/request";
 import { updateEndpoint, deleteEndpoint } from "@/services/webhook.service";
 
 export async function PUT(
@@ -23,8 +24,10 @@ export async function PUT(
 
   try {
     const { id } = await params;
-    const body = await request.json();
-    const result = await updateEndpoint(id, body, authResult.context);
+    if (!isUsableId(id)) return unusableIdNotFound("webhook", id);
+    const body = await readJsonBody(request);
+    if (!body.ok) return body.response;
+    const result = await updateEndpoint(id, body.body as Parameters<typeof updateEndpoint>[1], authResult.context);
     if (!result.success) return apiError(result.error);
     return apiSuccess(result.data);
   } catch (e) {
@@ -44,6 +47,7 @@ export async function DELETE(
 
   try {
     const { id } = await params;
+    if (!isUsableId(id)) return unusableIdNotFound("webhook", id);
     const result = await deleteEndpoint(id, authResult.context);
     if (!result.success) return apiError(result.error);
     return apiSuccess({ deleted: true });

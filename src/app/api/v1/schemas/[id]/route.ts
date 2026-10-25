@@ -11,6 +11,7 @@ import {
   apiUnauthorized,
   apiServerError,
 } from "@/app/api/v1/error-handler";
+import { isUsableId, unusableIdNotFound } from "@/app/api/v1/request";
 import { getEntityById } from "@/services/entity.service";
 
 export async function GET(
@@ -25,6 +26,7 @@ export async function GET(
 
   try {
     const { id } = await params;
+    if (!isUsableId(id)) return unusableIdNotFound("entity", id);
     const result = await getEntityById(id, authResult.context);
 
     if (!result.success) {

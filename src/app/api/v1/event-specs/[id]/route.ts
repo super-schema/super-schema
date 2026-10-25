@@ -17,6 +17,7 @@
 import type { NextResponse } from "next/server";
 import { authenticateRequest } from "@/app/api/v1/middleware";
 import { checkRateLimit } from "@/app/api/v1/rate-limit";
+import { isUsableId } from "@/app/api/v1/request";
 import { apiError, apiServerError, apiUnauthorized } from "@/app/api/v1/error-handler";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
@@ -81,6 +82,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
   try {
     const { id } = await params;
+    // PostgreSQL text holds no NUL byte: an id with one cannot be an event's, and the lookup would throw.
+    if (!isUsableId(id)) return specNotFound();
     const url = new URL(request.url);
 
     const format = url.searchParams.get("format") ?? "yaml";

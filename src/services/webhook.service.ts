@@ -223,6 +223,15 @@ export async function getDeliveries(
     });
   }
 
+  // An endpoint that does not exist has no deliveries to list: 404, not an empty list that reads as "nothing was delivered yet".
+  const endpoint = await prisma.webhookEndpoint.findUnique({ where: { id: endpointId }, select: { id: true } });
+  if (!endpoint) {
+    return err({
+      code: "NOT_FOUND",
+      message: `Webhook endpoint "${endpointId}" not found`,
+    });
+  }
+
   const rows = await prisma.webhookDelivery.findMany({
     where: { endpointId },
     orderBy: { deliveredAt: "desc" },

@@ -10,6 +10,7 @@ import {
   apiUnauthorized,
   apiServerError,
 } from "@/app/api/v1/error-handler";
+import { readJsonBody } from "@/app/api/v1/request";
 import { createEndpoint, getEndpoints } from "@/services/webhook.service";
 
 export async function GET(request: Request) {
@@ -35,8 +36,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = await request.json();
-    const result = await createEndpoint(body, authResult.context);
+    const body = await readJsonBody(request);
+    if (!body.ok) return body.response;
+    const result = await createEndpoint(body.body as Parameters<typeof createEndpoint>[0], authResult.context);
     if (!result.success) return apiError(result.error);
     return apiSuccess(result.data, "Webhook endpoint created", 201);
   } catch (e) {

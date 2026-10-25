@@ -13,6 +13,7 @@
 
 import { authenticateRequest } from "@/app/api/v1/middleware";
 import { checkRateLimit } from "@/app/api/v1/rate-limit";
+import { isUsableId, unusableIdNotFound } from "@/app/api/v1/request";
 import {
   apiSuccess,
   apiError,
@@ -44,6 +45,7 @@ export async function POST(
 
   try {
     const { id } = await params;
+    if (!isUsableId(id)) return unusableIdNotFound("entity", id);
 
     // Fetch entity
     const entityResult = await getEntityById(id, authResult.context);

@@ -12,6 +12,7 @@ import {
   apiUnauthorized,
   apiServerError,
 } from "@/app/api/v1/error-handler";
+import { isUsableId, unusableIdNotFound } from "@/app/api/v1/request";
 import {
   getNotificationsForUser,
   markAllAsRead,
@@ -90,6 +91,7 @@ export async function POST(request: Request) {
     if (action === "mark-read") {
       const id = url.searchParams.get("id");
       if (!id) return apiError({ code: "VALIDATION_ERROR", message: "Notification id is required" });
+      if (!isUsableId(id)) return unusableIdNotFound("notification", id);
       const result = await markAsRead(id, authResult.context);
       if (!result.success) return apiError(result.error);
       return apiSuccess({ marked: true });
@@ -104,7 +106,12 @@ export async function POST(request: Request) {
       return apiSuccess({ marked: true });
     }
 
-    return apiServerError("Unknown action");
+    // An action the route does not have is the caller's mistake, not a failure of the server.
+    return apiError({
+      code: "VALIDATION_ERROR",
+      message: "Unknown action",
+      suggestedFix: "Use ?action=mark-read&id=<notification id>, or ?action=mark-all-read.",
+    });
   } catch (e) {
     console.error("POST /api/v1/notifications error:", e);
     return apiServerError();

@@ -9,6 +9,7 @@ import {
   apiUnauthorized,
   apiServerError,
 } from "@/app/api/v1/error-handler";
+import { isUsableId, unusableIdNotFound } from "@/app/api/v1/request";
 import { getDeliveries } from "@/services/webhook.service";
 
 export async function GET(
@@ -22,6 +23,7 @@ export async function GET(
 
   try {
     const { id } = await params;
+    if (!isUsableId(id)) return unusableIdNotFound("webhook", id);
     const result = await getDeliveries(id, authResult.context);
     if (!result.success) return apiError(result.error);
     return apiSuccess(result.data);
