@@ -3,10 +3,12 @@ import { compileEntity, type PrismaFieldInput } from "@/lib/compiler/compiler.se
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { mergeSyncedField } from "@/lib/typespec-sync/merge-fields";
 
-// OPEN (design question, reported to the controller): an imported enum field now carries its symbols as `aliases` (commit 8b63d454) AND in
+// OPEN, KD-032 (docs/testing/known-defects.md): an imported enum field carries its symbols as `aliases` (commit 8b63d454) AND in
 // `validation.pattern` ("A|B"). extractEnumValues prefers aliases, and the TypeSpec sync (merge-fields.ts) only ever touches `decorators`:
 // it keeps an enum's pattern as "the truth" and never writes aliases. So a later change of the symbols through the pattern slot (or
 // the sync) is overridden by the stale aliases. Before 8b63d454 the pattern was the only carrier, so this is new for imported enums.
+// Not fixed here: which slot owns the symbols is a design decision (letting the pattern win when it differs from `aliases.join("|")` would
+// make an edit of the aliases themselves, which the Aliases panel allows, lose to the stale pattern). `it.fails` flips to `it` with the fix.
 const entity = { id: "e", name: "Evt", description: "", status: "DRAFT", version: 1, domainId: "d", metadata: {}, domain: { id: "d", name: "Sales", slug: "sales" } };
 const enumField = (aliases: string[], pattern: string): PrismaFieldInput => ({
   id: "f", name: "s", type: "enum", precision: null, scale: null, nullable: false, isKey: false, fieldNumber: null, description: "", classification: null,
@@ -26,8 +28,8 @@ describe("an enum field that carries both aliases and a pattern", () => {
     expect(merged).not.toHaveProperty("aliases");
   });
 
-  // OPEN: documents the hazard; flips to a normal test when the controller decides who owns the symbols.
-  it.fails("a later edit of the symbols in the pattern slot reaches the generated source", () => {
+  // OPEN (KD-032): documents the hazard; flips to a normal test, and the KD entry goes, when it is decided who owns the symbols.
+  it.fails("[KD-032] a later edit of the symbols in the pattern slot reaches the generated source", () => {
     expect(source(enumField(["A", "B"], "A|C"))).toMatch(/\bC,/);
   });
 });

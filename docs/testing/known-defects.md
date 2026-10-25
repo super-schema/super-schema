@@ -274,3 +274,13 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - where: `src/lib/typespec-official/closure-emit.ts` (`standalonePlan` uses `buildSourceForTarget`, `combinedPlan` uses `generateClosureTypeSpec`, which writes `unknown` and a warning).
 - cost to fix: make `standalonePlan` write a reference field that nothing resolves as `unknown` with the same warning (the stand-alone content of an entity WITHOUT such a field is
   unchanged), or refuse both with one message.
+
+## KD-032: an imported enum field keeps its symbols in two places, and the generator reads `aliases` before `validation.pattern`
+
+- status: no-test (the browser suite cannot reach it: no screen edits an enum's symbols; the generator side is pinned by the unit test `typespec-generator-enum-aliases-open.test.ts`, an `it.fails`)
+- symptom: an enum field imported from JSON Schema carries its symbols twice, as `aliases` (verbatim) and as the pattern `A|B`. A later change of the symbols in one of them
+  does not reach the generated TypeSpec when it is the pattern (the stale aliases win), and a TypeSpec Save never changes the symbols of a stored enum at all (the stored ones
+  win; `merge-fields.ts` keeps an enum's pattern "as the truth" and never writes `aliases`).
+- where: `extractEnumValues` (`src/lib/compiler/typespec-generator.ts`), `mergeSyncedField` (`src/lib/typespec-sync/merge-fields.ts`), `parsedFieldToCreateFieldInput` (`src/lib/importers/import-payload.ts`: it writes both).
+- cost to fix: decide which slot owns the symbols and make the other follow (a pattern that wins when it differs from `aliases.join("|")` is wrong for the Aliases panel, which edits the aliases
+  directly); then let a Save read the members of a declared enum back. Rows that carry both stay valid while the two agree, which every import writes.
