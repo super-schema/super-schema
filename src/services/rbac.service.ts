@@ -127,6 +127,16 @@ export async function assignRole(
     }
   }
 
+  // The role row has a foreign key to its user too: an id that is nobody's is said, and not thrown out of the action as the database's P2003.
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+  if (!user) {
+    return err({
+      code: "NOT_FOUND",
+      message: `User "${userId}" not found`,
+      suggestedFix: "Use the id of an existing user.",
+    });
+  }
+
   // Prevent duplicate role assignments
   const existing = await prisma.userRole.findFirst({
     where: {

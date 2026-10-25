@@ -14,6 +14,10 @@ Defects of the product that the browser suite (`tests/e2e`, see `e2e.md`) found 
   so many words that nothing in the suite pins it (a gap in the product that is not worth a test that fails every night, a design
   limit, a cosmetic one); `dead-code` is code nothing reaches.
 
+A pin must fail ONLY on its stated assertion. A bare `test.fail()` at the top of a test passes (as the expected failure) for any reason: a missing fixture, a server that did not
+answer, a page that was slow. So the preconditions of a pin (the API key is accepted, the 25 rows are rendered) run FIRST, and `test.fail()` is called after them, immediately
+before the one assertion that is the defect (`api-v1.spec.ts`, KD-024; `discovery.spec.ts`, KD-019). The marker still belongs to the title of its test, which the guard reads.
+
 An entry gives: what a user sees, how to see it, where it is, the suspected cause, and what fixing it costs.
 
 ## KD-001: a per-field type override is recorded but not applied by the generated schema
@@ -128,11 +132,15 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 
 - status: no-test (the Query and Gaps tabs were scoped to the tenant being viewed, the "compliance tenants" test in `governance-compliance.spec.ts` pins it; the Audit Trail cannot be, see below, and no test can say what the right answer is until it has a tenant)
 - symptom: the Audit Trail tab lists, and its CSV exports, the `audit_log` rows of ALL tenants: who changed what, in entities, domains and products
-  of another tenant. (Before this was fixed the Query and Gaps tabs read every tenant's fields too: `resolveContext` now passes the tenant being
-  viewed and `queryFields` / `detectGaps` filter `entity.tenantId`.)
-- where: `src/services/compliance.service.ts` (`queryAuditTrail`): `audit_log` has no tenant column; a row names an `entityType` and an `entityId`,
-  and the tenant has to be found through that entity's table (Entity, Field, Domain, Product, GitConfig ... each its own join).
-- cost to fix: a `tenantId` column on `audit_log` written by `withAudit` (the caller knows the tenant), a backfill, and the filter; or the join per type.
+  of another tenant. (Before this was partly fixed the Query and Gaps tabs read every tenant's fields too: `resolveContext` now passes the tenant being
+  viewed and `queryFields` / `detectGaps` filter `entity.tenantId`. "Scoped" there means the tenant being viewed, which is a cookie: KD-034.)
+- where: `src/services/compliance.service.ts` (`queryAuditTrail`): `audit_log` has no tenant column. A row names an `entityType` and an `entityId`, and a join per
+  type (Entity, Field, Domain, Product, GitConfig ...) cannot attribute the rows that matter: **a CREATE row is written with the literal `entityId: "pending"`**
+  (`domain-row.service.ts:72`, `entity.service.ts:66`, `field.service.ts:81`, `product.service.ts:143`, and `git.service.ts:614` for a new connection), because the
+  audit row is written before the row it describes has an id, and no table has a row called "pending". The per-type join would find the updates and deletes of a
+  tenant's rows and none of its creates.
+- cost to fix: only an `audit_log.tenantId` column works: written by `withAudit` (the caller knows the tenant), the filter in `queryAuditTrail`, and a backfill
+  for the old rows (the updates and deletes through the join; the old creates cannot be attributed and stay unattributed).
 
 ## KD-017: the glossary's detail panel never lists the linked fields
 
@@ -158,14 +166,18 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   page 2 ("No notifications found.").
 - where: `src/app/(dashboard)/notifications/page.tsx`.
 - pinned by: `discovery.spec.ts`, "with exactly 25 notifications Next is disabled".
-- cost to fix: the API returns the total (it has it: `count`), or the page asks for one more row than it shows.
+- cost to fix: the service has no total to give. `getNotificationsForUser` (`src/services/notification.service.ts`) returns `{ notifications, unreadCount }`, and
+  `unreadCount` counts the UNREAD rows only, whatever the filters (it is the bell's badge). A total needs a new count with the same filters as the list (one more
+  query), or the page asks for one more row than it shows (`take: pageSize + 1`, which needs no new query and no new field).
 
 ## KD-020: the command palette finds fields among the first 100 of the tenant
 
-- status: no-test (a limit for performance, noted in the route; the cross-tenant part was fixed: the route filters `entity.tenantId` of the tenant being viewed, a caller with an API key has none and gets the default tenant, and `discovery.spec.ts` ("the palette is offered the fields of the tenant being viewed") pins it)
+- status: no-test (a limit for performance, noted in the route; the route filters `entity.tenantId` of the tenant being viewed, which is a cookie any signed-in user can set to any tenant: KD-034. `discovery.spec.ts` ("the palette is offered the fields of the tenant being viewed") pins the filter)
 - symptom: `/api/command-palette-fields` returns 100 fields (`take: 100`, by entity name, then field name): a field of an entity whose name sorts after
   the first hundred fields of the tenant is not found by the palette.
-- where: `src/app/api/command-palette-fields/route.ts`.
+- where: `src/app/api/command-palette-fields/route.ts`. The route answers to a session only. It used to call `authenticateRequest`, whose API-key branch could never
+  run: the root middleware (`src/middleware.ts`) reads the Cookie header and nothing else, so a caller with only `Authorization: Bearer <key>` got 401 there, before the
+  route (a note here said such a caller "gets the default tenant", which was never true). The branch is removed.
 - cost to fix: search on the server (a query parameter), instead of filtering a fixed page in the browser.
 
 ## KD-021: the Enabled toggle of an emitter is not wired to anything, and the Health tab's compiler and emitter checks only look at what is installed
@@ -205,7 +217,7 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   (approve, reject) is limited to Steward and Admin; seeing is not limited at all.
 - where: `src/app/(dashboard)/governance/actions.ts` (`getGovernanceRequestsAction`: a session and no role).
 - cost to fix: a role floor for the list (and a narrower impact report for the roles below it), with the access-control work: tenant-, domain- and
-  product-scoped roles.
+  product-scoped roles. Which tenant's requests a user sees is the tenant cookie, which is not an access boundary either: KD-034.
 
 ## KD-024: no caller can create a webhook endpoint through the REST API
 
@@ -305,3 +317,61 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - cost to fix: write only the target's list with `jsonb_set(coalesce(metadata, '{}'), '{schemaVersions,<target>}', $json)` (a raw statement like the draft-state ones) and keep the audit row; every unit test
   that fakes `prisma.entity.update` for these three actions needs a raw-statement equivalent in its fake. Not done in final wave 2b: the same three writes, the same fakes and the audit
   before-state all change together, which is a change of its own.
+
+## KD-034: the tenant being viewed is a cookie, so tenant scoping only prevents accidental mixing
+
+- status: no-test (a design limit of the current model, resolved by the access-control project: nothing to pin until it has a rule to pin)
+- symptom: every route and page that is "scoped to the tenant" (the command palette, compliance Query and Gaps, governance requests, lineage, the glossary, the schemas
+  lists) reads the `active_tenant` cookie (`getActiveTenantId`, `src/lib/active-tenant.ts`). `setActiveTenantAction` accepts the id of ANY existing tenant and `/api/tenants`
+  lists every tenant, so any signed-in user (registration is open: KD-038) can choose another tenant and see its palette, governance requests, lineage and compliance data.
+  The scoping stops one tenant's data from showing up by accident in another's screens; it is not a boundary, and KD-016, KD-020 and KD-023 must not be read as one.
+  `/api/ai/generate-entity` now checks that the domain it is given belongs to the tenant being viewed (an id of another tenant answers like an unknown one), which is the same soft rule.
+- where: `src/lib/active-tenant.ts`, `setActiveTenantAction`, `src/app/api/tenants/route.ts`.
+- cost to fix: the access-control work: a user's tenants come from the roles it holds (a `UserRole` per tenant), `getActiveTenantId` refuses a cookie for a tenant the user
+  has no role in, and `/api/tenants` lists only the user's own.
+
+## KD-035: granting and revoking a role is not audited
+
+- status: no-test (nothing in the suite reads the audit log of an administrator's role change; a gap, not a malfunction)
+- symptom: Admin, Users, "assign role" and "remove role" write no `audit_log` row, so the Audit Trail and the Change Log cannot say who made someone an administrator, a steward or a
+  viewer, or took the role away. (The same screens are the only way to change who may approve governance requests and publish.)
+- where: `assignRole` and `removeRole` (`src/services/rbac.service.ts`); the other services write their audit row through `withAudit`.
+- note: `assignRole` with a user id that is nobody's used to throw the database's foreign-key error (P2003) out of `assignRoleAction`, which has no try/catch; it now answers
+  `NOT_FOUND: User "<id>" not found`, like an unknown domain (`tests/unit/services/rbac.service.test.ts`).
+- cost to fix: wrap both in `withAudit` with an action name of their own (`ROLE_ASSIGNED` / `ROLE_REMOVED`, the user and the role in the details), and show them in the Change Log
+  (KD-007 is about how that tab names actions).
+
+## KD-036: three specs pass today because they assert the defects they characterize: a green run does not prove those defects are gone
+
+- status: no-test (by construction: this is a statement about how to read a green run, not a defect of the product)
+- symptom: `api-v1.spec.ts` (KD-025, KD-026 and KD-027 as tests named `CHARACTERIZED (KD-nnn): ...`, KD-028 in its rate-limit test), `glossary-lineage.spec.ts` (KD-018: the domain tabs are the domains of what
+  is listed) and `type-mappings.spec.ts` (KD-013: the reference has no row for OpenAPI 3, JSON Schema and the others) assert the CURRENT behaviour as if it were the expected one, and pass BECAUSE the
+  defect is there. When one of those defects is fixed, its assertion fails, which is the signal to change it (and to delete the entry). Until then a green nightly says "the behaviour is unchanged",
+  not "the product is right". `tests/unit/e2e-suite-guard.test.ts` checks the `test.fail` / `test.fixme` / `test.skip` markers against this file; it does not check a `CHARACTERIZED` title or a comment
+  that names an id, so a characterization of an id this file does not carry, or of one that was fixed, is found by reading, not by the guard.
+- where: `tests/e2e/api-v1.spec.ts`, `tests/e2e/glossary-lineage.spec.ts`, `tests/e2e/type-mappings.spec.ts`.
+- cost to fix: have the guard read `CHARACTERIZED (KD-nnn)` titles like the other markers (the id must be an entry of this file with a status other than `open`).
+
+## KD-037: the visual snapshots were made on arm64 and the accessibility baseline on macOS, and neither has been measured on CI
+
+- status: no-test (a measurement nobody has made: the first nightly run on `ubuntu-latest` is the experiment)
+- symptom: the committed screenshots of `visual.spec.ts` were taken in the Playwright image on an arm64 machine (Apple Silicon, Docker's Linux/arm64), and CI compares them on x86-64: the
+  same image renders the same page with different anti-aliasing and font hinting on the two CPU architectures, and `maxDiffPixelRatio: 0.0005` is a guess that no x86-64 run has
+  checked (`playwright.config.ts`, "CPU architecture" in `docs/testing/e2e.md`). `a11y-baseline.json` (the violations that are known and tolerated) was measured with Google Chrome on macOS, and CI runs
+  Playwright's Chromium on Linux: an axe violation that depends on the browser's own rendering could appear or go away. The first nightly may therefore fail on the screenshots alone,
+  or hide a violation; the unit tests cannot say.
+- where: `tests/e2e/visual.spec.ts-snapshots/`, `tests/e2e/a11y-baseline.json`, `playwright.config.ts` (`toHaveScreenshot`).
+- cost to fix: run `npm run test:e2e:update-snapshots` once on an x86-64 Linux machine (or in the CI job, which uploads them when there are none), diff against the arm64 images, and either
+  commit the x86-64 set (one set per architecture) or widen the threshold with the measurement written in the config comment; run the a11y tier once on `ubuntu-latest` and compare its
+  violations with the baseline.
+
+## KD-038: registration is open, the first registrant of an unseeded database becomes ADMIN, and a seeded database ships admin@admin.com / admin
+
+- status: no-test (the access-control project replaces all three; `docs/auth-ops.md` says what to do until then, and nothing in the suite should pin an insecure default)
+- symptom: `/register` creates an account for anyone who can reach the app (no invitation, no throttling; bcrypt cost 12 is about 340 ms of CPU per attempt, so it is also a way to load the
+  server). `ensureFirstAdminAssignment` (`src/lib/admin-bootstrap.ts`) makes the earliest registered user the global ADMIN, so whoever registers first on a fresh deployment owns it.
+  `npm run db:seed` creates `admin@admin.com` with the password `admin` as the ADMIN (the e2e suite relies on it). A forged session token that carries a known administrator's e-mail maps to
+  that administrator through `resolveCurrentUserId`'s e-mail fallback, so the session secret is the whole boundary (a production server now refuses a weak one: `docs/auth-ops.md`).
+- where: `src/app/(auth)/register/actions.ts`, `src/lib/admin-bootstrap.ts`, `prisma/seed.ts`, `src/lib/access-control.ts`.
+- cost to fix: the access-control work: closed or invitation-only registration, an explicit first-administrator step (an environment variable or a command, not "whoever is first"), no
+  default password in a seed that a deployment can run, and no e-mail fallback in the identity resolution.

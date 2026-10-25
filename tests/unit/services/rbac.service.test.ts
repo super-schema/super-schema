@@ -66,6 +66,10 @@ vi.mock("@/lib/db", () => ({
         return roleStore.length;
       }),
     },
+    // The users that exist: every id but "ghost-user" (a role row has a foreign key to its user: an id that is nobody's used to throw P2003).
+    user: {
+      findUnique: vi.fn(async (args: { where: { id: string } }) => (args.where.id === "ghost-user" ? null : { id: args.where.id })),
+    },
     // The domains that exist: the ones whose id starts with "dom-" (a role row has a foreign key to its domain).
     domain: {
       findUnique: vi.fn(async (args: { where: { id: string } }) => (args.where.id.startsWith("dom-") ? { id: args.where.id } : null)),
@@ -130,6 +134,22 @@ describe("RBAC Service", () => {
       if (!result.success) {
         expect(result.error.code).toBe("NOT_FOUND");
         expect(result.error.message).toBe('Domain "no-such-domain" not found');
+      }
+      expect(await _getRoleStore()).toEqual([]);
+    });
+
+    it("refuses a user that does not exist, with a message, and writes nothing (the foreign key used to throw P2003 out of the action)", async () => {
+      for (const input of [
+        { userId: "ghost-user", role: "VIEWER" as const, domainId: "dom-1" },
+        { userId: "ghost-user", role: "ADMIN" as const },
+      ]) {
+        const result = await assignRole(input, adminCtx);
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.code).toBe("NOT_FOUND");
+          expect(result.error.message).toBe('User "ghost-user" not found');
+          expect(result.error.suggestedFix).toMatch(/existing user/i);
+        }
       }
       expect(await _getRoleStore()).toEqual([]);
     });

@@ -36,7 +36,9 @@ let emitterChecker: () => Promise<ComponentStatus> = defaultEmitterCheck;
 // ---------------------------------------------------------------------------
 
 export function _resetHealthStore(): void {
-  // Reset checkers to defaults
+  // Reset checkers to defaults, and forget the cached answer of the database check
+  dbCheckCache = undefined;
+  dbCheckPending = undefined;
   dbChecker = defaultDbCheck;
   compilerChecker = defaultCompilerCheck;
   emitterChecker = defaultEmitterCheck;
@@ -112,7 +114,35 @@ async function within<T>(work: Promise<T>, ms: number): Promise<T> {
   }
 }
 
+/**
+ * How long the answer of the database check is kept. `/api/v1/health` needs no login and a monitor (or anyone) may call it as often as it likes:
+ * without this every call ran a `SELECT 1`, so the endpoint was a free way to load the database. Within the window every call gets the result of
+ * the one query (a failure too: a sick database is not hit by every call, and its error is logged once per window). It is short on purpose: an
+ * outage shows within 5 s.
+ */
+export const DB_CHECK_CACHE_MS = 5000;
+
+let dbCheckCache: { at: number; value: ComponentStatus } | undefined;
+/** The check that is running now: calls that arrive while it runs wait for it instead of starting another. */
+let dbCheckPending: Promise<ComponentStatus> | undefined;
+
 async function defaultDbCheck(): Promise<ComponentStatus> {
+  if (dbCheckCache && Date.now() - dbCheckCache.at < DB_CHECK_CACHE_MS) return dbCheckCache.value;
+  if (dbCheckPending) return dbCheckPending;
+  const pending = runDbCheck().then((value) => {
+    // Only the check that is still the current one stores its answer (`_resetHealthStore` while it ran starts over).
+    if (dbCheckPending === pending) dbCheckCache = { at: Date.now(), value };
+    return value;
+  });
+  dbCheckPending = pending;
+  try {
+    return await pending;
+  } finally {
+    if (dbCheckPending === pending) dbCheckPending = undefined;
+  }
+}
+
+async function runDbCheck(): Promise<ComponentStatus> {
   const degradedAfterMs = positiveMs(process.env.HEALTH_DB_DEGRADED_MS, DEFAULT_DB_DEGRADED_MS);
   const timeoutMs = positiveMs(process.env.HEALTH_DB_TIMEOUT_MS, DEFAULT_DB_TIMEOUT_MS);
   const start = Date.now();

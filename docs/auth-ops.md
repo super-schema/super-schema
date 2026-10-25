@@ -77,5 +77,5 @@ root middleware lets only `/api/v1/*`, `/api/auth/*` and the asyncapi preview as
 
 - `docs/testing/e2e.md`: the browser suite, which runs with its own throwaway secret and database and never uses a `.env`. Access control, and what
   the suite will need when it lands, is in its last section.
-- `docs/testing/known-defects.md`: KD-034 (a tenant is a cookie), KD-035 and KD-036 (role changes unaudited, the registration and bootstrap risks above).
+- `docs/testing/known-defects.md`: KD-034 (a tenant is a cookie), KD-035 (granting and revoking a role is not audited), KD-038 (the registration and bootstrap risks above).
 - `src/lib/auth-secret.ts`, `src/instrumentation.ts`, `src/lib/session-cookie.ts`, `src/middleware.ts`.

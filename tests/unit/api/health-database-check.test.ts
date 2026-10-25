@@ -122,9 +122,11 @@ describe("GET /api/v1/health: the database", () => {
     mocks.queryRaw.mockImplementation(() => answerAfter(60));
     expect((await probe(60)).body.components.database.status).toBe("degraded");
 
+    _resetHealthStore(); // the answer of the database check is cached for 5 s (below): each case here is a fresh probe
     mocks.queryRaw.mockImplementation(() => answerAfter(30));
     expect((await probe(30)).body.components.database.status).toBe("healthy");
 
+    _resetHealthStore();
     mocks.queryRaw.mockImplementation(() => new Promise(() => {}));
     const { status } = await probe(2000);
     expect(status).toBe(503);
@@ -153,5 +155,54 @@ describe("GET /api/v1/health: the database", () => {
     expect(JSON.stringify(body)).not.toMatch(/ENOENT|secret-path|abc123|node_modules/);
     expect(body.components.compiler.message).toBe("Compiler check failed");
     expect(body.components.emitters.message).toBe("Emitter check failed");
+  });
+});
+
+describe("GET /api/v1/health: the database check is cached for 5 seconds", () => {
+  it("answers a second call within 5 s from the first one's result: one SELECT 1, however often a monitor calls", async () => {
+    mocks.queryRaw.mockResolvedValue([{ "?column?": 1 }]);
+    const first = await probe();
+    for (let i = 0; i < 20; i += 1) await probe(200); // 20 calls over 4 s
+    expect(mocks.queryRaw).toHaveBeenCalledTimes(1);
+    expect(first.body.components.database.status).toBe("healthy");
+  });
+
+  it("asks again once the 5 s are over, and not before", async () => {
+    mocks.queryRaw.mockResolvedValue([{ "?column?": 1 }]);
+    await probe();
+    await vi.advanceTimersByTimeAsync(4999);
+    await probe();
+    expect(mocks.queryRaw).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2);
+    await probe();
+    expect(mocks.queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it("calls at the same moment share ONE query (the second does not wait for another round trip)", async () => {
+    mocks.queryRaw.mockImplementation(() => answerAfter(100));
+    const pending = [GET(), GET(), GET(), GET()];
+    await vi.advanceTimersByTimeAsync(100);
+    const answers = await Promise.all(pending);
+    expect(answers.map((response) => response.status)).toEqual([200, 200, 200, 200]);
+    expect(mocks.queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("caches a failure too (a sick database is not hit by every call, and its error is logged once per 5 s), and recovers on the next window", async () => {
+    mocks.queryRaw.mockRejectedValue(new Error(RAW));
+    expect((await probe()).status).toBe(503);
+    expect((await probe(100)).status).toBe(503);
+    expect(mocks.queryRaw).toHaveBeenCalledTimes(1);
+    mocks.queryRaw.mockResolvedValue([{ "?column?": 1 }]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect((await probe()).status).toBe(200);
+    expect(mocks.queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it("_resetHealthStore forgets the cached answer (a test, or a deployment that wants a fresh check, starts clean)", async () => {
+    mocks.queryRaw.mockResolvedValue([{ "?column?": 1 }]);
+    await probe();
+    _resetHealthStore();
+    await probe();
+    expect(mocks.queryRaw).toHaveBeenCalledTimes(2);
   });
 });
