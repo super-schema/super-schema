@@ -13,6 +13,7 @@ const mockAuditLogCount = vi.fn().mockResolvedValue(0);
 const mockGovernanceRequestCount = vi.fn().mockResolvedValue(0);
 const mockGovernanceRequestFindMany = vi.fn().mockResolvedValue([]);
 const mockEntityFindMany = vi.fn().mockResolvedValue([]);
+const mockQueryRaw = vi.fn().mockResolvedValue([{ result: 1 }]);
 
 vi.mock("@/lib/db", () => ({
   prisma: {
@@ -25,7 +26,7 @@ vi.mock("@/lib/db", () => ({
       findMany: (...args: unknown[]) => mockGovernanceRequestFindMany(...args),
     },
     entity: { findMany: (...args: unknown[]) => mockEntityFindMany(...args) },
-    $queryRaw: vi.fn().mockResolvedValue([{ result: 1 }]),
+    $queryRaw: (...args: unknown[]) => mockQueryRaw(...args),
   },
 }));
 
@@ -80,12 +81,15 @@ describe("what the Health cards count (the audit actions that are written)", () 
     ]);
   });
 
-  it("Pending Governance is the dashboard's rule: PENDING requests of entities of the tenant being viewed (a deleted or foreign entity's do not count)", async () => {
-    mockGovernanceRequestFindMany.mockResolvedValue([{ entityId: "e-a" }, { entityId: "e-a" }, { entityId: "e-b" }, { entityId: "e-gone" }]);
-    mockEntityFindMany.mockResolvedValue([{ id: "e-a" }]);
+  it("Pending Governance is the dashboard's rule: PENDING requests of entities of the tenant being viewed (a deleted or foreign entity's do not count), counted by ONE query", async () => {
+    // (the database answers the count: the requests that have an entity of the tenant; M3 of the final re-review: no row of any tenant is read into memory)
+    mockQueryRaw.mockResolvedValueOnce([{ n: 2 }]);
     const scoped = await getActivityMetrics(adminCtx, "tenant-a");
     expect(scoped.success && scoped.data.governanceRequestsPending).toBe(2);
-    expect(mockEntityFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tenantId: "tenant-a" }) }));
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+    expect(mockQueryRaw.mock.calls[0]).toContain("tenant-a");
+    expect(mockGovernanceRequestFindMany).not.toHaveBeenCalled();
+    expect(mockEntityFindMany).not.toHaveBeenCalled();
     // without a tenant it is the plain count, as before
     mockGovernanceRequestCount.mockResolvedValue(7);
     const unscoped = await getActivityMetrics(adminCtx);
@@ -123,22 +127,27 @@ describe("the compiler and emitters checks look at what is installed", () => {
     return root;
   }
 
-  it("the compiler is healthy with its version when @typespec/compiler is installed, unhealthy (without a path) when it is not", async () => {
+  it("the compiler is healthy when @typespec/compiler is installed (its version only in the detail), unhealthy (without a path) when it is not", async () => {
     const ok = await checkInstalledPackages("TypeSpec Compiler", ["@typespec/compiler"], installed(["@typespec/compiler", "1.2.3"]));
-    expect(ok).toMatchObject({ name: "TypeSpec Compiler", status: "healthy" });
-    expect(ok.message).toContain("1.2.3");
+    expect(ok).toMatchObject({ name: "TypeSpec Compiler", status: "healthy", message: "Installed" });
+    // the message is public (/api/v1/health): no version, no package name; the administrators' view has the detail
+    expect(ok.message).not.toContain("1.2.3");
+    expect(ok.detail).toContain("1.2.3");
     const missing = await checkInstalledPackages("TypeSpec Compiler", ["@typespec/compiler"], installed());
     expect(missing).toMatchObject({ name: "TypeSpec Compiler", status: "unhealthy" });
     expect(missing.message).not.toContain(tmpdir());
+    expect(missing.detail ?? "").not.toContain(tmpdir());
   });
 
-  it("the emitters are healthy when every emitter package is installed, degraded when some are not, unhealthy when none is", async () => {
+  it("the emitters are healthy when every emitter package is installed and degraded when some or all are not (a missing emitter limits generating, not serving)", async () => {
     const names = ["@typespec/avro", "@typespec/json-schema", "@typespec/protobuf"];
-    expect((await checkInstalledPackages("Emitters", names, installed(...names.map((n): [string, string] => [n, "1.0.0"])))).status).toBe("healthy");
-    const some = await checkInstalledPackages("Emitters", names, installed(["@typespec/avro", "1.0.0"]));
+    expect((await checkInstalledPackages("Emitters", names, installed(...names.map((n): [string, string] => [n, "1.0.0"])), "optional")).status).toBe("healthy");
+    const some = await checkInstalledPackages("Emitters", names, installed(["@typespec/avro", "1.0.0"]), "optional");
     expect(some.status).toBe("degraded");
     expect(some.message).toBe("1 of 3 emitter packages installed");
-    expect((await checkInstalledPackages("Emitters", names, installed())).status).toBe("unhealthy");
+    const none = await checkInstalledPackages("Emitters", names, installed(), "optional");
+    expect(none.status).toBe("degraded");
+    expect(none.message).toBe("0 of 3 emitter packages installed");
   });
 
   it("a package whose package.json cannot be read is not installed", async () => {
