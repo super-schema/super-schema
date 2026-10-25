@@ -691,8 +691,9 @@ describe("the repository around the workflow", () => {
     expect(docs).toMatch(/do not require the `e2e-regression/i);
     expect(docs).toContain("flaky-tests.json");
     expect(docs).toContain("branch protection");
-    // Require it only once it has run green; and the counts say what they count.
+    // Require it only once it has run green; and the counts are read from the list (scripts/e2e-counts.mjs), not typed, and say what they leave out.
     expect(docs).toMatch(/only after it has run green once/i);
-    expect(docs).toMatch(/do not count the `setup`/i);
+    expect(docs).toMatch(/login project \(`setup`\) is not counted/i);
+    expect(docs).toContain("node scripts/e2e-counts.mjs");
   });
 });

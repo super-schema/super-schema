@@ -2,15 +2,55 @@
 
 The browser suite lives in `tests/e2e`. A **release run** is the suite run against an environment made for that run alone: a throwaway
 PostgreSQL database in Docker, migrated and seeded, and the app started from a production build. One command makes it, runs a tier of
-the suite, and removes it again.
+the suite, and removes it again. What the suite covers, area by area: [e2e-coverage-matrix.md](e2e-coverage-matrix.md). Design and decisions:
+`docs/superpowers/specs/2026-10-23-release-ui-suite-design.md`. How many tests each tier has is not written here (it would rot): `node scripts/e2e-counts.mjs`
+prints it from `playwright test --list`.
+
+## Release checklist
+
+Before a release, on a machine with Docker running, **in this order**. The exit code of each command is its answer: 0 is go, anything else is stop.
+
+**Once per machine**
+
+- Docker running (Docker Desktop, Rancher Desktop, colima): `docker info`. The runner starts `postgres:16` and removes it again.
+- Node 22 or 20.9+, through nvm: `nvm install 22 && nvm use 22` in the checkout (`.nvmrc`), or `nvm use 20`. Node 24 runs with an "untested" warning; Node 25 and 26 are refused (exit 2).
+- `npm ci`, with the registry and the sibling repository it needs ([CI prerequisites](#ci-prerequisites-what-npm-ci-needs-on-a-runner) says what: the same applies on a developer machine).
+- The browsers: `npx playwright install chromium firefox webkit` once. Firefox and WebKit are needed only for the smoke tier's three browsers (a smoke run without them fails for those two projects); Chromium
+  is the default, and Google Chrome is used instead when the machine has it.
+- The Playwright image, for the visual tier: `docker pull mcr.microsoft.com/playwright:v$(node -p "require('@playwright/test/package.json').version")-jammy` (about 2.5 GB; the runner never pulls it).
+- For the corpus only: the LocalCloud emulators (Spanner and BigQuery) running (`docker ps` shows `localcloud`) and `javac` on the PATH (the Java target).
+
+**Every release**
+
+| # | Command | What it covers | Expected |
+| --- | --- | --- | --- |
+| 1 | `npm run test:e2e:release:smoke` | the smoke tier on **three browsers** (Chromium, Firefox, WebKit): login, the page sweep, the basic create flows, one generate | exit 0; `RELEASE_SMOKE_DURATION` |
+| 2 | `npm run test:e2e:release` | the **nightly tier**: EVERYTHING EXCEPT the visual tier and the corpus. That is the regression tests, the `@slow` ones (the JSON Schema matrix, the navigation crawl, external event references), the `@external` ones (the network import, the git-mode `any` test on a second app the runner starts), the accessibility scan, and the smoke tests on Firefox and WebKit. No retries, a local run | exit 0, 0 flaky, **no skipped test that is not `@external`**; `RELEASE_NIGHTLY_DURATION` |
+| 3 | `npm run test:e2e:visual` | the nine screenshots, compared in the Playwright image. A change you meant: `npm run test:e2e:update-snapshots`, look at every image (`git diff --stat tests/e2e/visual.spec.ts-snapshots`), commit them | exit 0; `RELEASE_VISUAL_DURATION` |
+| 4 | `npm run test:corpus` | the corpus: every case against every enabled target, with the LocalCloud emulators and `javac`. It **rewrites** `docs/superpowers/reports/2026-10-22-corpus-matrix.md`: commit the change | exit 0; every failure is a known one in the report; `RELEASE_CORPUS_DURATION` |
+| 5 | `npx vitest run tests/unit` | the unit tests. Not `npm test`: that is `vitest` in watch mode and never ends | exit 0 |
+
+Step 2 is `npm run test:e2e:release`, which is `node scripts/e2e-release.mjs --tier nightly`: it is **not** "everything" (no visual tier, no corpus, no unit tests), which is why steps 3 to 5 exist.
+Steps 1 and 2 can be one run (the nightly tier includes the smoke tests, on all three browsers) when the browsers are installed; step 1 is the quick answer.
+
+**Exit codes** of the runner and of the phases script: **0** passed; **1** a test failed, or a test that is not `@external` was skipped (the skipped-test gate: [below](#skipped-tests-are-never-invisible));
+**2** a usage error (a bad option, an unsupported Node, a bad value of `E2E_STALL_MS` / `E2E_GLOBAL_TIMEOUT_MS` / `E2E_KEEP_RUNS`, a visual tier outside the image); **3** the environment could not be made
+(Docker, the database, the build, the app); **124** the stall watchdog ended a Playwright that stopped making progress; **128 + n** stopped by signal *n* (130 for Ctrl-C).
+
+**Where things are.** Everything of a run is under its output root, `test-results/run-<id>/` (printed at the start and in the last line): `server.log` (the app's log), `server-git-any.log` (the
+second app's), `test-results/<phase>/` (`junit.xml`, `flaky-tests.json`, `skipped-tests.json`, the traces, videos and screenshots of failures), `playwright-report/<phase>/index.html`
+(`npx playwright show-report <root>/playwright-report/main`), and `test-results/evidence/` (what the specs leave to be looked at). Runs older than 7 days are pruned when a new one starts (the newest five stay).
+**Leftovers** of a killed run: `docker ps -a --filter name=ss-e2e-` lists the containers (the database is `ss-e2e-<id>`, the visual run `ss-e2e-visual-<id>`), `docker rm -f <name>` removes one; the
+runner's last line says `TEARDOWN INCOMPLETE` with the command when it could not.
+
+**Access control.** The suite logs in as the seeded `admin@admin.com` and sees everything: a green run says nothing about who may see or change what. The access-control work will change that, and the suite
+needs a second login with a lower role then (the last section).
 
 ```bash
 npm run test:e2e:release:smoke      # the pull-request tier: about 5 minutes once the app is built
-npm run test:e2e:release            # everything (the nightly tier)
+npm run test:e2e:release            # the nightly tier: everything except the visual tier and the corpus
 npm run test:e2e:release -- --tier regression --shard 2/4
 ```
-
-Design and decisions: `docs/superpowers/specs/2026-10-23-release-ui-suite-design.md`.
 
 ## What you need
 
@@ -162,7 +202,7 @@ whatever your shell has under the prefixes `PG`, `AUTH_`, `NEXTAUTH_`, `E2E_`, `
 
 | Option | Meaning |
 | --- | --- |
-| `--tier smoke\|regression\|nightly\|serial` | required (the npm scripts set one; a later `--tier` wins). `serial` is a login and then the `serial-after` project alone (`--no-deps`): the only way to run its `@slow` / `@external` specs without Playwright running all of `chromium` first; the arguments after `--` go to that last phase |
+| `--tier smoke\|regression\|nightly\|serial\|visual` | required (the npm scripts set one; a later `--tier` wins). `serial` is a login and then the `serial-after` project alone (`--no-deps`): the only way to run its `@slow` / `@external` specs without Playwright running all of `chromium` first; the arguments after `--` go to that last phase. `visual` is the screenshot comparison: it needs `--docker-image <image>` (the browser run happens in that image), which `npm run test:e2e:visual` and `npm run test:e2e:update-snapshots` pass; run bare on the host it is a usage error |
 | `--shard i/n` | slice `i` of `n`. The `serial-after` phase of the regression tier runs with slice 1 only |
 | `--project <name>` | narrow the tier to a project (repeatable): `--tier smoke --project firefox-smoke`. It narrows; it does not add |
 | `--reuse-build` | skip the build when it can be reused (below) |
@@ -170,6 +210,7 @@ whatever your shell has under the prefixes `PG`, `AUTH_`, `NEXTAUTH_`, `E2E_`, `
 | `--second-app` | also start a second app with `SCHEMA_IMPORT_GIT_MODE=any` and give the browser run `E2E_GIT_ANY_BASE_URL` (the nightly tier does it by itself; a listing never does) |
 | `--list-only` | the whole setup, but the browser run only lists the tests of the tier (a dry run) |
 | `--output-root <dir>` | where reports and `server.log` go (default `$E2E_OUTPUT_ROOT`, else `test-results/run-<id>`) |
+| `--docker-image <image>` | run the browser run inside this Docker image (the visual tier; the image must be on the machine) |
 | `-- <args>` | Playwright's own: `-- tests/e2e/layout.spec.ts --headed --grep "sidebar"` (they go to the first phase) |
 
 Exit codes: the phases' (0 passed, 1 a test failed), 2 bad arguments, 3 the environment could not be set up (Docker, database, build,
@@ -213,6 +254,59 @@ own; `.github/workflows/ci.yml` (the unit tests, on PGlite and PostgreSQL) is un
 A leg or a shard that fails does not cancel the others (`fail-fast: false`). A newer push to a pull request cancels that pull request's
 older run; nothing else is cancelled.
 
+### CI prerequisites: what `npm ci` needs on a runner
+
+`.github/workflows/e2e.yml` calls `npm ci` on `ubuntu-latest`, and **that cannot succeed on a GitHub-hosted runner as the repository is**. Nothing in this workflow has ever run on one (no job of it has been
+triggered anywhere yet), so treat what follows as what a maintainer has to set up, not as something that was tried:
+
+1. **The `file:` packages.** `package.json` links the emitters of the sibling repository `typespec`: `@typespec/avro`, `@typespec/bigquery`, `@typespec/java-pojo`, `@typespec/postgres` and `@typespec/spanner`, all
+   `file:../typespec/packages/<name>`, and (inside this repository) `@superschema/typespec-enterprise` as `file:vendor/typespec-enterprise`. `npm ci` links them, it does not build them: the app runs their `dist`.
+   The sibling repository must be checked out at `../typespec` (next to the checkout) and **built** (`npm ci && npm run build` in each of those five packages) before `npm ci` here.
+2. **The registries.** `package-lock.json` resolves its packages through two internal registries: `artifactory.g.devqa.gcp.dev.paypalinc.com` (about 1,170 of them) and `us-central1-npm.pkg.dev` (about 210). A
+   runner has to reach both: a **self-hosted runner inside the network** (GitHub-hosted runners cannot), with an auth token for each as the secret `NPM_TOKEN`, written to an `.npmrc` by the job from the secret (never committed;
+   the repository has no `.npmrc`). The registry URLs and scopes are the ones of your own `~/.npmrc`.
+3. **Node.** `actions/setup-node` with Node 22 (the jobs do), and Docker on the runner (the runner starts a throwaway PostgreSQL; a self-hosted runner needs Docker installed and usable by the job's user).
+4. `.github/workflows/ci.yml` (the unit tests) has the same prerequisite for its own `npm ci`.
+
+A job that does all of that: **UNTESTED**, to be adapted to the real runner labels, repository names and registry URLs, and run once by hand (`workflow_dispatch`, tier `smoke`) before anyone relies on it:
+
+```yaml
+# UNTESTED. Put these steps first in every job of e2e.yml (and ci.yml), before `npm ci`; replace every <placeholder>.
+jobs:
+  smoke:
+    runs-on: [self-hosted, linux, <label of a runner inside the network that reaches both registries and has Docker>]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Registry access (an .npmrc written from the secret, never committed)
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          {
+            echo "@typespec:registry=<the internal registry of the @typespec packages, as in your ~/.npmrc>"
+            echo "registry=<the default internal registry, as in your ~/.npmrc>"
+            echo "//<host of the default registry>/:_authToken=${NPM_TOKEN}"
+            echo "//us-central1-npm.pkg.dev/<project>/<repository>/:_authToken=${NPM_TOKEN}"
+          } > "$HOME/.npmrc"
+      - name: The sibling repository the app links (a file: dependency at ../typespec), built
+        env:
+          TYPESPEC_REPO_TOKEN: ${{ secrets.TYPESPEC_REPO_TOKEN }}   # read access to that repository
+        run: |
+          rm -rf ../typespec
+          git clone --depth 1 "https://x-access-token:${TYPESPEC_REPO_TOKEN}@<host>/<org>/typespec.git" ../typespec
+          for package in avro bigquery java-pojo postgres spanner; do
+            (cd "../typespec/packages/$package" && npm ci && npm run build)
+          done
+      - run: npm ci
+      # ... the job continues as in e2e.yml: prisma generate, browsers, npm run test:e2e:release -- --tier smoke
+```
+
+Until that exists, the supported way to run the release check is on a developer machine (the checklist above), which has the registry access and the sibling repository already.
+
 ### Making `smoke` gate merges (branch protection)
 
 Whether a check blocks a merge is a **repository setting**, and a workflow file cannot change it. A maintainer has to add the check once:
@@ -232,9 +326,9 @@ required status check. This is the only new check to require.
 ### What `nightly-extra` runs, and why it is not `--tier nightly`
 
 The nightly tier is everything, so it includes the regression tests that the four shards have just run. The rest is run as three legs, each
-selecting tests that no other leg and no regression shard selects (at the time of writing: regression 52 tests, the legs 17, 6 and 10,
-the nightly tier 85 in all; `node scripts/e2e-phases.mjs <tier> --list ...` prints the sets). These counts do not count the `setup`
-login test, which the raw `--list` prints once more in every phase:
+selecting tests that no other leg and no regression shard selects (`node scripts/e2e-counts.mjs` prints how many tests each tier has, from `playwright test --list`, and
+`node scripts/e2e-phases.mjs <tier> --list ...` lists the sets; the numbers are not written here because they change with every test). The login project (`setup`) is not counted,
+though a raw `--list` prints it once more in every phase:
 
 ```bash
 # slow-chromium: the @slow and @external tests of Chromium (the JSON Schema matrix, the URL import over the network)
@@ -410,7 +504,7 @@ passed; at 0.1 the same change fails all nine pages. The same image on the same 
 **When it fails.** The html report (`<output root>/playwright-report/main`) and `<output root>/test-results/main/artifacts/<test>/` hold the expected, actual and diff
 images. A change you meant (a new look): run `npm run test:e2e:update-snapshots`, look at every image that changed (`git diff --stat tests/e2e/visual.spec.ts-snapshots`, then
 open them), and commit them with the change. A change you did not mean is the bug. A snapshot that changed without a change to the product is a page that is not
-still enough: find what moves and mask it, do not widen the tolerance. A snapshot whose name has another platform than `-visual-linux` was not made in the image, and
+still: find what moves (an animation, a loading state, a date) and mask it; do not widen the tolerance. A snapshot whose name has another platform than `-visual-linux` was not made in the image, and
 `tests/unit/e2e/visual-snapshots.test.ts` refuses it.
 
 **In CI** the `e2e-visual` job (nightly, tags, by hand) pulls the image of the installed version and runs `npm run test:e2e:visual` when the repository has snapshots;
