@@ -6,7 +6,9 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import type { LevelScope } from "@/lib/levels";
-import { renameReservedFields, renameReservedNames, reservedFieldRenamedMessage, reservedNameRenamedMessage } from "@/lib/reserved-field-names";
+import { builtInRenamedMessage, renameReservedFields, renameReservedNames, reservedFieldRenamedMessage, reservedNameRenamedMessage } from "@/lib/reserved-field-names";
+import { builtInNameConflict } from "@/lib/compiler/built-in-names";
+import { followEntityRenames, formatNamesEntitiesInTypes, renameBuiltInEntities } from "@/lib/builtin-entity-renames";
 import { isPlainObject } from "@/lib/editable-fields";
 import { genericExtensionEntries, setOwn } from "@/lib/compiler/governance-decorators";
 import { generateSlug } from "@/lib/slug";
@@ -49,8 +51,6 @@ export interface CreateImportedEntitiesArgs {
 /** Every imported asset costs a few registry / pre-check queries inside the transaction, so a large import can outlast Prisma's 5 s interactive-transaction default. */
 export const IMPORT_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 60_000 };
 
-type ImportedField = ImportedEntityInput["fields"][number];
-
 /**
  * The entity-level extensions worth persisting: the payload arrives untyped from the browser, so only a plain object counts (arrays,
  * primitives and null are ignored). `x-tags` / `x-classification` have their own path and stay out; a `__proto__` key is kept as an own data key.
@@ -73,28 +73,40 @@ export function entityExtensionsMetadata(raw: unknown): { metadata?: { custom: {
   return extensions ? { metadata: { custom: { extensions } } } : {};
 }
 
-/** `field` with the entity names it refers to (`referencedEntityName`, `arrayElementType`) replaced by their new names. */
-function followRenames(field: ImportedField, renames: ReadonlyMap<string, string>): ImportedField {
-  const decorators = field.decorators;
-  if (!decorators) return field;
-  const reference = typeof decorators.referencedEntityName === "string" ? renames.get(decorators.referencedEntityName.trim()) : undefined;
-  const element = typeof decorators.arrayElementType === "string" ? renames.get(decorators.arrayElementType.trim()) : undefined;
-  if (reference === undefined && element === undefined) return field;
-  return { ...field, decorators: { ...decorators, ...(reference === undefined ? {} : { referencedEntityName: reference }), ...(element === undefined ? {} : { arrayElementType: element }) } };
+/**
+ * The names and URL slugs the product's entities already have: what a renamed entity must not take (a number that is free in the batch is not
+ * necessarily free in the product). One query; callers make it only when a name needs renaming.
+ */
+export async function existingEntityNames(tx: Prisma.TransactionClient, productId: string): Promise<{ taken: string[]; takenSlugs: string[] }> {
+  const rows = await tx.entity.findMany({ where: { productId }, select: { name: true, slug: true } });
+  return { taken: rows.map((row) => row.name), takenSlugs: rows.map((row) => row.slug) };
 }
 
 /**
- * The batch with every entity whose name the AsyncAPI parser cannot read renamed (`hasOwnProperty` -> `hasOwnProperty_1`), and everything of
- * the batch that refers to it by name (`extends`, a reference field, an array of it) following. `originals` maps each new name back to the
- * name the import gave it.
+ * The batch with every entity renamed whose name cannot stand, and everything of the batch that refers to it by name (`extends`, a reference
+ * field, an array of it, a union member, a TypeSpec / OpenAPI type text) following. Two kinds of name:
+ * - one the AsyncAPI parser cannot read (`hasOwnProperty` -> `hasOwnProperty_1`);
+ * - a built-in type name (`Duration` -> `Duration2`, `Record` -> `Record2`: the events import's rule, see src/lib/builtin-entity-renames.ts).
+ * Neither is skipped, and each rename is reported through `note`. `originals` maps each new name back to the name the import gave it.
  */
-function renameReservedEntities(entities: ImportedEntityInput[], note?: (message: string) => void): { entities: ImportedEntityInput[]; originals: Map<string, string> } {
-  const { items, renames } = renameReservedNames(entities, (from, to) => note?.(reservedNameRenamedMessage("entity", from, to)));
-  if (renames.size === 0) return { entities: items, originals: new Map() };
-  return {
-    entities: items.map((entity) => ({ ...entity, fields: entity.fields.map((field) => followRenames(field, renames)) })),
-    originals: new Map([...renames].map(([from, to]) => [to, from])),
-  };
+async function renameUnsafeEntities(tx: Prisma.TransactionClient, args: CreateImportedEntitiesArgs): Promise<{ entities: ImportedEntityInput[]; originals: Map<string, string> }> {
+  const typeText = formatNamesEntitiesInTypes(args.sourceFormat);
+  const reserved = renameReservedNames(args.entities, (from, to) => args.note?.(reservedNameRenamedMessage("entity", from, to)));
+  let entities =
+    reserved.renames.size === 0
+      ? reserved.items
+      : reserved.items.map((entity) => ({ ...entity, fields: entity.fields.map((field) => followEntityRenames(field, reserved.renames, typeText)) }));
+  const originals = new Map([...reserved.renames].map(([from, to]) => [to, from]));
+  if (entities.some((entity) => builtInNameConflict(entity.name) !== null)) {
+    const builtIn = renameBuiltInEntities(entities, {
+      ...(await existingEntityNames(tx, args.productId)),
+      typeText,
+      onRename: (from, to, languages) => args.note?.(builtInRenamedMessage(from, to, languages)),
+    });
+    entities = builtIn.items;
+    for (const [from, to] of builtIn.renames) originals.set(to, from);
+  }
+  return { entities, originals };
 }
 
 /**
@@ -108,7 +120,7 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
   const created: Array<{ id: string; name: string }> = [];
   // Names are trimmed before BOTH the registry check and the write: the registry compares trimmed names, so an
   // untrimmed stored name ("Foo ") would slip past a later "Foo" and break line uniqueness.
-  const { entities, originals } = renameReservedEntities(args.entities, args.note);
+  const { entities, originals } = await renameUnsafeEntities(tx, args);
   for (const entity of entities) {
     const name = entity.name.trim();
     if (!(await args.isNameFree(name))) continue;

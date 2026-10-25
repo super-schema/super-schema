@@ -3,6 +3,7 @@ import { ok, type Result } from "@/types/result";
 import type { ParsedField } from "@/lib/importers/types";
 import type { ExtractedPayload } from "@/lib/events/import";
 import { createNameAllocator, planPayloadEntities, resolveEntityNames, type NameAllocator, type PlannedPayload } from "@/services/events/import-payload-entities";
+import { numberedName } from "@/lib/entity-name";
 import { emptyRegistryDelegates } from "../../../helpers/registry-mocks";
 
 // The module's service imports reach `@/lib/db`; nothing here touches a database.
@@ -186,6 +187,21 @@ describe("createNameAllocator: reserved names", () => {
     expect(await entities.data.allocate("Customer", "entity")).toEqual({ success: true, data: "Customer" });
     // (an event is not a model of a schema: its name is not an entity name)
     expect(await entities.data.allocate("url", "event")).toEqual({ success: true, data: "url" });
+  });
+
+  it("a built-in type name is renamed by the one suffix rule the bulk import uses (numberedName), and says so in the bulk import's words", async () => {
+    const allocator = await createNameAllocator(db(), scope);
+    if (!allocator.success) throw new Error(allocator.error.message);
+    const builtIn: PlannedPayload = {
+      pinKey: "m:payload", sourcePointer: "/components/messages/m/payload", format: "json-schema",
+      entities: [{ requestedName: "Duration", sourceName: "Duration", description: "", fields: [field("id")] }],
+    };
+    const resolved = await resolveEntityNames([builtIn], allocator.data);
+    if (!resolved.success) throw new Error(resolved.error.message);
+    expect(resolved.data.payloads[0].entities[0]).toMatchObject({ requestedName: "Duration", name: numberedName("Duration", 2), renamed: true });
+    expect(resolved.data.warnings.map((w) => [w.code, w.message])).toEqual([
+      ["ENTITY_RENAMED", 'The entity "Duration" was renamed to "Duration2" because "Duration" is a built-in type name in TypeSpec/Java; every reference to it now says "Duration2".'],
+    ]);
   });
 
   it("resolveEntityNames reports the rename (ENTITY_RENAMED says the name is used or reserved) and the entity gets the allocated name", async () => {

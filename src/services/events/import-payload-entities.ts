@@ -15,9 +15,10 @@ import { pickRootEntity } from "@/lib/importers/multi-asset";
 import { parseProtobufDocument } from "@/lib/importers/protobuf.importer";
 import type { MultiEntityImportResult, ParsedField } from "@/lib/importers/types";
 import { validateScope, type LevelScope } from "@/lib/levels";
-import { renameReservedFields, reservedFieldRenamedMessage, reservedNameMessage } from "@/lib/reserved-field-names";
+import { builtInRenamedMessage, renameReservedFields, reservedFieldRenamedMessage, reservedNameMessage } from "@/lib/reserved-field-names";
 import { generateSlug } from "@/lib/slug";
-import { entityNameMessage } from "@/lib/entity-name";
+import { entityNameMessage, numberedName } from "@/lib/entity-name";
+import { builtInNameConflict } from "@/lib/compiler/built-in-names";
 import { deleteEntity } from "@/services/entity.service";
 import { MAX_FIELD_RENAME_WARNINGS, MAX_NAME_ATTEMPTS, MAX_NOTES_PER_PAYLOAD, MAX_REQUESTED_NAME, boundText } from "@/services/events/import-limits";
 import { createImportedEntities, IMPORT_TRANSACTION_OPTIONS, type ImportedEntityInput } from "@/services/imported-entities";
@@ -151,8 +152,8 @@ export async function createNameAllocator(db: PrismaClient, scope: LevelScope): 
   return ok({
     async allocate(requested, kind) {
       for (let n = 1; n <= MAX_NAME_ATTEMPTS; n += 1) {
-        const suffix = n === 1 ? "" : String(n);
-        const candidate = `${requested.slice(0, 128 - suffix.length)}${suffix}`;
+        // The suffix rule every rename of an entity name follows (the bulk import's rename of a built-in type name takes it from here too).
+        const candidate = numberedName(requested, n);
         const slug = generateSlug(candidate);
         const unclaimed = !names.has(candidate.toLowerCase()) && reservedNameMessage(candidate) === null && (kind === "event" || (slug !== "" && !slugs.has(slug) && entityNameMessage(candidate) === null));
         if (!unclaimed) continue;
@@ -240,9 +241,13 @@ export async function resolveEntityNames(plans: readonly PlannedPayload[], alloc
     if (!allocated.success) return allocated;
     finalNames.set(entity, allocated.data);
     if (allocated.data !== entity.requestedName) {
+      // A built-in type name says so in the bulk import's words (one sentence for the same rename, whichever way it comes in).
+      const builtIn = builtInNameConflict(entity.requestedName);
       warnings.push({
         pointer: plan.sourcePointer, code: "ENTITY_RENAMED",
-        message: `The name "${entity.requestedName}" is already used in this product (or is reserved), so the entity is named "${allocated.data}".`,
+        message: builtIn
+          ? builtInRenamedMessage(entity.requestedName.trim(), allocated.data, builtIn.languages)
+          : `The name "${entity.requestedName}" is already used in this product (or is reserved), so the entity is named "${allocated.data}".`,
       });
     }
   }

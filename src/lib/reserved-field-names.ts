@@ -51,7 +51,7 @@ export function firstReservedFieldNameMessage(fields: ReadonlyArray<{ name: stri
 
 /** The sentence both rename notes are made of: `The <field|entity|model> "<from>" was renamed to "<to>": the name is reserved.` */
 const renameNote = (noun: string, from: string, to: string): string => `The ${noun} "${from}" was renamed to "${to}": the name is reserved.`;
-const RENAME_NOTE = /^The (?:field|entity|model) "[^]*" was renamed to "[^]*": the name is reserved\./;
+const RENAME_NOTE = /^The (?:field|entity|model) "[^]*" was renamed to "[^]*"(?:: the name is reserved\.| because "[^]*" is a built-in type name in )/;
 
 /** What an importer reports for a field it had to rename. `ownerName` says where (an entity, or a model with `kind: "model"`). */
 export function reservedFieldRenamedMessage(from: string, to: string, ownerName: string, kind: "entity" | "model" = "entity"): string {
@@ -64,7 +64,15 @@ export function reservedNameRenamedMessage(kind: "entity" | "model", from: strin
 }
 
 /**
- * True for a message `reservedFieldRenamedMessage` / `reservedNameRenamedMessage` wrote: a NOTE about something an import changed (it
+ * What an import reports for an ENTITY it renamed because its name is a built-in type name (`Duration` -> `Duration2`; see `builtInNameConflict`
+ * for what is one, `languages` are the ones it is). One sentence for every path that renames one (the bulk import, the AsyncAPI import).
+ */
+export function builtInRenamedMessage(from: string, to: string, languages: readonly string[]): string {
+  return `The entity "${from}" was renamed to "${to}" because "${from}" is a built-in type name in ${languages.join("/")}; every reference to it now says "${to}".`;
+}
+
+/**
+ * True for a message `reservedFieldRenamedMessage` / `reservedNameRenamedMessage` / `builtInRenamedMessage` wrote: a NOTE about something an import changed (it
  * is delivered with the import's other messages), never an error that stopped it. Callers that pick "the first blocking error" out of an
  * import's messages must skip these.
  */

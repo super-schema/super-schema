@@ -7,7 +7,7 @@ import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
 import { entityNameMessage } from "@/lib/entity-name";
-import { firstReservedFieldNameMessage, renameReservedFields, renameReservedNames, reservedFieldNameMessage, reservedFieldRenamedMessage, reservedNameRenamedMessage } from "@/lib/reserved-field-names";
+import { builtInRenamedMessage, firstReservedFieldNameMessage, renameReservedFields, renameReservedNames, reservedFieldNameMessage, reservedFieldRenamedMessage, reservedNameRenamedMessage } from "@/lib/reserved-field-names";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { inActiveTenant, isInActiveTenant, notFoundFailure, targetInActiveTenant, unexpectedFailure } from "@/lib/action-context";
@@ -22,7 +22,9 @@ import { firstInvalidDecimalFactMessage, mapFieldCreateInput } from "@/lib/entit
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
-import { createImportedEntities, entityExtensionsMetadata, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
+import { createImportedEntities, entityExtensionsMetadata, existingEntityNames, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
+import { builtInNameConflict } from "@/lib/compiler/built-in-names";
+import { renameBuiltInPayload } from "@/lib/builtin-entity-renames";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
 import { actionErrorText, isOpaqueErrorCode } from "@/types/action-result";
 import { err, ok } from "@/types/result";
@@ -1348,6 +1350,14 @@ export async function createDomainAssetsFromImportAction(
       // A model, or a model field, named like a key the AsyncAPI parser cannot read is renamed (`_1`) and reported, like the entities below;
       // a model that extends a renamed one follows it.
       const note = (message: string) => skipped.push(message);
+      // An entity named like a built-in type (`Duration`, `Record`, `Date` ...) is renamed, never skipped, and everything of THIS import that names it
+      // follows (field references, `extends`, union members, a service's entity and its operations' types). Unions and services are created
+      // before the entities, so this comes first; `createImportedEntities` then finds nothing left to rename.
+      const builtInTaken =
+        Array.isArray(payload.entities) && payload.entities.some((entity) => builtInNameConflict(entity?.name) !== null)
+          ? await existingEntityNames(tx, importProductId)
+          : {};
+      const named = renameBuiltInPayload(payload, { ...builtInTaken, onRename: (from, to, languages) => note(builtInRenamedMessage(from, to, languages)) });
       const reservedFreeModels = renameReservedNames(payload.models, (from, to) => note(reservedNameRenamedMessage("model", from, to))).items;
       for (const model of sortByInheritance(reservedFreeModels)) {
         const name = model.name.trim();
@@ -1430,7 +1440,7 @@ export async function createDomainAssetsFromImportAction(
         result.scalarsCreated++;
       }
 
-      for (const unionType of payload.unionTypes) {
+      for (const unionType of named.unionTypes) {
         const name = unionType.name.trim();
         if (!(await isNameFree("unionType", name, domainScope.data))) continue;
         await tx.unionType.create({
@@ -1453,7 +1463,7 @@ export async function createDomainAssetsFromImportAction(
 
       // The loop itself is shared with the AsyncAPI import service (`createImportedEntities`).
       const createdEntities = await createImportedEntities(tx, {
-        entities: sortByInheritance(payload.entities),
+        entities: sortByInheritance(named.entities),
         productScope: productScope.data,
         productId: importProductId,
         ownerId: currentUserId,
@@ -1475,7 +1485,7 @@ export async function createDomainAssetsFromImportAction(
       // domain already has. Resolve those by name in one query.
       const unresolvedEntityNames = [
         ...new Set(
-          payload.services
+          named.services
             .filter((s) => s.scope === "entity" && s.entityName && !entityRefs.has(s.entityName))
             .map((s) => s.entityName as string)
         ),
@@ -1493,7 +1503,7 @@ export async function createDomainAssetsFromImportAction(
         }
       }
 
-      for (const service of payload.services) {
+      for (const service of named.services) {
         const entityRef =
           service.scope === "entity" && service.entityName
             ? entityRefs.get(service.entityName)
