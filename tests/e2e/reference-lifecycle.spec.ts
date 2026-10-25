@@ -166,6 +166,8 @@ test.describe("references between entities", () => {
     expect(await filePaths(page)).toHaveLength(2);
     const java = await fileSet(page);
     expect(fileOf(java, customer.name).content).toMatch(new RegExp(`import [\\w.]+\\.${address.name};`));
+    // the field is typed with that class (it used to be a String, KD-009)
+    expect(fileOf(java, customer.name).content).toMatch(new RegExp(`private ${address.name} home;`));
     expect(fileOf(java, address.name).content).toMatch(new RegExp(`class ${address.name}\\b`));
 
     // Download all: every file of the set is saved, under its path (directories flattened with `_`)

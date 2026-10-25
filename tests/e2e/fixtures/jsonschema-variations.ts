@@ -288,7 +288,8 @@ export const VARIATIONS: Variation[] = [
     jsonSchema: ["order_id"],
     openapi: ["order_id"],
     rename: ["order_id", "id"],
-    survives: ["order_id"],
+    // `order_id` is renamed to `id` in the lifecycle; what a Save of the TypeSpec tab must keep is the reference to the other entity's file and the bound
+    survives: ['"$ref":"Line.json"', '"minItems":1'],
     primaryKey: ["order_id"],
     // `matrix` is an array of arrays: every target writes it but Protobuf. Everything else, `lines` (an array of references) included, generates.
     known: { protobuf: PROTOBUF_NESTED_ARRAY },
