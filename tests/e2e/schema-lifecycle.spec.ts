@@ -12,7 +12,7 @@
  * tests/integration/all-types-roundtrip.test.ts. This spec verifies the UI flows.
  *
  * PREREQS: see helpers/auth-state.ts. Selectors use roles/labels + known test-ids;
- * adjust if the UI copy changes. Run: `npm run test:e2e`.
+ * adjust if the UI copy changes. Run: `npm run test:e2e:release -- --tier regression -- tests/e2e/schema-lifecycle.spec.ts`.
  */
 
 import { readFileSync } from "node:fs";

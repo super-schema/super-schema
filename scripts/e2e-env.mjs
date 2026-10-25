@@ -20,6 +20,8 @@
 //   BROWSER RUN  E2E_BROWSER_CHANNEL (`chrome` | `chromium`, scripts/e2e-browser.cjs). The shell's value is dropped like every E2E_ name
 //            (that prefix is the runner's); the runner decides the channel from it (an explicit value wins, CI forces the bundled
 //            Chromium, else Chrome when the machine has it) and sets its decision for the browser run only (`phasesEnvironment`).
+//            (`E2E_ALLOW_REUSE_SERVER` is not one of them: it is read by playwright.config.ts for a bare `playwright test` only, scripts/e2e-direct.cjs,
+//            and the runner always sets E2E_BASE_URL, so a release run never starts or reuses a server of its own.)
 //   KNOBS    the runner's own settings (E2E_ALLOW_UNSUPPORTED_NODE, E2E_STALL_MS, E2E_GLOBAL_TIMEOUT_MS): read from the shell by the
 //            release runner, checked there, and handed to the browser run exactly as set (`runnerKnobs`, `phasesEnvironment`); the
 //            E2E_ prefix would otherwise drop them on the way, and the phases script and Playwright read them.
@@ -141,7 +143,7 @@ export const HERMETIC_BROWSER_RUN_NAMES = Object.freeze({
 
 /** The runner's own settings: read from the shell, handed to the browser run when set. Never to the app (it reads none of them). */
 export const HERMETIC_RUNNER_KNOB_NAMES = Object.freeze({
-  E2E_ALLOW_UNSUPPORTED_NODE: "`1` lets a Node outside 20.9+ / 22 run the suite (scripts/e2e-node.mjs refuses it otherwise); the phases script checks it again",
+  E2E_ALLOW_UNSUPPORTED_NODE: "`1` lets a Node that the suite refuses (not 20.9+, 22 or 24: scripts/e2e-node.cjs) run it; the phases script checks it again",
   E2E_STALL_MS: "how long the phases script waits for a sign of life from Playwright (the heartbeat file) before it ends it with exit 124; default 20 minutes (above the longest test timeout)",
   E2E_GLOBAL_TIMEOUT_MS: "playwright.config.ts globalTimeout: a hard ceiling for the whole Playwright run (CI sets it); unset means none",
 });

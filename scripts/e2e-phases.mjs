@@ -30,8 +30,8 @@
 // E2E_BROWSER_CHANNEL (playwright.config.ts reads it), and names the browser with its version at the start and in the summary. A listing
 // (`--list`) starts no browser and names none.
 //
-// The Node: the suite runs on Node 20.9+ or 22 (scripts/e2e-node.mjs): another Node is refused with exit 2 before anything is made,
-// unless E2E_ALLOW_UNSUPPORTED_NODE=1. The Node of the run is named in the header (`[e2e-phases] node: v22.12.0`).
+// The Node: the suite runs on Node 20.9+ or 22, and on 24 with an "untested" note (scripts/e2e-node.cjs): another Node is refused with exit 2
+// before anything is made, unless E2E_ALLOW_UNSUPPORTED_NODE=1. The Node of the run is named in the header (`[e2e-phases] node: v22.12.0`).
 //
 // The stall watchdog: each phase gets a heartbeat file (E2E_HEARTBEAT_FILE, <results>/<phase>/heartbeat) that
 // tests/e2e/reporters/heartbeat-reporter.ts rewrites whenever a test starts or ends. A Playwright whose heartbeat is older than

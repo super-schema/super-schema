@@ -132,8 +132,8 @@ export function dockerVisualArgs({ image, containerName, root, outputRoot, snaps
 }
 
 /**
- * What the container is told whatever the run says. `E2E_ALLOW_UNSUPPORTED_NODE`: the image ships Node 24, which scripts/e2e-node.mjs
- * does not list (untested, not known broken); Playwright's own image is the Node it supports. `E2E_BROWSER_CHANNEL=chromium`: the image
+ * What the container is told whatever the run says. `E2E_ALLOW_UNSUPPORTED_NODE`: the image ships Node 24, which scripts/e2e-node.cjs
+ * allows with an "untested" warning; the hatch stays so that an image with a newer Node still runs (Playwright's own image is the Node it supports). `E2E_BROWSER_CHANNEL=chromium`: the image
  * has no Google Chrome and the visual project never takes the channel. `HOME`: the user is the host's, who has no home in the image.
  */
 export const FIXED_ENVIRONMENT = [

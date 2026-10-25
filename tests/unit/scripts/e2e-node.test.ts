@@ -1,37 +1,55 @@
 /**
- * scripts/e2e-node.mjs: which Node the browser suite runs on. A run on Node 26.3.1 stopped after its last test with every worker idle,
- * so the suite supports 20.9+ and 22 (package.json `engines`, `.nvmrc`) and refuses the rest before anything is provisioned.
+ * scripts/e2e-node.cjs (re-exported by scripts/e2e-node.mjs): which Node the browser suite runs on. A run on Node 26.3.1 stopped after its last
+ * test with every worker idle. The policy: Node 20.9+ and 22 supported, Node 24 (the Active LTS, and the Playwright image's) allowed with a
+ * one-line warning, everything else refused before anything is provisioned (package.json `engines`, `.nvmrc`).
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { ALLOW_UNSUPPORTED_NODE, describeNode, isSupportedNode, nodeProblem } from "../../../scripts/e2e-node.mjs";
+import { ALLOW_UNSUPPORTED_NODE, classifyNode, describeNode, isAllowedNode, isSupportedNode, nodeProblem, nodeWarning } from "../../../scripts/e2e-node.mjs";
 
 const REPO = path.resolve(__dirname, "../../..");
 
-describe("isSupportedNode", () => {
-  it("accepts Node 22 and Node 20 from 20.9, with or without the v", () => {
-    for (const version of ["22.0.0", "22.12.0", "v22.20.1", "20.9.0", "20.19.4", "v20.10.0"]) expect(isSupportedNode(version), version).toBe(true);
+describe("classifyNode, isSupportedNode, isAllowedNode", () => {
+  it("accepts Node 22 and Node 20 from 20.9 as supported, with or without the v", () => {
+    for (const version of ["22.0.0", "22.12.0", "v22.20.1", "20.9.0", "20.19.4", "v20.10.0"]) {
+      expect(classifyNode(version), version).toBe("supported");
+      expect(isSupportedNode(version), version).toBe(true);
+      expect(isAllowedNode(version), version).toBe(true);
+    }
   });
 
-  it("refuses the others: the one that stalls (26.3.1), the ones below 20.9, and the majors between and after", () => {
-    for (const version of ["26.3.1", "25.9.0", "24.1.0", "23.0.0", "21.7.3", "20.8.1", "20.0.0", "18.20.0", "19.9.0", "garbage", ""]) {
+  it("allows Node 24 (the Active LTS) as untested: allowed, not supported", () => {
+    for (const version of ["24.0.0", "24.1.0", "v24.11.1"]) {
+      expect(classifyNode(version), version).toBe("untested");
       expect(isSupportedNode(version), version).toBe(false);
+      expect(isAllowedNode(version), version).toBe(true);
+    }
+  });
+
+  it("refuses the others: Node 25 and 26 (26.3.1 is the one that stalls), the odd releases between, and the ones below 20.9", () => {
+    for (const version of ["26.3.1", "26.0.0", "25.9.0", "25.0.0", "23.0.0", "21.7.3", "20.8.1", "20.0.0", "18.20.0", "19.9.0", "garbage", ""]) {
+      expect(classifyNode(version), version).toBe("unsupported");
+      expect(isAllowedNode(version), version).toBe(false);
     }
   });
 });
 
 describe("nodeProblem", () => {
-  it("is null for a supported Node, whatever the environment", () => {
+  it("is null for a supported or an untested Node, whatever the environment", () => {
     expect(nodeProblem({ node: "22.12.0" }, {})).toBeNull();
     expect(nodeProblem({ node: "20.19.4" }, { E2E_ALLOW_UNSUPPORTED_NODE: "0" })).toBeNull();
+    expect(nodeProblem({ node: "24.11.1" }, {})).toBeNull();
   });
 
-  it("names the Node, the reason and the command that fixes it", () => {
-    const problem = nodeProblem({ node: "26.3.1" }, {});
-    expect(problem).toContain("Node 26.3.1 is not supported by this suite (Playwright stalls after the last test on it)");
-    expect(problem).toContain("run `nvm use 22` (or Node 20.9+)");
-    expect(problem).toContain("E2E_ALLOW_UNSUPPORTED_NODE=1");
+  it("names the Node, the reason and the commands that fix it (nvm install 22, nvm use 20)", () => {
+    for (const node of ["26.3.1", "25.9.0"]) {
+      const problem = nodeProblem({ node }, {});
+      expect(problem).toContain(`Node ${node} is not supported by this suite`);
+      expect(problem).toContain("`nvm install 22 && nvm use 22`");
+      expect(problem).toContain("`nvm use 20`");
+      expect(problem).toContain("E2E_ALLOW_UNSUPPORTED_NODE=1");
+    }
   });
 
   it("is lifted by E2E_ALLOW_UNSUPPORTED_NODE=1 and by nothing else (not 'true', not '0', not empty)", () => {
@@ -44,9 +62,19 @@ describe("nodeProblem", () => {
   });
 });
 
+describe("nodeWarning", () => {
+  it("is one line, only for Node 24, and says it is untested", () => {
+    const warning = nodeWarning({ node: "24.1.0" });
+    expect(warning).toContain("Node 24.1.0 is untested with this suite");
+    expect(warning).not.toContain("\n");
+    for (const node of ["22.12.0", "20.19.4", "26.3.1", "25.9.0"]) expect(nodeWarning({ node }), node).toBeNull();
+  });
+});
+
 describe("describeNode", () => {
-  it("is `node v<version>`, and says when an unsupported Node was let through", () => {
+  it("is `node v<version>`, says when a Node is untested, and when an unsupported one was let through", () => {
     expect(describeNode({ node: "22.12.0" }, {})).toBe("node v22.12.0");
+    expect(describeNode({ node: "24.1.0" }, {})).toBe("node v24.1.0 (untested: the suite is verified on Node 20.9+ and 22)");
     expect(describeNode({ node: "26.3.1" }, { E2E_ALLOW_UNSUPPORTED_NODE: "1" })).toBe("node v26.3.1 (unsupported, let through by E2E_ALLOW_UNSUPPORTED_NODE=1)");
     // refused runs never get to print a header; the plain text is what a caller without the hatch would see
     expect(describeNode({ node: "26.3.1" }, {})).toBe("node v26.3.1");
@@ -54,11 +82,20 @@ describe("describeNode", () => {
 });
 
 describe("the versions of the repository agree with the guard", () => {
-  it(".nvmrc names a Node the guard accepts (22), and package.json `engines` says the same range", () => {
+  it(".nvmrc names a Node the suite supports (22); `engines` admits everything the guard allows and not Node 25+ (the one observed hang is Node 26.3.1)", () => {
     const nvmrc = readFileSync(path.join(REPO, ".nvmrc"), "utf8").trim();
     expect(nvmrc).toBe("22");
     expect(isSupportedNode(`${nvmrc}.0.0`)).toBe(true);
     const manifest = JSON.parse(readFileSync(path.join(REPO, "package.json"), "utf8")) as { engines?: { node?: string } };
-    expect(manifest.engines?.node).toBe("^20.9.0 || ^22.0.0");
+    expect(manifest.engines?.node).toBe(">=20.9.0 <25");
+  });
+
+  it("has no bare `test:e2e`: the unguarded `playwright test` is `test:e2e:raw`, and the docs send people to the release scripts", () => {
+    const manifest = JSON.parse(readFileSync(path.join(REPO, "package.json"), "utf8")) as { scripts: Record<string, string> };
+    expect(manifest.scripts).not.toHaveProperty("test:e2e");
+    expect(manifest.scripts["test:e2e:raw"]).toBe("playwright test");
+    const docs = readFileSync(path.join(REPO, "docs", "testing", "e2e.md"), "utf8");
+    expect(docs).toMatch(/test:e2e:release/);
+    expect(docs).not.toMatch(/npm run test:e2e(\s|$|`)/m);
   });
 });

@@ -22,11 +22,13 @@ Design and decisions: `docs/superpowers/specs/2026-10-23-release-ui-suite-design
   run in the Chromium Playwright downloads. Which one, and how to force the other: [The browser](#the-browser-google-chrome-or-the-bundled-chromium).
 - **macOS or Linux.** The runner puts each child in a process group of its own and signals the group (`kill(-pid)`, `ps` for the last
   resort); on Windows it signals the child alone and is not tested there.
-- **Node 20.9+ or 22** (`.nvmrc` says 22, CI runs 22; `engines` in `package.json` is `^20.9.0 || ^22.0.0`) and `npm ci`, as for the app:
-  `nvm install` (once) and `nvm use` in the checkout pick 22. The runner and the phases script refuse any other Node with exit code 2 before they provision
-  anything: on Node 26.3.1 a run stopped after its last test with every Playwright worker idle and never ended (see Troubleshooting). The
-  check is a whitelist, not a finding about every other Node: Node 24 (the current LTS) is untested here, not known to be broken, and is
-  refused until someone runs the suite on it. `E2E_ALLOW_UNSUPPORTED_NODE=1` runs the suite on another Node anyway (try Node 24 that way). No `.env` is needed, no database, no running server. A `.env` in the checkout is still read by the
+- **Node 20.9+ or 22** (`.nvmrc` says 22, CI runs 22; `engines` in `package.json` is `>=20.9.0 <25`) and `npm ci`, as for the app:
+  `nvm install 22 && nvm use 22` (or `nvm use 20`) in the checkout. The runner and the phases script refuse an unsupported Node with exit code 2
+  before they provision anything: on Node 26.3.1 a run stopped after its last test with every Playwright worker idle and never ended (see
+  Troubleshooting). The policy is a whitelist, not a finding about every other Node: **20.9+ and 22 are supported; Node 24 (the Active LTS, and the
+  Playwright image's) is allowed with a one-line "untested" warning; Node 25 and 26 and the other versions are refused**.
+  `E2E_ALLOW_UNSUPPORTED_NODE=1` runs the suite on a refused Node anyway. Only the e2e guard refuses: the application itself runs on whatever
+  `engines` allows. The guard is also in `playwright.config.ts`, so a bare `playwright test` (below) meets it too. No `.env` is needed, no database, no running server. A `.env` in the checkout is still read by the
   app, the seed and prisma (Next, dotenv and prisma/load-env-file.ts load it), so the runner defines every name the app reads, below: a
   `.env` cannot change what a run tests.
 
@@ -47,6 +49,13 @@ A test is never both `@smoke` and `@slow` / `@external` (the guard enforces that
 A tier is more than one `playwright test` command (Playwright runs a project's dependencies in full whatever `--grep` says, and every
 command clears its output directory), so `scripts/e2e-phases.mjs` runs the phases of a tier one after the other, each with reports of its
 own, and the release runner calls it. You can call it yourself against a server you started: `E2E_BASE_URL=http://localhost:3107 npm run test:e2e:smoke`.
+
+**Use `npm run test:e2e:release:smoke` / `npm run test:e2e:release`** (the release runner: a throwaway database and app of their own, the stall
+watchdog, the skipped-test gate). The npm script that was the bare `playwright test` is now `npm run test:e2e:raw`, and `npx playwright test` is the
+same thing: neither has the scripts in front of it, so `playwright.config.ts` itself refuses the two mistakes they allowed. It throws, with the command
+to run instead, **(1)** on an unsupported Node (the Node policy above) and **(2)** when `E2E_BASE_URL` is unset and something already listens on
+:3000: Playwright would reuse that server, and with it the database of your `.env` that the tests create and delete rows in. Setting
+`E2E_ALLOW_REUSE_SERVER=1` is the one way to reuse a server on purpose. A `--list` is never refused (it starts nothing).
 
 ## The browser: Google Chrome or the bundled Chromium
 
@@ -90,7 +99,7 @@ decides what a baseline looks like. Firefox and WebKit (`firefox-smoke`, `webkit
 
 `scripts/e2e-release.mjs`, in this order:
 
-1. Checks the Node (20.9+ or 22, else exit 2 with `nvm use 22`: above), that Docker is running, and decides the browser (above; an explicit
+1. Checks the Node (20.9+, 22, or 24 with a warning; else exit 2 with `nvm install 22 && nvm use 22`: above), that Docker is running, and decides the browser (above; an explicit
    `E2E_BROWSER_CHANNEL=chrome` that this machine cannot give is exit 2 before anything is provisioned); names the Node and the browser with
    its version.
 2. Picks a port for the app and one for the database (random, 20000-32000: below the ports Linux gives outgoing connections; never 3000,
@@ -419,11 +428,10 @@ that. Until a week of nightly runs says that it never fails by itself, `e2e-visu
   one of the three above). The message names the setting; `server.log` has the app's side.
 - **A run is stuck after Ctrl-C**: the first Ctrl-C asks the step in progress to stop and runs the teardown; a second one kills the step
   at once (the teardown still runs). It never leaves the container behind unless you pass `--keep`.
-- **"Node 26.3.1 is not supported by this suite ..."** (exit 2, before anything is provisioned): the Node of your shell is not 20.9+ or 22.
-  Run `nvm use 22` in the checkout (`.nvmrc`), or put a Node 20.9+/22 first on the path for one command:
-  `PATH="$HOME/.nvm/versions/node/v22.12.0/bin:$PATH" npm run test:e2e:release -- --tier smoke` (`ls ~/.nvm/versions/node` lists the ones you have;
-  the build is made once per Node major, it is part of the reuse hash). `E2E_ALLOW_UNSUPPORTED_NODE=1` overrides the refusal (Node 24 is untested,
-  not known to be broken; Node 26.3.1 is the one that stalled).
+- **"Node 26.3.1 is not supported by this suite ..."** (exit 2 from the scripts, an error from `playwright.config.ts` for a bare `playwright test`; before
+  anything is provisioned): the Node of your shell is not 20.9+, 22 or 24. Run `nvm install 22 && nvm use 22` in the checkout (`.nvmrc`), or
+  `nvm use 20`. `ls ~/.nvm/versions/node` lists the ones you have; the build is made once per Node major, it is part of the reuse hash.
+  `E2E_ALLOW_UNSUPPORTED_NODE=1` overrides the refusal (Node 25 and 26 are not verified; Node 26.3.1 is the one that stalled).
 - **A run that stalls**: a run that never ends, with every Playwright worker idle (the list shows the last test or no test at all, no summary, no
   CPU, no sockets), was seen four times on Node 26.3.1 (Homebrew) with a suite of about a hundred tests, never on Node 20.19.4. The Node guard keeps
   that Node away, and a watchdog covers whatever else makes a run hang: the phases script gives each phase a heartbeat file

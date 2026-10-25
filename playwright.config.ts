@@ -1,6 +1,7 @@
 import { defineConfig, devices, type ReporterDescription } from "@playwright/test";
 import { AUTH_STATE_PATH } from "./tests/e2e/helpers/auth-state";
 import { decideForThisProcess } from "./scripts/e2e-browser.cjs";
+import { REUSE_ENV, WEB_SERVER_PORT, directRunVerdict } from "./scripts/e2e-direct.cjs";
 
 /**
  * The browser suite (tests/e2e). Everything that every spec used to repeat lives here, once: timeouts, trace / screenshot / video,
@@ -83,6 +84,15 @@ if (!VISUAL_IN_DOCKER && process.env.TEST_WORKER_INDEX === undefined && process.
   );
 }
 
+/**
+ * A bare `playwright test` (`npm run test:e2e:raw`, `npx playwright test`) has neither the Node guard nor the stall watchdog of the scripts, and
+ * with a dev server on :3000 it would reuse that server and the database of `.env`. The config refuses both, with the command to run instead
+ * (scripts/e2e-direct.cjs; not in a worker, not for `--list`, not under vitest). Only `E2E_ALLOW_REUSE_SERVER=1` makes a run reuse a server.
+ */
+const DIRECT = directRunVerdict({ versions: process.versions, env: process.env, argv: process.argv });
+if (DIRECT.problem) throw new Error(`[playwright.config] ${DIRECT.problem}`);
+if (DIRECT.warning) console.warn(`[playwright.config] ${DIRECT.warning}`);
+
 /** E2E_BASE_URL points the specs at an already-running server (no build, no webServer): `E2E_BASE_URL=http://localhost:3107`. */
 const EXTERNAL_BASE_URL = process.env.E2E_BASE_URL;
 
@@ -153,7 +163,7 @@ export default defineConfig({
   reporter: REPORTERS,
   globalTimeout: globalTimeoutFromEnv(process.env.E2E_GLOBAL_TIMEOUT_MS),
   use: {
-    baseURL: EXTERNAL_BASE_URL ?? "http://localhost:3000",
+    baseURL: EXTERNAL_BASE_URL ?? `http://localhost:${WEB_SERVER_PORT}`,
     // First visits compile routes in dev, and the preview renders the payload with the real TypeSpec CLI.
     navigationTimeout: 60_000,
     actionTimeout: 30_000,
@@ -219,8 +229,9 @@ export default defineConfig({
     ? undefined
     : {
         command: "npm run build && npm start",
-        url: "http://localhost:3000",
-        reuseExistingServer: !CI && !E2E_DATABASE_URL,
+        url: `http://localhost:${WEB_SERVER_PORT}`,
+        // Never by default: a server that is already there has a database of its own (a dev server's). E2E_ALLOW_REUSE_SERVER=1 says "that one, on purpose".
+        reuseExistingServer: process.env[REUSE_ENV] === "1" && !CI && !E2E_DATABASE_URL,
         ...(E2E_DATABASE_URL
           ? { env: { ...process.env, DATABASE_URL: E2E_DATABASE_URL, DB_PROVIDER: "postgresql" } as Record<string, string> }
           : {}),
