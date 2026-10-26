@@ -250,6 +250,11 @@ export function appEnvironment(base, run) {
  * origin of ITS OWN port for Auth.js (a sign-in URL of the other port would send a login to the other server), and
  * `SCHEMA_IMPORT_GIT_MODE=any`, the one name that is blank for the first app and set here.
  *
+ * It also runs `AUTH_REGISTRATION=invite`, the product's own default (src/lib/auth/registration-mode.ts), where the first app runs `open` (the suite registers its own
+ * users through the register page): the registration mode is read when the app starts too, so a server of the other mode is the only way a browser test can see
+ * what `invite` does (tests/e2e/access-matrix.spec.ts: no register form, a token needed). The git-host test only logs in on it, which works in every mode. No new name:
+ * AUTH_REGISTRATION is already in the SET group, and the browser run still gets this app's origin as E2E_GIT_ANY_BASE_URL.
+ *
  * @param {Record<string, string>} base `hermeticEnv(shell)`
  * @param {{ databaseUrl: string, baseUrl: string, authSecret: string, pgliteDir: string, apiKey: string }} run the run of the FIRST app
  * @param {string} secondBaseUrl `http://localhost:<the second port>`
@@ -261,6 +266,7 @@ export function secondAppEnvironment(base, run, secondBaseUrl) {
     AUTH_URL: secondBaseUrl,
     NEXTAUTH_URL: secondBaseUrl,
     SCHEMA_IMPORT_GIT_MODE: "any",
+    AUTH_REGISTRATION: "invite",
     // `any` mode makes the server run `gh api` for a git URL, and `gh` would use the developer's own login (a token variable, or the
     // config directory under their real HOME): the @external test could then read a private repository. No token, and a config directory
     // of the run's own that does not exist (next to the run's pglite directory, in its temporary directory).

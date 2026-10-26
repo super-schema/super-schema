@@ -157,7 +157,9 @@ decides what a baseline looks like. Firefox and WebKit (`firefox-smoke`, `webkit
    (second server)" needs a server in `any` mode. After the first app is healthy the runner starts a second `next start` of the **same build**
    on another free port, with the same database, secret and API key, `SCHEMA_IMPORT_GIT_MODE=any`, and its own origin for Auth.js (a sign-in
    URL of the other port would send a login to the other server); it waits until it is ready and `/api/v1/health` answers, checks its sign-in
-   origin like the first app's, and gives the browser run its origin as `E2E_GIT_ANY_BASE_URL`. Its output goes to
+   origin like the first app's, and gives the browser run its origin as `E2E_GIT_ANY_BASE_URL`. It also runs `AUTH_REGISTRATION=invite` (the product's default; the
+   first app runs `open`): the registration mode is read when the app starts too, and `tests/e2e/access-matrix.spec.ts` uses this server to see what `invite` does (no
+   register form, a live invitation token needed). Its output goes to
    `<output root>/server-git-any.log`, and it is stopped first in the teardown. That test logs in on the second server itself (a
    session is that server's). Without a second app the test skips, and the skipped-test gate lists it (below).
    **It never uses your `gh` login.** In `any` mode the server runs `gh api` for a git URL, and `gh` would otherwise read the developer's own
@@ -212,7 +214,7 @@ whatever your shell has under the prefixes `PG`, `AUTH_`, `NEXTAUTH_`, `E2E_`, `
 | `--project <name>` | narrow the tier to a project (repeatable): `--tier smoke --project firefox-smoke`. It narrows; it does not add |
 | `--reuse-build` | skip the build when it can be reused (below) |
 | `--keep` | leave the database container running, and print how to connect and how to remove it |
-| `--second-app` | also start a second app with `SCHEMA_IMPORT_GIT_MODE=any` and give the browser run `E2E_GIT_ANY_BASE_URL` (the nightly tier does it by itself; a listing never does) |
+| `--second-app` | also start a second app with `SCHEMA_IMPORT_GIT_MODE=any` and `AUTH_REGISTRATION=invite` and give the browser run `E2E_GIT_ANY_BASE_URL` (the nightly tier does it by itself; a listing never does) |
 | `--list-only` | the whole setup, but the browser run only lists the tests of the tier (a dry run) |
 | `--output-root <dir>` | where reports and `server.log` go (default `$E2E_OUTPUT_ROOT`, else `test-results/run-<id>`) |
 | `--docker-image <image>` | run the browser run inside this Docker image (the visual tier; the image must be on the machine) |

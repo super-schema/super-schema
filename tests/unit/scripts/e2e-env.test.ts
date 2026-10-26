@@ -146,15 +146,17 @@ describe("the second app (git import in `any` mode) and the browser run's E2E_GI
   const SECOND = "http://localhost:22001";
   const base = hermeticEnv(DEVELOPER);
 
-  it("is the first app's environment with the git mode set to `any` (blank for the first), and the second origin for Auth.js", () => {
+  it("is the first app's environment with the git mode set to `any` (blank for the first), the registration mode `invite` (open for the first), and the second origin for Auth.js", () => {
     const first = appEnvironment(base, RUN);
     const second = secondAppEnvironment(base, RUN, SECOND);
     expect(first.SCHEMA_IMPORT_GIT_MODE).toBe("");
     expect(second.SCHEMA_IMPORT_GIT_MODE).toBe("any");
+    expect(first.AUTH_REGISTRATION).toBe("open");
+    expect(second.AUTH_REGISTRATION).toBe("invite");
     expect(second.AUTH_URL).toBe(SECOND);
     expect(second.NEXTAUTH_URL).toBe(SECOND);
     // everything else is the first app's: one database, one secret (a login is a signed cookie of that secret), one API key
-    const differing = ["SCHEMA_IMPORT_GIT_MODE", "AUTH_URL", "NEXTAUTH_URL", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_CONFIG_DIR"];
+    const differing = ["SCHEMA_IMPORT_GIT_MODE", "AUTH_REGISTRATION", "AUTH_URL", "NEXTAUTH_URL", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_CONFIG_DIR"];
     const without = (env: Record<string, string>) => Object.fromEntries(Object.entries(env).filter(([name]) => !differing.includes(name)));
     expect(without(second)).toEqual(without(first));
   });
@@ -162,6 +164,8 @@ describe("the second app (git import in `any` mode) and the browser run's E2E_GI
   it("carries nothing of the developer's shell (the developer's SCHEMA_IMPORT_GIT_MODE=any is not what makes it `any`: the run's value is)", () => {
     const second = secondAppEnvironment(hermeticEnv({ ...DEVELOPER, SCHEMA_IMPORT_GIT_MODE: "restricted" }), RUN, SECOND);
     expect(second.SCHEMA_IMPORT_GIT_MODE).toBe("any");
+    // a developer's own registration mode does not decide it either: the second app is `invite`, whatever the shell says
+    expect(secondAppEnvironment(hermeticEnv({ ...DEVELOPER, AUTH_REGISTRATION: "open" }), RUN, SECOND).AUTH_REGISTRATION).toBe("invite");
     expect(JSON.stringify(second)).not.toContain("devpass");
     expect(second.AUTH_PROVIDER_OKTA_CLIENT_ID).toBe("");
     expect(second.AUTH_PROVIDERS).toBe("");
@@ -213,11 +217,11 @@ describe("a fake developer environment never reaches a child", () => {
     expect(app.AUTH_TRUST_HOST).toBe("true");
   });
 
-  it("registration is OPEN for the app under test whatever the developer's shell says (the default is invite), and the second app has it too", () => {
+  it("registration is OPEN for the app under test whatever the developer's shell says (the default is invite), and the second app is the one that runs `invite`", () => {
     expect(app.AUTH_REGISTRATION).toBe("open");
     expect(hermeticEnv({ AUTH_REGISTRATION: "closed" }).AUTH_REGISTRATION).toBeUndefined(); // the shell's value is dropped (the AUTH_ prefix is the runner's)
     expect(appEnvironment(hermeticEnv({ ...DEVELOPER, AUTH_REGISTRATION: "closed" }), RUN).AUTH_REGISTRATION).toBe("open");
-    expect(secondAppEnvironment(base, RUN, "http://localhost:4000").AUTH_REGISTRATION).toBe("open");
+    expect(secondAppEnvironment(base, RUN, "http://localhost:4000").AUTH_REGISTRATION).toBe("invite");
   });
 
   it("the client address (sign-in throttle, REST API rate limit) is the run's own decision: X-Forwarded-For is trusted so each API test has an address of its own, whatever the developer's shell says", () => {
