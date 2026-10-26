@@ -3,15 +3,17 @@
  * the checks every JSON answer of the API has to pass.
  *
  *   - `session`  the admin's saved login (the `setup` project's storage state): what a browser's own call is. On the REST API a session
- *                is ALWAYS a viewer (src/app/api/v1/middleware.ts), the admin included;
- *   - `key`      `Authorization: Bearer <the run's API key>`: what a CI job calls with. The key is `E2E_API_KEY`, which the release runner
+ *                carries the user's real roles (src/app/api/v1/middleware.ts): the seeded admin is a GLOBAL administrator;
+ *   - `key`      `Authorization: Bearer <the run's API key>`: what a CI job calls with. A service principal acting as an ADMIN in the default
+ *                tenant (`API_KEY_ROLE` / `API_KEY_TENANT_ID` are blank in the run: src/lib/access/api-key.ts). The key is `E2E_API_KEY`, which the release runner
  *                makes up per run and starts the app with (scripts/e2e-env.mjs). A run that did not come from the runner has none: the
  *                first test that asks for `key` fails with that sentence instead of a 401 that looks like a product bug;
  *   - `anon`     no cookie, no header.
  *
  * Every context sends an `X-Forwarded-For` of its own (an address that is made up per test): the emit, validate and event-spec routes
- * allow 100 requests a minute per client address (src/app/api/v1/rate-limit.ts), and the address is read from that header, so a test
- * gets its own allowance instead of sharing one with every other spec of the run. (That the header decides is itself a finding: KD-028.)
+ * allow 100 requests a minute per client address (src/app/api/v1/rate-limit.ts), and the address is read from that header ONLY when the app
+ * trusts a proxy (`AUTH_TRUST_PROXY=1`, which the release runner sets for the app under test), so a test gets its own allowance instead of
+ * sharing one with every other spec of the run. (Without the setting the header is ignored: tests/unit/api/v1/rate-limit.test.ts.)
  */
 import { randomInt } from "node:crypto";
 import { expect, type APIRequestContext, type APIResponse, type PlaywrightWorkerArgs } from "@playwright/test";

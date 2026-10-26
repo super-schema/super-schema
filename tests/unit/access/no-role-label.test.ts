@@ -21,13 +21,11 @@ const DEFINITIONS = [
 ].map((path) => path.replaceAll("\\", "/"));
 
 /**
- * TEMPORARY. What still mentions the label after Task 5b, each with its reason: the API v1 context builders (Task 6 replaces them with the principal
- * and the key's tenant and role) and the dead oRPC routers (Task 7 deletes them: nothing mounts them). No service and no action reads the label any
- * more. Each one only sees the label as the PLATFORM role (not a role over a resource), so the worst it does today is refuse a tenant administrator.
+ * TEMPORARY. What still mentions the label after Task 6, each with its reason: the dead oRPC routers (Task 7 deletes them: nothing mounts them). No
+ * service, no action and no route reads the label any more (Task 6 replaced the two API v1 context builders with the principal and the key's tenant and
+ * role). Each one only sees the label as the PLATFORM role (not a role over a resource), so the worst it does today is refuse a tenant administrator.
  */
 const PENDING_TASK_5B: Record<string, string> = {
-  "src/app/api/v1/health/route.ts": "API v1 (Task 6)",
-  "src/app/api/v1/middleware.ts": "API v1 principal (Task 6)",
   "src/server/api/procedures.ts": "dead oRPC routers: deleted in Task 7",
   "src/server/api/routers/admin/classifications.ts": "dead oRPC routers: deleted in Task 7",
   "src/server/api/routers/admin/domains.ts": "dead oRPC routers: deleted in Task 7",

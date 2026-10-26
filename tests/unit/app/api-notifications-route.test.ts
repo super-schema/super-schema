@@ -5,6 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // mark of a notification the user opened was never saved: it came back unread on the next load.
 const authenticateRequest = vi.fn();
 vi.mock("@/app/api/v1/middleware", () => ({ authenticateRequest: (...args: unknown[]) => authenticateRequest(...args) }));
+vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/db", () => ({ prisma: {} }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn() }));
 
 const markAsRead = vi.fn();
 const markAllAsRead = vi.fn();
@@ -15,15 +18,57 @@ vi.mock("@/services/notification.service", () => ({
   markAllAsRead: (...args: unknown[]) => markAllAsRead(...args),
 }));
 
-import { POST } from "@/app/api/v1/notifications/route";
+import { GET, POST } from "@/app/api/v1/notifications/route";
+import { getNotificationsForUser, getUnreadCount } from "@/services/notification.service";
+import { principalOf, roleless } from "../../helpers/access-mocks";
 
-const context = { userId: "user-1", userRole: "VIEWER", prisma: {} };
-const post = (query: string) => POST(new Request(`http://localhost/api/v1/notifications?${query}`, { method: "POST" }));
+// Whoever is signed in has notifications, whatever role they hold: a user with NO role (not yet given access to any tenant) too.
+const principal = principalOf([], { userId: "user-1" });
+const context = expect.objectContaining({ userId: "user-1", assignments: [] });
+const ROUTE = { params: Promise.resolve({}) };
+const post = (query: string) => POST(new Request(`http://localhost/api/v1/notifications?${query}`, { method: "POST" }), ROUTE);
+const get = (query = "") => GET(new Request(`http://localhost/api/v1/notifications${query}`), ROUTE);
+
+describe("GET /api/v1/notifications: the signed-in user's own, a roleless user's included", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authenticateRequest.mockResolvedValue({ authenticated: true, source: "session", principal: roleless("user-2"), tenantId: null });
+    vi.mocked(getNotificationsForUser).mockResolvedValue({ success: true, data: { notifications: [], unreadCount: 0 } } as never);
+    vi.mocked(getUnreadCount).mockResolvedValue({ success: true, data: 4 } as never);
+  });
+
+  it("lists the notifications of the caller's own id, with no role and no tenant (a user with no role yet is not refused)", async () => {
+    const response = await get();
+    expect(response.status).toBe(200);
+    expect(getNotificationsForUser).toHaveBeenCalledWith("user-2", expect.anything(), expect.anything(), expect.objectContaining({ userId: "user-2" }));
+  });
+
+  it("the count only is the caller's too", async () => {
+    const response = await get("?countOnly=true");
+    expect(await response.json()).toEqual({ success: true, data: { unreadCount: 4 } });
+    expect(getUnreadCount).toHaveBeenCalledWith("user-2", expect.anything());
+  });
+
+  it("without a credential the bell's poll gets a count of 0, the list a 401", async () => {
+    authenticateRequest.mockResolvedValue({ authenticated: false });
+    expect(await (await get("?countOnly=true")).json()).toEqual({ success: true, data: { unreadCount: 0 } });
+    expect((await get()).status).toBe(401);
+    expect(getNotificationsForUser).not.toHaveBeenCalled();
+  });
+
+  it("when who is calling cannot be looked up the poll answers an empty mailbox, not an error", async () => {
+    authenticateRequest.mockRejectedValue(new Error("db down"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const response = await get();
+    expect(await response.json()).toEqual({ success: true, data: { unreadCount: 0, notifications: [], total: 0 } });
+    spy.mockRestore();
+  });
+});
 
 describe("POST /api/v1/notifications", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    authenticateRequest.mockResolvedValue({ authenticated: true, context });
+    authenticateRequest.mockResolvedValue({ authenticated: true, source: "session", principal, tenantId: null });
     markAsRead.mockResolvedValue({ success: true, data: {} });
     markAllAsRead.mockResolvedValue({ success: true, data: undefined });
   });

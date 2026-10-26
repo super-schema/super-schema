@@ -52,9 +52,10 @@ describe("the groups", () => {
     expect([...HERMETIC_BLANKED_NAMES].sort()).toEqual(
       [
         "AI_BASE_URL", "AI_MODEL", "AI_PROVIDER",
+        "API_KEY_ROLE", "API_KEY_TENANT_ID",
         "ASYNCAPI_PARSER_BREAKER_MS", "ASYNCAPI_PARSER_IN_PROCESS", "ASYNCAPI_PARSER_MAX_MESSAGE_BYTES", "ASYNCAPI_PARSER_PARSE_TIMEOUT_MS", "ASYNCAPI_PARSER_REBUILD_BACKOFF_MS",
         "ASYNCAPI_PARSER_START_TIMEOUT_MS", "ASYNCAPI_PARSER_VALIDATE_TIMEOUT_MS", "ASYNCAPI_PARSER_WORKER", "ASYNCAPI_PARSER_WORKERS",
-        "AUTH_REDIRECT_PROXY_URL", "AUTH_SECRET_1", "AUTH_SECRET_2", "AUTH_SECRET_3", "AUTH_TRUST_PROXY",
+        "AUTH_REDIRECT_PROXY_URL", "AUTH_SECRET_1", "AUTH_SECRET_2", "AUTH_SECRET_3",
         "BOOTSTRAP_ADMIN_EMAIL", "BOOTSTRAP_ADMIN_PASSWORD",
         "DIRECT_URL",
         "GOOGLE_ALLOWED_DOMAINS", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
@@ -70,7 +71,7 @@ describe("the groups", () => {
   it("pin the names the run sets", () => {
     expect([...HERMETIC_SET_NAMES].sort()).toEqual(
       [
-        "API_KEY", "AUTH_REGISTRATION", "AUTH_SECRET", "AUTH_TRUST_HOST", "AUTH_URL", "DATABASE_URL", "DB_PROVIDER", "E2E_DATABASE_URL", "NEXTAUTH_SECRET", "NEXTAUTH_URL", "PGLITE_DATA_DIR",
+        "API_KEY", "AUTH_REGISTRATION", "AUTH_SECRET", "AUTH_TRUST_HOST", "AUTH_TRUST_PROXY", "AUTH_URL", "DATABASE_URL", "DB_PROVIDER", "E2E_DATABASE_URL", "NEXTAUTH_SECRET", "NEXTAUTH_URL", "PGLITE_DATA_DIR",
         "SCHEMA_CLASSIFICATION_CATEGORY_FIELD", "SCHEMA_CLASSIFICATION_EXTENSION_KEY", "SCHEMA_CLASSIFICATION_LEVEL_FIELD",
       ].sort(),
     );
@@ -209,9 +210,10 @@ describe("a fake developer environment never reaches a child", () => {
     expect(secondAppEnvironment(base, RUN, "http://localhost:4000").AUTH_REGISTRATION).toBe("open");
   });
 
-  it("the client address of throttling is not trusted in the run, and a developer's own proxy setting does not change that", () => {
-    expect(app.AUTH_TRUST_PROXY).toBe("");
-    expect(appEnvironment(hermeticEnv({ ...DEVELOPER, AUTH_TRUST_PROXY: "1" }), RUN).AUTH_TRUST_PROXY).toBe("");
+  it("the client address (sign-in throttle, REST API rate limit) is the run's own decision: X-Forwarded-For is trusted so each API test has an address of its own, whatever the developer's shell says", () => {
+    expect(app.AUTH_TRUST_PROXY).toBe("1");
+    expect(hermeticEnv({ AUTH_TRUST_PROXY: "0" }).AUTH_TRUST_PROXY).toBeUndefined();
+    expect(appEnvironment(hermeticEnv({ ...DEVELOPER, AUTH_TRUST_PROXY: "0" }), RUN).AUTH_TRUST_PROXY).toBe("1");
     expect(app.GOOGLE_ALLOWED_DOMAINS).toBe("");
   });
 

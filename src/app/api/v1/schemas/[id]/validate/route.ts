@@ -11,13 +11,12 @@
  * ambiguous bare-name reference fails the request with 422 `AMBIGUOUS_REFERENCE` (structured, with the candidates).
  */
 
-import { authenticateRequest } from "@/app/api/v1/middleware";
+import { withApiAuth } from "@/lib/access/api";
 import { checkRateLimit } from "@/app/api/v1/rate-limit";
 import { isUsableId, unusableIdNotFound } from "@/app/api/v1/request";
 import {
   apiSuccess,
   apiError,
-  apiUnauthorized,
   apiServerError,
 } from "@/app/api/v1/error-handler";
 import { getEntityById } from "@/services/entity.service";
@@ -29,26 +28,15 @@ import type {
   PrismaFieldInput,
 } from "@/lib/compiler/compiler.service";
 
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  // Rate limit
-  const rateLimitResponse = checkRateLimit(request);
-  if (rateLimitResponse) return rateLimitResponse;
-
-  // Authenticate
-  const authResult = await authenticateRequest(request);
-  if (!authResult.authenticated || !authResult.context) {
-    return apiUnauthorized();
-  }
-
+// The rate limit comes first, before the credential is looked at (a request without one counts too); then who, which tenant and whether any role
+// reaches `entity.read`; `getEntityById` then answers one NOT_FOUND for an entity that is missing, of another tenant or that no role covers.
+export const POST = withApiAuth<{ id: string }>("entity.read", async (_request, api, { params }) => {
   try {
     const { id } = await params;
     if (!isUsableId(id)) return unusableIdNotFound("entity", id);
 
     // Fetch entity
-    const entityResult = await getEntityById(id, authResult.context);
+    const entityResult = await getEntityById(id, api.ctx);
     if (!entityResult.success) {
       return apiError(entityResult.error);
     }
@@ -103,5 +91,5 @@ export async function POST(
     console.error("POST /api/v1/schemas/:id/validate error:", e);
     return apiServerError();
   }
-}
+}, { before: (request) => checkRateLimit(request) });
 

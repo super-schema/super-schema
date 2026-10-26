@@ -1,28 +1,20 @@
 /**
- * GET /api/v1/schemas — List all entities with basic metadata.
+ * GET /api/v1/schemas — List the entities the caller may read, with basic metadata.
  *
  * Query params: domain, status, search
  * Returns: { success, data, summary }
+ *
+ * Only the entities of the tenant the caller acts in (a session's active tenant, the API key's tenant) that one of the caller's roles covers
+ * (`entity.read`): the service restricts the query to them (a tenant-wide role lists them all, a domain- or product-scoped role only its own).
  */
 
-import { authenticateRequest } from "@/app/api/v1/middleware";
-import {
-  apiSuccess,
-  apiError,
-  apiUnauthorized,
-  apiServerError,
-} from "@/app/api/v1/error-handler";
+import { withApiAuth } from "@/lib/access/api";
+import { apiSuccess, apiError, apiServerError } from "@/app/api/v1/error-handler";
 import { getEntities } from "@/services/entity.service";
 import { optionalParam, queryProblem } from "@/app/api/v1/request";
 import { EntityFiltersSchema } from "@/types/schemas/entity.schema";
 
-export async function GET(request: Request) {
-  // Authenticate
-  const authResult = await authenticateRequest(request);
-  if (!authResult.authenticated || !authResult.context) {
-    return apiUnauthorized();
-  }
-
+export const GET = withApiAuth("entity.read", async (request, api) => {
   try {
     const url = new URL(request.url);
     const bad = queryProblem(url);
@@ -41,7 +33,7 @@ export async function GET(request: Request) {
       });
     }
 
-    const result = await getEntities(parsed.data, authResult.context);
+    const result = await getEntities(parsed.data, api.ctx);
 
     if (!result.success) {
       return apiError(result.error);
@@ -63,4 +55,4 @@ export async function GET(request: Request) {
     console.error("GET /api/v1/schemas error:", e);
     return apiServerError();
   }
-}
+});

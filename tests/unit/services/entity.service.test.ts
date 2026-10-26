@@ -209,7 +209,7 @@ describe("Entity Service", () => {
       const mockEntities = [{ id: "ent-1", name: "Customer" }];
       vi.mocked(prisma.entity.findMany).mockResolvedValue(mockEntities as never);
 
-      const result = await getEntities({ domainId: "dom-1" }, mockCtx);
+      const result = await getEntities({ domainId: "dom-1" }, { ...mockCtx, assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }] });
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -253,32 +253,89 @@ describe("Entity Service", () => {
       });
     });
 
-    it("with no tenant in the context (a caller that is not a page) nothing is restricted, as before", async () => {
-      vi.mocked(prisma.entity.findMany).mockResolvedValue([] as never);
-      await getEntities({}, mockCtx);
-      expect(vi.mocked(prisma.entity.findMany).mock.calls.at(-1)?.[0]?.where).toEqual({});
+    describe("with no tenant in the context (a caller that is not a page): only a platform administrator reads across tenants", () => {
+      it("a platform administrator is not restricted", async () => {
+        vi.mocked(prisma.entity.findMany).mockResolvedValue([] as never);
+        await getEntities({}, { ...mockCtx, assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }] });
+        expect(vi.mocked(prisma.entity.findMany).mock.calls.at(-1)?.[0]?.where).toEqual({});
+      });
+
+      it("anyone else is refused and nothing is read (a context that carries no tenant never means 'every tenant')", async () => {
+        vi.mocked(prisma.entity.findMany).mockClear();
+        for (const assignments of [undefined, [], [{ role: "ADMIN", scope: { kind: "TENANT", tenantId: "tenant-1" } }]] as const) {
+          const result = await getEntities({}, { ...mockCtx, assignments: assignments as ServiceContext["assignments"] });
+          expect(result).toEqual({ success: false, error: { code: "FORBIDDEN", message: "You do not have permission to do this" } });
+        }
+        expect(prisma.entity.findMany).not.toHaveBeenCalled();
+      });
     });
   });
 
-  describe("getEntityById", () => {
-    it("returns entity when found", async () => {
-      vi.mocked(prisma.entity.findUnique).mockResolvedValue({
-        id: "ent-1",
-        name: "Customer",
-      } as never);
+  describe("getEntityById (tenant-scoped, and by role: an entity the caller may not read is a missing one)", () => {
+    const VIEWER_T1: ServiceContext["assignments"] = [{ role: "VIEWER", scope: { kind: "TENANT", tenantId: "tenant-1" } }];
+    const ctxOf = (assignments: ServiceContext["assignments"], tenantId?: string): ServiceContext => ({ ...mockCtx, assignments, ...(tenantId ? { tenantId } : {}) });
+    const row = (over: Record<string, unknown> = {}) => ({
+      id: "ent-1", tenantId: "tenant-1", domainId: "dom-a", productId: "prod-1", name: "Customer", domain: { id: "dom-a" }, fields: [], product: { domainId: "dom-a" }, ...over,
+    });
+    const MISSING = { success: false, error: { code: "NOT_FOUND", message: 'Entity with ID "ent-1" not found', suggestedFix: "Verify the entity ID and try again." } };
 
-      const result = await getEntityById("ent-1", mockCtx);
+    it("returns the entity (and only the entity: not the product it was placed through) to a role that covers it in the tenant in view", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(row() as never);
+      const result = await getEntityById("ent-1", ctxOf(VIEWER_T1, "tenant-1"));
       expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toMatchObject({ id: "ent-1", name: "Customer" });
+        expect(result.data).not.toHaveProperty("product");
+      }
     });
 
-    it("returns not-found error for missing entity", async () => {
+    it("returns not-found for a missing entity", async () => {
       vi.mocked(prisma.entity.findUnique).mockResolvedValue(null);
+      const result = await getEntityById("ent-1", ctxOf(VIEWER_T1, "tenant-1"));
+      expect(result).toEqual(MISSING);
+    });
 
-      const result = await getEntityById("nonexistent", mockCtx);
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe("NOT_FOUND");
+    it("an entity of ANOTHER tenant than the one in view is the very answer of a missing one, whatever role the caller holds there", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(row({ tenantId: "tenant-2" }) as never);
+      const both = [...VIEWER_T1!, { role: "ADMIN", scope: { kind: "TENANT", tenantId: "tenant-2" } }, { role: "ADMIN", scope: { kind: "GLOBAL" } }] as ServiceContext["assignments"];
+      expect(await getEntityById("ent-1", ctxOf(both, "tenant-1"))).toEqual(MISSING);
+    });
+
+    it("a caller with no role over it (none at all, another tenant's, a sibling domain's) gets the same answer", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(row() as never);
+      for (const assignments of [
+        undefined,
+        [],
+        [{ role: "ADMIN", scope: { kind: "TENANT", tenantId: "tenant-2" } }],
+        [{ role: "ADMIN", scope: { kind: "DOMAIN", tenantId: "tenant-1", domainId: "dom-b" } }],
+        [{ role: "ADMIN", scope: { kind: "PRODUCT", tenantId: "tenant-1", domainId: "dom-a", productId: "prod-2" } }],
+      ] as ServiceContext["assignments"][]) {
+        expect(await getEntityById("ent-1", ctxOf(assignments, "tenant-1")), JSON.stringify(assignments)).toEqual(MISSING);
       }
+    });
+
+    it("a domain-scoped role reads the entities of its domain, and a product-level entity whose domain column is empty through its product's domain", async () => {
+      const inDomain: ServiceContext["assignments"] = [{ role: "VIEWER", scope: { kind: "DOMAIN", tenantId: "tenant-1", domainId: "dom-a" } }];
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(row() as never);
+      expect((await getEntityById("ent-1", ctxOf(inDomain, "tenant-1"))).success).toBe(true);
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(row({ domainId: null }) as never);
+      expect((await getEntityById("ent-1", ctxOf(inDomain, "tenant-1"))).success).toBe(true);
+    });
+
+    it("a tenant-level entity is read through a tenant or platform role only, never through a domain role", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(row({ domainId: null, productId: null, product: null }) as never);
+      const inDomain: ServiceContext["assignments"] = [{ role: "ADMIN", scope: { kind: "DOMAIN", tenantId: "tenant-1", domainId: "dom-a" } }];
+      expect(await getEntityById("ent-1", ctxOf(inDomain, "tenant-1"))).toEqual(MISSING);
+      expect((await getEntityById("ent-1", ctxOf(VIEWER_T1, "tenant-1"))).success).toBe(true);
+    });
+
+    it("with no tenant in the context the caller's roles decide alone: a platform administrator reads any, a tenant role its own tenant only, nobody else", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(row() as never);
+      expect((await getEntityById("ent-1", ctxOf([{ role: "ADMIN", scope: { kind: "GLOBAL" } }]))).success).toBe(true);
+      expect((await getEntityById("ent-1", ctxOf(VIEWER_T1))).success).toBe(true);
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(row({ tenantId: "tenant-2" }) as never);
+      expect(await getEntityById("ent-1", ctxOf(VIEWER_T1))).toEqual(MISSING);
+      expect(await getEntityById("ent-1", ctxOf(undefined))).toEqual(MISSING);
     });
   });
 

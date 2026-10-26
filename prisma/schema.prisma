@@ -782,12 +782,13 @@ model WebhookEndpoint {
   events    String[]
   secret    String
   active    Boolean           @default(true)
-  createdBy String
+  // The user who created it. Null for an endpoint the REST API key made: the key is a service principal and no row of `users` (KD-024).
+  createdBy String?
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
   deliveries WebhookDelivery[]
 
-  creator User @relation("WebhookCreator", fields: [createdBy], references: [id])
+  creator User? @relation("WebhookCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@map("webhook_endpoints")
 }

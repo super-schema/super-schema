@@ -432,11 +432,14 @@ route (the spec reads `src/app/api` and fails on a route it does not know), sche
 `files`, `resolution`, the 422 `AMBIGUOUS_REFERENCE` error and its fix), the rate limit, webhooks, notifications, event specs, and what a bad request gets
 (a body that is not JSON, several megabytes, a NUL byte in an id, a wrong method: never a 500, never a stack trace).
 
-Three callers (`tests/e2e/helpers/api.ts`): the admin's saved session (a VIEWER on this API, always), the run's API key (`Authorization: Bearer`: the release runner
-makes one up per run, starts the app with it as `API_KEY` and gives the browser run the same value as `E2E_API_KEY`; against a server you started yourself,
-set both to one value), and nobody. Every test sends a client address of its own in `X-Forwarded-For`, so the rate limit (100 requests a minute per
-address) never couples two tests. What the spec found and could not fix is in [known-defects.md](known-defects.md) (KD-024 to KD-028): webhooks cannot be
-created by anyone, a session is a viewer, the schemas routes are not tenant scoped, the webhook list carries every endpoint's secret, the rate limit trusts a header.
+Three callers (`tests/e2e/helpers/api.ts`): the admin's saved session (the seeded global administrator: a session carries the signed-in user's real roles, so the admin's login
+may use the webhook routes and a viewer's may not), the run's API key (`Authorization: Bearer`: a service principal acting as an `ADMIN` in the default tenant, `API_KEY_ROLE` and
+`API_KEY_TENANT_ID` blank; the release runner makes the key up per run, starts the app with it as `API_KEY` and gives the browser run the same value as `E2E_API_KEY`; against a
+server you started yourself, set both to one value), and nobody; the webhook test also signs in a viewer and a user with no role, made for it. Every test sends a client address
+of its own in `X-Forwarded-For` (the run sets `AUTH_TRUST_PROXY=1`, without which the app ignores the header), so the rate limit (100 requests a minute per address) never couples
+two tests. What the spec found and could not fix is in [known-defects.md](known-defects.md) (KD-027: a webhook URL has no policy; KD-028: the limit is per process). The rest of what it
+first found was fixed with the access-control work: a key can create an endpoint, a session carries its roles, the schemas routes are scoped to a tenant and a role, no list
+carries a signing secret, the rate limit trusts the proxy's word only and answers in the API's envelope.
 
 ```bash
 npm run test:e2e:release -- --tier regression --project chromium --reuse-build -- tests/e2e/api-v1.spec.ts

@@ -7,8 +7,6 @@
 
 import { NextResponse } from "next/server";
 import { runHealthCheck } from "@/services/health.service";
-import type { ServiceContext } from "@/types/service-context";
-import { prisma } from "@/lib/db";
 
 /** What an unauthenticated caller is told when the check itself could not run: nothing of the cause (it is logged). */
 function unavailable() {
@@ -16,16 +14,11 @@ function unavailable() {
 }
 
 export async function GET() {
-  // System context — no user session required
-  const ctx: ServiceContext = {
-    userId: "system",
-    userRole: "ADMIN",
-    prisma,
-  };
-
+  // The probe is public on purpose and has no caller: it runs with no context at all (no pretended administrator), and the default
+  // `detail: "public"` keeps every package name and version out of the answer.
   let result: Awaited<ReturnType<typeof runHealthCheck>>;
   try {
-    result = await runHealthCheck(ctx);
+    result = await runHealthCheck({});
   } catch (error) {
     console.error("[health] the health check could not run", error);
     return unavailable();

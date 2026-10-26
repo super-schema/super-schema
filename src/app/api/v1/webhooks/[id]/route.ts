@@ -1,58 +1,39 @@
 /**
- * PUT    /api/v1/webhooks/:id — Update a webhook endpoint (Admin only).
- * DELETE /api/v1/webhooks/:id — Delete a webhook endpoint (Admin only).
+ * PUT    /api/v1/webhooks/:id — Update a webhook endpoint (platform administrators only).
+ * DELETE /api/v1/webhooks/:id — Delete a webhook endpoint (platform administrators only).
+ *
+ * See ./route.ts: endpoints are a platform item. The answer of an update carries no signing secret.
  */
 
-import { authenticateRequest } from "@/app/api/v1/middleware";
-import {
-  apiSuccess,
-  apiError,
-  apiUnauthorized,
-  apiServerError,
-} from "@/app/api/v1/error-handler";
+import { withApiAuth } from "@/lib/access/api";
+import { apiSuccess, apiError, apiServerError } from "@/app/api/v1/error-handler";
 import { isUsableId, readJsonBody, unusableIdNotFound } from "@/app/api/v1/request";
 import { updateEndpoint, deleteEndpoint } from "@/services/webhook.service";
 
-export async function PUT(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const authResult = await authenticateRequest(request);
-  if (!authResult.authenticated || !authResult.context) {
-    return apiUnauthorized();
-  }
-
+export const PUT = withApiAuth<{ id: string }>("platform.admin", async (request, api, { params }) => {
   try {
     const { id } = await params;
     if (!isUsableId(id)) return unusableIdNotFound("webhook", id);
     const body = await readJsonBody(request);
     if (!body.ok) return body.response;
-    const result = await updateEndpoint(id, body.body as Parameters<typeof updateEndpoint>[1], authResult.context);
+    const result = await updateEndpoint(id, body.body as Parameters<typeof updateEndpoint>[1], api.ctx);
     if (!result.success) return apiError(result.error);
     return apiSuccess(result.data);
   } catch (e) {
     console.error("PUT /api/v1/webhooks/:id error:", e);
     return apiServerError();
   }
-}
+});
 
-export async function DELETE(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const authResult = await authenticateRequest(request);
-  if (!authResult.authenticated || !authResult.context) {
-    return apiUnauthorized();
-  }
-
+export const DELETE = withApiAuth<{ id: string }>("platform.admin", async (_request, api, { params }) => {
   try {
     const { id } = await params;
     if (!isUsableId(id)) return unusableIdNotFound("webhook", id);
-    const result = await deleteEndpoint(id, authResult.context);
+    const result = await deleteEndpoint(id, api.ctx);
     if (!result.success) return apiError(result.error);
     return apiSuccess({ deleted: true });
   } catch (e) {
     console.error("DELETE /api/v1/webhooks/:id error:", e);
     return apiServerError();
   }
-}
+});

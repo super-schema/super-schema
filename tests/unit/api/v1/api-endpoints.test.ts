@@ -80,6 +80,9 @@ import { WEBHOOK_EVENT_TYPES } from "@/types/schemas/webhook";
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Next hands every route handler its context (`params`); the list routes have none to read. */
+const NO_PARAMS = { params: Promise.resolve({}) };
+
 function makeRequest(
   url: string,
   options: { method?: string; headers?: Record<string, string> } = {}
@@ -257,7 +260,7 @@ describe("API v1", () => {
   describe("Authentication", () => {
     it("returns 401 without auth header", async () => {
       const request = makeRequest("http://localhost/api/v1/schemas");
-      const response = await schemasListGet(request as never);
+      const response = await schemasListGet(request as never, NO_PARAMS);
       const body = await response.json();
 
       expect(response.status).toBe(401);
@@ -269,7 +272,7 @@ describe("API v1", () => {
       const request = makeRequest("http://localhost/api/v1/schemas", {
         headers: { authorization: "Bearer wrong-key" },
       });
-      const response = await schemasListGet(request as never);
+      const response = await schemasListGet(request as never, NO_PARAMS);
       const body = await response.json();
 
       expect(response.status).toBe(401);
@@ -285,7 +288,7 @@ describe("API v1", () => {
       const request = makeAuthenticatedRequest(
         "http://localhost/api/v1/schemas"
       );
-      const response = await schemasListGet(request as never);
+      const response = await schemasListGet(request as never, NO_PARAMS);
       const body = await response.json();
 
       expect(response.status).toBe(200);
@@ -307,7 +310,7 @@ describe("API v1", () => {
       const request = makeAuthenticatedRequest(
         "http://localhost/api/v1/schemas"
       );
-      const response = await schemasListGet(request as never);
+      const response = await schemasListGet(request as never, NO_PARAMS);
       const body = await response.json();
 
       expect(response.status).toBe(200);
@@ -327,7 +330,7 @@ describe("API v1", () => {
       const request = makeAuthenticatedRequest(
         "http://localhost/api/v1/schemas"
       );
-      const response = await schemasListGet(request as never);
+      const response = await schemasListGet(request as never, NO_PARAMS);
       const body = await response.json();
 
       expect(response.status).toBe(200);
@@ -337,7 +340,7 @@ describe("API v1", () => {
     it("a NUL byte in any filter is a 400 VALIDATION_ERROR and the service is not asked (it used to reach the database: a 500)", async () => {
       for (const query of ["search=%00", "domain=a%00b", "status=%00", "search=abc%00"]) {
         vi.mocked(getEntities).mockClear();
-        const response = await schemasListGet(makeAuthenticatedRequest(`http://localhost/api/v1/schemas?${query}`) as never);
+        const response = await schemasListGet(makeAuthenticatedRequest(`http://localhost/api/v1/schemas?${query}`) as never, NO_PARAMS);
         expect(response.status, query).toBe(400);
         expect((await response.json()).error.code).toBe("VALIDATION_ERROR");
         expect(getEntities).not.toHaveBeenCalled();
@@ -346,7 +349,7 @@ describe("API v1", () => {
 
     it("an empty filter is no filter: ?status=, ?domain= and ?search= are the unfiltered list, not an error", async () => {
       vi.mocked(getEntities).mockResolvedValue({ success: true, data: [] });
-      const response = await schemasListGet(makeAuthenticatedRequest("http://localhost/api/v1/schemas?status=&domain=&search=") as never);
+      const response = await schemasListGet(makeAuthenticatedRequest("http://localhost/api/v1/schemas?status=&domain=&search=") as never, NO_PARAMS);
       expect(response.status).toBe(200);
       expect(getEntities).toHaveBeenCalledWith({ domainId: undefined, status: undefined, search: undefined }, expect.any(Object));
     });
@@ -360,7 +363,7 @@ describe("API v1", () => {
       const request = makeAuthenticatedRequest(
         "http://localhost/api/v1/schemas?domain=d1&status=ACTIVE&search=cust"
       );
-      await schemasListGet(request as never);
+      await schemasListGet(request as never, NO_PARAMS);
 
       expect(getEntities).toHaveBeenCalledWith(
         {
@@ -684,7 +687,7 @@ describe("API v1", () => {
       const request = makeAuthenticatedRequest(
         "http://localhost/api/v1/schemas"
       );
-      const response = await schemasListGet(request as never);
+      const response = await schemasListGet(request as never, NO_PARAMS);
       const body = await response.json();
 
       expect(body).toHaveProperty("success", true);
@@ -693,7 +696,7 @@ describe("API v1", () => {
 
     it("all error responses have { success: false, error: { code, message } }", async () => {
       const request = makeRequest("http://localhost/api/v1/schemas");
-      const response = await schemasListGet(request as never);
+      const response = await schemasListGet(request as never, NO_PARAMS);
       const body = await response.json();
 
       expect(body).toHaveProperty("success", false);

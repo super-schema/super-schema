@@ -16,7 +16,7 @@ Defects of the product that the browser suite (`tests/e2e`, see `e2e.md`) found 
 
 A pin must fail ONLY on its stated assertion. A bare `test.fail()` at the top of a test passes (as the expected failure) for any reason: a missing fixture, a server that did not
 answer, a page that was slow. So the preconditions of a pin (the API key is accepted, the 25 rows are rendered) run FIRST, and `test.fail()` is called after them, immediately
-before the one assertion that is the defect (`api-v1.spec.ts`, KD-024; `discovery.spec.ts`, KD-019). The marker still belongs to the title of its test, which the guard reads.
+before the one assertion that is the defect (`discovery.spec.ts`, KD-019). The marker still belongs to the title of its test, which the guard reads.
 
 An entry gives: what a user sees, how to see it, where it is, the suspected cause, and what fixing it costs.
 
@@ -219,58 +219,23 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - where: `src/app/(dashboard)/governance/actions.ts` (`getGovernanceRequestsAction`), `src/services/governance.service.ts` (`getAllRequests`).
 - cost to fix: a narrower impact report for the roles below steward (the consumers' owners' e-mails are the sensitive part); a product decision, not a policy one.
 
-## KD-024: no caller can create a webhook endpoint through the REST API
+## KD-027: the URL of a webhook endpoint has no policy
 
-- status: open
-- symptom: `POST /api/v1/webhooks` answers 403 to a session (a session is a VIEWER on this API, KD-025) and 500 `INTERNAL_ERROR` to the API key: the
-  key's principal is the user id `api-key-user`, which is no row of `users`, and `webhook_endpoints.createdBy` is a foreign key to `users`, so the
-  insert throws. Webhook endpoints that exist can be listed, changed and deleted by the key (the specs write the row); nothing can make one.
-- where: `src/app/api/v1/middleware.ts` (`authenticateWithApiKey`: `userId: "api-key-user"`), `src/services/webhook.service.ts` (`createEndpoint`:
-  `createdBy: ctx.userId`), `prisma/schema.prisma` (`WebhookEndpoint.creator`).
-- pinned by: `api-v1.spec.ts`, "a key creates an endpoint".
-- cost to fix: decide who the API key acts as (a real service user row, or `createdBy` optional with a migration), and give a session its real role (KD-025)
-  so an admin can create one from the app's own login; then delete the pin.
+- status: no-test (a security note, not something a test can call wrong; the other half of this entry, the signing secret in every list, is fixed: the list and an update carry no `secret`, only the answer of the creation does, and `api-v1.spec.ts` pins that)
+- symptom: the endpoint URL is any URL that `z.string().url()` accepts: `http://127.0.0.1:5432`, a cloud metadata address and `file:` URLs are all accepted, and
+  `dispatchEvent` then makes the server `fetch` it (a server-side request forgery surface for whoever may create an endpoint: a platform administrator or an
+  `ADMIN` API key). Endpoints are global: they belong to no tenant.
+- where: `src/services/webhook.service.ts` (`CreateWebhookEndpointInputSchema` in `src/types/schemas/webhook.ts`, `sendWebhookRequest`).
+- cost to fix: allow `https:` only (and `http:` for a configured allow-list), refuse private and link-local addresses at the time of the request, not only of the URL's text.
 
-## KD-025: a session is a viewer on the REST API, the admin's own login included
+## KD-028: the REST API's rate limit is per process, and only three routes have one
 
-- status: no-test (a policy of the API that the access-control work will change; `api-v1.spec.ts` CHARACTERIZES it: its test says the admin's session is
-  refused by each of the five webhook endpoints, so the day a session gets its real role that test fails and is edited with this entry)
-- symptom: `authenticateRequest` gives a session `userRole: "VIEWER"` whoever signed in. The webhook endpoints are for ADMIN only, so a browser session
-  gets 403 on them; only the API key (an ADMIN) can use them. Registration is open, so a stranger's session is as much a VIEWER as the seeded admin's.
-- where: `src/app/api/v1/middleware.ts` (`authenticateWithSession`).
-- cost to fix: resolve the user's effective role (`rbac.service.ts`) there, with tenant- and domain-scoped roles; this is the access-control work.
-
-## KD-026: the schemas routes are not tenant scoped
-
-- status: no-test (a policy the user will change with access control; `api-v1.spec.ts` CHARACTERIZES it: an entity of another tenant is listed by
-  `GET /api/v1/schemas` and returned by `GET /api/v1/schemas/:id` to a session that views the default tenant, so a fix edits that test with this entry)
-- symptom: `GET /api/v1/schemas` lists the entities of every tenant, `GET /api/v1/schemas/:id`, `/emit` and `/validate` accept the id of any tenant's
-  entity (the emission keeps its reference closure inside the entity's own tenant, so a foreign entity is emitted, not mixed with the caller's). The
-  detail answer carries `tenantId`, `ownerId` and the whole row. The event-spec route, by contrast, is scoped (a foreign id is the same 404 as an unknown one).
-- where: `src/services/entity.service.ts` (`getEntities`, `getEntityById`: no tenant in the query), the four routes under `src/app/api/v1/schemas`.
-- cost to fix: the caller's tenant (a session's active tenant, the key's configured one) in `getEntities` / `getEntityById`, as `getActiveTenantId` does for event specs.
-
-## KD-027: the webhook list returns every endpoint's signing secret, and the URL has no policy
-
-- status: no-test (a security note, not something a test can call wrong: `api-v1.spec.ts` shows the list's fields, secret included)
-- symptom: `GET /api/v1/webhooks` carries `secret` (the HMAC key of `X-Webhook-Signature`) of every endpoint, on every call, to any ADMIN caller; the
-  creation answer is the only one that would need it once. The endpoint URL is any URL that `z.string().url()` accepts: `http://127.0.0.1:5432`,
-  a cloud metadata address and `file:` URLs are all accepted, and `dispatchEvent` then makes the server `fetch` it (a server-side request forgery
-  surface for whoever holds the API key). Endpoints are global: they belong to no tenant and no user.
-- where: `src/services/webhook.service.ts` (`toWebhookEndpoint`, `CreateWebhookEndpointInputSchema` in `src/types/schemas/webhook.ts`, `sendWebhookRequest`).
-- cost to fix: leave `secret` out of everything but the creation answer; allow `https:` only (and `http:` for a configured allow-list), refuse private and
-  link-local addresses at the time of the request, not only of the URL's text.
-
-## KD-028: the rate limit is keyed by a header the client sends, and its answer has an envelope of its own
-
-- status: no-test (`api-v1.spec.ts` CHARACTERIZES both in its rate-limit test: 429 with `{ error, message, retryAfter }`, and a second `X-Forwarded-For` has its own allowance)
-- symptom: `emit`, `validate` and `event-specs` allow 100 requests a minute per client address, read from `X-Forwarded-For` (then `X-Real-IP`), which a caller
-  that does not sit behind a proxy that overwrites it can set to anything: another value is another client. The other routes have no limit. The 429
-  body is `{ error: "Too Many Requests", message, retryAfter }`, while every other API answer is `{ success: false, error: { code, message } }`; the
-  app's own JSON endpoints (`/api/tenants` ...) answer 401 as `{ error: "Not authenticated" }`, a third shape. The limiter is in memory, per process.
-- where: `src/app/api/v1/rate-limit.ts`, `src/middleware.ts`.
-- cost to fix: take the address from the platform (the connection, or a trusted-proxy count), give the 429 the standard envelope, and a shared store when there is
-  more than one instance.
+- status: no-test (a limit of the design: the limiter is a `Map` in the process, and nothing in the suite can start a second instance to show it)
+- symptom: `emit`, `validate` and `event-specs` allow 100 requests a minute per client address; the other routes have no limit, and the allowance is kept in memory, so
+  several instances each allow 100. (Fixed: the address is `X-Forwarded-For` ONLY when `AUTH_TRUST_PROXY=1`, as for the sign-in throttle, so a header a caller makes up buys no
+  fresh allowance, and the 429 is the API's own envelope, `{ success: false, error: { code: "RATE_LIMITED", details: { retryAfter } } }`; `tests/unit/api/v1/rate-limit.test.ts` and `api-v1.spec.ts`.)
+- where: `src/app/api/v1/rate-limit.ts`.
+- cost to fix: a shared store when there is more than one instance (`auth_events` is the pattern the sign-in throttle uses), and a limit on the routes that have none.
 
 ## KD-029: a union of entities is not followed by the reference closure
 
@@ -331,14 +296,17 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   and the glossary ask it before they read or write (domain- and product-scoped roles are judged at the row's own domain and product).
   Fixed since (access-control Task 5b, the second half): the product, event, trait, usage, governance, retention, deployment-overview, admin (users, roles, domains, platform items) and
   type-mapping actions and services ask it too, so `PENDING_TASK_5B` of `tests/unit/access/deny-by-default.test.ts` is EMPTY: every server action is guarded or public, and no service or action reads
-  the platform role label (`no-role-label.test.ts` lists what still mentions it: the API v1 context builders and the dead oRPC routers). Lists across the tenant are filtered to what the caller's roles
-  cover, in the query. What is NOT yet a boundary, and is listed by name in `PENDING_TASK_6`: the `/api/*` and `/api/v1` routes (a session on `/api/v1` is still a viewer, the API key still a platform
-  administrator), and every server-component loader that reads the database directly except the entity workspace. They still check the ACTIVE TENANT only or nothing, so a user with any role in a tenant
-  can still read through them what the old rules allowed there. KD-016 and KD-020 must not be read as a boundary either.
+  the platform role label (`no-role-label.test.ts` lists what still mentions it: the dead oRPC routers). Lists across the tenant are filtered to what the caller's roles
+  cover, in the query.
+  Fixed since (access-control Task 6, the REST API): every `/api/v1/*` route asks `withApiAuth(action, handler)` (`src/lib/access/api.ts`) before it reads anything: a session carries the signed-in user's real
+  roles (it used to be a viewer, always), the API key is a service principal that acts in `API_KEY_TENANT_ID` with `API_KEY_ROLE`, the entity routes answer for the acting tenant and the roles that cover
+  the entity (`getEntities`, `getEntityById`), the webhook routes need a platform administrator, and a user with no role is told 404 or 403, never a 500. What is NOT yet a boundary: the app's own
+  `/api/*` routes and every server-component loader that reads the database directly except the entity workspace (listed by name in `PENDING_TASK_6`). They still check the ACTIVE TENANT only or nothing,
+  so a user with any role in a tenant can still read through them what the old rules allowed there. KD-016 and KD-020 must not be read as a boundary either.
   The first write-up of this entry (and the Task 3 report) said a role-less or disabled user reached nothing through the older actions: that was wrong. Until Task 5 they reached,
   with a valid session and no role, `getDeploymentOverviewAction` and `getDomainsAction` (every tenant's entity names, versions and domains), the eight glossary actions (which ran as a
   hard-coded AUTHOR for ANY session), the three import actions (the converter, the compiler and an outbound fetch on their say-so), and `/api/v1/*` (a session there is a VIEWER). The
-  Domains list, the three import actions, the glossary and `getDeploymentOverviewAction` are closed now; `/api/v1` is still open (Task 6), and registration was open until Task 4.
+  Domains list, the three import actions, the glossary, `getDeploymentOverviewAction` and `/api/v1` are closed now, and registration was open until Task 4.
   `/api/ai/generate-entity` checks that the domain it is given belongs to the tenant being viewed (an id of another tenant answers like an unknown one), which is the same soft rule.
 - where: `src/lib/active-tenant.ts`, `setActiveTenantAction`, `src/app/api/tenants/route.ts`.
 - cost to fix: the rest of the access-control work: every action, route and page loader asks `authorize(action, resource)` (Tasks 5 and 6), so the role and the scope decide, not the tenant alone.
@@ -354,15 +322,15 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - cost to fix: wrap both in `withAudit` with an action name of their own (`ROLE_ASSIGNED` / `ROLE_REMOVED`, the user and the role in the details), and show them in the Change Log
   (KD-007 is about how that tab names actions).
 
-## KD-036: three specs pass today because they assert the defects they characterize: a green run does not prove those defects are gone
+## KD-036: two specs pass today because they assert the defects they characterize: a green run does not prove those defects are gone
 
 - status: no-test (by construction: this is a statement about how to read a green run, not a defect of the product)
-- symptom: `api-v1.spec.ts` (KD-025, KD-026 and KD-027 as tests named `CHARACTERIZED (KD-nnn): ...`, KD-028 in its rate-limit test), `glossary-lineage.spec.ts` (KD-018: the domain tabs are the domains of what
+- symptom: `glossary-lineage.spec.ts` (KD-018: the domain tabs are the domains of what
   is listed) and `type-mappings.spec.ts` (KD-013: the reference has no row for OpenAPI 3, JSON Schema and the others) assert the CURRENT behaviour as if it were the expected one, and pass BECAUSE the
-  defect is there. When one of those defects is fixed, its assertion fails, which is the signal to change it (and to delete the entry). Until then a green nightly says "the behaviour is unchanged",
+  defect is there. (`api-v1.spec.ts` was the third: its characterizations of KD-025, KD-026 and KD-027 and the rate-limit test of KD-028 were rewritten with the access-control work, which fixed what they pinned.) When one of those defects is fixed, its assertion fails, which is the signal to change it (and to delete the entry). Until then a green nightly says "the behaviour is unchanged",
   not "the product is right". `tests/unit/e2e-suite-guard.test.ts` checks the `test.fail` / `test.fixme` / `test.skip` markers against this file; it does not check a `CHARACTERIZED` title or a comment
   that names an id, so a characterization of an id this file does not carry, or of one that was fixed, is found by reading, not by the guard.
-- where: `tests/e2e/api-v1.spec.ts`, `tests/e2e/glossary-lineage.spec.ts`, `tests/e2e/type-mappings.spec.ts`.
+- where: `tests/e2e/glossary-lineage.spec.ts`, `tests/e2e/type-mappings.spec.ts`.
 - cost to fix: have the guard read `CHARACTERIZED (KD-nnn)` titles like the other markers (the id must be an entry of this file with a status other than `open`).
 
 ## KD-037: the visual snapshots were made on arm64 and the accessibility baseline on macOS, and neither has been measured on CI
@@ -453,3 +421,14 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   the referenced version's stored content into the event's own emission. A domain-scoped author who learns an id from outside their scope can therefore read what the pin resolves to through the event's preview.
 - where: `src/services/events/event.service.ts` (`updateEventDocument`, the reference and pin validation), `src/services/events/event-publish.service.ts`.
 - cost to fix: pass the caller's assignments into the document validation and refuse a pin or reference that no role of theirs covers (`entity.read` / `event.read`), the way the loaders do.
+
+## KD-045: an entity's emission includes the entities it references, whether or not the caller may read them
+
+- status: no-test (a policy gap found while scoping the REST API; the reference closure is built inside the entity's own tenant and knows nothing of the caller's roles)
+- symptom: `POST /api/v1/schemas/:id/emit` and `/validate`, and the emission preview of the entity page, require `entity.read` over the ENTITY asked for, and then emit it together with everything it
+  references (one file per entity, in `files` and `output`). A caller whose role is scoped to one domain or product (`API_KEY_ROLE=VIEWER` is tenant-wide, so it is not affected; a domain- or
+  product-scoped user is) who can read entity A, which references entity B of another domain, therefore receives B's generated schema in the emission of A. A tenant-wide role reads every entity of the
+  tenant, so for it the closure shows nothing it could not read.
+- where: `src/lib/emission/emission.service.ts` (`emitTargetsForEntity`), `src/lib/references/closure.ts` (the closure is loaded by tenant, not by what the caller may read).
+- cost to fix: pass the caller's assignments into the closure loader and either refuse the emission (a 422 naming the unreadable reference as unresolved) or emit the reference as an opaque type, the way a
+  dangling reference is emitted (KD-031); a product decision between the two.

@@ -216,8 +216,14 @@ async function defaultEmitterCheck(): Promise<ComponentStatus> {
 // checkDatabase
 // ---------------------------------------------------------------------------
 
+/**
+ * The probes read nothing of who asks: the unauthenticated liveness endpoint runs them with no caller at all (`{}`), the administrators' view
+ * with their context. A caller is never needed to RUN a probe; what is shown of the result (`detail`) is the caller's to decide (`options.detail`).
+ */
+export type HealthCaller = Partial<ServiceContext>;
+
 export async function checkDatabase(
-  _ctx: ServiceContext
+  _ctx: HealthCaller
 ): Promise<ComponentStatus> {
   try {
     return await dbChecker();
@@ -232,7 +238,7 @@ export async function checkDatabase(
 // ---------------------------------------------------------------------------
 
 export async function checkCompiler(
-  _ctx: ServiceContext
+  _ctx: HealthCaller
 ): Promise<ComponentStatus> {
   try {
     return await compilerChecker();
@@ -247,7 +253,7 @@ export async function checkCompiler(
 // ---------------------------------------------------------------------------
 
 export async function checkEmitters(
-  _ctx: ServiceContext
+  _ctx: HealthCaller
 ): Promise<ComponentStatus> {
   try {
     return await emitterChecker();
@@ -275,7 +281,7 @@ export interface HealthCheckOptions {
  * makes the overall status degraded, never unhealthy: an orchestrator that gates readiness on the endpoint must not take a pod out for it.
  */
 export async function runHealthCheck(
-  ctx: ServiceContext,
+  ctx: HealthCaller,
   options: HealthCheckOptions = {}
 ): Promise<Result<HealthCheckResponse>> {
   const [database, compiler, emitters] = await Promise.all([

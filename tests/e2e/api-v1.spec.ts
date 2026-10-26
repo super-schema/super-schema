@@ -2,23 +2,26 @@
  * The REST API (src/app/api/v1/**, and the JSON endpoints under src/app/api/*) over HTTP, with Playwright's `request` (no browser,
  * except where a second user has to sign in): status codes AND bodies, who may call what, and what a bad request gets back.
  *
- * Who calls (helpers/api.ts): the admin's saved session (a VIEWER on this API, always), the run's API key (`Authorization: Bearer`,
- * an ADMIN; the release runner makes the key up per run), and nobody. Every test sends a client address of its own, so the rate limit
- * (100 requests a minute per address, on emit / validate / event-specs) never couples two tests.
+ * Who calls (helpers/api.ts): the admin's saved session (the seeded GLOBAL administrator: a session carries the user's real roles), the run's API key
+ * (`Authorization: Bearer`; a service principal that acts as an ADMIN in the default tenant, `API_KEY_ROLE` / `API_KEY_TENANT_ID` blank; the release
+ * runner makes the key up per run), users the spec makes itself (a user with no role, a viewer), and nobody. Every test sends a client address of its own
+ * (the run trusts X-Forwarded-For: AUTH_TRUST_PROXY=1), so the rate limit (100 requests a minute per address, on emit / validate / event-specs) never couples
+ * two tests.
  *
  *   health         unauthenticated, 200 for healthy and degraded, no internals
  *   docs           /api/v1/docs is a valid OpenAPI 3 document, names every route group, and every documented operation exists
  *   authentication every non-public route (found by reading src/app/api, so a new route fails until it is listed here) answers 401 JSON
  *                  without a credential; a wrong key is refused even with a session; the middleware's own 401 for the other JSON endpoints
- *   schemas        list (filters, shape), detail, unknown / hostile ids, methods; CHARACTERIZES that no route is tenant scoped (KD-026)
+ *   schemas        list (filters, shape), detail, unknown / hostile ids, methods; another tenant's entity is not listed and is the 404 of a missing one
  *   emit/validate  the shape of an emission, the closure `files` and `resolution`, the 422 AMBIGUOUS_REFERENCE error and its fix, the rate limit
- *   webhooks       endpoints are admin-only: the session is refused (KD-025), no one can create one (KD-024, pinned); the rest through rows
+ *   webhooks       platform administrators only: the admin's session and the key use them, a viewer and a user with no role are refused; a key can create
+ *                  one; no list carries a secret; the rest through rows
  *   notifications  per-user list, filters, pages, counts, mark-read, mark-all-read, other users' rows; a second user signs in for it
  *   event-specs    404 for an unknown id and for another tenant's (the same answer), bad parameters, a draft, no published version
  *   hardening      a body that is not JSON, an oversized body, ids that look like SQL / operators / NUL, wrong methods, nothing internal in an error
  *
  * Where the API had a bug the test came first and the fix with it (a body that is not JSON, an unknown `status` filter, a NUL byte in an id,
- * an unknown action, deliveries of an unknown endpoint); what stays open is in docs/testing/known-defects.md (KD-024 .. KD-028).
+ * an unknown action, deliveries of an unknown endpoint); what stays open is in docs/testing/known-defects.md.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -31,6 +34,7 @@ import {
   createEntityInProduct, createEventSpecInProduct, createFieldRow, createForeignTenantSpec, createNotifications, createProductInDomain,
   createSecondTenant, createUserRow, createUserWithPassword, createWebhookDeliveryRows, createWebhookRow, deleteForeignTenantSpec, deleteTenantWithDomain,
   deleteUsersByEmail, deleteWebhookRows, createEntityInTenant, notificationReadFlags, setFieldDecorators, webhookRow, webhookRowState, pg,
+  activeTenantId, grantRoleRow, seededOwnerId,
   type ForeignTenantSpec,
 } from "./helpers/db";
 import { SCHEMA_TARGETS_FOR_TESTS } from "./helpers/targets";
@@ -64,7 +68,8 @@ interface ValidateData {
   summary: { totalTargets: number; validCount: number; warningCount: number; invalidCount: number };
   ci: { pass: boolean; summary: string };
 }
-interface Webhook { id: string; url: string; events: string[]; secret: string; active: boolean; createdBy: string; createdAt: string; updatedAt: string }
+/** An endpoint as the API answers: the signing `secret` is in the answer of the creation only; `createdBy` is null for an endpoint the key made. */
+interface Webhook { id: string; url: string; events: string[]; secret?: string; active: boolean; createdBy: string | null; createdAt: string; updatedAt: string }
 interface Delivery { id: string; endpointId: string; event: string; payload: Record<string, unknown>; statusCode: number | null; error: string | null; attempt: number; nextRetryAt: string | null; deliveredAt: string }
 interface NotificationItem { id: string; userId: string; type: string; title: string; body: string; entityRef: Record<string, unknown>; read: boolean; createdAt: string }
 interface NotificationList { notifications: NotificationItem[]; unreadCount: number }
@@ -513,19 +518,24 @@ test.describe("schemas: list and detail", () => {
 });
 
 test.describe("schemas: tenants", () => {
-  test("CHARACTERIZED (KD-026): the schemas routes are not tenant scoped, an entity of another tenant is listed and readable", { tag: ["@regression"] }, async ({ api }) => {
-    // The session below views the default tenant. These are the routes' policy today (the user will add access control later); when a
-    // route starts to scope by tenant these assertions change together with KD-026.
+  test("the schemas routes are scoped to the tenant the caller acts in: an entity of another tenant is not listed and is the 404 of a missing id, on every route, for the session (even a platform administrator's) and for the key", { tag: ["@regression"] }, async ({ api }) => {
+    // The session below views the default tenant and the key acts in it. The entity lives in a second tenant (KD-026: these routes used to list it and return it whole).
     const other = await createSecondTenant();
     const name = unique("OtherTenant");
     try {
       const entity = await createEntityInTenant(other.tenantId, name);
       for (const caller of [api.session, api.key]) {
         const list = await expectApiSuccess<SchemaListItem[]>(await caller.get(`${API}/schemas?search=${name}`));
-        expect(list.data.map((e) => e.id), "the list is scoped to a tenant now: edit this test and KD-026").toEqual([entity.id]);
-        expect(list.data[0].domainId).toBeNull(); // a tenant-level entity
-        const detail = await expectApiSuccess<{ tenantId: string; name: string }>(await caller.get(`${API}/schemas/${entity.id}`));
-        expect(detail.data).toMatchObject({ name, tenantId: other.tenantId });
+        expect(list.data, "another tenant's entity is listed").toEqual([]);
+        const foreign = await expectApiError(await caller.get(`${API}/schemas/${entity.id}`), 404, "NOT_FOUND");
+        const missing = await expectApiError(await caller.get(`${API}/schemas/${unique("no-such-entity-")}`), 404, "NOT_FOUND");
+        // The very answer of a missing id (only the id in the message differs): nothing says the entity exists in a tenant that is not in view.
+        expect(foreign.message.replace(entity.id, "<id>")).toBe(missing.message.replace(/"[^"]+"/, '"<id>"'));
+        expect(foreign.suggestedFix).toBe(missing.suggestedFix);
+        expect(JSON.stringify(foreign)).not.toContain(other.tenantId);
+        for (const route of ["emit", "validate"]) {
+          await expectApiError(await caller.post(`${API}/schemas/${entity.id}/${route}`), 404, "NOT_FOUND");
+        }
       }
     } finally {
       await deleteTenantWithDomain(other);
@@ -689,7 +699,7 @@ test.describe("emit and validate", () => {
 });
 
 test.describe("rate limit", () => {
-  test("the 101st request of one client address within a minute is a 429 with Retry-After, whatever route it goes to; another address is not limited (KD-028)", { tag: ["@regression"] }, async ({ api }) => {
+  test("the 101st request of one client address within a minute is a 429 with Retry-After, in the API's own envelope, whatever route it goes to; another address is not limited", { tag: ["@regression"] }, async ({ api }) => {
     // Unauthenticated requests count too: the limit comes before the credential check. The unknown id is a cheap 404/401 for the first 100.
     for (let i = 0; i < 100; i += 1) {
       const response = await api.anon.get(`${API}/event-specs/some-id`);
@@ -703,17 +713,18 @@ test.describe("rate limit", () => {
     expect(Number(limited.headers()["retry-after"])).toBeGreaterThan(0);
     expect(Number(limited.headers()["retry-after"])).toBeLessThanOrEqual(60);
     expect(Number(limited.headers()["x-ratelimit-reset"])).toBeGreaterThan(Date.now() / 1000 - 5);
-    const body = await jsonOf<{ error: string; message: string; retryAfter: number }>(limited);
-    // The answer has an envelope of its own (not `{ success: false, error: { code } }`): KD-028.
-    expect(body).toMatchObject({ error: "Too Many Requests", retryAfter: Number(limited.headers()["retry-after"]) });
-    expect(body.message).toMatch(/Rate limit exceeded\. Try again in \d+ seconds\./);
+    // The answer is the API's own envelope, like every other one (KD-028: it used to be `{ error: "Too Many Requests", message, retryAfter }`).
+    const error = await expectApiError(limited, 429, "RATE_LIMITED");
+    expect(error.details).toEqual({ retryAfter: Number(limited.headers()["retry-after"]) });
+    expect(error.message).toMatch(/Rate limit exceeded\. Try again in \d+ seconds\./);
     // The limit is per address across the routes that have one.
     expect((await api.anon.post(`${API}/schemas/some-id/emit`)).status()).toBe(429);
     expect((await api.anon.post(`${API}/schemas/some-id/validate`)).status()).toBe(429);
     // The routes without a limit are not affected.
     expect((await api.anon.get(`${API}/health`)).status()).toBe(200);
     expect((await api.anon.get(`${API}/schemas`)).status()).toBe(401);
-    // The address is the client's own header: another value is another client (a spoofable limit unless a proxy sets the header).
+    // The run trusts X-Forwarded-For (AUTH_TRUST_PROXY=1: a proxy sets it), so another address is another client. Without that setting the header is
+    // ignored and every caller is one client, so a made-up header buys no allowance (unit-tested: tests/unit/api/v1/rate-limit.test.ts).
     const another = await api.custom({ "x-forwarded-for": `10.${(Number(api.ip.split(".")[1]) + 1) % 256}.1.1` });
     expect((await another.get(`${API}/event-specs/some-id`)).status()).toBe(401);
   });
@@ -729,44 +740,72 @@ test.describe("webhooks", () => {
     await deleteWebhookRows(created.splice(0));
   });
 
-  test("CHARACTERIZED (KD-025): a session is a viewer on this API, so the admin's own login is refused by every webhook endpoint", { tag: ["@regression"] }, async ({ api }) => {
-    const row = await createWebhookRow();
-    created.push(row.id);
-    const refused: Array<[string, string, unknown?]> = [
-      ["GET", `${API}/webhooks`],
-      ["POST", `${API}/webhooks`, { url: "https://example.invalid/hook", events: [WEBHOOK_EVENT] }],
-      ["PUT", `${API}/webhooks/${row.id}`, { active: false }],
-      ["DELETE", `${API}/webhooks/${row.id}`],
-      ["GET", `${API}/webhooks/${row.id}/deliveries`],
-    ];
-    const messages = new Set<string>();
-    for (const [method, url, data] of refused) {
-      const error = await expectApiError(await api.session.fetch(url, { method, ...(data ? asJson(data) : {}) }), 403, "FORBIDDEN");
-      expect(error.message).toMatch(/^Only Admin users can (view|create|update|delete) webhook (endpoints|deliveries)$/);
-      messages.add(error.message);
-    }
-    expect(messages.size).toBe(5);
-    // Nothing was changed by the refused calls.
-    expect(await webhookRow(row.id)).toMatchObject({ url: row.url, active: true, events: row.events });
+  test("the admin's own login (a platform administrator) uses every webhook endpoint: create, list, update, deliveries, delete (a session used to be a viewer, KD-025)", { tag: ["@regression"] }, async ({ api }) => {
+    const url = `https://e2e-hook-${unique("session-")}.example.invalid/hook`;
+    const response = await api.session.post(`${API}/webhooks`, asJson({ url, events: [WEBHOOK_EVENT] }));
+    const body = await expectApiSuccess<Webhook>(response, 201);
+    created.push(body.data.id);
+    expect(body.summary).toBe("Webhook endpoint created");
+    // The one answer that carries the signing secret, and the creator is the signed-in user (a real row of users).
+    expect(body.data.secret).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.data.createdBy).toBe(await seededOwnerId());
+    const listed = await expectApiSuccess<Webhook[]>(await api.session.get(`${API}/webhooks`));
+    expect(listed.data.map((w) => w.id)).toContain(body.data.id);
+    const updated = await expectApiSuccess<Webhook>(await api.session.put(`${API}/webhooks/${body.data.id}`, asJson({ active: false })));
+    expect(updated.data).toMatchObject({ id: body.data.id, active: false });
+    expect(await expectApiSuccess<Delivery[]>(await api.session.get(`${API}/webhooks/${body.data.id}/deliveries`))).toMatchObject({ data: [] });
+    expect((await expectApiSuccess<{ deleted: boolean }>(await api.session.delete(`${API}/webhooks/${body.data.id}`))).data).toEqual({ deleted: true });
+    expect(await webhookRow(body.data.id)).toBeUndefined();
   });
 
-  test("[KD-024 POST /api/v1/webhooks cannot create an endpoint: the key's user is no row of users, so the insert fails] a key creates an endpoint", { tag: ["@regression"] }, async ({ api }) => {
-    // PRECONDITIONS, before the expectation of failure: a bare `test.fail()` at the top passes (as the expected failure) for ANY reason, a run with
-    // no API key included (`api.key` throws then), a key the app does not accept, or a request that never got an answer. None of that is KD-024,
-    // so each of them runs first and fails this test loudly; only the assertion about the 201 below is the expected failure.
-    const listed = await api.key.get(`${API}/webhooks`);
-    expect(listed.status(), `the run's API key is not accepted by this server, which is not KD-024: ${await listed.text()}`).toBe(200);
-    const url = `https://e2e-hook-${unique("create-")}.example.invalid/hook`;
-    const response = await api.key.post(`${API}/webhooks`, asJson({ url, events: [WEBHOOK_EVENT] }));
-    const text = await response.text();
-    test.fail(); // from here on, the one thing that may fail is the endpoint not being created (a 201 with the endpoint)
+  test("a user who is not a platform administrator is refused by every webhook endpoint (403, nothing changed): a viewer of the tenant, and a user with no role at all", { tag: ["@regression"] }, async ({ api, playwright, baseURL }) => {
+    const row = await createWebhookRow();
+    created.push(row.id);
+    const password = "Str0ng!Passw0rd";
+    const viewer = await createUserWithPassword({ email: `${unique("e2e-viewer-")}@example.com`.toLowerCase(), password });
+    const nobody = await createUserWithPassword({ email: `${unique("e2e-nobody-")}@example.com`.toLowerCase(), password });
+    const sessions: APIRequestContext[] = [];
     try {
-      expect(response.status(), text).toBe(201);
-      const body = JSON.parse(text) as { data: Webhook; summary: string };
+      await grantRoleRow(viewer.id, "VIEWER", { tenantId: await activeTenantId() });
+      sessions.push(await signInCaller(playwright, baseURL, { email: viewer.email, password }), await signInCaller(playwright, baseURL, { email: nobody.email, password }));
+      const refused: Array<[string, string, unknown?]> = [
+        ["GET", `${API}/webhooks`],
+        ["POST", `${API}/webhooks`, { url: "https://example.invalid/hook", events: [WEBHOOK_EVENT] }],
+        ["PUT", `${API}/webhooks/${row.id}`, { active: false }],
+        ["DELETE", `${API}/webhooks/${row.id}`],
+        ["GET", `${API}/webhooks/${row.id}/deliveries`],
+      ];
+      for (const session of sessions) {
+        for (const [method, url, data] of refused) {
+          const error = await expectApiError(await session.fetch(url, { method, ...(data ? asJson(data) : {}) }), 403, "FORBIDDEN");
+          // Generic: it names no role, no action and no tenant.
+          expect(error.message).toBe("You do not have permission to do this");
+        }
+      }
+      // Nothing was changed by the refused calls, and the viewer still reads the schemas of its tenant while the user with no role reads none.
+      expect(await webhookRow(row.id)).toMatchObject({ url: row.url, active: true, events: row.events });
+      await expectApiSuccess(await sessions[0].get(`${API}/schemas?search=${unique("nothing-")}`));
+      await expectApiError(await sessions[1].get(`${API}/schemas`), 404, "NOT_FOUND");
+      // A user with no role still has notifications (their own): the mailbox is not tenant content.
+      await expectApiSuccess(await sessions[1].get(`${API}/notifications`));
+    } finally {
+      await Promise.all(sessions.map((session) => session.dispose()));
+      await deleteUsersByEmail([viewer.email, nobody.email]);
+    }
+  });
+
+  test("a key creates an endpoint: 201 with the signing secret in this one answer, and no creator (the key is no user row: KD-024)", { tag: ["@regression"] }, async ({ api }) => {
+    const url = `https://e2e-hook-${unique("create-")}.example.invalid/hook`;
+    try {
+      const body = await expectApiSuccess<Webhook>(await api.key.post(`${API}/webhooks`, asJson({ url, events: [WEBHOOK_EVENT] })), 201);
       created.push(body.data.id);
       expect(body.summary).toBe("Webhook endpoint created");
-      expect(body.data).toMatchObject({ url, events: [WEBHOOK_EVENT], active: true });
+      expect(body.data).toMatchObject({ url, events: [WEBHOOK_EVENT], active: true, createdBy: null });
       expect(body.data.secret).toMatch(/^[0-9a-f]{64}$/);
+      expect(await webhookRow(body.data.id)).toMatchObject({ createdBy: null, secret: body.data.secret });
+      // ... and the secret is not in any later answer.
+      const listed = await expectApiSuccess<Webhook[]>(await api.key.get(`${API}/webhooks`));
+      expect(JSON.stringify(listed)).not.toContain(body.data.secret);
     } finally {
       const { rows } = await pg().query(`SELECT id FROM webhook_endpoints WHERE url = $1`, [url]);
       await deleteWebhookRows(rows.map((r) => r.id as string));
@@ -825,9 +864,10 @@ test.describe("webhooks", () => {
     const body = await expectApiSuccess<Webhook[]>(await api.key.get(`${API}/webhooks`));
     const listed = body.data.find((w) => w.id === row.id) as Webhook;
     expect(listed).toBeDefined();
-    // CHARACTERIZED (KD-027): the list carries each endpoint's signing secret, every time it is listed.
-    expect(keysOf(listed)).toEqual(["active", "createdAt", "createdBy", "events", "id", "secret", "updatedAt", "url"]);
-    expect(listed).toMatchObject({ url: row.url, events: [WEBHOOK_EVENT, "drift.detected"], active: true, secret: row.secret });
+    // KD-027: the list never carries an endpoint's signing secret (it is in the answer of the creation, once).
+    expect(keysOf(listed)).toEqual(["active", "createdAt", "createdBy", "events", "id", "updatedAt", "url"]);
+    expect(listed).toMatchObject({ url: row.url, events: [WEBHOOK_EVENT, "drift.detected"], active: true });
+    expect(JSON.stringify(body)).not.toContain(row.secret);
     expect(listed.createdBy).toBe((await webhookRow(row.id))?.createdBy);
     expect(Number.isNaN(Date.parse(listed.createdAt))).toBe(false);
   });
@@ -840,7 +880,10 @@ test.describe("webhooks", () => {
     const body = await expectApiSuccess<Webhook>(
       await api.key.put(`${API}/webhooks/${row.id}`, asJson({ url, events: ["drift.detected", "compliance.gap.detected"], active: false, secret: "chosen-by-the-caller", createdBy: "someone-else", id: "another-id" })),
     );
-    expect(body.data).toMatchObject({ id: row.id, url, events: ["drift.detected", "compliance.gap.detected"], active: false, secret: row.secret, createdBy: before?.createdBy });
+    expect(body.data).toMatchObject({ id: row.id, url, events: ["drift.detected", "compliance.gap.detected"], active: false, createdBy: before?.createdBy });
+    // The answer of an update does not carry the secret either (KD-027), and the stored one is not changed by a body that names one.
+    expect(body.data).not.toHaveProperty("secret");
+    expect(JSON.stringify(body)).not.toContain("chosen-by-the-caller");
     expect(await webhookRow(row.id)).toMatchObject({ url, events: ["drift.detected", "compliance.gap.detected"], active: false, secret: row.secret, createdBy: before?.createdBy });
     // One field alone, and an empty body, leave the rest as it is.
     expect((await expectApiSuccess<Webhook>(await api.key.put(`${API}/webhooks/${row.id}`, asJson({ active: true })))).data).toMatchObject({ url, active: true });

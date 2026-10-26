@@ -1,97 +1,53 @@
 /**
- * API v1 authentication middleware.
+ * API v1 authentication: WHO is calling, as a principal (access-control design, decision 11).
  *
- * Supports two auth methods:
- * 1. API key via `Authorization: Bearer <key>` — validated against API_KEY env var
- * 2. Session-based auth via NextAuth (fallback)
+ * Two ways in, the same kind of answer:
+ * 1. `Authorization: Bearer <key>`: the configured `API_KEY` (src/lib/access/api-key.ts). The key is a SERVICE principal bound to
+ *    `API_KEY_TENANT_ID` and `API_KEY_ROLE`. A bearer token that is not the key is refused; the session next to it is NOT the fallback.
+ * 2. Otherwise the signed-in session: the user's REAL principal (their role assignments, not a fixed role), `null` for nobody, a disabled
+ *    user or a stale session.
  *
- * Returns the authenticated user context or null if unauthenticated.
+ * What the caller may DO is decided after this, by `withApiAuth` (src/lib/access/api.ts) and the services behind it.
  */
 
-import crypto from "crypto";
-import { auth } from "@/lib/auth";
-import type { ServiceContext } from "@/types/service-context";
-import { prisma } from "@/lib/db";
+import { apiKeyMatches, apiKeyPrincipal } from "@/lib/access/api-key";
+import { getPrincipal, type Principal } from "@/lib/access/principal";
 
-export interface AuthResult {
-  authenticated: boolean;
-  context?: ServiceContext;
-}
+export type AuthResult =
+  | {
+      authenticated: true;
+      source: "api-key" | "session";
+      principal: Principal;
+      /** The tenant the caller acts in when the credential fixes it (the API key's); null for a session (its active tenant is resolved per request). */
+      tenantId: string | null;
+    }
+  | { authenticated: false };
+
+const NOT_AUTHENTICATED = { authenticated: false } as const;
 
 /**
- * Authenticate an incoming API request.
- *
- * Checks for an API key in the Authorization header first,
- * then falls back to session-based auth.
+ * Authenticate an incoming request. A non-empty bearer token decides alone: the key, or nobody. No token (or an empty one, or another
+ * scheme) is judged by the session. `allowApiKey: false` is for the app's own JSON endpoints, which answer to a session only.
  */
-export async function authenticateRequest(
-  request: Request
-): Promise<AuthResult> {
-  // 1. Check for Bearer token
-  const authHeader = request.headers.get("authorization");
-  if (authHeader?.startsWith("Bearer ")) {
-    const token = authHeader.slice(7).trim();
-    if (token) {
-      return authenticateWithApiKey(token);
+export async function authenticateRequest(request: Request, { allowApiKey = true }: { allowApiKey?: boolean } = {}): Promise<AuthResult> {
+  if (allowApiKey) {
+    const header = request.headers.get("authorization");
+    if (header?.startsWith("Bearer ")) {
+      const token = header.slice(7).trim();
+      if (token) return authenticateWithApiKey(token);
     }
   }
-
-  // 2. Fall back to session auth
   return authenticateWithSession();
 }
 
-/**
- * Validate an API key against the API_KEY environment variable.
- * For MVP, this is a simple env var check.
- */
-async function authenticateWithApiKey(token: string): Promise<AuthResult> {
-  const expectedKey = process.env.API_KEY;
-  if (!expectedKey) {
-    // No API_KEY configured — API key auth is disabled
-    return { authenticated: false };
-  }
-
-  const tokenBuf = Buffer.from(token);
-  const expectedBuf = Buffer.from(expectedKey);
-  if (
-    tokenBuf.length !== expectedBuf.length ||
-    !crypto.timingSafeEqual(tokenBuf, expectedBuf)
-  ) {
-    return { authenticated: false };
-  }
-
-  // API key is valid — return a system-level context. It carries the platform administrator assignment the key has always stood for (the services
-  // decide with `can` over `assignments` now, not from the label); Task 6 binds the key to a tenant and a role (`API_KEY_TENANT_ID`, `API_KEY_ROLE`).
-  return {
-    authenticated: true,
-    context: {
-      userId: "api-key-user",
-      userRole: "ADMIN",
-      assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }],
-      prisma,
-    },
-  };
+function authenticateWithApiKey(token: string): AuthResult {
+  // No API_KEY configured (or an API_KEY_ROLE that is not a role): the key authentication is off.
+  const key = apiKeyPrincipal();
+  if (!key || !apiKeyMatches(token)) return NOT_AUTHENTICATED;
+  return { authenticated: true, source: "api-key", principal: key.principal, tenantId: key.tenantId };
 }
 
-/**
- * Authenticate using NextAuth session.
- */
 async function authenticateWithSession(): Promise<AuthResult> {
-  try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return { authenticated: false };
-    }
-
-    return {
-      authenticated: true,
-      context: {
-        userId: session.user.id,
-        userRole: "VIEWER",
-        prisma,
-      },
-    };
-  } catch {
-    return { authenticated: false };
-  }
+  const principal = await getPrincipal();
+  return principal ? { authenticated: true, source: "session", principal, tenantId: null } : NOT_AUTHENTICATED;
 }

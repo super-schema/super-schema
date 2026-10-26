@@ -8,12 +8,20 @@ import { createForeignTenant } from "../services/events/foreign-tenant";
 
 /**
  * GET /api/v1/event-specs/:id against the real database and the real emission service, for self-contained events (document v2).
- * Only the two request-scoped inputs are replaced: the v1 auth result (so the context carries this suite's Prisma client) and the
- * active tenant (reads a cookie). Event / version rows are written directly — no publish audit rows (immutable) are created.
+ * Only the request-scoped inputs are replaced: who is calling (the API key's service principal, a platform administrator acting in this
+ * suite's tenant: `withApiAuth` needs no session for it) and the session library. Event / version rows are written directly — no publish
+ * audit rows (immutable) are created.
  */
 const h = vi.hoisted(() => ({ ctx: undefined as unknown, tenantId: "" }));
-vi.mock("@/app/api/v1/middleware", () => ({ authenticateRequest: async () => ({ authenticated: true, context: h.ctx }) }));
-vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: async () => h.tenantId }));
+vi.mock("@/app/api/v1/middleware", () => ({
+  authenticateRequest: async () => ({
+    authenticated: true,
+    source: "api-key",
+    tenantId: h.tenantId,
+    principal: { userId: "api-key-user", email: "api-key@service.invalid", assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }], isGlobalAdmin: true },
+  }),
+}));
+vi.mock("@/lib/auth", () => ({ auth: async () => null }));
 
 import { GET } from "@/app/api/v1/event-specs/[id]/route";
 

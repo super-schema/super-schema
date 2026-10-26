@@ -13,7 +13,7 @@ import {
   type EntityFilters,
 } from "@/types/schemas/entity.schema";
 import type { Prisma } from "@/generated/prisma/client";
-import { readableScopes } from "@/lib/access";
+import { ctxCan, readableScopes } from "@/lib/access";
 import { canTransition } from "@/lib/entity-lifecycle";
 import { entityUpdateTouchesDraft, withSourceStale } from "@/lib/entity-versioning/draft-state";
 import { generateSlug } from "@/lib/slug";
@@ -110,9 +110,10 @@ export async function createEntity(
 }
 
 /**
- * The entities matching `filters`. With a tenant in the context (`ctx.tenantId`: the page and action callers), only the entities of THAT tenant that the
- * caller's assignments let them read (`entity.read`): a tenant-wide role lists them all, a domain- or product-scoped role only the entities under its
- * domains and products, in the query. With no tenant in the context (a caller that is not a page) nothing is restricted.
+ * The entities matching `filters`. With a tenant in the context (`ctx.tenantId`: the pages, the actions and every API route), only the entities of THAT
+ * tenant that the caller's assignments let them read (`entity.read`): a tenant-wide role lists them all, a domain- or product-scoped role only the entities
+ * under its domains and products, in the query. A context with NO tenant never means "every tenant": only a platform administrator reads across tenants
+ * then, anyone else is refused (and nothing is read).
  */
 export async function getEntities(
   filters: EntityFilters,
@@ -124,6 +125,8 @@ export async function getEntities(
     where.tenantId = ctx.tenantId;
     const scopes = readableScopes([...(ctx.assignments ?? [])], "entity.read", ctx.tenantId);
     if (!scopes.all) where.OR = [{ domainId: { in: scopes.domainIds } }, { productId: { in: scopes.productIds } }];
+  } else if (!ctxCan(ctx, "platform.admin")) {
+    return err({ code: "FORBIDDEN", message: "You do not have permission to do this" });
   }
 
   if (filters.domainId) {
@@ -147,24 +150,39 @@ export async function getEntities(
   return ok(entities);
 }
 
+/**
+ * One entity with its fields. The caller must be able to READ it (`entity.read` over the entity's own tenant, domain and product): an entity of
+ * another tenant than the one in view (`ctx.tenantId`, when the context carries one), one no role of the caller covers, and one that does not exist
+ * all answer the very same NOT_FOUND, so an id says nothing about what exists. With no tenant in the context the caller's roles decide alone (a
+ * platform administrator reads any entity, a role in a tenant that tenant's).
+ */
 export async function getEntityById(
   id: string,
-  _ctx: ServiceContext
+  ctx: ServiceContext
 ): Promise<Result<Entity>> {
-  const entity = await prisma.entity.findUnique({
+  const found = await prisma.entity.findUnique({
     where: { id },
     include: {
       domain: true,
       fields: { orderBy: { sortOrder: "asc" } },
+      // Only to place the entity (a product-level row may carry no domain column): not part of the answer.
+      product: { select: { domainId: true } },
     },
   });
-  if (!entity) {
+  const place = found && {
+    tenantId: found.tenantId,
+    domainId: found.domainId ?? found.product?.domainId ?? null,
+    productId: found.productId ?? null,
+  };
+  const readable = found !== null && place !== null && (ctx.tenantId === undefined || found.tenantId === ctx.tenantId) && ctxCan(ctx, "entity.read", place);
+  if (!found || !readable) {
     return err({
       code: "NOT_FOUND",
       message: `Entity with ID "${id}" not found`,
       suggestedFix: "Verify the entity ID and try again.",
     });
   }
+  const { product: _product, ...entity } = found;
   return ok(entity);
 }
 

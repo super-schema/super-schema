@@ -27,9 +27,11 @@ beforeAll(async () => {
   if (!user) throw new Error("No user found — register a user first");
   testUserId = user.id;
 
+  // A platform administrator: with no tenant in the context only one reads across tenants (`getEntityById`, `getEntities`).
   ctx = {
     userId: testUserId,
     userRole: "AUTHOR",
+    assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }],
     prisma,
   };
 });

@@ -8,6 +8,7 @@
 import crypto from "crypto";
 import type { Prisma } from "@/generated/prisma/client";
 import { ctxCan } from "@/lib/access";
+import { isServiceUserId } from "@/lib/access/api-key";
 import { prisma } from "@/lib/db";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
@@ -17,6 +18,7 @@ import {
   type CreateWebhookEndpointInput,
   type UpdateWebhookEndpointInput,
   type WebhookEndpoint,
+  type WebhookEndpointSummary,
   type WebhookDelivery,
   type WebhookPayload,
 } from "@/types/schemas/webhook";
@@ -52,16 +54,19 @@ const MAX_ATTEMPTS = 4; // 1 initial + 3 retries
 // Prisma row → app type mappers
 // ---------------------------------------------------------------------------
 
-function toWebhookEndpoint(row: {
+type EndpointRow = {
   id: string;
   url: string;
   events: string[];
   secret: string;
   active: boolean;
-  createdBy: string;
+  createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
-}): WebhookEndpoint {
+};
+
+/** The whole endpoint, secret included: for the dispatcher (it signs with it) and the answer of the creation, which shows it once. */
+function toWebhookEndpoint(row: EndpointRow): WebhookEndpoint {
   return {
     id: row.id,
     url: row.url,
@@ -72,6 +77,12 @@ function toWebhookEndpoint(row: {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/** The endpoint as every other answer shows it: no signing secret (KD-027). */
+function toEndpointSummary(row: EndpointRow): WebhookEndpointSummary {
+  const { secret: _secret, ...summary } = toWebhookEndpoint(row);
+  return summary;
 }
 
 function toWebhookDelivery(row: {
@@ -128,10 +139,12 @@ export async function createEndpoint(
       events: parsed.data.events,
       secret: crypto.randomBytes(32).toString("hex"),
       active: parsed.data.active,
-      createdBy: ctx.userId,
+      // The API key's principal is no user row (a foreign key would refuse it): an endpoint it makes has no creator.
+      createdBy: isServiceUserId(ctx.userId) ? null : ctx.userId,
     },
   });
 
+  // The one answer that carries the signing secret: it is not shown again.
   return ok(toWebhookEndpoint(row));
 }
 
@@ -139,7 +152,7 @@ export async function updateEndpoint(
   id: string,
   input: UpdateWebhookEndpointInput,
   ctx: ServiceContext
-): Promise<Result<WebhookEndpoint>> {
+): Promise<Result<WebhookEndpointSummary>> {
   if (!ctxCan(ctx, "platform.admin")) {
     return err({
       code: "FORBIDDEN",
@@ -173,7 +186,7 @@ export async function updateEndpoint(
     data,
   });
 
-  return ok(toWebhookEndpoint(updated));
+  return ok(toEndpointSummary(updated));
 }
 
 export async function deleteEndpoint(
@@ -201,7 +214,7 @@ export async function deleteEndpoint(
 
 export async function getEndpoints(
   ctx: ServiceContext
-): Promise<Result<WebhookEndpoint[]>> {
+): Promise<Result<WebhookEndpointSummary[]>> {
   if (!ctxCan(ctx, "platform.admin")) {
     return err({
       code: "FORBIDDEN",
@@ -210,7 +223,7 @@ export async function getEndpoints(
   }
 
   const rows = await prisma.webhookEndpoint.findMany();
-  return ok(rows.map(toWebhookEndpoint));
+  return ok(rows.map(toEndpointSummary));
 }
 
 export async function getDeliveries(

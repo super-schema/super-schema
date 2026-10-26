@@ -39,7 +39,8 @@ export const CLASSIFICATION_DEFAULTS = {
  * What the run decides, for the children that start the app or prepare its database. `run` is `{ databaseUrl, baseUrl, authSecret, pgliteDir, apiKey }`.
  *
  * API_KEY is SET to a random key of the run (not blanked): the REST API's key authentication (`Authorization: Bearer <key>`, src/app/api/v1/middleware.ts)
- * is the only way to a role above VIEWER there (a session is always a VIEWER), and the webhook endpoints are for admins. The browser run
+ * is a service principal (src/lib/access/api-key.ts) acting in `API_KEY_TENANT_ID` with `API_KEY_ROLE`, both blanked below so the key is an administrator of the
+ * default tenant, and the webhook endpoints are for platform administrators (the seeded admin's own session is one too). The browser run
  * is told the same key as E2E_API_KEY (`phasesEnvironment`) so tests/e2e/api-v1.spec.ts can call the API as a key holder. The key never leaves
  * the run: it is random per run, it lives in two children's environments, and a developer's own API_KEY is dropped like any other.
  *
@@ -61,6 +62,10 @@ export function setValues(run) {
     AUTH_SECRET: run.authSecret,
     AUTH_URL: run.baseUrl,
     AUTH_TRUST_HOST: "true",
+    // The client address of the sign-in throttle and of the REST API's rate limit comes from X-Forwarded-For ONLY when this is 1 (src/lib/auth/throttle.ts
+    // `clientIp`). The run trusts it: tests/e2e/api-v1.spec.ts sends an address of its own per test so the 100-a-minute limit never couples two tests, and a
+    // request with no header (the browser) is the one constant address, as without the setting. A developer's own value is dropped (the AUTH_ prefix).
+    AUTH_TRUST_PROXY: "1",
     // Registration is OPEN for the app under test (src/lib/auth/registration-mode.ts; the default is `invite`): the browser suite registers its own users through the
     // register page, and they hold no role. `invite` and `closed` are covered at the unit and action level (tests/unit/app/register-actions.test.ts).
     AUTH_REGISTRATION: "open",
@@ -82,9 +87,10 @@ export const HERMETIC_BLANKED_NAMES = Object.freeze([
   // default admin@admin.com / admin, the contract of the browser suite; a developer's own bootstrap administrator must not replace it
   "BOOTSTRAP_ADMIN_EMAIL",
   "BOOTSTRAP_ADMIN_PASSWORD",
-  // src/lib/auth/throttle.ts: `1` makes sign-in throttling take the client address from X-Forwarded-For (a proxy in front sets it). Blank = not trusted,
-  // the run's one constant address bucket: the browser run is one client, and a developer's own proxy setting must not change what it tests
-  "AUTH_TRUST_PROXY",
+  // src/lib/access/api-key.ts: which tenant and role the REST API key (the run's own API_KEY) acts as. Blank = the defaults, the default tenant and ADMIN,
+  // which is what the browser suite's API tests rely on; a developer's own binding must not change what they test
+  "API_KEY_TENANT_ID",
+  "API_KEY_ROLE",
   // Auth.js: a proxy for OAuth callbacks, rotated secrets
   "AUTH_REDIRECT_PROXY_URL",
   "AUTH_SECRET_1",

@@ -37,7 +37,7 @@ Tiers (the tags on a test: `@smoke`, `@regression`, `@slow`, `@external`; `@visu
 | Command palette, shortcuts, tenant switcher | `Mod+K`, the search, `Entity -> field`, recents, `/` and `Mod+N`, switching the tenant | `discovery.spec.ts` (21, shared with Notifications) | regression | KD-020 (the palette finds fields among the first 100), KD-034 (the tenant is a cookie) |
 | Type mappings | `/schemas/type-mappings`: pick a logical type, read each technology's physical type | `type-mappings.spec.ts` (5) | regression | KD-013 (no row for OpenAPI 3, JSON Schema and the Java POJO) |
 | Domain assets | Data Types (enums, scalars, unions), APIs (services and operations), Properties (traits), at domain, product and Enterprise level | `domain-assets.spec.ts` (12) | regression | none recorded |
-| REST API v1 and webhooks | health, schemas, emit, validate, event specs, notifications, webhooks, who may call what, bad requests, the rate limit | `api-v1.spec.ts` (70), and the unit tests of the routes | smoke 1, rest regression | KD-024 (a key cannot create a webhook), KD-025 (a session is a viewer), KD-026 (the schemas routes are not tenant scoped), KD-027 (the list returns signing secrets), KD-028 (the rate limit); KD-036 (the characterizations pass because the defect is there) |
+| REST API v1 and webhooks | health, schemas, emit, validate, event specs, notifications, webhooks, who may call what, bad requests, the rate limit | `api-v1.spec.ts` (71), and the unit tests of the routes | smoke 1, rest regression | KD-027 (a webhook URL has no policy), KD-028 (the rate limit is per process) |
 | Accessibility | an axe scan (WCAG 2.1 A and AA) of every route and of the dialogs and palette states that matter, against a recorded baseline | `a11y.spec.ts` (28), project `a11y` | regression (inside the regression and nightly tiers) | only the dark theme is scanned (`docs/testing/a11y.md`); the baseline was measured with Chrome on macOS: KD-037 |
 | Visual regression | nine pages, compared to screenshots made in the Playwright image | `visual.spec.ts` (9), project `visual`, image only | `visual` tier, by hand and the `e2e-visual` job | the snapshots were made on arm64, CI is x86-64: KD-037 |
 | Not tested in a browser | Git export (no UI exists), `/dev/design-system` (development only), Google sign-in (external), real Spanner and BigQuery (only the emulators, in the corpus), Firefox and WebKit beyond the smoke tests | | | |
@@ -52,7 +52,7 @@ when a test is added or removed: the unit test compares the two.
 | --- | --- | --- | --- | --- | --- | --- |
 | a11y.spec.ts | 28 | @regression 28 | 0 | 28 | 28 | 0 |
 | admin.spec.ts | 23 | @regression 23 | 0 | 23 | 23 | 0 |
-| api-v1.spec.ts | 70 | @regression 70, @smoke 1 | 1 | 70 | 70 | 0 |
+| api-v1.spec.ts | 71 | @regression 71, @smoke 1 | 1 | 71 | 71 | 0 |
 | auth.spec.ts | 41 | @regression 41, @smoke 5 | 5 | 41 | 41 | 0 |
 | authored-lifecycle.spec.ts | 4 | @regression 4 | 0 | 4 | 4 | 0 |
 | dashboard-not-found.spec.ts | 2 | @regression 2 | 0 | 2 | 2 | 0 |
@@ -100,7 +100,7 @@ machine and could not be: their 40 smoke runs (20 tests x 2 browsers) were not r
 | Visual tier | `npm run test:e2e:visual` | 10 passed (nine screenshots and the login), in the Playwright image | 1 min 47 s |
 | Smoke tier, Chromium only | `node scripts/e2e-release.mjs --tier smoke --project chromium` | 21 passed on every run (also with the bundled Chromium, three times). Two of four runs with Google Chrome and a fresh build then sat idle for 11 minutes after the last test before the Playwright process ended on its own (docs/testing/e2e.md, "A run that stalls") | 30 s to 12 min 45 s |
 
-Expected failures that keep the run green (the `[KD-nnn ...]` tests of the guard): KD-014, KD-015, KD-017, KD-019 and KD-024 each fail as stated, and the run reports them as passed.
+Expected failures that keep the run green (the `[KD-nnn ...]` tests of the guard): KD-014, KD-015, KD-017 and KD-019 each fail as stated (a fifth, the webhook creation by the API key, was fixed with the access-control work), and the run reports them as passed.
 
-Known defects at this release (`docs/testing/known-defects.md`): **5 open**, each pinned by a test that fails as stated (KD-014, KD-015, KD-017, KD-019, KD-024), 27 `no-test` (a gap or a design limit that nothing in the suite pins: KD-034 to KD-039 are new this wave) and 3 `dead-code` (KD-004, KD-005, KD-022).
+Known defects at this release (`docs/testing/known-defects.md`): **4 open**, each pinned by a test that fails as stated (KD-014, KD-015, KD-017, KD-019), 27 `no-test` (a gap or a design limit that nothing in the suite pins: KD-034 to KD-039 are new this wave) and 3 `dead-code` (KD-004, KD-005, KD-022).
 <!-- final-run:end -->

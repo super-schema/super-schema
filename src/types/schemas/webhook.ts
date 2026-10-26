@@ -43,10 +43,14 @@ export type WebhookEndpoint = {
   events: string[];
   secret: string;
   active: boolean;
-  createdBy: string;
+  /** The user who created it; null for an endpoint made by the REST API key (a service principal, which is no user row). */
+  createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
+
+/** What every answer but the creation carries: the endpoint WITHOUT its signing secret (KD-027: the secret is shown once). */
+export type WebhookEndpointSummary = Omit<WebhookEndpoint, "secret">;
 
 export type WebhookDelivery = {
   id: string;

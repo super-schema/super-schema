@@ -197,6 +197,15 @@ describe("Webhook Service", () => {
       }
     });
 
+    it("the API key's service principal is no user row: its endpoint has no creator (KD-024), the secret is in the answer once", async () => {
+      const result = await createEndpoint(makeEndpointInput(), { ...adminCtx, userId: "api-key-user" });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.createdBy).toBeNull();
+        expect(result.data.secret).toMatch(/^[0-9a-f]{64}$/);
+      }
+    });
+
     it("validates URL format", async () => {
       const result = await createEndpoint(
         makeEndpointInput({ url: "not-a-url" }),
@@ -301,6 +310,31 @@ describe("Webhook Service", () => {
       if (result.success) {
         expect(result.data).toHaveLength(2);
       }
+    });
+
+    it("never carries a signing secret (it is shown once, in the answer of the creation)", async () => {
+      const created = await createEndpoint(makeEndpointInput(), adminCtx);
+      expect(created.success && created.data.secret).toMatch(/^[0-9a-f]{64}$/);
+      const secret = created.success ? created.data.secret : "";
+
+      const result = await getEndpoints(adminCtx);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        for (const endpoint of result.data) {
+          expect(endpoint).not.toHaveProperty("secret");
+          expect(Object.keys(endpoint).sort()).toEqual(["active", "createdAt", "createdBy", "events", "id", "updatedAt", "url"]);
+        }
+        expect(JSON.stringify(result.data)).not.toContain(secret);
+      }
+    });
+
+    it("the answer of an update does not carry the secret either, and the stored secret is unchanged", async () => {
+      const created = await createEndpoint(makeEndpointInput(), adminCtx);
+      if (!created.success) throw new Error("create failed");
+      const updated = await updateEndpoint(created.data.id, { active: false }, adminCtx);
+      expect(updated.success).toBe(true);
+      if (updated.success) expect(updated.data).not.toHaveProperty("secret");
+      expect((await _getEndpoints())[0].secret).toBe(created.data.secret);
     });
 
     it("rejects non-Admin users", async () => {

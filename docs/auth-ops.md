@@ -44,10 +44,14 @@ Without either, nothing can log in. Development and test always trust it. Differ
 no (Auth.js reads any set value as yes), `NEXTAUTH_URL` alone does not trust the host, and the `VERCEL` / `CF_PAGES` platform defaults are not applied (set `AUTH_URL`
 or `AUTH_TRUST_HOST=true` there). The e2e release runner sets both for its own app.
 
-**The client address** (`AUTH_TRUST_PROXY`, used only by throttling: below). Set `AUTH_TRUST_PROXY=1` only when a reverse proxy in front of the app **sets
+**The client address** (`AUTH_TRUST_PROXY`, used by the sign-in throttle, below, and by the REST API's rate limit: 100 requests a minute per address on `emit`, `validate` and
+`event-specs`). Set `AUTH_TRUST_PROXY=1` only when a reverse proxy in front of the app **sets
 `X-Forwarded-For` itself and overwrites whatever the client sent** (nginx `proxy_set_header X-Forwarded-For $remote_addr;`, most cloud load balancers). The app then
-takes the **left-most** entry as the client address. If the proxy appends instead of overwriting, a client can write that header and choose its own throttle bucket:
-leave the setting off. Without it every request is in one shared bucket (see "Throttling").
+takes the **left-most** entry as the client address. If the proxy appends instead of overwriting, a client can write that header and choose its own bucket:
+leave the setting off. Without it every request is in one shared bucket (see "Throttling"), and **a header a REST API caller makes up buys no fresh rate-limit
+allowance** (KD-028: the limiter used to read `X-Forwarded-For` unconditionally). The 429 answer of the REST API is its own error envelope,
+`{ "success": false, "error": { "code": "RATE_LIMITED", "message": ..., "details": { "retryAfter": <seconds> } } }`, with `Retry-After` and `X-RateLimit-*` headers. The limiter is
+in memory, per process.
 
 ## Registration and the first administrator: read this before you expose it
 
@@ -156,9 +160,28 @@ a checkout (`npm ci && npm run build && npm start`) when generation is needed.
 
 ## The REST API key
 
-`API_KEY` (an environment variable) enables `Authorization: Bearer <key>` on `/api/v1/*`. Whoever has the key acts as an administrator there. The
-root middleware lets only `/api/v1/*`, `/api/auth/*` and the asyncapi preview assets through without a session cookie, so **a key works on
-`/api/v1/*` only**; every other `/api/*` route needs a session (a Bearer-only caller gets 401 from the middleware before the route runs).
+`API_KEY` (an environment variable) enables `Authorization: Bearer <key>` on `/api/v1/*`. The root middleware lets only `/api/v1/*`, `/api/auth/*` and
+the asyncapi preview assets through without a session cookie, so **a key works on `/api/v1/*` only**; every other `/api/*` route needs a session (a
+Bearer-only caller gets 401 from the middleware before the route runs). The key is compared in constant time; a bearer token that is not the key is
+401, and the session next to it is not the fallback (an EMPTY bearer token, or another scheme, is judged by the session).
+
+**The key is a service principal bound to one tenant and one role** (`src/lib/access/api-key.ts`):
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `API_KEY_TENANT_ID` | the tenant the key acts in: `GET /api/v1/schemas` and the by-id routes answer for that tenant's entities and nothing else (an entity of another tenant is the same 404 as a missing one) | the default tenant (`tenant_default`) |
+| `API_KEY_ROLE` | the role the key holds: `VIEWER`, `AUTHOR`, `STEWARD`, `COMPLIANCE_OFFICER` or `ADMIN` | `ADMIN` |
+
+The default is `ADMIN` so integrations that existed before access control keep working, and that is a trade-off to decide on, not a recommendation: **an
+`ADMIN` key is a platform administrator**, as the key has always been (`/api/v1/webhooks*` are platform items and need one), while its schemas are confined
+to `API_KEY_TENANT_ID`. A key that only reads schemas for CI should be `API_KEY_ROLE=VIEWER`: it holds a role in its tenant only, reads that tenant's
+schemas, and is refused the webhook routes (403). An `API_KEY_ROLE` that is not one of the five roles turns the key OFF (every call is 401); it never falls
+back to `ADMIN`. Blank settings are the defaults. The key has no user row: it has no notifications, and a webhook endpoint it creates has no creator.
+
+**A session on `/api/v1` has the signed-in user's real roles** (it used to be a viewer, the administrator's own login included): it reads the schemas of its
+active tenant that its roles cover (a domain- or product-scoped role sees only its own), and uses the webhook routes only when the user is a platform
+administrator. A user with no role is told 404 on the schema routes and 403 on the webhook routes, never a 500. **The webhook list never carries a signing
+secret**: the secret is in the answer of the creation, once.
 
 ## See also
 

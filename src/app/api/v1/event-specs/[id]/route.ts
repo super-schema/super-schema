@@ -7,19 +7,20 @@
  * The body is the raw AsyncAPI document; errors use the v1 JSON error envelope.
  *
  * Tenant scoping (R67): the emit service checks that the event belongs to the product it is given, but trusts the id, so
- * this route resolves the caller's tenant and looks the event up inside it BEFORE any other read (the product it passes on is
- * the event's own). An event of another tenant and an event that does not exist produce the same 404 — nothing downstream
- * runs, nothing in the body depends on which case it was.
+ * this route resolves the caller's tenant (`withApiAuth`: a session's active tenant, the API key's) and looks the event up inside it
+ * BEFORE any other read (the product it passes on is the event's own), then asks the policy whether a role of the caller covers the
+ * event's own domain and product (`event.read`). An event of another tenant, one no role of theirs covers and an event that does not
+ * exist produce the same 404 — nothing downstream runs, nothing in the body depends on which case it was.
  *
  * Error bodies never carry service / database text: ServiceError codes are mapped to a status and a fixed message
  * (the original is logged server-side); only already-sanitised draft diagnostics are returned, field-whitelisted.
  */
 import type { NextResponse } from "next/server";
-import { authenticateRequest } from "@/app/api/v1/middleware";
 import { checkRateLimit } from "@/app/api/v1/rate-limit";
 import { isUsableId, optionalParam, queryProblem } from "@/app/api/v1/request";
-import { apiError, apiServerError, apiUnauthorized } from "@/app/api/v1/error-handler";
-import { getActiveTenantId } from "@/lib/active-tenant";
+import { apiError, apiServerError } from "@/app/api/v1/error-handler";
+import { withApiAuth } from "@/lib/access/api";
+import { ctxCan } from "@/lib/access";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import type { Diagnostic } from "@/lib/event-specs";
 import { emitEventDraft, emitEventStoredVersion, type EventEmission } from "@/services/events/event-emit.service";
@@ -73,12 +74,8 @@ function serviceFailure(error: ServiceError, step: string, notFound: () => NextR
   return apiServerError();
 }
 
-export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const limited = checkRateLimit(request);
-  if (limited) return limited;
-  const auth = await authenticateRequest(request);
-  if (!auth.authenticated || !auth.context) return apiUnauthorized();
-  const ctx = auth.context;
+export const GET = withApiAuth<{ id: string }>("event.read", async (request, api, { params }) => {
+  const ctx = api.ctx;
 
   try {
     const { id } = await params;
@@ -98,13 +95,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       return apiError({ code: "VALIDATION_ERROR", message: 'version must be "draft" or MAJOR.MINOR', suggestedFix: "Use e.g. ?version=2.1, ?version=draft, or omit it for the latest published version." });
     }
 
-    // R67: the caller can only reach events of its own tenant. Missing and foreign are indistinguishable.
-    const tenantId = await getActiveTenantId();
+    // R67: the caller can only reach events of the tenant it acts in, and only those a role of theirs covers. Missing, foreign and unseen are indistinguishable.
+    const tenantId = api.tenantId as string; // content action: `withApiAuth` always resolves it
     const owned = await ctx.prisma.eventSpec.findFirst({
       where: { id, tenantId },
-      select: { name: true, productId: true, latestVersion: { select: { major: true, minor: true } } },
+      select: { name: true, productId: true, domainId: true, product: { select: { domainId: true } }, latestVersion: { select: { major: true, minor: true } } },
     });
     if (!owned || !owned.productId) return specNotFound();
+    if (!ctxCan(ctx, "event.read", { tenantId, domainId: owned.domainId ?? owned.product?.domainId ?? null, productId: owned.productId })) return specNotFound();
     const { name: specName, productId } = owned;
 
     let version: string;
@@ -146,4 +144,4 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     console.error("GET /api/v1/event-specs/:id error:", e);
     return apiServerError();
   }
-}
+}, { before: (request) => checkRateLimit(request) });

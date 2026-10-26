@@ -29,18 +29,6 @@ const PENDING_TASK_6: Record<string, string> = {
   "/api/compliance/query#POST": "Task 6 compliance routes",
   "/api/domains-tree#GET": "Task 6 internal API",
   "/api/tenants#GET": "Task 6 internal API",
-  "/api/v1/event-specs/[id]#GET": "Task 6 API v1",
-  "/api/v1/notifications#GET": "Task 6 API v1",
-  "/api/v1/notifications#POST": "Task 6 API v1",
-  "/api/v1/schemas/[id]/emit#POST": "Task 6 API v1",
-  "/api/v1/schemas/[id]#GET": "Task 6 API v1",
-  "/api/v1/schemas/[id]/validate#POST": "Task 6 API v1",
-  "/api/v1/schemas#GET": "Task 6 API v1",
-  "/api/v1/webhooks/[id]/deliveries#GET": "Task 6 API v1",
-  "/api/v1/webhooks/[id]#PUT": "Task 6 API v1",
-  "/api/v1/webhooks/[id]#DELETE": "Task 6 API v1",
-  "/api/v1/webhooks#GET": "Task 6 API v1",
-  "/api/v1/webhooks#POST": "Task 6 API v1",
 };
 
 const surfaces = scanRepository("src");

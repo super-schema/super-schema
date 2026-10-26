@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { assign, principalOf, roleless, tenantMember } from "../../../helpers/access-mocks";
 
 const h = vi.hoisted(() => ({
   authenticateRequest: vi.fn(),
@@ -11,6 +12,8 @@ const h = vi.hoisted(() => ({
 vi.mock("@/app/api/v1/middleware", () => ({ authenticateRequest: h.authenticateRequest }));
 vi.mock("@/app/api/v1/rate-limit", () => ({ checkRateLimit: h.checkRateLimit }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
+vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/db", () => ({ prisma: { eventSpec: { findFirst: h.findFirst } } }));
 vi.mock("@/services/events/event-emit.service", () => ({
   emitEventDraft: h.emitEventDraft,
   emitEventStoredVersion: h.emitEventStoredVersion,
@@ -22,11 +25,15 @@ import { GET } from "@/app/api/v1/event-specs/[id]/route";
 // one. The mock honours the `where` it is given, so removing the route's tenant filter changes the outcome (the cross-tenant test fails).
 let specName = "checkout-service";
 const SPECS = [
-  { id: "s1", tenantId: "t1", productId: "p1", latestVersion: { major: 2, minor: 0 } },
-  { id: "s-draft-only", tenantId: "t1", productId: "p1", latestVersion: null },
-  { id: "s-foreign", tenantId: "t2", productId: "p9", latestVersion: { major: 1, minor: 0 } },
+  { id: "s1", tenantId: "t1", productId: "p1", domainId: "d1", latestVersion: { major: 2, minor: 0 } },
+  { id: "s-draft-only", tenantId: "t1", productId: "p1", domainId: "d1", latestVersion: null },
+  { id: "s-sibling", tenantId: "t1", productId: "p2", domainId: "d2", latestVersion: { major: 1, minor: 0 } },
+  { id: "s-foreign", tenantId: "t2", productId: "p9", domainId: "d9", latestVersion: { major: 1, minor: 0 } },
 ];
-const CTX = { userId: "api-key-user", userRole: "ADMIN", prisma: { eventSpec: { findFirst: h.findFirst } } };
+/** What the service context of an authorized request carries: the tenant it acts in, whoever the caller is (the services are handed the very ctx). */
+const CTX = expect.objectContaining({ tenantId: "t1", userId: "member-1" });
+/** A session of a viewer of tenant t1 (the active tenant of a session is resolved per request: `getActiveTenantId`). */
+const session = (principal = tenantMember("VIEWER", "t1")) => ({ authenticated: true, source: "session", principal, tenantId: null });
 const emission = (over: Record<string, unknown> = {}) => ({
   success: true,
   data: { document: { asyncapi: "3.0.0" }, json: '{"asyncapi":"3.0.0"}\n', yaml: "asyncapi: 3.0.0\n", diagnostics: [], ...over },
@@ -41,11 +48,11 @@ beforeEach(() => {
   errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   specName = "checkout-service";
   h.checkRateLimit.mockReturnValue(null);
-  h.authenticateRequest.mockResolvedValue({ authenticated: true, context: CTX });
+  h.authenticateRequest.mockResolvedValue(session());
   h.getActiveTenantId.mockResolvedValue("t1");
   h.findFirst.mockImplementation(async ({ where }: { where: { id: string; tenantId?: string } }) => {
     const spec = SPECS.find((s) => s.id === where.id && (where.tenantId === undefined || s.tenantId === where.tenantId));
-    return spec ? { name: specName, productId: spec.productId, latestVersion: spec.latestVersion } : null;
+    return spec ? { name: specName, productId: spec.productId, domainId: spec.domainId, product: { domainId: spec.domainId }, latestVersion: spec.latestVersion } : null;
   });
   h.emitEventDraft.mockResolvedValue(emission());
   h.emitEventStoredVersion.mockResolvedValue(emission());
@@ -195,10 +202,44 @@ describe("tenant scoping (R67: the emit service trusts the id, so the route look
   });
 
   it("serves the foreign event to a caller whose tenant owns it (the filter is the only difference)", async () => {
+    h.authenticateRequest.mockResolvedValue(session(principalOf([assign.tenant("VIEWER", "t1"), assign.tenant("VIEWER", "t2")])));
     h.getActiveTenantId.mockResolvedValue("t2");
     expect((await call("", "s-foreign")).status).toBe(200);
-    expect(h.emitEventStoredVersion).toHaveBeenCalledWith("s-foreign", "p9", "1.0", CTX);
+    expect(h.emitEventStoredVersion).toHaveBeenCalledWith("s-foreign", "p9", "1.0", expect.objectContaining({ tenantId: "t2" }));
     expect((await call("", "s1")).status).toBe(404);
+  });
+
+  it("an event of a sibling domain, for a caller whose role covers one domain only, is the very 404 of a missing event (a role decides, not only the tenant)", async () => {
+    h.authenticateRequest.mockResolvedValue(session(principalOf([assign.domain("VIEWER", "t1", "d1")])));
+    expect((await call("", "s1")).status).toBe(200);
+    const sibling = await call("?version=draft", "s-sibling");
+    const missing = await call("?version=draft", "does-not-exist");
+    expect(sibling.status).toBe(404);
+    expect(await sibling.json()).toEqual(await missing.json());
+    expect(h.emitEventDraft).not.toHaveBeenCalled();
+  });
+
+  it("a product-scoped caller reads the events of that product only", async () => {
+    h.authenticateRequest.mockResolvedValue(session(principalOf([assign.product("VIEWER", "t1", "d1", "p1")])));
+    expect((await call("", "s1")).status).toBe(200);
+    expect((await call("", "s-sibling")).status).toBe(404);
+  });
+
+  it("a user with no role at all (no tenant to reach, or none in this one) is a 404 and nothing is looked up", async () => {
+    h.authenticateRequest.mockResolvedValue(session(roleless()));
+    expect((await call()).status).toBe(404);
+    h.getActiveTenantId.mockRejectedValue(Object.assign(new Error("no tenant"), { name: "NoTenantAccess", code: "NO_TENANT_ACCESS" }));
+    expect((await call()).status).toBe(404);
+    expect(h.findFirst).not.toHaveBeenCalled();
+    expect(emitters()).toBe(0);
+  });
+
+  it("the API key acts in ITS tenant (no session, no active tenant asked); an event of another tenant is the same 404", async () => {
+    const key = principalOf([assign.tenant("VIEWER", "t1")], { userId: "api-key-user" });
+    h.authenticateRequest.mockResolvedValue({ authenticated: true, source: "api-key", principal: key, tenantId: "t1" });
+    expect((await call()).status).toBe(200);
+    expect((await call("", "s-foreign")).status).toBe(404);
+    expect(h.getActiveTenantId).not.toHaveBeenCalled();
   });
 
   it("does not leak the event id or its existence in the 404 body", async () => {

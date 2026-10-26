@@ -449,6 +449,18 @@ export async function createResetTokenRow(userId: string, options: { expiresInHo
   return { id, token };
 }
 
+/**
+ * A role for a user, as the app stores it (`scopeKey` and the id columns agree): at the tenant's scope, or at one domain's (`domainId`). Goes with the user
+ * (cascade). A global administrator is the seeded admin; a spec that needs a user with a LOWER role gives it here.
+ */
+export async function grantRoleRow(userId: string, role: string, scope: { tenantId: string; domainId?: string }): Promise<void> {
+  const scopeKey = scope.domainId ? `D:${scope.domainId}` : `T:${scope.tenantId}`;
+  await pg().query(
+    `INSERT INTO user_roles (id, "userId", role, "scopeKey", "tenantId", "domainId") VALUES ($1, $2, $3, $4, $5, $6)`,
+    [newId(), userId, role, scopeKey, scope.tenantId, scope.domainId ?? null],
+  );
+}
+
 /** The role rows (`user_roles`) of a user: [{ role, domainId }]. */
 export async function rolesOfUser(userId: string): Promise<Array<{ role: string; domainId: string | null }>> {
   const { rows } = await pg().query(`SELECT role, "domainId" FROM user_roles WHERE "userId" = $1 ORDER BY role`, [userId]);
@@ -851,7 +863,7 @@ export async function webhookRowState(id: string): Promise<{ endpoint: boolean; 
 }
 
 /** The webhook endpoint row as the database has it (what a test compares an API answer to), or undefined. */
-export async function webhookRow(id: string): Promise<{ url: string; events: string[]; secret: string; active: boolean; createdBy: string } | undefined> {
+export async function webhookRow(id: string): Promise<{ url: string; events: string[]; secret: string; active: boolean; createdBy: string | null } | undefined> {
   const { rows } = await pg().query(`SELECT url, events, secret, active, "createdBy" FROM webhook_endpoints WHERE id = $1`, [id]);
-  return rows[0] as { url: string; events: string[]; secret: string; active: boolean; createdBy: string } | undefined;
+  return rows[0] as { url: string; events: string[]; secret: string; active: boolean; createdBy: string | null } | undefined;
 }
