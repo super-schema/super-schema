@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { globalAdmin, signInAs } from "../../helpers/access-mocks";
+import { assign, globalAdmin, principalOf, signInAs } from "../../helpers/access-mocks";
 
 type Row = Record<string, unknown>;
 
@@ -201,17 +201,25 @@ describe("FieldDetailPage for a product entity", () => {
 });
 
 describe("FieldDetailPage: the entities a reference can point at (for the type picker)", () => {
-  // The ENTITY's tenant differs from the ACTIVE tenant (a stale tenant cookie: the page tolerates it and resolves the URL's own domain),
-  // so a query read for the wrong one would show.
+  // The page used to tolerate a stale tenant cookie (a domain found in ANY tenant, then the entity's own tenant read): that fallback is gone, a domain of another
+  // tenant than the one in view is a missing one. The entity, its domain and the picker's entities are all of the tenant in view.
   beforeEach(() => {
     db.activeTenantId = "tenant-active";
-    db.domains = [{ id: "dom-1", slug: "payments", tenantId: "tenant-entity" }];
+    db.domains = [{ id: "dom-1", slug: "payments", tenantId: "tenant-active" }];
     db.products = [{ id: "prod-1", slug: "checkout", domainId: "dom-1" }];
-    db.entities = [{ id: "ent-checkout", slug: "order", tenantId: "tenant-entity", domainId: "dom-1", productId: "prod-1", name: "Order" }];
+    db.entities = [{ id: "ent-checkout", slug: "order", tenantId: "tenant-active", domainId: "dom-1", productId: "prod-1", name: "Order" }];
     db.fields = [fieldRow("f-checkout", "ent-checkout")];
   });
 
-  it("hands the field studio the entities with their domain and product names, read for the ENTITY'S tenant (not the active one)", async () => {
+  it("a domain that only ANOTHER tenant has is a 404: there is no tenant-agnostic fallback", async () => {
+    db.domains = [{ id: "dom-1", slug: "payments", tenantId: "tenant-entity" }];
+    db.entities = [{ id: "ent-checkout", slug: "order", tenantId: "tenant-entity", domainId: "dom-1", productId: "prod-1", name: "Order" }];
+    db.fields = [fieldRow("f-checkout", "ent-checkout")];
+    await expect(FieldDetailPage({ params: params("payments", "checkout", "order", "f-checkout") })).rejects.toThrow("not found");
+    expect(mocks.entityFindMany).not.toHaveBeenCalled();
+  });
+
+  it("hands the field studio the entities with their domain and product names, read for the tenant in view (and only the ones the caller may read)", async () => {
     mocks.entityFindMany.mockResolvedValue([{ id: "e-addr", name: "Address", domain: { name: "Billing" }, product: { name: "Core" } }]);
 
     const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "f-checkout") });
@@ -219,8 +227,8 @@ describe("FieldDetailPage: the entities a reference can point at (for the type p
     expect(element.props.field.id).toBe("f-checkout");
     expect(element.props.referenceTargets).toEqual([{ id: "e-addr", name: "Address", domain: "Billing", product: "Core" }]);
     expect(mocks.entityFindMany).toHaveBeenCalledTimes(1);
-    expect(mocks.entityFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-entity" } }));
-    expect(mocks.entityFindMany).not.toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-active" } }));
+    expect(mocks.entityFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-active" } }));
+    expect(mocks.entityFindMany).not.toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-entity" } }));
   });
 
   it("a failing lookup does not take the page down", async () => {
@@ -232,6 +240,54 @@ describe("FieldDetailPage: the entities a reference can point at (for the type p
     expect(element.props.field.id).toBe("f-checkout");
     expect(element.props.referenceTargets).toEqual([]);
     spy.mockRestore();
+  });
+});
+
+describe("FieldDetailPage: who may open a field (a role that lets the caller READ its entity)", () => {
+  beforeEach(() => {
+    db.domains = [{ id: "dom-1", slug: "payments", tenantId: "tenant-1" }];
+    db.products = [{ id: "prod-1", slug: "checkout", domainId: "dom-1" }];
+    db.entities = [
+      { id: "ent-checkout", slug: "order", tenantId: "tenant-1", domainId: "dom-1", productId: "prod-1", name: "Order", product: { domainId: "dom-1" } },
+      { id: "ent-t1", slug: "customer", tenantId: "tenant-1", domainId: null, productId: null, name: "Customer", product: null },
+    ];
+    db.fields = [fieldRow("f-checkout", "ent-checkout"), fieldRow("f-t1", "ent-t1")];
+  });
+  const open = () => FieldDetailPage({ params: params("payments", "checkout", "order", "f-checkout") });
+
+  it.each([
+    ["a viewer of the tenant", [assign.tenant("VIEWER", "tenant-1")]],
+    ["a viewer of the domain", [assign.domain("VIEWER", "tenant-1", "dom-1")]],
+    ["a viewer of the product", [assign.product("VIEWER", "tenant-1", "dom-1", "prod-1")]],
+  ])("%s opens it, and the reference picker holds only the entities they may read", async (_who, assignments) => {
+    signInAs(principalOf(assignments));
+    mocks.entityFindMany.mockClear();
+    const element = await open();
+    expect(element.props.field.id).toBe("f-checkout");
+    const where = mocks.entityFindMany.mock.calls[0][0].where;
+    expect(where.tenantId).toBe("tenant-1");
+    expect("OR" in where).toBe(assignments[0].scope.kind !== "TENANT");
+  });
+
+  it.each([
+    ["a viewer of ANOTHER domain", [assign.domain("VIEWER", "tenant-1", "dom-2")]],
+    ["a viewer of another product of the domain", [assign.product("VIEWER", "tenant-1", "dom-1", "prod-2")]],
+    ["an administrator of another tenant", [assign.tenant("ADMIN", "tenant-2")]],
+    ["a user with no role", []],
+  ])("%s gets a 404 and no field or entity list is read", async (_who, assignments) => {
+    signInAs(principalOf(assignments));
+    mocks.fieldFindFirst.mockClear();
+    await expect(open()).rejects.toThrow("not found");
+    expect(mocks.fieldFindFirst).not.toHaveBeenCalled();
+    expect(mocks.entityFindMany).not.toHaveBeenCalled();
+  });
+
+  it("a tenant-level (Enterprise) entity's field needs a role over the whole tenant: a domain role is a 404", async () => {
+    const enterprise = () => FieldDetailPage({ params: params("enterprise", "entities", "customer", "f-t1") });
+    signInAs(principalOf([assign.domain("ADMIN", "tenant-1", "dom-1")]));
+    await expect(enterprise()).rejects.toThrow("not found");
+    signInAs(principalOf([assign.tenant("VIEWER", "tenant-1")]));
+    expect((await enterprise()).props.field.id).toBe("f-t1");
   });
 });
 

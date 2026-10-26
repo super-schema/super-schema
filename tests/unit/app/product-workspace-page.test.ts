@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assign, globalAdmin, principalOf, signInAs } from "../../helpers/access-mocks";
 
 const mocks = vi.hoisted(() => ({
   loadEventsList: vi.fn(),
@@ -27,7 +28,9 @@ vi.mock("@/lib/db", () => ({
     serviceDefinition: { findMany: mocks.empty },
   },
 }));
-vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId, requireActiveTenantId: mocks.getActiveTenantId }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId, requireActiveTenantId: mocks.getActiveTenantId, NO_ACCESS_PATH: "/no-access" }));
+vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).principalModule);
 vi.mock("@/features/events/event-page/load-events-list", () => ({ loadEventsList: mocks.loadEventsList }));
 vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => {
@@ -67,6 +70,7 @@ function entityRow(id: string, fields: number) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  signInAs(globalAdmin());
   mocks.loadEventsList.mockResolvedValue([]);
   mocks.getActiveTenantId.mockResolvedValue("tenant-1");
   mocks.domainFindFirst.mockResolvedValue(DOMAIN);
@@ -199,12 +203,13 @@ describe("ProductWorkspacePage", () => {
     expect(mocks.loadEventsList).not.toHaveBeenCalled();
   });
 
-  it("falls back to an unscoped domain lookup when the slug is outside the active tenant", async () => {
-    mocks.domainFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(DOMAIN);
-    await ProductWorkspacePage({ params });
+  it("never looks a domain up outside the tenant in view: a slug that only another tenant has is a 404 (there is no tenant-agnostic fallback)", async () => {
+    mocks.domainFindFirst.mockImplementation(async ({ where }: { where: { tenantId?: string } }) => (where.tenantId === "tenant-1" ? null : DOMAIN));
+    await expect(ProductWorkspacePage({ params })).rejects.toThrow("not found");
 
-    expect(mocks.domainFindFirst).toHaveBeenCalledTimes(2);
-    expect(mocks.domainFindFirst.mock.calls[1][0].where).toEqual({ slug: "payments" });
+    expect(mocks.domainFindFirst).toHaveBeenCalledTimes(1);
+    expect(mocks.domainFindFirst.mock.calls[0][0].where).toEqual({ slug: "payments", tenantId: "tenant-1" });
+    expect(mocks.entityFindMany).not.toHaveBeenCalled();
   });
 
   it("404s when the domain does not exist", async () => {
@@ -214,7 +219,7 @@ describe("ProductWorkspacePage", () => {
 
   it("redirects a legacy 2-segment entity link to the canonical entity URL, keeping the query", async () => {
     mocks.domainFindFirst.mockResolvedValue({ ...DOMAIN, products: [] });
-    mocks.entityFindFirst.mockResolvedValue({ slug: "checkout", product: { slug: "web" } });
+    mocks.entityFindFirst.mockResolvedValue({ slug: "checkout", productId: "prod-9", product: { slug: "web" } });
 
     await expect(
       ProductWorkspacePage({
@@ -229,5 +234,55 @@ describe("ProductWorkspacePage", () => {
     mocks.domainFindFirst.mockResolvedValue({ ...DOMAIN, products: [] });
     mocks.entityFindFirst.mockResolvedValue(null);
     await expect(ProductWorkspacePage({ params })).rejects.toThrow("not found");
+  });
+});
+
+// Who may open a product (a role over the product, its domain, the tenant or the platform) and how much of what it inherits it is shown.
+describe("ProductWorkspacePage: who may see what", () => {
+  it.each([
+    ["a viewer of the tenant", [assign.tenant("VIEWER", "tenant-1")]],
+    ["an author of the domain", [assign.domain("AUTHOR", "tenant-1", "dom-1")]],
+    ["a viewer of exactly this product", [assign.product("VIEWER", "tenant-1", "dom-1", "prod-1")]],
+  ])("%s opens it", async (_who, assignments) => {
+    signInAs(principalOf(assignments));
+    const element = await ProductWorkspacePage({ params });
+    expect(element.props.entities).toHaveLength(2);
+  });
+
+  it.each([
+    ["an author of ANOTHER product of the domain", [assign.product("AUTHOR", "tenant-1", "dom-1", "prod-2")]],
+    ["an author of another domain", [assign.domain("AUTHOR", "tenant-1", "dom-2")]],
+    ["an administrator of another tenant", [assign.tenant("ADMIN", "tenant-2")]],
+    ["a user with no role", []],
+  ])("%s gets a 404 and no content is read", async (_who, assignments) => {
+    signInAs(principalOf(assignments));
+    await expect(ProductWorkspacePage({ params })).rejects.toThrow("not found");
+    expect(mocks.entityFindMany).not.toHaveBeenCalled();
+    expect(mocks.loadEventsList).not.toHaveBeenCalled();
+  });
+
+  it("a role at this product alone is not shown what the domain and the Enterprise hold: those queries are not run", async () => {
+    signInAs(principalOf([assign.product("VIEWER", "tenant-1", "dom-1", "prod-1")]));
+    mocks.empty.mockClear();
+    await ProductWorkspacePage({ params });
+    // the product's own four (enums, scalars, unions, APIs) only: the four of the domain and the three of the Enterprise are not asked for
+    expect(mocks.empty).toHaveBeenCalledTimes(4);
+  });
+
+  it("a role over the whole tenant is shown the inherited assets too (all eleven queries run)", async () => {
+    signInAs(principalOf([assign.tenant("VIEWER", "tenant-1")]));
+    mocks.empty.mockClear();
+    await ProductWorkspacePage({ params });
+    expect(mocks.empty).toHaveBeenCalledTimes(11);
+  });
+
+  it("a legacy entity link redirects only to an entity the caller may read (the redirect would say that it exists): another product's entity is a 404", async () => {
+    signInAs(principalOf([assign.product("VIEWER", "tenant-1", "dom-1", "prod-1")]));
+    mocks.domainFindFirst.mockResolvedValue({ ...DOMAIN, products: [] });
+    mocks.entityFindFirst.mockResolvedValue({ slug: "checkout", productId: "prod-9", product: { slug: "web" } });
+    await expect(ProductWorkspacePage({ params })).rejects.toThrow("not found");
+    // while an entity of the product the caller holds is followed
+    mocks.entityFindFirst.mockResolvedValue({ slug: "checkout", productId: "prod-1", product: { slug: "web" } });
+    await expect(ProductWorkspacePage({ params })).rejects.toThrow("redirect:/schemas/payments/web/checkout");
   });
 });

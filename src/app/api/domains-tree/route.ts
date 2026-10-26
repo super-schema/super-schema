@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { APP_ERRORS, withApiAuth } from "@/lib/access/api";
-import { canListDomain, canListProduct, readableScopes, type ActionId, type Assignment } from "@/lib/access";
+import { canListDomain, canListProduct, readableWhere } from "@/lib/access";
 import { buildExplorerTree } from "@/lib/navigation/build-explorer-tree";
 
 type GroupedLevel = { domainId: string | null; productId: string | null; _count: { _all: number } };
@@ -9,16 +9,6 @@ type GroupedLevel = { domainId: string | null; productId: string | null; _count:
 /** `groupBy` rows → the level-tagged shape the tree builder counts (one row per level, with its count). */
 const asLevelCounts = (rows: GroupedLevel[]) =>
   rows.map(({ domainId, productId, _count }) => ({ domainId, productId, count: _count._all }));
-
-/**
- * The rows of a table the caller may read for `action`, as a `where` fragment: all of the tenant's (a tenant or platform role), or only those under
- * the domains and products their narrower roles cover. A role that is too low for the action contributes nothing, so a tenant-level row (no domain,
- * no product) is only ever shown to a tenant or platform role. The QUERY is restricted, not a page after it.
- */
-function readableRows(assignments: readonly Assignment[], action: ActionId, tenantId: string): { OR?: Array<Record<string, unknown>> } {
-  const scopes = readableScopes(assignments, action, tenantId);
-  return scopes.all ? {} : { OR: [{ domainId: { in: scopes.domainIds } }, { productId: { in: scopes.productIds } }] };
-}
 
 /**
  * The explorer tree of the tenant being viewed, as far as the caller's roles reach: the domains and products they may list (a role at a product
@@ -32,10 +22,10 @@ export const GET = withApiAuth(
     const tenantId = api.tenantId as string; // content action: `withApiAuth` always resolves it
     const assignments = api.principal.assignments;
     const levelSelect = { domainId: true, productId: true } as const;
-    const entityScope = readableRows(assignments, "entity.read", tenantId);
-    const assetScope = readableRows(assignments, "asset.read", tenantId);
-    const traitScope = readableRows(assignments, "trait.read", tenantId);
-    const eventScope = readableRows(assignments, "event.read", tenantId);
+    const entityScope = readableWhere(assignments, "entity.read", tenantId);
+    const assetScope = readableWhere(assignments, "asset.read", tenantId);
+    const traitScope = readableWhere(assignments, "trait.read", tenantId);
+    const eventScope = readableWhere(assignments, "event.read", tenantId);
     // Traits and events are only counted per level (never listed), so they are aggregated in the
     // database instead of loading every row.
     const levelGroup = (where: object) =>

@@ -236,7 +236,7 @@ test.describe("governance dashboard", () => {
       const page = visitor.page;
       await openGovernance(page);
       const card = requestCard(page, entityName);
-      // Any signed-in user sees the requests of the tenant they are viewing (KD-023: who may see them is a policy not yet decided); only a
+      // Any signed-in user sees the requests of the tenant they are viewing (who may see them is now decided by role, and only a request the user may decide shows the consumers' owners; the access matrix rewrites this spec); only a
       // Steward or an Admin may decide.
       await expect(card).toBeVisible();
 

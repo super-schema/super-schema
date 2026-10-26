@@ -4,7 +4,8 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { EntityCreationWizard } from "@/components/custom/EntityCreationWizard";
 import { isAiConfigured } from "@/services/ai.service";
-import { requireActiveTenantId } from "@/lib/active-tenant";
+import { can, readableWhere } from "@/lib/access";
+import { requirePageAccess } from "@/lib/access/page-access";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { HideEmptyRightPanel } from "@/components/layout/HideEmptyRightPanel";
 
@@ -14,11 +15,11 @@ interface Props {
 
 export default async function NewEntityPage({ params }: Props) {
   const { domainSlug, productSlug } = await params;
-  const tenantId = await requireActiveTenantId();
+  const { principal, tenantId } = await requirePageAccess();
+  const assignments = principal.assignments;
 
-  const domain =
-    (await prisma.domain.findFirst({ where: { slug: domainSlug, tenantId } })) ??
-    (await prisma.domain.findFirst({ where: { slug: domainSlug } }));
+  // The domain of the tenant in view and no other (a slug is not unique across tenants; it used to fall back to a tenant-agnostic lookup).
+  const domain = await prisma.domain.findFirst({ where: { slug: domainSlug, tenantId } });
 
   if (!domain) {
     notFound();
@@ -28,13 +29,15 @@ export default async function NewEntityPage({ params }: Props) {
     where: { slug: productSlug, domainId: domain.id },
   });
 
-  if (!product) {
+  // Creating an entity here needs `entity.write` over the product (an author of it, its domain or the tenant): a role that cannot create here, or none that covers
+  // the product, is a 404 (the page is the wizard that writes; the action behind it asks again).
+  if (!product || !can(assignments, "entity.write", { tenantId, domainId: domain.id, productId: product.id })) {
     notFound();
   }
 
-  // Existing entities in this domain — offered as $ref targets in the visual builder.
+  // Existing entities in this domain that the caller may read: offered as $ref targets in the visual builder (a name is not shown to a role that cannot read it).
   const referenceTargets = await prisma.entity.findMany({
-    where: { domainId: domain.id },
+    where: { domainId: domain.id, tenantId, ...readableWhere(assignments, "entity.read", tenantId) },
     select: { id: true, name: true },
     orderBy: { name: "asc" },
   });

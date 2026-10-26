@@ -167,6 +167,14 @@ tables and columns, restores the old unique key, keeps the role rows the old mod
 product-scoped ones to `user_roles_access_control_backup` instead of leaving rows the old code would read as wider, and clears the password hash of any
 disabled user so the rollback does not silently re-enable them. Invitations, tokens and auth events are lost (export them first if you need them).
 
+### Webhook endpoint creator (`20261026000000_webhook_endpoint_creator_optional`)
+
+One statement: `webhook_endpoints."createdBy"` loses its NOT NULL (the foreign key to `users` stays, `ON DELETE RESTRICT`). The REST API key is a service principal and no row
+of `users`, so an endpoint it creates has no creator; before this, the insert violated the foreign key and the key could not create an endpoint at all. Existing rows keep their creator.
+`prisma/schema.prisma` says `createdBy String?` with `onDelete: Restrict, onUpdate: Cascade`, which is what the database has, so `migrate dev` finds no drift. PGlite applies it with
+the others (`tests/integration/db/webhook-endpoint-creator-pglite.test.ts`). Its rollback (`rollback.sql`, never run automatically) is `SET NOT NULL` and refuses while an endpoint
+has no creator: delete those, or give each a creator, first.
+
 ---
 
 ## Production notes

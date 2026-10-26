@@ -2,13 +2,18 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { EntityCreationWizard } from "@/components/custom/EntityCreationWizard";
-import { requireActiveTenantId } from "@/lib/active-tenant";
+import { notFound } from "next/navigation";
+import { can } from "@/lib/access";
+import { requirePageAccess } from "@/lib/access/page-access";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { HideEmptyRightPanel } from "@/components/layout/HideEmptyRightPanel";
 import { levelLabel } from "@/lib/levels";
 
 export default async function NewEnterpriseEntityPage() {
-  const tenantId = await requireActiveTenantId();
+  const { principal, tenantId } = await requirePageAccess();
+
+  // Creating a tenant-level entity needs `entity.write` over the tenant as a whole (a tenant author or above, or a platform role); anyone else is told 404.
+  if (!can(principal.assignments, "entity.write", { tenantId })) notFound();
 
   // Existing Enterprise entities — offered as $ref targets in the visual builder.
   const referenceTargets = await prisma.entity.findMany({

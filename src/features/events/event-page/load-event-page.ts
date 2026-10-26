@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db";
+import { can, readableWhere } from "@/lib/access";
+import { getPrincipal } from "@/lib/access/principal";
 import { assetHref, normalizeBuilderSection, normalizeEventTab, type BuilderSection, type EventTab } from "@/lib/navigation/asset-href";
 import { EVENT_SELECT, toEventDetail, type EventDetail } from "@/services/events/event.service";
 import { productCrumbs } from "@/features/events/crumbs";
@@ -53,6 +55,12 @@ export async function loadEventPage(params: {
 }): Promise<EventPageData | null> {
   const route = await resolveProductRoute(params.domainSlug, params.productSlug);
   if (!route) return null;
+  // The route already says the caller's roles cover this product (a role over it, its domain, the tenant or the platform); who they are is asked again here for the event
+  // itself and for what the page OFFERS beside it (the entity and trait pickers: only what they may read).
+  const principal = await getPrincipal();
+  if (!principal) return null;
+  const assignments = principal.assignments;
+  if (!can(assignments, "event.read", { tenantId: route.tenantId, domainId: route.domain.id, productId: route.product.id })) return null;
   const row = await prisma.eventSpec.findFirst({
     where: { id: params.eventId, tenantId: route.tenantId, productId: route.product.id },
     select: EVENT_SELECT,
@@ -68,10 +76,14 @@ export async function loadEventPage(params: {
   // A library trait is usable from an event when it is tenant-level or of the event's own domain (never product-level: the service
   // refuses those), so the scope handed to the loader is the domain's, without the product.
   const libraryScope = { tenantId: route.tenantId, domainId: route.domain.id, productId: null };
+  const readTraits = {
+    enterprise: can(assignments, "trait.read", { tenantId: route.tenantId }),
+    domain: can(assignments, "trait.read", { tenantId: route.tenantId, domainId: route.domain.id }),
+  };
   const [entityOptions, messageTraits, operationTraits] = await Promise.all([
-    loadEntityOptions(route.tenantId),
-    loadTraitOptions(libraryScope, "MESSAGE"),
-    loadTraitOptions(libraryScope, "OPERATION"),
+    loadEntityOptions(route.tenantId, readableWhere(assignments, "entity.read", route.tenantId)),
+    loadTraitOptions(libraryScope, "MESSAGE", readTraits),
+    loadTraitOptions(libraryScope, "OPERATION", readTraits),
   ]);
   const libraryTraits = [
     ...messageTraits.map((t) => libraryOption(t, "MESSAGE")),

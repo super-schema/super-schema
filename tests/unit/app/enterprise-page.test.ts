@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assign, globalAdmin, principalOf, roleless, signInAs } from "../../helpers/access-mocks";
 
 const mocks = vi.hoisted(() => ({
   loadLevelTraits: vi.fn(),
@@ -17,7 +18,17 @@ vi.mock("@/lib/db", () => ({
     unionType: { findMany: mocks.empty },
   },
 }));
-vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId, requireActiveTenantId: mocks.getActiveTenantId }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId, requireActiveTenantId: mocks.getActiveTenantId, NO_ACCESS_PATH: "/no-access" }));
+vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).principalModule);
+vi.mock("next/navigation", () => ({
+  notFound: () => {
+    throw new Error("not found");
+  },
+  redirect: (url: string) => {
+    throw new Error(`NEXT_REDIRECT ${url}`);
+  },
+}));
 vi.mock("@/features/events/workspace/load-events-tab-data", () => ({
   loadLevelTraits: mocks.loadLevelTraits,
 }));
@@ -29,6 +40,7 @@ import EnterprisePage from "@/app/(dashboard)/schemas/enterprise/page";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  signInAs(globalAdmin());
   mocks.getActiveTenantId.mockResolvedValue("tenant-1");
   mocks.loadLevelTraits.mockResolvedValue({ own: [], inherited: [] });
   mocks.empty.mockResolvedValue([]);
@@ -92,5 +104,37 @@ describe("EnterprisePage", () => {
       domainSlug: null,
     });
     expect(element.props.traits).toBe(traits);
+  });
+});
+
+// The Enterprise level is the tenant itself: a role over the whole tenant (or the platform) reads it; a role at one domain or product does not, and neither does a
+// user with no role. They get a 404 and nothing is read.
+describe("EnterprisePage: who may see the tenant-level assets", () => {
+  it.each([
+    ["a viewer of the tenant", [assign.tenant("VIEWER", "tenant-1")]],
+    ["an author of the tenant", [assign.tenant("AUTHOR", "tenant-1")]],
+    ["a platform administrator", [assign.global()]],
+  ])("%s sees them", async (_who, assignments) => {
+    signInAs(principalOf(assignments));
+    expect((await EnterprisePage()).props.entities).toHaveLength(2);
+  });
+
+  it.each([
+    ["an author of one domain", [assign.domain("AUTHOR", "tenant-1", "dom-1")]],
+    ["an administrator of one product", [assign.product("ADMIN", "tenant-1", "dom-1", "prod-1")]],
+    ["an administrator of ANOTHER tenant", [assign.tenant("ADMIN", "tenant-2")]],
+    ["a user with no role", []],
+  ])("%s gets a 404 and nothing is read", async (_who, assignments) => {
+    signInAs(principalOf(assignments));
+    await expect(EnterprisePage()).rejects.toThrow("not found");
+    expect(mocks.entityFindMany).not.toHaveBeenCalled();
+    expect(mocks.loadLevelTraits).not.toHaveBeenCalled();
+  });
+
+  it("nobody (a disabled user, a stale session) is sent to /no-access", async () => {
+    signInAs(null);
+    await expect(EnterprisePage()).rejects.toThrow("NEXT_REDIRECT /no-access");
+    expect(roleless().assignments).toEqual([]);
+    expect(mocks.entityFindMany).not.toHaveBeenCalled();
   });
 });

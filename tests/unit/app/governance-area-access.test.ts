@@ -219,6 +219,17 @@ describe("getGovernanceRequestsAction", () => {
     expect(visible({ tenantId: T, domainId: "dom-c", productId: null })).toBe(false);
     expect(visible({ tenantId: T, domainId: null, productId: null })).toBe(false);
   });
+
+  it("hands the service the second filter that keeps the owners' e-mail addresses to the requests the caller may DECIDE (a steward or above over the entity): KD-023", async () => {
+    signInAs(principalOf([assign.domain("STEWARD", T, "dom-a"), assign.domain("VIEWER", T, "dom-b"), assign.tenant("VIEWER", T)]));
+    await getGovernanceRequestsAction();
+    const mayDecide = h.getAllRequests.mock.calls[0][2] as (place: { tenantId: string; domainId: string | null; productId: string | null }) => boolean;
+    expect(mayDecide({ tenantId: T, domainId: "dom-a", productId: "prod-a" })).toBe(true);
+    // a viewer (of the tenant, or of that domain) reads the request, and is not told whom it affects
+    expect(mayDecide({ tenantId: T, domainId: "dom-b", productId: null })).toBe(false);
+    expect(mayDecide({ tenantId: T, domainId: "dom-c", productId: null })).toBe(false);
+    expect(mayDecide({ tenantId: T, domainId: null, productId: null })).toBe(false);
+  });
 });
 
 describe("getEntitiesForRetentionAction", () => {

@@ -30,15 +30,18 @@ const domainTraits = (tenantId: string, domainId: string) => ({ tenantId, domain
  * Traits of a domain (`scope.domainId` set) or of the Enterprise; a domain also shows the Enterprise traits
  * read-only. `scope.productId` is not read here.
  */
-export async function loadLevelTraits(args: { scope: LevelScope; domainSlug: string | null }): Promise<TraitsTabData> {
+export async function loadLevelTraits(args: { scope: LevelScope; domainSlug: string | null; read?: { own: boolean; enterprise: boolean } }): Promise<TraitsTabData> {
   const { scope, domainSlug } = args;
+  // Which of the two lists the CALLER may read (`trait.read`: a role over the domain / over the tenant). A list they may not read is not queried at all, so a
+  // role scoped to one domain gets that domain's traits and not the Enterprise ones it does not cover. Default: both (a caller that has already decided).
+  const read = args.read ?? { own: true, enterprise: true };
   if (!scope.domainId) {
-    const own = await prisma.trait.findMany({ where: tenantTraits(scope.tenantId), orderBy: { name: "asc" }, select: TRAIT_SELECT });
+    const own = read.own ? await prisma.trait.findMany({ where: tenantTraits(scope.tenantId), orderBy: { name: "asc" }, select: TRAIT_SELECT }) : [];
     return { own: linkTraits(own, null), inherited: [] };
   }
   const [own, fromTenant] = await Promise.all([
-    prisma.trait.findMany({ where: domainTraits(scope.tenantId, scope.domainId), orderBy: { name: "asc" }, select: TRAIT_SELECT }),
-    prisma.trait.findMany({ where: tenantTraits(scope.tenantId), orderBy: { name: "asc" }, select: TRAIT_SELECT }),
+    read.own ? prisma.trait.findMany({ where: domainTraits(scope.tenantId, scope.domainId), orderBy: { name: "asc" }, select: TRAIT_SELECT }) : Promise.resolve([]),
+    read.enterprise ? prisma.trait.findMany({ where: tenantTraits(scope.tenantId), orderBy: { name: "asc" }, select: TRAIT_SELECT }) : Promise.resolve([]),
   ]);
   return {
     own: linkTraits(own, domainSlug),

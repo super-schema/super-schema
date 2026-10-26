@@ -1,14 +1,17 @@
 import { prisma } from "@/lib/db";
-import { requireActiveTenantId } from "@/lib/active-tenant";
+import { readableWhere } from "@/lib/access";
+import { requirePageAccess } from "@/lib/access/page-access";
 import type { EntityMetadata } from "@/types/schemas/entity-metadata.schema";
 import { LineagePageClient } from "./lineage-client";
 import { domainLabel } from "@/lib/entity-placement";
 import { entityRelationships } from "@/lib/lineage/entity-relationships";
 
 export default async function LineagePage() {
-  // The graph of the tenant being viewed (the explorer, the retention page and the other lists scope the same way).
+  // The graph of the tenant being viewed (the explorer, the retention page and the other lists scope the same way), and of the entities the caller may read
+  // in it: the restriction is in the query, so an entity of a domain their roles do not cover is no node and no edge.
+  const { principal, tenantId } = await requirePageAccess();
   const entities = await prisma.entity.findMany({
-    where: { tenantId: await requireActiveTenantId() },
+    where: { tenantId, ...readableWhere(principal.assignments, "entity.read", tenantId) },
     include: {
       domain: true,
       product: true,
@@ -25,9 +28,11 @@ export default async function LineagePage() {
     },
   });
 
+  const visibleIds = new Set(entities.map((e) => e.id));
   const entityData = entities.map((e) => {
     const metadata = (e.metadata as EntityMetadata) || {};
-    const relationships = entityRelationships({ metadataRelationships: metadata.relationships || [], fields: e.fields });
+    // An edge to an entity the caller may not read is no edge (its id would name an entity that is not on their graph).
+    const relationships = entityRelationships({ metadataRelationships: metadata.relationships || [], fields: e.fields }).filter((r) => visibleIds.has(r.targetEntityId));
 
     const piiCount = e.fields.filter(
       (f) => f.classification === "PII"

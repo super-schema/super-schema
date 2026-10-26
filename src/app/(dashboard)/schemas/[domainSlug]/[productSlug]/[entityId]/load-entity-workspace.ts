@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { can } from "@/lib/access";
+import { can, readableWhere } from "@/lib/access";
 import { entityCapabilities } from "@/lib/access/capabilities";
 import { getPrincipal } from "@/lib/access/principal";
 import type { Prisma } from "@/generated/prisma/client";
@@ -63,7 +63,8 @@ export async function findEntityInScope<I extends Prisma.EntityInclude>(
  */
 async function loadReplacementEntity(
   entity: { status: string; metadata: unknown },
-  tenantId: string
+  tenantId: string,
+  readable: Prisma.EntityWhereInput
 ): Promise<ReplacementEntityLink | null> {
   if (entity.status !== "DEPRECATED") return null;
   const replacementId = (
@@ -71,8 +72,9 @@ async function loadReplacementEntity(
   )?.deprecation?.replacementEntityId;
   if (!replacementId) return null;
 
+  // Only an entity the caller may read is named on the banner (its name is shown to them): one they may not is as good as none.
   const replacement = await prisma.entity.findFirst({
-    where: { id: replacementId, tenantId },
+    where: { ...readable, id: replacementId, tenantId },
     select: {
       name: true,
       slug: true,
@@ -125,10 +127,12 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
     (entity.domain as { policyTemplate?: Record<string, unknown> } | null)
       ?.policyTemplate ?? null;
 
-  const replacementEntity = await loadReplacementEntity(entity, where.tenantId);
+  const readable = readableWhere(principal.assignments, "entity.read", where.tenantId);
+  const replacementEntity = await loadReplacementEntity(entity, where.tenantId, readable);
   const referenceStaleness = await loadStaleReferences(entity.id);
   // The entities of THIS tenant (the scope's tenant, never the client's) a reference field can be pointed at, for the type picker.
-  const referenceTargets = await loadPickableEntities(prisma, where.tenantId);
+  // ... and only those the caller may read.
+  const referenceTargets = await loadPickableEntities(prisma, where.tenantId, readable);
 
   return {
     props: {

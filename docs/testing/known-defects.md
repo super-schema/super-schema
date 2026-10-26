@@ -197,16 +197,6 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - cost to fix: decide where a request is raised (a breaking publish, a classification change) and call it there, in the same transaction as the
   publish, and where the gate is asked (before an emission); this is a product decision, not a fix.
 
-## KD-023: a viewer sees the whole impact report of a governance request
-
-- status: no-test (a policy question; the rule that decides WHO may see a request is in place and unit-tested, `governance-area-access.test.ts`: this is what is left of it)
-- symptom: who sees which requests is decided now (access-control Task 5b): a user needs a role in the tenant being viewed, and a request is listed only when their roles cover the entity it is
-  about (`governance.read` over that entity; a domain- or product-scoped role sees the requests of its own domains and products, a user with no role sees none). Deciding is `governance.decide`
-  (a steward and above). What is left: every role that may SEE a request sees its whole impact report, which carries the entity's name, a summary of the change and the e-mail of the owner of each
-  affected consumer, down to a viewer. (`governance-compliance.spec.ts` still says in a comment that the rule is "not yet decided": the spec is rewritten with the access matrix, Task 9.)
-- where: `src/app/(dashboard)/governance/actions.ts` (`getGovernanceRequestsAction`), `src/services/governance.service.ts` (`getAllRequests`).
-- cost to fix: a narrower impact report for the roles below steward (the consumers' owners' e-mails are the sensitive part); a product decision, not a policy one.
-
 ## KD-027: the URL of a webhook endpoint has no policy
 
 - status: no-test (a security note, not something a test can call wrong; the other half of this entry, the signing secret in every list, is fixed: the list and an update carry no `secret`, only the answer of the creation does, and `api-v1.spec.ts` pins that)
@@ -271,35 +261,23 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   that fakes `prisma.entity.update` for these three actions needs a raw-statement equivalent in its fake. Not done in final wave 2b: the same three writes, the same fakes and the audit
   before-state all change together, which is a change of its own.
 
-## KD-034: the tenant being viewed is a cookie, so tenant scoping only prevents accidental mixing
+## KD-034: the tenant being viewed is a per-browser cookie, a CHOICE among the tenants the user holds a role in
 
-- status: no-test (a design limit of the current model, resolved by the access-control project: nothing to pin until it has a rule to pin)
-- symptom: every route and page that is "scoped to the tenant" (the command palette, compliance Query and Gaps, governance requests, lineage, the glossary, the schemas
-  lists) reads the `active_tenant` cookie (`getActiveTenantId`, `src/lib/active-tenant.ts`). Fixed already (access-control Task 3): the cookie counts only for a tenant the signed-in
-  user holds a role in (at any depth; a global administrator: any tenant), else the first tenant they can access, else `NoTenantAccess` (the dashboard layout and the pages send
-  that user to `/no-access`); `setActiveTenantAction` refuses any other tenant exactly as it refuses a missing one, and `/api/tenants` lists only the tenants the user may access.
-  Fixed since (access-control Task 5, the first half): an action on a resource now needs BOTH the resource in the ACTIVE tenant (else the answer of a missing resource, even for
-  a user who holds a role in the tenant that is not in view, and for a global administrator) AND a covering role (`authorizeInActiveTenant`); the entity, field, schema, publish,
-  deploy, type-mapping (per entity), TypeSpec-source, version, domain-asset, import, entity-creation and tenant-level-entity actions, the Domains list, the domain create and delete
-  and the glossary ask it before they read or write (domain- and product-scoped roles are judged at the row's own domain and product).
-  Fixed since (access-control Task 5b, the second half): the product, event, trait, usage, governance, retention, deployment-overview, admin (users, roles, domains, platform items) and
-  type-mapping actions and services ask it too, so `PENDING_TASK_5B` of `tests/unit/access/deny-by-default.test.ts` is EMPTY: every server action is guarded or public, and no service or action reads
-  the platform role label (`no-role-label.test.ts` lists what still mentions it: the dead oRPC routers). Lists across the tenant are filtered to what the caller's roles
-  cover, in the query.
-  Fixed since (access-control Task 6, the REST API): every `/api/v1/*` route asks `withApiAuth(action, handler)` (`src/lib/access/api.ts`) before it reads anything: a session carries the signed-in user's real
-  roles (it used to be a viewer, always), the API key is a service principal that acts in `API_KEY_TENANT_ID` with `API_KEY_ROLE`, the entity routes answer for the acting tenant and the roles that cover
-  the entity (`getEntities`, `getEntityById`), the webhook routes need a platform administrator, and a user with no role is told 404 or 403, never a 500. The same guard now stands in front of the
-  app's own JSON endpoints (`/api/tenants`, `/api/domains-tree`, `/api/command-palette-fields`, `/api/compliance/*`, `/api/ai/generate-entity`): `PENDING_TASK_6` of the deny-by-default scan is EMPTY for routes,
-  the tree, the palette and the compliance pages show what the caller's roles reach, and the compliance Audit Trail is the tenant in view's (`audit_log.tenantId`, written by `withAudit`;
-  rows written before the column that could not be attributed have no tenant and are shown to platform administrators only). What is NOT yet a boundary: every server-component loader that reads the database
-  directly except the entity workspace (the pages). They still check the ACTIVE TENANT only or nothing, so a user with any role in a tenant can still read through them what the old rules allowed there.
-  The first write-up of this entry (and the Task 3 report) said a role-less or disabled user reached nothing through the older actions: that was wrong. Until Task 5 they reached,
-  with a valid session and no role, `getDeploymentOverviewAction` and `getDomainsAction` (every tenant's entity names, versions and domains), the eight glossary actions (which ran as a
-  hard-coded AUTHOR for ANY session), the three import actions (the converter, the compiler and an outbound fetch on their say-so), and `/api/v1/*` (a session there is a VIEWER). The
-  Domains list, the three import actions, the glossary, `getDeploymentOverviewAction` and `/api/v1` are closed now, and registration was open until Task 4.
-  `/api/ai/generate-entity` checks that the domain it is given belongs to the tenant being viewed (an id of another tenant answers like an unknown one), which is the same soft rule.
-- where: `src/lib/active-tenant.ts`, `setActiveTenantAction`, `src/app/api/tenants/route.ts`.
-- cost to fix: the rest of the access-control work: every action, route and page loader asks `authorize(action, resource)` (Tasks 5 and 6), so the role and the scope decide, not the tenant alone.
+- status: no-test (what is left is a design limit of the switcher, not a boundary: the boundary is the role, and it is unit-tested everywhere the choice is used)
+- symptom: the tenant in view is the `active_tenant` cookie (`getActiveTenantId`, `src/lib/active-tenant.ts`), set by the switcher in the browser. It is **no longer a free pick** (access-control Tasks 3, 5, 6): it counts only
+  for a tenant the signed-in user holds a role in, at any depth (a platform administrator: any tenant); otherwise the first tenant they can access; a user with no role gets `NoTenantAccess`
+  (`/no-access` for a page, 404 or 403 JSON for an API route, never a 500); `setActiveTenantAction` refuses any other tenant exactly as it refuses a missing one, and `/api/tenants` lists only the
+  tenants the user may access. What a user may DO and SEE is decided by their roles, at the data layer: every server action asks `authorizeInActiveTenant` (the resource must lie in the tenant in view AND
+  a covering role must reach the action: a user with roles in tenants A and B and A in view cannot read or write B's rows by id, a platform administrator included), every `/api/v1` and `/api/*` route asks
+  `withApiAuth` (a session carries the user's real roles; the API key is a service principal bound to `API_KEY_TENANT_ID`), and every page and loader that reads the database asks the principal's
+  assignments (`requirePageAccess`, `can`, `canListDomain`, `canListProduct`, `readableWhere`) and looks a domain up INSIDE the tenant in view (the tenant-agnostic fallbacks that tolerated a stale cookie are gone).
+  `tests/unit/access/deny-by-default.test.ts` fails for a server action or a route handler that is neither guarded nor on the allow-list, and both pending lists are empty.
+  What is left: the choice lives in a cookie of one browser, so a user with roles in two tenants who opens a deep link into the tenant that is not in view gets a 404 until they switch (the same answer as a
+  missing page, on purpose: it says nothing about what exists), and a cookie that names a tenant whose role was since revoked falls back to the first accessible tenant without telling the user.
+  Not a boundary either, and recorded on their own: the glossary is one list for every tenant (KD-043), an event document may name an entity its author may not read (KD-044), and an entity's emission
+  includes the entities it references (KD-045).
+- where: `src/lib/active-tenant.ts`, `setActiveTenantAction`, `src/lib/access/api.ts`, `src/lib/access/page-access.ts`, `src/app/api/tenants/route.ts`.
+- cost to fix: keep the choice per user on the server (a column on `users`, read by `getActiveTenantId`) and say so on the page that falls back; or show the user the tenant they were sent to.
 
 ## KD-035: granting and revoking a role is not audited
 

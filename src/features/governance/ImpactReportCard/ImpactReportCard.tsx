@@ -119,7 +119,7 @@ export function ImpactReportCard({ report }: ImpactReportCardProps) {
                   ({consumer.relationship})
                 </span>
                 <span className="ml-auto text-mono-small">
-                  {consumer.ownerEmail}
+                  {consumer.ownerEmail || "owner not shown"}
                 </span>
               </div>
             ))}

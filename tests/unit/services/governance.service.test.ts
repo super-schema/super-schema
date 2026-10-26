@@ -253,6 +253,52 @@ describe("Governance Service", () => {
       expect(result.success && result.data.map((r) => r.id)).toEqual([own.data.id]);
     });
 
+    // KD-023: the impact report names the owner of each affected consumer (an e-mail address): a role that may SEE a request is not thereby entitled to those.
+    describe("the owners' e-mail addresses in the impact report", () => {
+      const report = {
+        summary: "Breaking change to Customer",
+        changeClassification: makeClassification("breaking"),
+        perTarget: [],
+        affectedConsumers: [{ entityName: "Order", fieldName: "customer_id", relationship: "reference", ownerEmail: "owner@example.com" }],
+        migrationArtifactsSummary: { bigquery: "", avro: "", openapi: "" },
+      };
+      const owners = (result: Awaited<ReturnType<typeof getAllRequests>>) => (result.success ? result.data.map((r) => r.impactReport?.affectedConsumers.map((c) => c.ownerEmail)) : []);
+
+      beforeEach(async () => {
+        entities = [{ id: "ent-home", tenantId: "tenant-a", domainId: "dom-1", productId: "prod-1" }];
+        const made = await createRequest("ent-home", 2, makeClassification("breaking"), report, stewardCtx, "Home");
+        if (!made.success) throw new Error("setup");
+      });
+
+      it("are kept for a caller who may decide the request (they coordinate with those owners)", async () => {
+        expect(owners(await getAllRequests("tenant-a", () => true, () => true))).toEqual([["owner@example.com"]]);
+      });
+
+      it("are left out (the consumer is still listed) for a caller who may read the request but not decide it", async () => {
+        const result = await getAllRequests("tenant-a", () => true, () => false);
+        expect(owners(result)).toEqual([[""]]);
+        expect(result.success && result.data[0].impactReport?.affectedConsumers[0]).toMatchObject({ entityName: "Order", fieldName: "customer_id", relationship: "reference" });
+        expect(JSON.stringify(result)).not.toContain("owner@example.com");
+      });
+
+      it("are left out when the caller says nothing about deciding (a tenant's list fails closed)", async () => {
+        expect(owners(await getAllRequests("tenant-a", () => true))).toEqual([[""]]);
+        expect(owners(await getAllRequests("tenant-a"))).toEqual([[""]]);
+      });
+
+      it("the decision is judged per request: the owners of a request the caller may decide are kept, those of another are not", async () => {
+        entities.push({ id: "ent-other", tenantId: "tenant-a", domainId: "dom-2", productId: "prod-2" });
+        await createRequest("ent-other", 2, makeClassification("breaking"), report, stewardCtx, "Other");
+        const result = await getAllRequests("tenant-a", () => true, (place) => place.domainId === "dom-1");
+        const byEntity = Object.fromEntries((result.success ? result.data : []).map((r) => [r.entityId, r.impactReport?.affectedConsumers[0].ownerEmail]));
+        expect(byEntity).toEqual({ "ent-home": "owner@example.com", "ent-other": "" });
+      });
+
+      it("a caller that is not a page (no tenant) reads the report as it is", async () => {
+        expect(owners(await getAllRequests())).toEqual([["owner@example.com"]]);
+      });
+    });
+
     it("without a tenant (a caller that is not a page) the list is everything, as it was", async () => {
       await twoRequests();
       const result = await getAllRequests();

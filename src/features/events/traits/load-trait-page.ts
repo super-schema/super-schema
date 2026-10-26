@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db";
+import { can, readableWhere } from "@/lib/access";
+import { getPrincipal } from "@/lib/access/principal";
 import type { ScopeTarget } from "@/lib/asset-scope";
 import { assetHref } from "@/lib/navigation/asset-href";
 import type { TraitDetail } from "@/lib/events/types";
@@ -27,6 +29,9 @@ export async function loadTraitPage(params: { domainSlug: string | null; product
   if (!params.domainSlug && params.productSlug) return null; // no such URL: a product always sits under its domain
   const route = await resolveLevelRoute(params.domainSlug, params.productSlug);
   if (!route) return null;
+  // A trait is read by a role that covers the LEVEL it lives at (the Enterprise: the tenant as a whole; a domain: that domain), not merely one of its products.
+  const principal = await getPrincipal();
+  if (!principal || !can(principal.assignments, "trait.read", route.scope)) return null;
   const row = await prisma.trait.findFirst({
     where: { id: params.traitId, tenantId: route.scope.tenantId, domainId: route.scope.domainId, productId: route.scope.productId },
     select: TRAIT_SELECT,
@@ -38,6 +43,6 @@ export async function loadTraitPage(params: { domainSlug: string | null; product
     owner: route.target,
     listHref,
     crumbs: levelCrumbs(route, { label: PROPERTIES_TAB_LABEL, href: listHref }, row.name),
-    entityOptions: await loadEntityOptions(route.scope.tenantId),
+    entityOptions: await loadEntityOptions(route.scope.tenantId, readableWhere(principal.assignments, "entity.read", route.scope.tenantId)),
   };
 }

@@ -600,7 +600,7 @@ role cannot do.
 
 **Sign-in in the run.** The app under test runs with `AUTH_REGISTRATION=open` (`scripts/e2e-env.mjs`; the default is `invite`): a user who registers through the
 page holds **no role**, is **not signed in by registering** (the answer is the same for an address that exists, so it redirects to `/login` either way), and lands on
-`/no-access` after signing in. A spec that needs a second user who sees the dashboard must give that user a role first (a helper for that comes with the role work).
+`/no-access` after signing in. A spec that needs a second user who sees the dashboard must give that user a role first (`grantRoleRow` in `tests/e2e/helpers/db.ts`: a role at a tenant's or a domain's scope; `api-v1.spec.ts` uses it for a viewer).
 The `invite` and `closed` modes are covered by unit tests (`tests/unit/app/register-actions.test.ts`), not by a second server. Sign-in is throttled in the run like anywhere
-(5 failures per e-mail, a shared per-address bucket of 100 because the run has no trusted proxy): a spec that fails a login on purpose does it for an e-mail of its own.
+(5 failures per e-mail, and a per-address bucket of 100: the run sets `AUTH_TRUST_PROXY=1`, so an address comes from `X-Forwarded-For` when a request sends one, as the API specs do, and every request without the header, the browser's, is one address): a spec that fails a login on purpose does it for an e-mail of its own.
 Users that accepted an invitation or used a reset link cannot be deleted (their audit entries are immutable and point at them); the run's database is thrown away.

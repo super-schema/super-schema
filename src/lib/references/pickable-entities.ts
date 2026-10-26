@@ -14,13 +14,17 @@ export const MAX_PICKABLE_ENTITIES = 2000;
  * (`domain / product / entity`; `_tenant` stands in for a missing one). Reads names and ids only, never fields or schema versions, and only
  * inside `tenantId`: the caller derives it from the server context (never from the client), so another tenant's entity is never offered.
  *
+ * `readable` restricts the list to the entities the CALLER may read (`readableWhere(assignments, "entity.read", tenantId)`: nothing added for a tenant or
+ * platform role, the rows under the caller's domains and products otherwise), so a role scoped to one domain is not offered another domain's entity names.
+ * Left out, every entity of the tenant is offered (a caller that has already decided).
+ *
  * Fail-soft: a failed lookup is logged and reads as no entities, so the page still renders and the picker still takes a typed name.
  */
-export async function loadPickableEntities(db: Pick<DbClient, "entity">, tenantId: string): Promise<PickableEntity[]> {
+export async function loadPickableEntities(db: Pick<DbClient, "entity">, tenantId: string, readable: Prisma.EntityWhereInput = {}): Promise<PickableEntity[]> {
   if (typeof tenantId !== "string" || tenantId.length === 0) return [];
   try {
     const rows = await db.entity.findMany({
-      where: { tenantId },
+      where: { ...readable, tenantId },
       orderBy: [{ name: "asc" }, { id: "asc" }],
       select: { id: true, name: true, domain: { select: { name: true } }, product: { select: { name: true } } },
       take: MAX_PICKABLE_ENTITIES,

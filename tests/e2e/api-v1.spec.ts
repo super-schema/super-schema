@@ -95,6 +95,8 @@ function discoverHandlers(): string[] {
         const urlPath = `/api/${path.relative(root, dir).split(path.sep).filter(Boolean).join("/")}`.replace(/\[([^\]]+)\]/g, "{$1}").replace(/\/$/, "");
         const source = readFileSync(full, "utf8");
         for (const match of source.matchAll(/export\s+(?:async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE)\b/g)) found.push(`${match[1]} ${urlPath}`);
+        // `export const GET = withApiAuth(...)`: a handler wrapped by the guard (src/lib/access/api.ts), which is how every guarded route is written now.
+        for (const match of source.matchAll(/export\s+const\s+(GET|POST|PUT|PATCH|DELETE)\s*=/g)) found.push(`${match[1]} ${urlPath}`);
         // `export const { GET, POST } = handlers;` (Auth.js)
         for (const match of source.matchAll(/export\s+const\s*\{([^}]*)\}\s*=/g)) {
           for (const name of match[1].split(",").map((part) => part.trim())) if (/^(GET|POST|PUT|PATCH|DELETE)$/.test(name)) found.push(`${name} ${urlPath}`);

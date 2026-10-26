@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import type { Prisma } from "@/generated/prisma/client";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import type { LevelScope } from "@/lib/levels";
 import { isBundledTrait, propertySummary, type PropertySummaryRow } from "@/lib/events/bundled-traits";
@@ -22,9 +23,11 @@ export function ownerLabel(row: OwnerRow): string {
   return row.domain ? row.domain.name : "Enterprise";
 }
 
-export async function loadEntityOptions(tenantId: string): Promise<EntityOption[]> {
+export async function loadEntityOptions(tenantId: string, readable: Prisma.EntityWhereInput = {}): Promise<EntityOption[]> {
+  // `readable` restricts the options to the entities the CALLER may read (readableWhere(assignments, "entity.read", tenantId)): a role scoped to one domain is not
+  // offered another domain's entity names. Left out, every entity of the tenant is offered (a caller that has already decided).
   const rows = await prisma.entity.findMany({
-    where: { tenantId },
+    where: { ...readable, tenantId },
     orderBy: { name: "asc" },
     select: {
       id: true, name: true, slug: true, latestVersionId: true, metadata: true, latestVersion: { select: { major: true, minor: true } },
@@ -74,16 +77,22 @@ export interface LibraryTraitSource extends TraitOption {
   properties: PropertySummaryRow[];
 }
 
-/** Traits visible from a level: Enterprise + that domain (product-level traits no longer exist; spec §4.3 line). */
-export async function loadTraitOptions(scope: LevelScope, kind: TraitKind): Promise<LibraryTraitSource[]> {
+/**
+ * Traits visible from a level: Enterprise + that domain (product-level traits no longer exist; spec §4.3 line). `read` says which of the two the CALLER may read
+ * (trait.read over the tenant / over the domain): a list they may not read is not queried, so a role at one domain is offered that domain's traits and not the
+ * Enterprise ones, and a role at one product neither. Default: both (a caller that has already decided).
+ */
+export async function loadTraitOptions(scope: LevelScope, kind: TraitKind, read: { enterprise: boolean; domain: boolean } = { enterprise: true, domain: true }): Promise<LibraryTraitSource[]> {
+  const levels = [
+    ...(read.enterprise ? [{ domainId: null }] : []),
+    ...(scope.domainId && read.domain ? [{ domainId: scope.domainId, productId: null }] : []),
+  ];
+  if (levels.length === 0) return [];
   const rows = await prisma.trait.findMany({
     where: {
       tenantId: scope.tenantId,
       kind,
-      OR: [
-        { domainId: null },
-        ...(scope.domainId ? [{ domainId: scope.domainId, productId: null }] : []),
-      ],
+      OR: levels,
     },
     orderBy: { name: "asc" },
     select: { id: true, name: true, spec: true, ...OWNER_SELECT },

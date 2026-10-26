@@ -2,7 +2,8 @@ import { prisma } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
 import { FieldStudio } from "./field-studio";
 import { domainLabel } from "@/lib/entity-placement";
-import { requireActiveTenantId } from "@/lib/active-tenant";
+import { can, readableWhere } from "@/lib/access";
+import { requirePageAccess } from "@/lib/access/page-access";
 import { ENTERPRISE_ENTITIES_SEGMENT, ENTERPRISE_ROUTE_SEGMENT, assetHref, type QueryParams } from "@/lib/navigation/asset-href";
 import { findEntityInScope } from "../../load-entity-workspace";
 import { loadPickableEntities } from "@/lib/references/pickable-entities";
@@ -15,24 +16,24 @@ interface Props {
 
 export default async function FieldDetailPage({ params, searchParams }: Props) {
   const { domainSlug, productSlug, entityId, fieldId } = await params;
-  const activeTenantId = await requireActiveTenantId();
+  const { principal, tenantId: activeTenantId } = await requirePageAccess();
 
   // Resolve the entity within its placement (slug first, then cuid). Slugs repeat
   // across products and tenants, so the lookup is never unscoped.
   // assetHref puts a tenant-level (Enterprise) entity's fields under the enterprise/entities segments.
   const isTenantLevel =
     domainSlug === ENTERPRISE_ROUTE_SEGMENT && productSlug === ENTERPRISE_ENTITIES_SEGMENT;
-  let entity: { id: string } | null = null;
+  type Placed = { id: string; tenantId: string; domainId: string | null; productId: string | null; product: { domainId: string | null } | null };
+  const placedInclude = { product: { select: { domainId: true } } } as const;
+  let entity: Placed | null = null;
   if (isTenantLevel) {
     entity = await findEntityInScope(
       { slugOrId: entityId, productId: null, tenantId: activeTenantId },
-      {}
+      placedInclude
     );
   } else {
-    // Tenant-scoped domain first, then tenant-agnostic to tolerate a stale tenant cookie.
-    const domain =
-      (await prisma.domain.findFirst({ where: { slug: domainSlug, tenantId: activeTenantId } })) ??
-      (await prisma.domain.findFirst({ where: { slug: domainSlug } }));
+    // The domain of the tenant in view, and no other (a slug is not unique across tenants: there is no tenant-agnostic fallback).
+    const domain = await prisma.domain.findFirst({ where: { slug: domainSlug, tenantId: activeTenantId } });
     const product = domain
       ? await prisma.product.findFirst({
           where: { slug: productSlug, domainId: domain.id },
@@ -42,11 +43,13 @@ export default async function FieldDetailPage({ params, searchParams }: Props) {
     if (domain && product) {
       entity = await findEntityInScope(
         { slugOrId: entityId, productId: product.id, tenantId: domain.tenantId },
-        {}
+        placedInclude
       );
     }
   }
-  if (!entity) notFound();
+  // The caller must be able to READ the entity (a role over its own tenant, domain and product): one they cannot read is a missing one, before any of its
+  // fields is loaded. The studio's controls write through actions that ask `entity.write` again.
+  if (!entity || !can(principal.assignments, "entity.read", { tenantId: entity.tenantId, domainId: entity.domainId ?? entity.product?.domainId ?? null, productId: entity.productId })) notFound();
 
   // Try slug-based lookup first, fall back to id-based lookup
   let field = await prisma.field.findFirst({
@@ -98,7 +101,7 @@ export default async function FieldDetailPage({ params, searchParams }: Props) {
       ?.policyTemplate ?? null;
 
   // The entities of the entity's own tenant a reference can point at, for the type picker (fail-soft: a typed name still works).
-  const referenceTargets = await loadPickableEntities(prisma, field.entity.tenantId);
+  const referenceTargets = await loadPickableEntities(prisma, field.entity.tenantId, readableWhere(principal.assignments, "entity.read", field.entity.tenantId));
 
   return (
     <FieldStudio

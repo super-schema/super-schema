@@ -100,8 +100,9 @@ describe("access_control migration: backfill over rows written under the old sch
   it("is found next to the others and sorts after the latest earlier migration", () => {
     const names = readdirSync("prisma/migrations", { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
     expect(MIGRATION).toMatch(/^\d{8,14}_access_control$/);
-    expect(names[names.length - 1]).toBe(MIGRATION);
-    expect(names[names.length - 2]).toBe("20261020_drop_legacy_event_catalog");
+    // It comes right after the last migration that predates it; later ones (the webhook creator, 20261026) follow it.
+    expect(names[names.indexOf(MIGRATION) - 1]).toBe("20261020_drop_legacy_event_catalog");
+    expect(names.indexOf(MIGRATION)).toBeGreaterThan(0);
   });
 
   it("the old schema lets two identical global ADMIN rows coexist (the NULL-distinct hole the new unique key closes)", async () => {
@@ -377,7 +378,8 @@ describe("access_control migration: the constraints", () => {
     try {
       const before = await rows<{ extname: string }>(db, `SELECT extname FROM pg_extension ORDER BY extname`);
       const applied = await applyPgliteMigrations(db);
-      expect(applied[applied.length - 1]).toBe(MIGRATION);
+      // Applied, in order, after every earlier migration (a later one may follow it).
+      expect(applied.indexOf(MIGRATION)).toBe(applied.indexOf("20261020_drop_legacy_event_catalog") + 1);
       expect(await rows<{ extname: string }>(db, `SELECT extname FROM pg_extension ORDER BY extname`)).toEqual(before);
       expect(await scalar<number>(db, `SELECT count(*)::int AS v FROM "user_roles"`)).toBe(0);
       expect(await migrationRecorded(db)).toBe(true);

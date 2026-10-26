@@ -5,6 +5,12 @@ import type { ServiceContext } from "@/types/service-context";
 
 const h = vi.hoisted(() => ({ getActiveTenantId: vi.fn() }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
+// The caller is a platform administrator (the route scope reads the principal): these suites are about the rows the loaders return, not about who may ask.
+vi.mock("@/lib/auth", () => ({ auth: async () => null }));
+vi.mock("@/lib/access/principal", () => {
+  const admin = { userId: "admin-1", email: "admin@example.test", assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }], isGlobalAdmin: true };
+  return { getPrincipal: async () => admin, loadPrincipalById: async () => admin };
+});
 
 import { loadTraitPage } from "@/features/events/traits/load-trait-page";
 import { cleanupDomains, cleanupTenantTraits, connectTestDb, createProductScope, TENANT, testContext } from "./helpers";

@@ -29,7 +29,12 @@ export async function getGovernanceRequestsAction() {
   const access = await guardActiveTenant("tenant.access", { label: "Governance requests" });
   if (!access.allowed) return { error: access.refusal.error };
   const { principal, resource } = access;
-  const result = await getAllRequests(resource.tenantId, (place) => can(principal.assignments, "governance.read", place));
+  // The owners' e-mail addresses of an impact report go only with a request the caller may decide (`governance.decide`): reading a request is not entitlement to them.
+  const result = await getAllRequests(
+    resource.tenantId,
+    (place) => can(principal.assignments, "governance.read", place),
+    (place) => can(principal.assignments, "governance.decide", place)
+  );
   if (!result.success) return { error: result.error.message };
   return { success: true, data: result.data };
 }

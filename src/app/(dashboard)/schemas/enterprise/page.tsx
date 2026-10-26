@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db";
-import { requireActiveTenantId } from "@/lib/active-tenant";
+import { notFound } from "next/navigation";
+import { can } from "@/lib/access";
+import { requirePageAccess } from "@/lib/access/page-access";
 import {
   mapCustomScalarRows,
   mapSharedEnumRows,
@@ -13,7 +15,11 @@ import { loadLevelTraits } from "@/features/events/workspace/load-events-tab-dat
 import { EnterpriseWorkspace } from "./enterprise-workspace";
 
 export default async function EnterprisePage() {
-  const tenantId = await requireActiveTenantId();
+  const { principal, tenantId } = await requirePageAccess();
+
+  // The Enterprise level is the tenant itself: its entities, data types and traits are covered by a role over the TENANT as a whole (or a platform role), never
+  // by a role at one domain or product. A caller without one is told 404, as for a missing page.
+  if (!can(principal.assignments, "entity.read", { tenantId })) notFound();
 
   // Tenant-level entities carry neither a domain nor a product.
   const tenantEntities = { tenantId, domainId: null, productId: null };

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
-import { requireActiveTenantId } from "@/lib/active-tenant";
+import { can, canListDomain, canListProduct } from "@/lib/access";
+import { requirePageAccess } from "@/lib/access/page-access";
 import { DomainWorkspace } from "../domain-workspace";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { loadEventsList } from "@/features/events/event-page/load-events-list";
@@ -35,33 +36,37 @@ export default async function ProductWorkspacePage({
   searchParams,
 }: Props) {
   const { domainSlug, productSlug } = await params;
-  const tenantId = await requireActiveTenantId();
+  const { principal, tenantId } = await requirePageAccess();
+  const assignments = principal.assignments;
 
-  // Domain and product resolve in a single query. The tenant-scoped lookup
-  // wins; the unscoped one is only a fallback for a slug outside the active tenant.
-  const findDomain = (where: { slug: string; tenantId?: string }) =>
-    prisma.domain.findFirst({
-      where,
-      include: { products: { where: { slug: productSlug }, take: 1 } },
-    });
-  const domain =
-    (await findDomain({ slug: domainSlug, tenantId })) ??
-    (await findDomain({ slug: domainSlug }));
+  // Domain and product resolve in a single query, inside the tenant in view and nowhere else: a slug is not unique across tenants, and a domain of
+  // another tenant is a missing one (it used to be found by a tenant-agnostic fallback).
+  const domain = await prisma.domain.findFirst({
+    where: { slug: domainSlug, tenantId },
+    include: { products: { where: { slug: productSlug }, take: 1 } },
+  });
 
-  if (!domain) {
+  // A role that covers the domain or one of its products lets the caller see that it is there; anyone else gets a 404.
+  if (!domain || !canListDomain(assignments, { tenantId, domainId: domain.id })) {
     notFound();
   }
 
   const product = domain.products[0];
 
+  if (product && !canListProduct(assignments, { tenantId, domainId: domain.id, productId: product.id })) {
+    // A product the caller has no role over reads exactly like a missing one.
+    notFound();
+  }
+
   if (!product) {
     // Back-compat: legacy 2-segment entity links (/schemas/<domain>/<entity>)
     // land here with productSlug holding the entity slug. Resolve and redirect
-    // to the canonical 3-segment URL.
-    const legacyEntity = await prisma.entity.findFirst({
-      where: { slug: productSlug, domainId: domain.id },
-      select: { slug: true, product: { select: { slug: true } } },
+    // to the canonical 3-segment URL, but only to an entity the caller may read (the redirect would otherwise say that it exists).
+    const found = await prisma.entity.findFirst({
+      where: { slug: productSlug, domainId: domain.id, tenantId },
+      select: { slug: true, productId: true, product: { select: { slug: true } } },
     });
+    const legacyEntity = found && can(assignments, "entity.read", { tenantId, domainId: domain.id, productId: found.productId }) ? found : null;
     if (legacyEntity) {
       const resolvedSearchParams: Record<string, string | string[] | undefined> =
         (await searchParams) ?? {};
@@ -86,6 +91,12 @@ export default async function ProductWorkspacePage({
     }
     notFound();
   }
+
+  // What the product page may show beyond the product itself: the assets it inherits from its domain and from the Enterprise, each only where a role covers them.
+  const readDomain = can(assignments, "asset.read", { tenantId, domainId: domain.id });
+  const readTenant = can(assignments, "asset.read", { tenantId });
+  // A query that is not allowed is not run at all (a lazy loader, not a promise that already started).
+  const rowsIf = <T,>(allowed: boolean, load: () => Promise<T[]>): Promise<T[]> => (allowed ? load() : Promise.resolve([] as T[]));
 
   // Everything else is independent of each other: one parallel stage.
   const [
@@ -134,37 +145,15 @@ export default async function ProductWorkspacePage({
       orderBy: { name: "asc" },
       include: SERVICE_INCLUDE,
     }),
-    // Inherited from the domain (read-only).
-    prisma.sharedEnum.findMany({
-      where: { domainId: domain.id, productId: null },
-      orderBy: { name: "asc" },
-    }),
-    prisma.customScalar.findMany({
-      where: { domainId: domain.id, productId: null },
-      orderBy: { name: "asc" },
-    }),
-    prisma.unionType.findMany({
-      where: { domainId: domain.id, productId: null },
-      orderBy: { name: "asc" },
-    }),
-    prisma.serviceDefinition.findMany({
-      where: { domainId: domain.id, productId: null },
-      orderBy: { name: "asc" },
-      include: SERVICE_INCLUDE,
-    }),
-    // Inherited from the Enterprise (read-only).
-    prisma.sharedEnum.findMany({
-      where: { tenantId: domain.tenantId, domainId: null },
-      orderBy: { name: "asc" },
-    }),
-    prisma.customScalar.findMany({
-      where: { tenantId: domain.tenantId, domainId: null },
-      orderBy: { name: "asc" },
-    }),
-    prisma.unionType.findMany({
-      where: { tenantId: domain.tenantId, domainId: null },
-      orderBy: { name: "asc" },
-    }),
+    // Inherited from the domain (read-only), only when a role of the caller covers the domain itself (a role at this product does not).
+    rowsIf(readDomain, () => prisma.sharedEnum.findMany({ where: { domainId: domain.id, productId: null }, orderBy: { name: "asc" } })),
+    rowsIf(readDomain, () => prisma.customScalar.findMany({ where: { domainId: domain.id, productId: null }, orderBy: { name: "asc" } })),
+    rowsIf(readDomain, () => prisma.unionType.findMany({ where: { domainId: domain.id, productId: null }, orderBy: { name: "asc" } })),
+    rowsIf(readDomain, () => prisma.serviceDefinition.findMany({ where: { domainId: domain.id, productId: null }, orderBy: { name: "asc" }, include: SERVICE_INCLUDE })),
+    // Inherited from the Enterprise (read-only), only when a role of the caller covers the tenant as a whole.
+    rowsIf(readTenant, () => prisma.sharedEnum.findMany({ where: { tenantId: domain.tenantId, domainId: null }, orderBy: { name: "asc" } })),
+    rowsIf(readTenant, () => prisma.customScalar.findMany({ where: { tenantId: domain.tenantId, domainId: null }, orderBy: { name: "asc" } })),
+    rowsIf(readTenant, () => prisma.unionType.findMany({ where: { tenantId: domain.tenantId, domainId: null }, orderBy: { name: "asc" } })),
     // Events tab: the product's events, scoped by the route's tenant and product. Legacy v1 event specs are skipped by the loader.
     loadEventsList({
       tenantId: domain.tenantId,

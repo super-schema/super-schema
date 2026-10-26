@@ -55,6 +55,21 @@ export function seesWholeDomain(assignments: readonly Assignment[], resource: { 
  */
 export type ReadableScopes = { all: true } | { all: false; domainIds: string[]; productIds: string[] };
 
+/**
+ * `readableScopes` as a `where` fragment for a table whose rows carry `domainId` and `productId` columns (entities, data types, APIs, traits, events):
+ * nothing added for a tenant or platform role (every row of the tenant), else the rows under the domains and products the caller's narrower roles cover.
+ * An empty `in` matches no row, so a caller that reaches nothing reads nothing: the fragment is always a restriction, never a "no filter" by accident.
+ * A fresh object each call (the caller adds `tenantId` and more to it).
+ */
+export function readableWhere(
+  assignments: readonly Assignment[],
+  action: ActionId,
+  tenantId: string
+): { OR?: Array<{ domainId: { in: string[] } } | { productId: { in: string[] } }> } {
+  const scopes = readableScopes(assignments, action, tenantId);
+  return scopes.all ? {} : { OR: [{ domainId: { in: scopes.domainIds } }, { productId: { in: scopes.productIds } }] };
+}
+
 export function readableScopes(assignments: readonly Assignment[], action: ActionId, tenantId: string): ReadableScopes {
   const domainIds = new Set<string>();
   const productIds = new Set<string>();

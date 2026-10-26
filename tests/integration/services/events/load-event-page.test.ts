@@ -14,6 +14,12 @@ import { createForeignTenantFixture } from "./foreign-tenant-fixture";
  */
 const h = vi.hoisted(() => ({ tenantId: "" }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: async () => h.tenantId }));
+// The caller is a platform administrator (the route scope reads the principal): these suites are about the rows the loaders return, not about who may ask.
+vi.mock("@/lib/auth", () => ({ auth: async () => null }));
+vi.mock("@/lib/access/principal", () => {
+  const admin = { userId: "admin-1", email: "admin@example.test", assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }], isGlobalAdmin: true };
+  return { getPrincipal: async () => admin, loadPrincipalById: async () => admin };
+});
 
 import { loadEventPage } from "@/features/events/event-page/load-event-page";
 

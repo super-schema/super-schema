@@ -290,11 +290,24 @@ export async function getPendingRequests(
   return ok(rows.map(toGovernanceRequest));
 }
 
+/** The request with the owners' e-mail addresses left out of its impact report (the consumers stay listed): what a caller who may not decide it is shown (KD-023). */
+function withoutOwnerEmails(request: GovernanceRequest): GovernanceRequest {
+  if (!request.impactReport) return request;
+  return {
+    ...request,
+    impactReport: { ...request.impactReport, affectedConsumers: request.impactReport.affectedConsumers.map((consumer) => ({ ...consumer, ownerEmail: "" })) },
+  };
+}
+
 /**
  * Get all governance requests (for dashboard). With `tenantId`, only the requests of entities of that tenant: the impact report of a
  * request names its entity, its summary and the owners of the consumers it affects.
+ *
+ * A tenant's list leaves the owners' e-mail addresses out of every impact report unless `mayDecide` says the caller may decide THAT request (the place of its
+ * entity: `governance.decide`, a steward or above): a role that may see a request is not thereby entitled to the addresses of the people it affects, and a
+ * caller that says nothing about deciding is shown none (fail closed). Without a tenant (a caller that is not a page) the reports are returned as stored.
  */
-export async function getAllRequests(tenantId?: string, visible?: (place: ResourceRef) => boolean): Promise<Result<GovernanceRequest[]>> {
+export async function getAllRequests(tenantId?: string, visible?: (place: ResourceRef) => boolean, mayDecide?: (place: ResourceRef) => boolean): Promise<Result<GovernanceRequest[]>> {
   const rows = await prisma.governanceRequest.findMany({
     orderBy: { createdAt: "desc" },
   });
@@ -306,8 +319,15 @@ export async function getAllRequests(tenantId?: string, visible?: (place: Resour
   });
   // The requests of entities of the tenant; with `visible`, only those whose entity the caller may read (a domain- or product-scoped caller is not
   // told the requests, entity names and impact reports of domains their roles do not cover).
-  const inTenant = new Set(entities.filter((entity) => visible === undefined || visible(placeOf(entity))).map((entity) => entity.id));
-  return ok(rows.filter((row) => inTenant.has(row.entityId)).map(toGovernanceRequest));
+  const visibleEntities = entities.filter((entity) => visible === undefined || visible(placeOf(entity)));
+  const inTenant = new Set(visibleEntities.map((entity) => entity.id));
+  const decidable = new Set(visibleEntities.filter((entity) => mayDecide !== undefined && mayDecide(placeOf(entity))).map((entity) => entity.id));
+  return ok(
+    rows
+      .filter((row) => inTenant.has(row.entityId))
+      .map(toGovernanceRequest)
+      .map((request) => (decidable.has(request.entityId) ? request : withoutOwnerEmails(request)))
+  );
 }
 
 /**

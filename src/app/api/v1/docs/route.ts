@@ -240,7 +240,7 @@ const openApiSpec = {
     "/webhooks": {
       get: {
         summary: "List webhook endpoints",
-        description: "Admin only: a session is a viewer on this API, so this takes the API key. Every endpoint is listed, with its signing secret.",
+        description: "Platform administrators only: the session of a platform administrator, or the API key when its role is ADMIN. The list never carries a signing secret: the answer of the creation shows it, once.",
         tags: ["Webhooks"],
         responses: {
           "200": { description: "The endpoints", content: { "application/json": { schema: { $ref: "#/components/schemas/ApiSuccessResponse" } } } },
@@ -250,7 +250,7 @@ const openApiSpec = {
       },
       post: {
         summary: "Create a webhook endpoint",
-        description: "Admin only. The body is `{ url, events, active? }`; the signing secret is made up by the server.",
+        description: "Platform administrators only. The body is `{ url, events, active? }`; the signing secret is made up by the server and is in the answer of this call only. An endpoint made by the API key has no creator (`createdBy` is null).",
         tags: ["Webhooks"],
         requestBody: {
           required: true,
@@ -279,7 +279,7 @@ const openApiSpec = {
     "/webhooks/{id}": {
       put: {
         summary: "Update a webhook endpoint",
-        description: "Admin only. Any of `url`, `events`, `active`; nothing else of the endpoint can be changed.",
+        description: "Platform administrators only. Any of `url`, `events`, `active`; nothing else of the endpoint can be changed. The answer carries no signing secret.",
         tags: ["Webhooks"],
         parameters: [{ name: "id", in: "path", required: true, description: "Webhook endpoint ID", schema: { type: "string" } }],
         requestBody: {
@@ -307,7 +307,7 @@ const openApiSpec = {
       },
       delete: {
         summary: "Delete a webhook endpoint",
-        description: "Admin only. The endpoint's deliveries are deleted with it.",
+        description: "Platform administrators only. The endpoint's deliveries are deleted with it.",
         tags: ["Webhooks"],
         parameters: [{ name: "id", in: "path", required: true, description: "Webhook endpoint ID", schema: { type: "string" } }],
         responses: {
@@ -321,7 +321,7 @@ const openApiSpec = {
     "/webhooks/{id}/deliveries": {
       get: {
         summary: "List the deliveries of a webhook endpoint",
-        description: "Admin only. Newest first, with the status code or the error of each attempt.",
+        description: "Platform administrators only. Newest first, with the status code or the error of each attempt.",
         tags: ["Webhooks"],
         parameters: [{ name: "id", in: "path", required: true, description: "Webhook endpoint ID", schema: { type: "string" } }],
         responses: {
@@ -389,7 +389,7 @@ const openApiSpec = {
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
           "404": { $ref: "#/components/responses/NotFound" },
-          "429": { description: "More than 100 requests a minute from one client address" },
+          "429": { description: "More than 100 requests a minute from one client address (the proxy's X-Forwarded-For when the server trusts one, else one client for every caller). The body is the error envelope, code RATE_LIMITED, with the wait in details.retryAfter and the Retry-After header." },
         },
       },
     },
@@ -400,7 +400,7 @@ const openApiSpec = {
         type: "http",
         scheme: "bearer",
         description:
-          "API key authentication. Pass your API key as a Bearer token.",
+          "API key authentication. Pass your API key as a Bearer token. The key is a service principal bound to ONE tenant and ONE role (API_KEY_TENANT_ID, API_KEY_ROLE; by default the default tenant and ADMIN): the schema routes answer for that tenant only. Without a key, a signed-in session is accepted and carries the user's own roles.",
       },
     },
     schemas: {
