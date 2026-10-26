@@ -13,6 +13,21 @@ import {
   type BusinessConceptFilter,
 } from "@/types/schemas/business-concept";
 import { domainLabel } from "@/lib/entity-placement";
+import { readableScopes } from "@/lib/access";
+import type { Prisma } from "@/generated/prisma/client";
+
+/**
+ * Which field links of a concept the caller may see. The concepts themselves (name, definition, synonyms) are one shared glossary, but a link
+ * names a FIELD (and, in `getConceptById`, its entity and domain): with a tenant in view only the links of fields of that tenant's entities
+ * that the caller's roles let them read are listed (a domain- or product-scoped caller: only their domains and products), never another tenant's.
+ * With no tenant in the context (a caller that is not a page, a test) nothing is filtered.
+ */
+function visibleLinks(ctx: ServiceContext | undefined): Prisma.FieldConceptLinkWhereInput | undefined {
+  if (ctx?.tenantId === undefined) return undefined;
+  const scopes = readableScopes([...(ctx.assignments ?? [])], "entity.read", ctx.tenantId);
+  if (scopes.all) return { field: { entity: { tenantId: ctx.tenantId } } };
+  return { field: { entity: { tenantId: ctx.tenantId, OR: [{ domainId: { in: scopes.domainIds } }, { productId: { in: scopes.productIds } }] } } };
+}
 
 export async function createConcept(
   input: CreateBusinessConceptInput,
@@ -156,19 +171,20 @@ export async function getConcepts(
   const concepts = await prisma.businessConcept.findMany({
     where,
     orderBy: { name: "asc" },
-    include: { fieldLinks: true },
+    include: { fieldLinks: { where: visibleLinks(_ctx) } },
   });
   return ok(concepts);
 }
 
 export async function getConceptById(
   id: string,
-  _ctx: ServiceContext
+  ctx: ServiceContext
 ): Promise<Result<BusinessConcept & { fieldLinks: (FieldConceptLink & { field: { id: string; name: string; type: string; entityId: string; entity: { id: string; name: string; domain: { name: string } } } })[] }>> {
   const concept = await prisma.businessConcept.findUnique({
     where: { id },
     include: {
       fieldLinks: {
+        where: visibleLinks(ctx),
         include: {
           field: {
             include: {

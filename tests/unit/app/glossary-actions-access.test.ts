@@ -102,12 +102,12 @@ describe.each(CALLS)("$name", ({ run, service, level }) => {
     expect(service).toHaveBeenCalledTimes(1);
   });
 
-  it("hands the service a context that carries the principal's assignments", async () => {
+  it("hands the service a context that carries the principal's assignments and the tenant in view", async () => {
     const principal = tenantMember("AUTHOR", T1, "u-7");
     signInAs(principal);
     await run();
     const ctx = service.mock.calls[0].find((arg: unknown) => typeof arg === "object" && arg !== null && "userId" in arg) as { userId: string; userRole: string; assignments: unknown };
-    expect(ctx).toMatchObject({ userId: "u-7", userRole: "VIEWER", assignments: principal.assignments });
+    expect(ctx).toMatchObject({ userId: "u-7", userRole: "VIEWER", assignments: principal.assignments, tenantId: T1 });
   });
 });
 
@@ -127,5 +127,39 @@ describe("linking a field is judged over the field's own place", () => {
     const unseen = await glossary.unlinkFieldFromConceptAction("f1", "c1");
     mocks.prisma.field.findUnique.mockResolvedValueOnce(null);
     expect(await glossary.unlinkFieldFromConceptAction("f1", "c1")).toEqual(unseen);
+  });
+});
+
+describe("the glossary belongs to no domain: the role counts wherever it is held in the tenant", () => {
+  const readCalls = [() => glossary.getConceptsAction(), () => glossary.searchConceptsAction("cust"), () => glossary.suggestConceptsForFieldAction("email", "string")];
+  const writeCalls = [
+    () => glossary.createConceptAction({ name: "Customer" } as never),
+    () => glossary.updateConceptAction("c1", { name: "x" } as never),
+    () => glossary.deleteConceptAction("c1"),
+  ];
+
+  it("every role of the ladder reads; from AUTHOR up writes (a steward, a compliance officer and an administrator too); below it is refused", async () => {
+    for (const role of ["VIEWER", "AUTHOR", "STEWARD", "COMPLIANCE_OFFICER", "ADMIN"] as const) {
+      signInAs(tenantMember(role, T1));
+      for (const call of readCalls) expect(await call(), role).toMatchObject({ success: true });
+      for (const call of writeCalls) {
+        const answer = await call();
+        if (role === "VIEWER") expect(answer, role).toEqual({ error: "You do not have permission to do this" });
+        else expect(answer, role).toMatchObject({ success: true });
+      }
+    }
+  });
+
+  it("a domain-scoped or product-scoped role counts: an author of one domain writes the glossary, a viewer of one product reads it and cannot write", async () => {
+    signInAs(principalOf([assign.domain("AUTHOR", T1, "dom-a")]));
+    for (const call of [...readCalls, ...writeCalls]) expect(await call()).toMatchObject({ success: true });
+    signInAs(principalOf([assign.product("VIEWER", T1, "dom-a", "prod-a")]));
+    for (const call of readCalls) expect(await call()).toMatchObject({ success: true });
+    for (const call of writeCalls) expect(await call()).toEqual({ error: "You do not have permission to do this" });
+  });
+
+  it("a role in another tenant gives nothing here (the tenant in view is T1)", async () => {
+    signInAs(principalOf([assign.tenant("ADMIN", T2), assign.domain("AUTHOR", T2, "dom-z")]));
+    for (const call of [...readCalls, ...writeCalls]) expect(await call()).toEqual({ error: "Not found" });
   });
 });

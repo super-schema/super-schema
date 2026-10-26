@@ -24,12 +24,14 @@ import { revalidatePath } from "next/cache";
  * The guard of every glossary action, BEFORE any read or write: the caller must be allowed `action` in the ACTIVE tenant (`glossary.read`,
  * `glossary.write`: the table's "anywhere in the tenant" level) or, for linking a field, over the field's own place (`glossary.link`).
  * Nobody signed in, a user with no role, a disabled user and a tenant that is not the one in view are all refused; the context handed to the
- * service carries the principal's assignments, not a role label the service could trust.
+ * service carries the principal's assignments and the tenant in view, not a role label the service could trust.
  */
 async function getServiceContext(action: ActionId, subject?: AccessSubject): Promise<{ ctx: ServiceContext } | { error: string }> {
   const allowed = subject ? await authorizeSubject(action, subject) : await authorizeActiveTenant(action);
   if (!allowed.success) return { error: allowed.error.code === "UNAUTHORIZED" ? "Not authenticated" : allowed.error.message };
-  return { ctx: contextOf(allowed.data.principal) };
+  // The tenant in view travels with the context: the glossary itself (names, definitions) is shared, but the fields linked to a concept are
+  // listed only for the entities of THIS tenant that the caller may read (see `business-concept.service`).
+  return { ctx: { ...contextOf(allowed.data.principal), tenantId: allowed.data.resource.tenantId } };
 }
 
 export async function createConceptAction(input: CreateBusinessConceptInput) {

@@ -36,12 +36,53 @@ import {
 } from "@/services/business-concept.service";
 import { prisma } from "@/lib/db";
 import type { ServiceContext } from "@/types/service-context";
+import { getConceptById } from "@/services/business-concept.service";
+import { assign } from "../../helpers/access-mocks";
 
 const mockCtx: ServiceContext = {
   userId: "user-1",
   userRole: "AUTHOR",
   prisma: prisma as unknown as ServiceContext["prisma"],
 };
+
+describe("the field links of a concept are listed only for what the caller may read", () => {
+  const ctxFor = (assignments: ServiceContext["assignments"], tenantId: string | undefined = "tenant-1"): ServiceContext => ({ ...mockCtx, assignments, tenantId });
+  const linksWhere = () => vi.mocked(prisma.businessConcept.findMany).mock.calls[0][0]?.include as { fieldLinks: { where: unknown } };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.businessConcept.findMany).mockResolvedValue([]);
+  });
+
+  it("with no tenant in the context nothing is filtered (a caller that is not a page)", async () => {
+    await getConcepts(undefined, mockCtx);
+    expect(linksWhere().fieldLinks.where).toBeUndefined();
+  });
+
+  it("a tenant-wide role sees the links of the tenant in view, never another tenant's", async () => {
+    await getConcepts(undefined, ctxFor([assign.tenant("VIEWER", "tenant-1")]));
+    expect(linksWhere().fieldLinks.where).toEqual({ field: { entity: { tenantId: "tenant-1" } } });
+  });
+
+  it("a domain- or product-scoped role sees only the links of fields of its domains and products", async () => {
+    await getConcepts(undefined, ctxFor([assign.domain("VIEWER", "tenant-1", "dom-a"), assign.product("AUTHOR", "tenant-1", "dom-b", "prod-x")]));
+    expect(linksWhere().fieldLinks.where).toEqual({
+      field: { entity: { tenantId: "tenant-1", OR: [{ domainId: { in: ["dom-a"] } }, { productId: { in: ["prod-x"] } }] } },
+    });
+  });
+
+  it("a caller whose roles reach nothing in the tenant sees no link at all (an empty scope matches nothing)", async () => {
+    await getConcepts(undefined, ctxFor([]));
+    expect(linksWhere().fieldLinks.where).toEqual({ field: { entity: { tenantId: "tenant-1", OR: [{ domainId: { in: [] } }, { productId: { in: [] } }] } } });
+  });
+
+  it("the by-id read names fields, entities and domains only of what the caller may read", async () => {
+    vi.mocked(prisma.businessConcept.findUnique).mockResolvedValue({ id: "c1", fieldLinks: [] } as never);
+    await getConceptById("c1", ctxFor([assign.tenant("VIEWER", "tenant-1")]));
+    const include = vi.mocked(prisma.businessConcept.findUnique).mock.calls[0][0]?.include as { fieldLinks: { where: unknown } };
+    expect(include.fieldLinks.where).toEqual({ field: { entity: { tenantId: "tenant-1" } } });
+  });
+});
 
 describe("Business Concept Service", () => {
   beforeEach(() => {
