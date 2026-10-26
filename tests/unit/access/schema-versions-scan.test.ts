@@ -135,15 +135,13 @@ describe("every reader of the stored generated schemas is redacted or says why n
     expect([...EXITS.keys()].filter((key) => !callsRedaction(key))).toEqual([]);
   });
 
-  it("the git export is a platform administrator's act (the reason its entries give): every async function but one asks `git.manage`, and nothing outside the services imports any", () => {
+  it("the git export is a platform administrator's act (the reason its entries give): every async function asks `git.manage`, and nothing outside the services imports any", () => {
     const git = readFileSync("src/services/git.service.ts", "utf8");
     const asyncFunctions = git.match(/^export async function \w+/gm) ?? [];
     expect(asyncFunctions.length).toBeGreaterThanOrEqual(6);
-    // `exportEntity` (one entity, with the stored file sets) asks no role of its own. It has no caller at all (the importer check below), and the
-    // gap is recorded in the Task 7b report: mounting it must come with the same `git.manage` the other six ask.
-    expect(asyncFunctions).toContain("export async function exportEntity");
-    expect((git.match(/ctxCan\(ctx, "git\.manage"\)/g) ?? []).length).toBe(asyncFunctions.length - 1);
-    // Mounting it (a route or an action) is a decision to review: it would hand file sets to whoever calls it.
+    expect(asyncFunctions).not.toContain("export async function exportEntity");
+    expect((git.match(/ctxCan\(ctx, "git\.manage"\)/g) ?? []).length).toBe(asyncFunctions.length);
+    // Mounting one (a route or an action) is a decision to review: it would hand file sets to whoever calls it.
     const importers = files.filter((file) => !file.startsWith("src/services/git") && /from "(@\/services\/git(-pr)?\.service|\.\/git(-pr)?\.service)"/.test(readFileSync(file, "utf8")));
     expect(importers).toEqual([]);
   });

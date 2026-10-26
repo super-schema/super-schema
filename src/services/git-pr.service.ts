@@ -360,7 +360,7 @@ export async function exportWithReview(
   const createPr = shouldCreatePr(config.prReviewMode, changeInfo.isBreaking);
 
   if (!createPr) {
-    // Direct push — delegate to exportEntity logic
+    // Direct push
     const plan = planGitExport(config.basePath, [toExportEntityInput(entity, version)]);
     const files = plan.files;
 

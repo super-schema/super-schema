@@ -15,7 +15,6 @@ vi.mock("@/lib/db", () => ({
 import {
   buildExportEntityDefinition,
   exportAll,
-  exportEntity,
   exportedTargetSummary,
   generateExportFiles,
   pickExportVersion,
@@ -611,7 +610,7 @@ describe("every entity folder holds the root's full file set", () => {
     }
   });
 
-  it("an entity exports the same files in its folder alone (exportEntity) and in a bulk run (exportAll)", () => {
+  it("an entity exports the same files in its folder alone and in a bulk run (exportAll)", () => {
     const alone = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, { productName: "Checkout", schemaVersions: orderVersions() });
     const bulk = planGitExport(BASE, [order(), address()]).files;
     const dir = "schemas/payments/checkout/order";
@@ -784,33 +783,6 @@ describe("entry points export file sets", () => {
   });
 
   const orderMetadata = { schemaVersions: closureVersions() };
-
-  it("exportEntity counts the SuperSchema JSON and every stored file of every target", async () => {
-    vi.mocked(prisma.entity.findUnique).mockResolvedValue(entityRow({ id: "e-order", metadata: orderMetadata }) as never);
-    const result = await exportEntity("e-order", adminCtx);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.success).toBe(true);
-      expect(result.data.filesExported).toBe(1 + 10);
-      expect(result.data.warnings).toBeUndefined();
-    }
-    // The product is read with the entity.
-    expect(vi.mocked(prisma.entity.findUnique).mock.calls[0][0]).toMatchObject({ include: { domain: true, product: true } });
-  });
-
-  it("exportEntity reports the files it skipped", async () => {
-    vi.mocked(prisma.entity.findUnique).mockResolvedValue(
-      entityRow({
-        metadata: { schemaVersions: { avro: [published("avro", 1, [file("avro", "../x", "evil", "e1"), file("avro", "ok.json", "ok", "e1")])] } },
-      }) as never
-    );
-    const result = await exportEntity("e1", adminCtx);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.filesExported).toBe(2);
-      expect(result.data.warnings).toHaveLength(1);
-    }
-  });
 
   it("exportAll gives every entity its own full folder, same-named ones of different products side by side", async () => {
     vi.mocked(prisma.entity.findMany).mockResolvedValue([
