@@ -13,6 +13,10 @@
  *   - registration (`register`): every ATTEMPT counts against the client address (5 in 15 minutes): a success creates an account, which is
  *     what is being limited.
  *   - accepting an invitation (`invite_accept`) and using a reset link (`reset_consume`): 5 FAILURES in 15 minutes per client address.
+ *   - a sign-in through an identity provider that the policy REFUSED (`provider_refused:<reason>`, outcome `refused`: src/lib/auth/provider-callback.ts)
+ *     counts, whatever the reason, against the client address (5 in 15 minutes; the shared bucket's ceiling when no proxy is trusted). The reason is the tail
+ *     of the event kind, so a count of the table says what is being refused and the user is told none of it. The e-mail is not limited: a refusal there
+ *     means the identity provider vouched for the person already, and the address is not a secret a guess can find.
  *   - an attempt made while locked is recorded as `locked` and does not count, so the lock is not extended by the attempts it refuses.
  *
  * The client address comes from `X-Forwarded-For` ONLY when `AUTH_TRUST_PROXY=1` (a proxy in front sets it; otherwise it is whatever the client
@@ -29,9 +33,14 @@ import { prisma } from "@/lib/db";
 import { resolveAuthSecret } from "@/lib/auth-secret";
 import { normalizeEmail } from "@/lib/auth/password-policy";
 
-export type AuthEventKind = "login" | "register" | "invite_accept" | "reset_consume";
-/** `success` / `failure` of a sign-in or token use, `attempt` of a registration, `locked` for an attempt that was refused because of the limit. */
-export type AuthEventOutcome = "success" | "failure" | "attempt" | "locked";
+/** The kinds that have a rule of their own (`isThrottled` is asked about one of these). */
+export type ThrottleKind = "login" | "register" | "invite_accept" | "reset_consume" | "provider_refused";
+/** A refused provider sign-in carries its reason in the kind: `provider_refused:no-account`, `provider_refused:domain`, ... (`ProviderSignInRefusal`, plus `throttled`). */
+export type ProviderRefusedKind = `provider_refused:${string}`;
+/** What `recordAuthEvent` accepts: the throttled kinds, a refused provider sign-in with its reason, and a successful one. */
+export type AuthEventKind = Exclude<ThrottleKind, "provider_refused"> | ProviderRefusedKind | "provider_login";
+/** `success` / `failure` of a sign-in or token use, `attempt` of a registration, `refused` for a provider sign-in the policy refused, `locked` for an attempt that was refused because of the limit. */
+export type AuthEventOutcome = "success" | "failure" | "attempt" | "refused" | "locked";
 
 export const THROTTLE_WINDOW_MS = 15 * 60 * 1000;
 export const THROTTLE_MAX_FAILURES = 5;
@@ -45,11 +54,13 @@ export const PRUNE_AFTER_MS = 24 * 60 * 60 * 1000;
 export const PRUNE_BATCH = 200;
 
 /** Which outcome of each kind counts toward its limit, and whether a success of it resets an e-mail's count. */
-const COUNTED: Record<AuthEventKind, { outcome: AuthEventOutcome; successResets: boolean }> = {
+const COUNTED: Record<ThrottleKind, { outcome: AuthEventOutcome; successResets: boolean; kindPrefix?: string }> = {
   login: { outcome: "failure", successResets: true },
   register: { outcome: "attempt", successResets: false },
   invite_accept: { outcome: "failure", successResets: false },
   reset_consume: { outcome: "failure", successResets: false },
+  // every reason counts: the rows of this family are `provider_refused:<reason>`
+  provider_refused: { outcome: "refused", successResets: false, kindPrefix: "provider_refused:" },
 };
 
 function keyedDigest(label: "email" | "ip", value: string): string {
@@ -124,7 +135,7 @@ async function secondsUntilBelowLimit(where: object, count: number, limit: numbe
  * @param now the clock unless a test sets it
  */
 export async function isThrottled(
-  input: { email?: string; ip?: string; kind?: AuthEventKind },
+  input: { email?: string; ip?: string; kind?: ThrottleKind },
   now: Date = new Date(),
 ): Promise<{ throttled: boolean; retryAfterSeconds?: number }> {
   const kind = input.kind ?? "login";
@@ -148,7 +159,7 @@ export async function isThrottled(
         });
         if (lastSuccess) since = lastSuccess.createdAt;
       }
-      const where = { [dimension.field]: dimension.hash, kind, outcome: rule.outcome, createdAt: { gt: since } };
+      const where = { [dimension.field]: dimension.hash, kind: rule.kindPrefix ? { startsWith: rule.kindPrefix } : kind, outcome: rule.outcome, createdAt: { gt: since } };
       const count = await prisma.authEvent.count({ where });
       if (count < dimension.limit) return null;
       return secondsUntilBelowLimit(where, count, dimension.limit, now);

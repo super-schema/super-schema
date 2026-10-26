@@ -5,7 +5,7 @@
  * Server only (it reads the request's headers).
  */
 import { headers } from "next/headers";
-import { clientIp, isThrottled, recordAuthEvent, type AuthEventKind, type AuthEventOutcome } from "@/lib/auth/throttle";
+import { clientIp, isThrottled, recordAuthEvent, type AuthEventKind, type AuthEventOutcome, type ThrottleKind } from "@/lib/auth/throttle";
 
 /** The client address bucket of the request being served (`clientIp`: a trusted proxy header, else the constant bucket). */
 export async function requestIp(): Promise<string> {
@@ -17,7 +17,7 @@ export async function requestIp(): Promise<string> {
  * extend the lock). Fails CLOSED: when the throttle itself cannot be read the attempt is refused, because a database that cannot answer this
  * question is not a reason to let an unlimited number of guesses through.
  */
-export async function isBlocked(kind: AuthEventKind, ip: string): Promise<boolean> {
+export async function isBlocked(kind: Exclude<ThrottleKind, "provider_refused">, ip: string): Promise<boolean> {
   try {
     const { throttled } = await isThrottled({ ip, kind });
     if (throttled) await recordQuietly(kind, { ip, outcome: "locked" });

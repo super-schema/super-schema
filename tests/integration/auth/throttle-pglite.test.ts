@@ -267,3 +267,44 @@ describe("pruning", () => {
     expect(await db().authEvent.count({ where: { emailHash: "old" } })).toBe(1);
   }, 60_000);
 });
+
+describe("refused sign-ins through an identity provider are throttled per address", () => {
+  const refuse = (reason: string, ip: string, email: string | undefined = "a@example.test", at: Date = NOW) =>
+    recordAuthEvent(`provider_refused:${reason}`, { email, ip, outcome: "refused" }, at);
+
+  it("five refusals from one address lock that address for provider sign-ins, whatever the reasons were, and not the password login", async () => {
+    for (const reason of ["no-account", "domain", "email-unverified", "not-linked"]) await refuse(reason, "203.0.113.5", `${reason}@example.test`);
+    expect(await isThrottled({ ip: "203.0.113.5", kind: "provider_refused" }, NOW)).toEqual({ throttled: false });
+    await refuse("disabled", "203.0.113.5");
+    expect((await isThrottled({ ip: "203.0.113.5", kind: "provider_refused" }, NOW)).throttled).toBe(true);
+    // another address, and the password login of the same address, are not locked by it
+    expect(await isThrottled({ ip: "203.0.113.6", kind: "provider_refused" }, NOW)).toEqual({ throttled: false });
+    expect(await isThrottled({ ip: "203.0.113.5", kind: "login" }, NOW)).toEqual({ throttled: false });
+  }, 60_000);
+
+  it("refusals leave the window like any other failure (15 minutes), and a refusal made while locked (outcome locked) does not extend the lock", async () => {
+    for (let i = 0; i < 5; i++) await refuse("no-account", "203.0.113.5", undefined, ago(16 * MINUTE));
+    expect(await isThrottled({ ip: "203.0.113.5", kind: "provider_refused" }, NOW)).toEqual({ throttled: false });
+    for (let i = 0; i < 5; i++) await refuse("no-account", "203.0.113.5", undefined, ago(MINUTE));
+    expect((await isThrottled({ ip: "203.0.113.5", kind: "provider_refused" }, NOW)).throttled).toBe(true);
+    const before = await db().authEvent.count({ where: { outcome: "refused" } });
+    await recordAuthEvent("provider_refused:throttled", { ip: "203.0.113.5", outcome: "locked" }, NOW);
+    expect(await db().authEvent.count({ where: { outcome: "refused" } })).toBe(before);
+  }, 60_000);
+
+  it("the shared bucket without a trusted proxy has the same ceiling as the password login's (100)", async () => {
+    await db().authEvent.createMany({
+      data: Array.from({ length: UNTRUSTED_IP_MAX_FAILURES - 1 }, () => ({ kind: "provider_refused:no-account", ipHash: hashIp(UNTRUSTED_IP), outcome: "refused", createdAt: NOW })),
+    });
+    expect(await isThrottled({ ip: UNTRUSTED_IP, kind: "provider_refused" }, NOW)).toEqual({ throttled: false });
+    await refuse("no-account", UNTRUSTED_IP);
+    expect((await isThrottled({ ip: UNTRUSTED_IP, kind: "provider_refused" }, NOW)).throttled).toBe(true);
+  }, 60_000);
+
+  it("a row says the reason in its kind, the outcome refused, and holds hashes only", async () => {
+    await refuse("email-unverified", "203.0.113.5", "Ada@Example.test");
+    const [row] = await db().authEvent.findMany();
+    expect(row).toMatchObject({ kind: "provider_refused:email-unverified", outcome: "refused", emailHash: hashEmail("ada@example.test"), ipHash: hashIp("203.0.113.5") });
+    expect(JSON.stringify(row)).not.toMatch(/ada|203\.0\.113/i);
+  }, 60_000);
+});

@@ -12,14 +12,15 @@ type Captured = {
     trustHost?: boolean;
     session?: { strategy?: string; maxAge?: number; updateAge?: number };
     jwt?: { maxAge?: number };
-    pages?: { signIn?: string };
+    pages?: { signIn?: string; error?: string };
     providers?: Array<{ id: string }>;
-    callbacks?: { signIn?: (args: { user?: { id?: string }; account?: { provider: string } | null }) => Promise<boolean>; jwt?: unknown; session?: unknown };
+    adapter?: { createUser?: (user: unknown) => Promise<unknown> };
+    callbacks?: { signIn?: (args: { user?: { id?: string }; account?: { provider: string; providerAccountId?: string } | null; profile?: unknown }) => Promise<boolean>; jwt?: unknown; session?: unknown };
   };
   credentials?: { authorize?: (credentials: Record<string, unknown> | undefined, request: Request) => Promise<unknown> };
 };
 const captured = vi.hoisted((): Captured => ({}));
-const mocks = vi.hoisted(() => ({ findUnique: vi.fn(), updateMany: vi.fn(), authenticateWithPassword: vi.fn() }));
+const mocks = vi.hoisted(() => ({ findUnique: vi.fn(), updateMany: vi.fn(), authenticateWithPassword: vi.fn(), authorizeProviderSignIn: vi.fn(), createUser: vi.fn() }));
 
 vi.mock("next-auth", () => ({
   default: (config: Captured["config"]) => {
@@ -33,9 +34,10 @@ vi.mock("next-auth/providers/credentials", () => ({
     return { id: "credentials" };
   },
 }));
-vi.mock("@auth/prisma-adapter", () => ({ PrismaAdapter: () => ({}) }));
+vi.mock("@auth/prisma-adapter", () => ({ PrismaAdapter: () => ({ createUser: mocks.createUser, getUserByEmail: vi.fn() }) }));
 vi.mock("@/lib/db", () => ({ prisma: { user: { findUnique: mocks.findUnique, updateMany: mocks.updateMany } } }));
 vi.mock("@/lib/auth/credentials", () => ({ authenticateWithPassword: mocks.authenticateWithPassword }));
+vi.mock("@/lib/auth/provider-callback", () => ({ authorizeProviderSignIn: mocks.authorizeProviderSignIn }));
 
 const NAMES = ["AUTH_SECRET", "NEXTAUTH_SECRET", "AUTH_PROVIDERS", "AUTH_PROVIDER_OKTA_CLIENT_ID", "AUTH_PROVIDER_OKTA_CLIENT_SECRET", "AUTH_PROVIDER_OKTA_ISSUER", "AUTH_URL", "AUTH_TRUST_HOST", "AUTH_TRUST_PROXY", "NODE_ENV"] as const;
 
@@ -64,6 +66,8 @@ describe("the session", () => {
     expect(config?.jwt?.maxAge).toBe(12 * 60 * 60);
     expect(config?.secret).toBe("auth-config-test-secret-0123456789");
     expect(config?.pages?.signIn).toBe("/login");
+    // a refusal of an identity provider lands on the login page too (not on Auth.js's own error page, which names the error)
+    expect(config?.pages?.error).toBe("/login");
   });
 });
 
@@ -159,10 +163,29 @@ describe("the signIn callback", () => {
     expect(mocks.updateMany).toHaveBeenCalledWith({ where: { id: "u1" }, data: { lastLoginAt: expect.any(Date) } });
   });
 
-  it("refuses a sign-in through an identity provider until its rules are wired in: a provider's user id is no database id, so 'nobody found' must never mean 'let through'", async () => {
-    mocks.findUnique.mockResolvedValue(null);
-    expect(await signIn({ id: "provider-sub-123" }, { provider: "okta" })).toBe(false);
+  it("hands a sign-in through an identity provider to the provider policy with the account and the REAL profile, and answers what it answers", async () => {
+    const profile = { sub: "kc-1", email: "ada@example.com", email_verified: true };
+    const account = { provider: "keycloak", providerAccountId: "kc-1" };
+    mocks.authorizeProviderSignIn.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const { config } = await load();
+    expect(await config!.callbacks!.signIn!({ user: { id: "kc-1" }, account, profile })).toBe(true);
+    expect(await config!.callbacks!.signIn!({ user: { id: "kc-1" }, account, profile })).toBe(false);
+    expect(mocks.authorizeProviderSignIn).toHaveBeenCalledWith({ account, profile });
+    // the credentials branch (a database id, the disabled check) is not what decides it: nothing was looked up by the provider's id
+    expect(mocks.findUnique).not.toHaveBeenCalled();
     expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a sign-in with no account is not credentials: it goes to the provider policy, which refuses it (fail closed)", async () => {
+    mocks.authorizeProviderSignIn.mockResolvedValue(false);
+    expect(await signIn({ id: "u1" }, null)).toBe(false);
+    expect(mocks.authorizeProviderSignIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("a credentials sign-in never reaches the provider policy", async () => {
+    mocks.findUnique.mockResolvedValue({ disabledAt: null });
+    expect(await signIn({ id: "u1" })).toBe(true);
+    expect(mocks.authorizeProviderSignIn).not.toHaveBeenCalled();
   });
 
   it("lets a credentials sign-in with no usable user id through (nothing to check, nothing to write)", async () => {
@@ -181,5 +204,13 @@ describe("the signIn callback", () => {
   it("refuses when it cannot tell whether the user is disabled (fails closed)", async () => {
     mocks.findUnique.mockRejectedValue(new Error("database is down"));
     await expect(signIn({ id: "u1" })).rejects.toThrow("database is down");
+  });
+});
+
+describe("the adapter", () => {
+  it("is Auth.js's own with createUser refusing: no sign-in creates an account", async () => {
+    const { config } = await load();
+    await expect(config!.adapter!.createUser!({ email: "stranger@example.com" })).rejects.toThrow(/no account is created by a sign-in/i);
+    expect(mocks.createUser).not.toHaveBeenCalled();
   });
 });

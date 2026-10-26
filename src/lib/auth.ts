@@ -3,8 +3,10 @@ import Credentials from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/db";
 import { resolveAuthSecret } from "@/lib/auth-secret";
+import { guardAdapter } from "@/lib/auth/adapter-guard";
 import { authenticateWithPassword } from "@/lib/auth/credentials";
 import { enabledProviders } from "@/lib/auth/providers";
+import { authSignInCallback } from "@/lib/auth/sign-in-callback";
 import { clientIp } from "@/lib/auth/throttle";
 import { resolveTrustHost } from "@/lib/auth/trust-host";
 
@@ -32,7 +34,8 @@ const providers = [
 ];
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: PrismaAdapter(prisma),
+  // The guarded adapter: no sign-in creates an account (`createUser` refuses) and the e-mail look-up is normalized (src/lib/auth/adapter-guard.ts).
+  adapter: guardAdapter(PrismaAdapter(prisma)),
   // The secret the middleware verifies the cookie with (src/lib/session-cookie.ts): one rule for both, an empty name is not set. Left
   // undefined when neither name is set, so Auth.js falls back to its own AUTH_SECRET_1..3 (which the middleware does not read: docs/auth-ops.md).
   secret: resolveAuthSecret(),
@@ -43,28 +46,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   // the next request (src/lib/access/principal.ts), not by waiting for this to run out.
   session: { strategy: "jwt", maxAge: SESSION_MAX_AGE_SECONDS, updateAge: SESSION_UPDATE_AGE_SECONDS },
   jwt: { maxAge: SESSION_MAX_AGE_SECONDS },
-  pages: { signIn: "/login" },
+  // Both to the login page: a refusal (`AccessDenied`, from the `signIn` callback) and any other failure of an identity provider's flow land there, where
+  // the words are the generic login failure whatever `?error=` says (the code is never shown). Auth.js's own error page would name the error.
+  pages: { signIn: "/login", error: "/login" },
   providers,
   callbacks: {
-    /**
-     * Runs after the credentials are accepted: a disabled user does not sign in, and a sign-in is recorded as `lastLoginAt` (best effort: a problem
-     * writing it never blocks a sign-in). When the database cannot say whether the user is disabled, this throws and the sign-in fails. A sign-in
-     * through an identity provider is refused here until its rules are wired in (the next change): a provider's user id is not a database id, so the
-     * lookup below would find nobody and let them through.
-     */
-    async signIn({ user, account }) {
-      if (account?.provider !== undefined && account.provider !== "credentials") return false;
-      const id = user?.id;
-      if (typeof id !== "string" || id === "") return true;
-      const row = await prisma.user.findUnique({ where: { id }, select: { disabledAt: true } });
-      if (row?.disabledAt) return false;
-      try {
-        await prisma.user.updateMany({ where: { id }, data: { lastLoginAt: new Date() } });
-      } catch (error) {
-        console.error("[auth] could not record lastLoginAt", error);
-      }
-      return true;
-    },
+    // Credentials: the disabled check and `lastLoginAt`. An identity provider: the policy with the real profile, the generic refusal, the event and the
+    // throttle (src/lib/auth/provider-callback.ts). Auth.js calls this BEFORE it creates, links or updates anything.
+    signIn: authSignInCallback,
     async jwt({ token, user }) {
       if (user?.id) {
         token.sub = user.id;
