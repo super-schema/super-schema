@@ -1,13 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// The product actions run under getActionContext (the REAL role and the resolved user id), never a hardcoded AUTHOR,
+// The product actions run under the principal (the user id and the assignments the policy judged), never a hardcoded role,
 // and a thrown service never reaches the form as a rejection or as raw driver text.
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
   revalidatePath: vi.fn(),
-  getEffectiveRole: vi.fn(),
-  resolveCurrentUserId: vi.fn(),
   createProduct: vi.fn(),
   updateProduct: vi.fn(),
   deleteProduct: vi.fn(),
@@ -22,15 +20,14 @@ vi.mock("@/lib/db", () => ({
   prisma: { tag: "prisma", domain: { findUnique: h.findDomain }, product: { findUnique: h.findProduct } },
 }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
-vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: h.getEffectiveRole }));
-vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/services/product.service", () => ({
   createProduct: h.createProduct,
   updateProduct: h.updateProduct,
   deleteProduct: h.deleteProduct,
 }));
 
-import { AuditUserMissingError } from "@/lib/audit";
+import { assign, resetSessionPrincipal, setSessionPrincipal } from "../../helpers/access-mocks";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 import {
   createProductAction,
@@ -42,43 +39,44 @@ const CREATE_INPUT = { domainId: "dom-1", name: "Billing" };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetSessionPrincipal();
   h.auth.mockResolvedValue({ user: { id: "session-id", email: "a@example.test" } });
-  h.resolveCurrentUserId.mockResolvedValue("db-user");
   // The domain / product the actions address belong to the active tenant (the by-id ownership guard reads them).
   h.getActiveTenantId.mockResolvedValue("tenant-1");
   h.findDomain.mockResolvedValue({ tenantId: "tenant-1" });
   h.findProduct.mockResolvedValue({ domain: { tenantId: "tenant-1" } });
-  h.getEffectiveRole.mockResolvedValue({ success: true, data: "VIEWER" });
   h.createProduct.mockResolvedValue({ success: true, data: { id: "prd-1", slug: "billing" } });
   h.updateProduct.mockResolvedValue({ success: true, data: { id: "prd-1", slug: "billing-2" } });
   h.deleteProduct.mockResolvedValue({ success: true, data: undefined });
 });
 
-describe("product actions use the real action context", () => {
-  it("createProductAction passes the resolved user id and the REAL role (not a hardcoded AUTHOR) to the service", async () => {
+describe("product actions use the principal's context", () => {
+  it("createProductAction passes the signed-in user and THEIR assignments (not a hardcoded role) to the service", async () => {
+    setSessionPrincipal([assign.tenant("STEWARD", "tenant-1")]);
     expect(await createProductAction(CREATE_INPUT)).toEqual({ success: true, productId: "prd-1", slug: "billing" });
-    expect(h.createProduct).toHaveBeenCalledWith(CREATE_INPUT, expect.objectContaining({ userId: "db-user", userRole: "VIEWER" }));
+    expect(h.createProduct).toHaveBeenCalledWith(CREATE_INPUT, expect.objectContaining({ userId: "session-id", assignments: [assign.tenant("STEWARD", "tenant-1")] }));
     expect(h.revalidatePath).toHaveBeenCalledWith("/schemas");
   });
 
-  it("update / delete get the same real context", async () => {
+  it("update / delete get the same context", async () => {
+    setSessionPrincipal([assign.tenant("ADMIN", "tenant-1")]);
     expect(await updateProductAction("prd-1", { name: "Billing 2" })).toEqual({ success: true, slug: "billing-2" });
-    expect(h.updateProduct).toHaveBeenCalledWith("prd-1", { name: "Billing 2" }, expect.objectContaining({ userId: "db-user", userRole: "VIEWER" }));
-    h.getEffectiveRole.mockResolvedValue({ success: true, data: "ADMIN" });
+    expect(h.updateProduct).toHaveBeenCalledWith("prd-1", { name: "Billing 2" }, expect.objectContaining({ userId: "session-id" }));
     expect(await deleteProductAction("prd-1")).toEqual({ success: true });
-    expect(h.deleteProduct).toHaveBeenCalledWith("prd-1", expect.objectContaining({ userId: "db-user", userRole: "ADMIN" }));
+    expect(h.deleteProduct).toHaveBeenCalledWith("prd-1", expect.objectContaining({ userId: "session-id", assignments: [assign.tenant("ADMIN", "tenant-1")] }));
   });
 
-  it("a role lookup failure fails closed to VIEWER", async () => {
-    h.getEffectiveRole.mockResolvedValue({ success: false, error: { code: "DB_ERROR", message: "x" } });
-    await createProductAction(CREATE_INPUT);
-    expect(h.createProduct).toHaveBeenCalledWith(CREATE_INPUT, expect.objectContaining({ userRole: "VIEWER" }));
+  it("a user with no role at all reaches no service and nothing is revalidated", async () => {
+    setSessionPrincipal([]);
+    expect(await createProductAction(CREATE_INPUT)).toEqual({ error: 'Domain "dom-1" not found' });
+    expect(h.createProduct).not.toHaveBeenCalled();
+    expect(h.revalidatePath).not.toHaveBeenCalled();
   });
 
-  it("without a session, or with a stale one, nothing runs and nothing revalidates", async () => {
+  it("without a session nothing runs and nothing revalidates (a stale or disabled user is no principal: the loader's own tests pin it)", async () => {
     h.auth.mockResolvedValueOnce(null);
     expect(await createProductAction(CREATE_INPUT)).toEqual({ error: "You must be logged in" });
-    h.resolveCurrentUserId.mockRejectedValueOnce(new AuditUserMissingError("session-id"));
+    h.auth.mockResolvedValueOnce(null);
     expect(await updateProductAction("prd-1", { name: "x" })).toEqual({ error: "You must be logged in" });
     h.auth.mockResolvedValueOnce(null);
     expect(await deleteProductAction("prd-1")).toEqual({ error: "You must be logged in" });

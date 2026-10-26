@@ -2,13 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The product actions address a domain (create) or a product (update / delete) by a bare id and the product service trusts
 // it: the id must belong to the caller's ACTIVE tenant. A foreign id gets the very answer the service gives a missing one.
-// (`ctx.userRole` is never read by product.service: no role gate exists below these actions; noted in the F7 report.)
+// The role rules of the same actions are in product-actions-access.test.ts; here the principal is a global administrator (the default).
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
   revalidatePath: vi.fn(),
-  getEffectiveRole: vi.fn(),
-  resolveCurrentUserId: vi.fn(),
   getActiveTenantId: vi.fn(),
   createProduct: vi.fn(),
   updateProduct: vi.fn(),
@@ -21,10 +19,10 @@ vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/db", () => ({ prisma: { domain: { findUnique: h.findDomain }, product: { findUnique: h.findProduct } } }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
-vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: h.getEffectiveRole }));
-vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/services/product.service", () => ({ createProduct: h.createProduct, updateProduct: h.updateProduct, deleteProduct: h.deleteProduct }));
 
+import { resetSessionPrincipal } from "../../helpers/access-mocks";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 import { createProductAction, deleteProductAction, updateProductAction } from "@/app/(dashboard)/schemas/[domainSlug]/product-actions";
 
@@ -38,8 +36,7 @@ const CREATE_INPUT = { domainId: "dom-1", name: "Billing" };
 beforeEach(() => {
   vi.clearAllMocks();
   h.auth.mockResolvedValue({ user: { id: "session-id", email: "a@example.test" } });
-  h.resolveCurrentUserId.mockResolvedValue("db-user");
-  h.getEffectiveRole.mockResolvedValue({ success: true, data: "AUTHOR" });
+  resetSessionPrincipal();
   h.getActiveTenantId.mockResolvedValue(T);
   h.findDomain.mockResolvedValue({ tenantId: T });
   h.findProduct.mockResolvedValue({ domain: { tenantId: T } });

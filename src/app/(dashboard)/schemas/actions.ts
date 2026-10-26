@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { createDomainRow } from "@/services/domain-row.service";
 import { revalidatePath } from "next/cache";
-import { can } from "@/lib/access";
+import { canListDomain, productScopesIn, seesWholeDomain } from "@/lib/access";
 import { guardActiveTenant, guardSubject, unexpectedFailure } from "@/lib/action-context";
 import { domainDeleteBlocker } from "@/lib/domain-deletion";
 import { combineBlockers, EVENTS_ASSET_COUNT_SELECT } from "@/lib/product-deletion";
@@ -12,8 +12,9 @@ import { eventsInUseError, findCrossProductEventRefs } from "@/services/events/e
 
 /**
  * The domains of the ACTIVE tenant (never another tenant's) that the caller may read: the caller must hold a role in the tenant
- * (`tenant.access`), and each domain is listed only when their roles cover it (`domain.read` over the domain, so a domain-scoped role lists its
- * own domain and not its siblings).
+ * (`tenant.access`), and each domain is listed only when their roles reach it: a tenant or domain role lists the domain (and a domain-scoped
+ * role not its siblings), a PRODUCT-scoped role lists the domain of its product as the way to reach that product (`canListDomain`). A domain
+ * listed only through product roles counts only the entities of those products (never the siblings' entities).
  */
 export async function getDomainsAction() {
   try {
@@ -27,7 +28,17 @@ export async function getDomainsAction() {
         _count: { select: { entities: true } },
       },
     });
-    return domains.filter((domain) => can(access.principal.assignments, "domain.read", { tenantId: domain.tenantId, domainId: domain.id }));
+    const { assignments } = access.principal;
+    const listed = domains.filter((domain) => canListDomain(assignments, { tenantId: domain.tenantId, domainId: domain.id }));
+    const reach = productScopesIn(assignments, access.resource.tenantId);
+    return await Promise.all(
+      listed.map(async (domain) => {
+        if (seesWholeDomain(assignments, { tenantId: domain.tenantId, domainId: domain.id })) return domain;
+        const productIds = reach.filter((scope) => scope.domainId === domain.id).map((scope) => scope.productId);
+        const entities = await prisma.entity.count({ where: { tenantId: domain.tenantId, domainId: domain.id, productId: { in: productIds } } });
+        return { ...domain, _count: { ...domain._count, entities } };
+      })
+    );
   } catch (e: unknown) {
     return { ...unexpectedFailure("getDomainsAction", e) };
   }

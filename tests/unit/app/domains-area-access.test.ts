@@ -11,11 +11,12 @@ const h = vi.hoisted(() => ({
   auth: vi.fn(),
   activeTenant: vi.fn(),
   findMany: vi.fn(),
+  entityCount: vi.fn(),
   createDomainRow: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({ prisma: { domain: { findMany: h.findMany } } }));
+vi.mock("@/lib/db", () => ({ prisma: { domain: { findMany: h.findMany }, entity: { count: h.entityCount } } }));
 vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
@@ -78,6 +79,26 @@ describe("getDomainsAction", () => {
   it("a domain-scoped role lists ITS domain and not its siblings", async () => {
     setSessionPrincipal([assign.domain("VIEWER", T, "dom-a")]);
     expect(await getDomainsAction()).toEqual([DOMAINS[0]]);
+  });
+
+  it("a PRODUCT-scoped role lists the domain of its product as the way to it (not a sibling domain), counting only its own product's entities", async () => {
+    h.entityCount.mockResolvedValue(1);
+    setSessionPrincipal([assign.product("VIEWER", T, "dom-a", "prod-a")]);
+    expect(await getDomainsAction()).toEqual([{ ...DOMAINS[0], _count: { entities: 1 } }]);
+    // The count is of the products the caller's roles reach, in that domain of the active tenant, never the domain's whole total.
+    expect(h.entityCount).toHaveBeenCalledWith({ where: { tenantId: T, domainId: "dom-a", productId: { in: ["prod-a"] } } });
+  });
+
+  it("a user holding the whole domain AND a product of it sees the domain whole (no narrowed count)", async () => {
+    setSessionPrincipal([assign.domain("VIEWER", T, "dom-a"), assign.product("AUTHOR", T, "dom-a", "prod-a")]);
+    expect(await getDomainsAction()).toEqual([DOMAINS[0]]);
+    expect(h.entityCount).not.toHaveBeenCalled();
+  });
+
+  it("a product role of another tenant lists nothing here", async () => {
+    setSessionPrincipal([assign.product("VIEWER", "tenant-2", "dom-a", "prod-a")]);
+    expect(await getDomainsAction()).toEqual({ error: "Domains not found" });
+    expect(h.findMany).not.toHaveBeenCalled();
   });
 });
 

@@ -31,3 +31,5 @@ export {
 } from "./actions";
 
 export { can, contextRole, effectiveRole, globalRole, grantAllowed, roleAtLeast } from "./policy";
+
+export { canListDomain, canListProduct, productScopesIn, seesWholeDomain } from "./visibility";
