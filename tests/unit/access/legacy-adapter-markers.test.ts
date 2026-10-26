@@ -48,7 +48,8 @@ function adapterUses(): Array<{ file: string; line: number; text: string; marked
 describe("legacy role-less guard adapters", () => {
   it("no source file uses a role-less adapter (every caller asks the policy)", () => {
     expect(adapterUses().map((use) => `${use.file}:${use.line}  ${use.text.slice(0, 100)}`)).toEqual([]);
-  });
+    // a whole-repository scan: over the default 5 s under the load of the whole suite, so a limit of its own
+  }, 60_000);
 
   it("the scan itself recognises an adapter call and a guarded one (it is not vacuous, now that Task 5b moved the callers)", () => {
     const adapter = (line: string) => ADAPTER_CALL.test(line) && !GUARDED_CALL.test(line);
@@ -70,5 +71,6 @@ describe("legacy role-less guard adapters", () => {
         });
     }
     expect(stale).toEqual([]);
-  });
+    // a whole-repository scan, like the one above: a limit of its own
+  }, 60_000);
 });
