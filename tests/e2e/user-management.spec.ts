@@ -150,12 +150,17 @@ test.describe("invitations", () => {
         await expect(invitee.getByTestId("admin-no-permission")).toBeVisible();
         await expect(invitee.getByTestId("user-table")).toHaveCount(0);
 
-        // The link has been used: the same card as for any dead link.
-        const again = await context.newPage();
-        await again.context().clearCookies();
-        await again.goto(pathOf(link));
-        await expect(again.getByTestId("invalid-link")).toBeVisible();
-        await expect(again.getByText(INVALID_LINK)).toBeVisible();
+        // The link has been used: the same card as for any dead link, for a visitor who is signed in as nobody (a browser of its own: the invitee's
+        // session is still being refreshed in theirs, and a signed-in visitor is sent to /schemas before the page is asked).
+        const visitorContext = await freshContext(browser, baseURL);
+        try {
+          const again = await visitorContext.newPage();
+          await again.goto(pathOf(link));
+          await expect(again.getByTestId("invalid-link")).toBeVisible();
+          await expect(again.getByText(INVALID_LINK)).toBeVisible();
+        } finally {
+          await visitorContext.close();
+        }
       } finally {
         await context.close();
       }
