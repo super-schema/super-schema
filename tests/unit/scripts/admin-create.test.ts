@@ -101,9 +101,22 @@ describe("admin:create", () => {
     });
 
     it("accepts exactly 12 and exactly 72 bytes", async () => {
-      for (const password of ["z".repeat(12), "z".repeat(72)]) {
+      for (const password of ["Qz7!mK2#vR9&wL4@".repeat(5).slice(0, 12), "Qz7!mK2#vR9&wL4@".repeat(5).slice(0, 72)]) {
         const h = harness({ stdin: `${password}\n` });
         expect(await h.call(["--email", "a@example.com"])).toBe(EXIT.OK);
+      }
+    });
+
+    it("refuses a trivial password (the deny-list of every account), and a password that is the administrator's own address", async () => {
+      for (const [email, password, message] of [
+        ["a@example.com", "password1234", /too easy to guess/],
+        ["a@example.com", "z".repeat(12), /repeated/],
+        ["boss.person@example.com", "boss.person@example.com", /e-mail/],
+      ] as const) {
+        const h = harness({ stdin: `${password}\n` });
+        expect(await h.call(["--email", email])).toBe(EXIT.REFUSED);
+        expect(h.err.join("\n")).toMatch(message);
+        expect(h.connect).not.toHaveBeenCalled();
       }
     });
   });

@@ -11,12 +11,13 @@
 import { compare, hash } from "bcryptjs";
 import type { Prisma } from "@/generated/prisma/client";
 import { scopeKey } from "@/lib/access/scope";
+import { PASSWORD_MAX_BYTES, PASSWORD_MIN_BYTES, validatePassword } from "@/lib/auth/password-policy";
 
 type AdminBootstrapClient = Pick<Prisma.TransactionClient, "user" | "userRole">;
 
-/** bcrypt reads at most 72 bytes of a password: a longer one would be silently cut, so it is refused. */
-export const BOOTSTRAP_PASSWORD_MIN_BYTES = 12;
-export const BOOTSTRAP_PASSWORD_MAX_BYTES = 72;
+/** The bounds of the one password rule (src/lib/auth/password-policy.ts), under the names this module has always exported. */
+export const BOOTSTRAP_PASSWORD_MIN_BYTES = PASSWORD_MIN_BYTES;
+export const BOOTSTRAP_PASSWORD_MAX_BYTES = PASSWORD_MAX_BYTES;
 const BCRYPT_COST = 12;
 const MAX_EMAIL_LENGTH = 254;
 
@@ -25,16 +26,12 @@ export function normalizeBootstrapEmail(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
-/** The password rule of the bootstrap paths: 12 to 72 bytes (UTF-8). The development default (`admin`) is deliberately outside it and never passes through here. */
-export function validateBootstrapPassword(password: string): { ok: true } | { ok: false; message: string } {
-  const bytes = Buffer.byteLength(password, "utf8");
-  if (bytes < BOOTSTRAP_PASSWORD_MIN_BYTES) {
-    return { ok: false, message: `The password is too short: it must be at least ${BOOTSTRAP_PASSWORD_MIN_BYTES} bytes (it is ${bytes}).` };
-  }
-  if (bytes > BOOTSTRAP_PASSWORD_MAX_BYTES) {
-    return { ok: false, message: `The password is too long: bcrypt reads at most ${BOOTSTRAP_PASSWORD_MAX_BYTES} bytes (it is ${bytes}).` };
-  }
-  return { ok: true };
+/**
+ * The password rule of the bootstrap paths: the one every account gets (12 to 72 bytes and the deny-list of trivial passwords, the address of
+ * the administrator included when it is given). The development default (`admin`) is deliberately outside it and never passes through here.
+ */
+export function validateBootstrapPassword(password: string, email?: string): { ok: true } | { ok: false; message: string } {
+  return validatePassword(password, { email });
 }
 
 /** The development administrator of a seeded database: what the e2e suite and a local `npm run db:seed` sign in with. Never created in production. */
@@ -63,7 +60,7 @@ export function planSeedAdmin(env: Readonly<Record<string, string | undefined>>)
     if (email === "" || password === "") {
       return { kind: "invalid", message: "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be set together (one of them is missing or empty)." };
     }
-    const policy = validateBootstrapPassword(password);
+    const policy = validateBootstrapPassword(password, email);
     if (!policy.ok) return { kind: "invalid", message: `BOOTSTRAP_ADMIN_PASSWORD is not acceptable. ${policy.message}` };
     return { kind: "configured", email, password };
   }

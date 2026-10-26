@@ -114,7 +114,7 @@ export async function run({ argv, env, out, err, terminal, connect }) {
       password = piped.split(/\r?\n/, 1)[0];
     }
   }
-  const policy = validateBootstrapPassword(password ?? "");
+  const policy = validateBootstrapPassword(password ?? "", email);
   if (!policy.ok) {
     err(`${policy.message} Nothing was created.`);
     return EXIT.REFUSED;

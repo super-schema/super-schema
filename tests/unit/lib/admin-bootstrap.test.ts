@@ -143,21 +143,33 @@ describe("validateBootstrapPassword", () => {
     expect([BOOTSTRAP_PASSWORD_MIN_BYTES, BOOTSTRAP_PASSWORD_MAX_BYTES]).toEqual([12, 72]);
   });
 
+  // The rule is the one every account gets (src/lib/auth/password-policy.ts, tested in tests/unit/lib/auth/password-policy.test.ts): lengths in bytes here,
+  // and the deny-list below. (A run of one letter is a "repeated character", refused, so the fixtures are not.)
+  const OF = (length: number) => "Qz7!mK2#vR9&wL4@".repeat(5).slice(0, length);
   it.each([
     ["admin", false],
-    ["x".repeat(11), false],
-    ["x".repeat(12), true],
-    ["x".repeat(72), true],
-    ["x".repeat(73), false],
-    ["é".repeat(36), true], // 72 bytes in 36 characters
-    ["é".repeat(37), false], // 74 bytes: bcrypt would cut it, so it is refused
-    ["é".repeat(6), true], // 12 bytes in 6 characters
-    ["é".repeat(5), false],
+    [OF(11), false],
+    [OF(12), true],
+    [OF(72), true],
+    [OF(73), false],
+    ["éàüöçñ".repeat(6), true], // 72 bytes in 36 characters
+    ["éàüöçñ".repeat(6) + "é", false], // 74 bytes: bcrypt would cut it, so it is refused
+    ["éàüöçñ", true], // 12 bytes in 6 characters
+    ["éàüöç", false],
     ["", false],
   ])("%j -> ok: %s", (password, ok) => {
     const result = validateBootstrapPassword(password);
     expect(result.ok).toBe(ok);
-    if (!result.ok) expect(result.message).toMatch(/too (short|long)/);
+    if (!result.ok) expect(result.message).toMatch(/at (least|most) \d+ bytes \(it is \d+\)|repeated/);
+  });
+
+  it("refuses the trivial passwords of the deny-list, and the administrator's own e-mail address and its name", () => {
+    for (const trivial of ["x".repeat(12), "password1234", "Passw0rd!2024", "123456789012", "administrator"]) {
+      expect(validateBootstrapPassword(trivial).ok, trivial).toBe(false);
+    }
+    expect(validateBootstrapPassword("boss.person-2026!", "boss.person@example.com").ok).toBe(false);
+    expect(validateBootstrapPassword("boss.person@example.com", "boss.person@example.com").ok).toBe(false);
+    expect(validateBootstrapPassword("correct horse battery", "boss.person@example.com").ok).toBe(true);
   });
 });
 
@@ -205,7 +217,7 @@ describe("planSeedAdmin (which administrator the seed makes)", () => {
       expect(plan.kind).toBe("invalid");
       if (plan.kind === "invalid") {
         expect(plan.message).toMatch(/BOOTSTRAP_ADMIN_PASSWORD is not acceptable/);
-        expect(plan.message).toMatch(/too (short|long)/);
+        expect(plan.message).toMatch(/at (least|most) \d+ bytes/);
         expect(plan.message).not.toContain(password);
       }
     }
