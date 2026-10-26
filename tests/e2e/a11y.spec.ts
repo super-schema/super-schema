@@ -26,8 +26,8 @@ import {
   BASELINE_PATH, assertUpdateAllowed, compareToBaseline, describeComparison, entriesOfState, readBaseline, toEntries, writeBaselineState,
 } from "./helpers/a11y-baseline";
 import {
-  createFieldRow, createIsolatedWorkspaceRows, createUserRow, createUserWithPassword, deleteIsolatedWorkspaceRows, deleteInvitationsByEmail, deleteUsersByEmail,
-  grantScopedRoleRow,
+  createFieldRow, createInvitationRow, createIsolatedWorkspaceRows, createUserRow, createUserWithPassword, deleteIsolatedWorkspaceRows, deleteInvitationsByEmail, deleteUsersByEmail,
+  disableUser, grantScopedRoleRow, seededOwnerId,
 } from "./helpers/db";
 import { createEventFromMenu, centerPanel } from "./helpers/event-builder";
 import { openEntityPage } from "./helpers/entity-page";
@@ -113,6 +113,7 @@ const ADMIN_STATES = [
   "dialog:admin-reset-link",
   "page:admin-role-matrix",
   "page:admin-no-permission",
+  "page:admin-user-statuses",
 ] as const;
 const SIGNED_OUT_STATES = ["page:login", "page:register"] as const;
 const ALL_STATES: readonly string[] = [...ROUTE_STATES, ...WORKSPACE_STATES, ...ADMIN_STATES, ...SIGNED_OUT_STATES];
@@ -308,6 +309,33 @@ test.describe("the Admin Users screen", () => {
     await centerPanel(page).getByTestId("user-reset-link").click();
     await expect(page.getByTestId("reset-create")).toBeVisible();
     await checkState(page, "dialog:admin-reset-link");
+  });
+
+  // The Disabled badge, the Invited badge and the Revoke button only exist next to a disabled account and a pending invitation: this is the state that shows them, so
+  // their colours (the badge's outline, the button's text, on the dark theme the app opens in) are measured and not reasoned about.
+  test("the users table with a disabled account and a pending invitation (the Disabled and Invited badges, the Revoke button)", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    const stem = "e2e-a11y-status-";
+    const disabledEmail = `${unique(stem)}@example.com`.toLowerCase();
+    const invitedEmail = `${unique(stem)}@example.com`.toLowerCase();
+    people.push(disabledEmail);
+    invitations.push(invitedEmail);
+    const { id } = await createUserRow({ email: disabledEmail, name: "A11y Disabled" });
+    await grantScopedRoleRow(id, "AUTHOR", { tenantId: home.tenantId });
+    await disableUser(id);
+    await createInvitationRow({ email: invitedEmail, createdById: await seededOwnerId(), roles: [{ role: "VIEWER", scopeKey: `T:${home.tenantId}` }] });
+
+    await page.goto("/admin");
+    await expect(centerPanel(page).getByRole("heading", { name: "Users", level: 2 })).toBeVisible();
+    await expect(centerPanel(page).getByText("Loading users…")).toHaveCount(0);
+    await waitForHydration(centerPanel(page).getByTestId("invite-user-open"));
+    // Both rows, and nothing else of the database's users (the filter matches the shared start of the two addresses).
+    await centerPanel(page).getByTestId("user-filter").fill(stem);
+    const disabledRow = centerPanel(page).locator(`[data-testid="user-row"][data-email="${disabledEmail}"]`);
+    const invitedRow = centerPanel(page).locator(`[data-testid="invitation-row"][data-email="${invitedEmail}"]`);
+    await expect(disabledRow.getByTestId("user-status")).toHaveAttribute("data-status", "disabled");
+    await expect(invitedRow.getByTestId("user-status")).toHaveAttribute("data-status", "invited");
+    await expect(invitedRow.getByTestId("invitation-revoke")).toBeVisible();
+    await checkState(page, "page:admin-user-statuses", { [disabledEmail]: "<disabled-user>", [invitedEmail]: "<invited-user>" });
   });
 
   test("the role matrix", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
