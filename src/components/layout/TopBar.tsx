@@ -15,7 +15,11 @@ import { useModKey } from "@/lib/platform";
 import { NotificationCenter } from "@/components/custom/NotificationCenter";
 import { TenantSwitcher } from "@/components/layout/TenantSwitcher";
 
-export function TopBar() {
+/**
+ * `showAdmin`: the person administers the tenant in view or the platform (the server's reading of the policy, handed down by the dashboard layout), so the
+ * Admin link is theirs. Off by default (fail closed). Personal settings stay one click away in the user menu for everybody.
+ */
+export function TopBar({ showAdmin = false }: { showAdmin?: boolean } = {}) {
   const { data: session } = useSession();
   const { open: openPalette } = useCommandPalette();
   const mod = useModKey();
@@ -54,13 +58,17 @@ export function TopBar() {
       <div className="flex items-center gap-space-3">
         <NotificationCenter />
 
-        <Link
-          href="/admin"
-          className="p-1.5 rounded-lg hover:bg-accent animate-field-hover text-muted-foreground hover:text-foreground"
-          title="Settings"
-        >
-          <Settings className="w-5 h-5" />
-        </Link>
+        {showAdmin && (
+          <Link
+            href="/admin"
+            data-testid="topbar-admin"
+            aria-label="Administration"
+            className="p-1.5 rounded-lg hover:bg-accent animate-field-hover text-muted-foreground hover:text-foreground"
+            title="Administration"
+          >
+            <Settings className="w-5 h-5" aria-hidden="true" />
+          </Link>
+        )}
 
         <DropdownMenu>
           <DropdownMenuTrigger

@@ -29,12 +29,23 @@ const LABELS: Record<string, string> = {
 describe("ActivityBar", () => {
   it("is a named navigation landmark, and each of its icon-only links has the name its tooltip shows", () => {
     pathname.value = "/glossary";
-    render(<ActivityBar />);
+    render(<ActivityBar showAdmin />);
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     expect(within(nav).getAllByRole("link")).toHaveLength(Object.keys(LABELS).length);
     for (const [testId, label] of Object.entries(LABELS)) {
       expect(within(nav).getByRole("link", { name: label }).getAttribute("data-testid")).toBe(testId);
     }
+  });
+
+  it("shows no Admin link to a person who has no admin right (it is off unless the server says the area is theirs)", () => {
+    pathname.value = "/glossary";
+    render(<ActivityBar />);
+    const nav = screen.getByRole("navigation", { name: "Main navigation" });
+    expect(within(nav).getAllByRole("link")).toHaveLength(Object.keys(LABELS).length - 1);
+    expect(within(nav).queryByRole("link", { name: "Admin" })).toBeNull();
+    cleanup();
+    render(<ActivityBar showAdmin={false} />);
+    expect(screen.queryByTestId("nav-admin")).toBeNull();
   });
 
   it("marks the link of the page the user is on as the current one, and only that link", () => {

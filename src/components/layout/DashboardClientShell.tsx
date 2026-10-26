@@ -33,7 +33,7 @@ type PaletteAction = {
   onSelect: () => void;
 };
 
-export function DashboardClientShell({ children }: { children: React.ReactNode }) {
+export function DashboardClientShell({ children, adminArea = false }: { children: React.ReactNode; adminArea?: boolean }) {
   const responsive = useResponsiveLayout();
   const palette = useCommandPaletteProvider();
   const router = useRouter();
@@ -163,6 +163,7 @@ export function DashboardClientShell({ children }: { children: React.ReactNode }
             rightPanel={rightPanel}
             palette={palette}
             paletteActions={paletteActions}
+            adminArea={adminArea}
           >
             {children}
           </DashboardShell>
@@ -178,6 +179,7 @@ function DashboardShell({
   rightPanel,
   palette,
   paletteActions,
+  adminArea,
   children,
 }: {
   responsive: ReturnType<typeof useResponsiveLayout>;
@@ -185,6 +187,7 @@ function DashboardShell({
   rightPanel: ReturnType<typeof useResizablePanel>;
   palette: ReturnType<typeof useCommandPaletteProvider>;
   paletteActions: PaletteAction[];
+  adminArea: boolean;
   children: React.ReactNode;
 }) {
   const {
@@ -221,7 +224,7 @@ function DashboardShell({
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
-      <TopBar />
+      <TopBar showAdmin={adminArea} />
 
       {responsive.autoCollapse && (
         <div
@@ -233,7 +236,7 @@ function DashboardShell({
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        <ActivityBar />
+        <ActivityBar showAdmin={adminArea} />
         <LeftSidebar
           width={sidebar.width}
           isCollapsed={sidebar.isCollapsed}

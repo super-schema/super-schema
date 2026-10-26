@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { adminCapabilities } from "@/lib/access/capabilities";
+import { getPrincipal } from "@/lib/access/principal";
 import { NO_ACCESS_PATH, getActiveTenantId, isNoTenantAccess } from "@/lib/active-tenant";
 import { DashboardClientShell } from "@/components/layout/DashboardClientShell";
 
@@ -25,12 +27,18 @@ export default async function DashboardLayout({
   const session = await auth();
   if (!session?.user) redirect("/login");
 
+  let tenantId: string;
   try {
-    await getActiveTenantId();
+    tenantId = await getActiveTenantId();
   } catch (e: unknown) {
     if (isNoTenantAccess(e)) redirect(NO_ACCESS_PATH);
     throw e;
   }
 
-  return <DashboardClientShell>{children}</DashboardClientShell>;
+  // Whether to SHOW the Admin link: the person administers the tenant in view or the platform (the policy's reading, `adminCapabilities`: never a role
+  // name). A convenience for the navigation only; the Admin pages and every admin action decide for themselves.
+  const principal = await getPrincipal();
+  const adminArea = principal ? adminCapabilities(principal.assignments, tenantId).area : false;
+
+  return <DashboardClientShell adminArea={adminArea}>{children}</DashboardClientShell>;
 }

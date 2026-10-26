@@ -3,8 +3,8 @@
  */
 
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
 import { TopBar } from "@/components/layout/TopBar";
 
 vi.mock("next/link", () => ({
@@ -52,10 +52,23 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 }));
 
 describe("TopBar navigation", () => {
+  afterEach(cleanup);
+
   it("routes the profile menu item instead of rendering an inert item", () => {
     render(<TopBar />);
 
     const profileLink = screen.getByRole("link", { name: "Profile" });
     expect(profileLink.getAttribute("href")).toBe("/admin/settings");
+  });
+
+  it("shows the Admin link only when the person has an admin right (off by default, personal settings stay in the user menu)", () => {
+    render(<TopBar />);
+    expect(screen.queryByTestId("topbar-admin")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Administration" })).toBeNull();
+    cleanup();
+
+    render(<TopBar showAdmin />);
+    expect(screen.getByRole("link", { name: "Administration" }).getAttribute("href")).toBe("/admin");
+    expect(screen.getByRole("link", { name: "Profile" }).getAttribute("href")).toBe("/admin/settings");
   });
 });

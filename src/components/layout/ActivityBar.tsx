@@ -25,11 +25,17 @@ const navItems = [
   { icon: ShieldCheck, label: "Governance", href: "/governance" },
   { icon: ClipboardCheck, label: "Compliance", href: "/compliance" },
   { icon: Rocket, label: "Deployments", href: "/deployments" },
-  { icon: Settings, label: "Admin", href: "/admin" },
 ];
 
-export function ActivityBar() {
+const adminItem = { icon: Settings, label: "Admin", href: "/admin" };
+
+/**
+ * `showAdmin`: the person administers the tenant in view or the platform (the server's reading of the policy, handed down by the dashboard layout), so the
+ * Admin link is theirs. Off by default (fail closed): nobody else is shown a link that leads to a no-permission screen.
+ */
+export function ActivityBar({ showAdmin = false }: { showAdmin?: boolean } = {}) {
   const pathname = usePathname();
+  const items = showAdmin ? [...navItems, adminItem] : navItems;
 
   return (
     <TooltipProvider>
@@ -38,7 +44,7 @@ export function ActivityBar() {
         aria-label="Main navigation"
         className="w-12 surface-1 flex flex-col items-center pt-space-2 gap-space-1 border-r border-border"
       >
-        {navItems.map((item) => {
+        {items.map((item) => {
           const isActive = pathname.startsWith(item.href);
           return (
             <Tooltip key={item.href}>
