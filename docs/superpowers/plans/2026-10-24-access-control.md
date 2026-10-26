@@ -153,7 +153,9 @@
 - [ ] **Step 4: Run** unit + the admin and user-management e2e on Node 20 — expect PASS.
 - [ ] **Step 5: Commit** per concern (services; UI; e2e).
 
-### Task 8: Google sign-in
+### Task 8: Google sign-in — REMOVED 2026-10-25, replaced by Task 8b (pluggable provider registry)
+
+> **Owner change (2026-10-25):** Google sign-in is out of scope; logins are admin-controlled only (local accounts, invite/closed registration). The owner asked to use the library (Auth.js) so an administrator can configure other sign-in providers later. **Task 8b replaces everything below:** one typed provider registry (`AUTH_PROVIDERS`; credentials is the only provider enabled by default; no Google-specific code, no `GOOGLE_*` settings, no Google button); a pure `evaluateProviderSignIn(profile, { provider, config, existingUser })` for any non-credentials provider (provider enabled; e-mail present and verified; the user must already exist and not be disabled (no self-signup); no automatic linking by e-mail unless an admin-set allow flag for that provider is on; optional per-provider allowed e-mail domains; refusals use the login failure message); `docs/auth.md` explains enabling a provider (client id/secret env names, redirect URI, marked untested against a real IdP). Not built: an in-app screen storing provider secrets (needs encrypted secret storage): recorded as a follow-up. The Task 4 plumbing (`GOOGLE_CLIENT_ID` flag, `GOOGLE_ALLOWED_DOMAINS`, login-page Google button flag) is generalised. The original text is kept below for reference only.
 
 **Files:**
 - Modify: `src/lib/auth.ts` (Google `signIn` rules), `src/app/(auth)/login/page.tsx`, `src/env.ts`, `.env.example`, `docs/`
