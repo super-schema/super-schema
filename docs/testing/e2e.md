@@ -596,13 +596,19 @@ that. Until a week of nightly runs says that it never fails by itself, `e2e-visu
 The operational side of authentication (the session secret, trusting the host, open registration and the first administrator, the health endpoint) is in
 [`docs/auth-ops.md`](../auth-ops.md); read its registration warnings before a deployment is reachable by anyone else.
 
-The seeded user `admin@admin.com` is an `ADMIN`; the suite logs in as that user and sees everything. Role rules (viewer, author, per tenant,
-domain and product) are a later change; when they land, the suite needs a second login with a lower role and specs that check what that
-role cannot do.
+The seeded user `admin@admin.com` is a platform `ADMIN`; the suite logs in as that user and sees everything. The rule for every other role (viewer, author, steward,
+compliance officer, admin, held per platform, tenant, domain or product) is `src/lib/access/actions.ts`, and what the browser suite proves about it, per role and per place it is enforced,
+is [`access-control.md`](access-control.md) (`tests/e2e/access-matrix.spec.ts`).
+
+**Making a second person.** A test that needs somebody who is not the admin makes them through the database helpers and signs them in through the real login form:
+`withSecondUser(browser, baseURL, body, { roles: [{ role: "AUTHOR", scope: { tenantId, domainId } }] })` (`tests/e2e/helpers/second-user.ts`: `createUser` stores the password with the
+app's own `hashPassword`, `grantRole` writes the role row as the app stores it, a user with no `roles` holds no role and lands on `/no-access`). A role without a `scope` is held over the tenant
+the admin sees. A test of the register page itself uses `registerThroughTheForm`. A person who wrote something has an audit row that points at them (immutable): they cannot be
+deleted, and `deleteUsersBestEffort` leaves them.
 
 **Sign-in in the run.** The app under test runs with `AUTH_REGISTRATION=open` (`scripts/e2e-env.mjs`; the default is `invite`): a user who registers through the
 page holds **no role**, is **not signed in by registering** (the answer is the same for an address that exists, so it redirects to `/login` either way), and lands on
-`/no-access` after signing in. A spec that needs a second user who sees the dashboard must give that user a role first (`grantRoleRow` in `tests/e2e/helpers/db.ts`: a role at a tenant's or a domain's scope; `api-v1.spec.ts` uses it for a viewer).
-The `invite` and `closed` modes are covered by unit tests (`tests/unit/app/register-actions.test.ts`), not by a second server. Sign-in is throttled in the run like anywhere
+`/no-access` after signing in; that is why a test does not get a user by registering. The second app of the nightly tier (and `--second-app`) runs `AUTH_REGISTRATION=invite`, and
+`access-matrix.spec.ts` uses it for the `invite` mode (`@external`); the `closed` mode is covered by unit and PGlite tests (`tests/unit/app/register-actions.test.ts`), not by a server. Sign-in is throttled in the run like anywhere
 (5 failures per e-mail, and a per-address bucket of 100: the run sets `AUTH_TRUST_PROXY=1`, so an address comes from `X-Forwarded-For` when a request sends one, as the API specs do, and every request without the header, the browser's, is one address): a spec that fails a login on purpose does it for an e-mail of its own.
 Users that accepted an invitation or used a reset link cannot be deleted (their audit entries are immutable and point at them); the run's database is thrown away.

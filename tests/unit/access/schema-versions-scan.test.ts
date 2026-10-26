@@ -107,7 +107,9 @@ const callsOf = (key: string): Set<string> => {
 };
 const callsRedaction = (key: string) => [...callsOf(key)].some((callee) => REDACTION.has(callee));
 
-describe("every reader of the stored generated schemas is redacted or says why not (KD-046)", () => {
+// Reads every source file of `src` (the readers, and the importers of the repository-export service): over the default 5 s under the load of the whole unit suite, so a limit
+// of its own for every test here (the other whole-repository scans of this directory have one).
+describe("every reader of the stored generated schemas is redacted or says why not (KD-046)", { timeout: 60_000 }, () => {
   it("the scan finds the readers (it is not vacuous)", () => {
     expect(found.length).toBeGreaterThanOrEqual(10);
     expect(found.some((m) => m.key === `${A}#getSchemaVersionsAction`)).toBe(true);

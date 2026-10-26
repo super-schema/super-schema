@@ -274,7 +274,7 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   `tests/unit/access/deny-by-default.test.ts` fails for a server action or a route handler that is neither guarded nor on the allow-list, and both pending lists are empty.
   What is left: the choice lives in a cookie of one browser, so a user with roles in two tenants who opens a deep link into the tenant that is not in view gets a 404 until they switch (the same answer as a
   missing page, on purpose: it says nothing about what exists), and a cookie that names a tenant whose role was since revoked falls back to the first accessible tenant without telling the user.
-  Not a boundary either, and recorded on their own: the glossary is one list for every tenant (KD-043), an event document may name an entity its author may not read (KD-044) and An entity's emission, validation,
+  Not a boundary either, and recorded on their own: the glossary is one list for every tenant (KD-043), an event document may name an entity its author may not read (KD-044), and an entity's emission, validation,
   preview, generation and publish used to include the entities it references whether or not the caller could read them (KD-045, fixed): the closure now refuses (`REFERENCE_NOT_READABLE`) when it reaches
   an entity no role of the caller covers, before anything is built from it (`entityReader`, `tests/unit/access/closure-reader-scan.test.ts` keeps every caller honest). The stored result of an earlier
   generation by a wider role carried the files of the entities it referenced (KD-046, fixed): every reader of `metadata.schemaVersions` (the Schemas tab, `getSchemaVersionsAction`, `GET /api/v1/schemas/:id`,

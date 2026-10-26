@@ -19,7 +19,8 @@ const deletesUsers = (text: string): number[] =>
     .split("\n")
     .flatMap((line, index) => (!isComment(line) && USER_DELETE.some((pattern) => pattern.test(line)) ? [index + 1] : []));
 
-describe("no code deletes a user", () => {
+// A whole-repository scan, like its neighbours in this directory: over the default 5 s under the load of the whole unit suite, so a limit of its own for every test here.
+describe("no code deletes a user", { timeout: 60_000 }, () => {
   const files = [...listSourceFiles("src", /\.(ts|tsx|mjs|js)$/), ...listSourceFiles("scripts", /\.(ts|tsx|mjs|js)$/)].filter((file) => !file.includes("/generated/"));
 
   it("the scan reads the source (it is not vacuous)", () => {
