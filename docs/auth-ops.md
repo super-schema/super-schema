@@ -1,7 +1,9 @@
 # Authentication: what to configure and what to know before you run it
 
 Short and operational. The access-control work (roles per tenant, domain and product) is still landing: the sections below say what is true now and what is
-not yet. Sign-in itself (registration modes, passwords, throttling, invitation and reset links, sessions) is described in full here.
+not yet. Sign-in itself (registration modes, passwords, throttling, invitation and reset links, sessions) is described in full here. Identity providers an
+administrator can add next to the local accounts (Google, GitHub, Microsoft Entra ID, Okta, Keycloak, a generic OpenID Connect issuer; none by default) are in
+[`auth.md`](auth.md), with the settings, the rules, the risk of linking existing users and worked examples.
 
 ## The secret
 
@@ -104,6 +106,7 @@ inserts that follow (no scheduler).
 | Sign-in | failures, per e-mail hash **and**, independently, per client-address hash | 5 in 15 minutes each; a success resets the e-mail's count (not the address's); an attempt refused because of the lock is recorded but does not count |
 | `/register` (open mode) | every attempt | 5 in 15 minutes per client address |
 | `/invite/<token>` and `/reset/<token>` | dead-link failures (a wrong, expired or used token), not a password the policy refused | 5 in 15 minutes per client address; a locked address gets the same "not valid or expired" answer |
+| Sign-in through an identity provider ([`auth.md`](auth.md)) | refusals by the provider policy (`provider_refused:<reason>` rows), whatever the reason | 5 in 15 minutes per client address (the shared ceiling without a trusted proxy); the password login is not locked by it; a locked address is refused with the same generic answer |
 
 Without `AUTH_TRUST_PROXY=1` every request is in **one shared address bucket**, so it has a higher ceiling (100 failures in 15 minutes: five typos by five people must not
 lock everybody out) and the per-e-mail limit (5) is the protection that matters. Set `AUTH_TRUST_PROXY=1` behind a proxy that overwrites `X-Forwarded-For` (above) to get a
@@ -184,8 +187,10 @@ What to do on any deployment that is not a laptop:
 1. Leave `AUTH_REGISTRATION` unset (invite-only) or `closed`. Run the seed with `NODE_ENV=production` (or do not seed) and make your administrator with `npm run admin:create` or the two `BOOTSTRAP_ADMIN_*` variables.
    A database that was seeded earlier keeps `admin@admin.com` / `admin`: change that password straight away (there is no UI for it yet: update the
    `User.password` bcrypt hash in the database, or delete the user once you have another administrator).
-2. Behind a reverse proxy: let it overwrite `X-Forwarded-For` and set `AUTH_TRUST_PROXY=1`; also keep a rate limit on `/api/auth/*` at the proxy (the throttle covers password attempts, not requests that never reach the check).
-3. Keep the app on a private network, or behind an authenticating proxy (SSO, a VPN), until the API routes and the page loaders ask the policy too (KD-034).
+2. Leave `AUTH_PROVIDERS` unset unless you want identity providers (then read [`auth.md`](auth.md): a provider only signs in people who already have an account, `_LINK_EXISTING_USERS` is a
+   risk you take for a provider whose verified e-mails you trust, and a mistake in the provider settings stops a production server from starting).
+3. Behind a reverse proxy: let it overwrite `X-Forwarded-For` and set `AUTH_TRUST_PROXY=1`; also keep a rate limit on `/api/auth/*` at the proxy (the throttle covers password attempts, not requests that never reach the check).
+4. Keep the app on a private network, or behind an authenticating proxy (SSO, a VPN), until the API routes and the page loaders ask the policy too (KD-034).
 
 ## Health endpoint
 
@@ -249,6 +254,8 @@ by hand (the table is immutable: lift the `audit_log_immutable` trigger for that
 
 - `docs/testing/e2e.md`: the browser suite, which runs with its own throwaway secret and database and never uses a `.env`. Access control, and what
   the suite will need when it lands, is in its last section.
-- `docs/testing/known-defects.md`: KD-034 (a tenant is a cookie), KD-038 (the registration and bootstrap risks above).
+- `docs/auth.md`: the identity providers (settings, redirect URIs, the rules of a provider sign-in, linking, worked examples for Google and a generic OpenID Connect issuer).
+- `docs/testing/known-defects.md`: KD-034 (a tenant is a cookie), KD-038 (the registration and bootstrap risks above), KD-047 (no in-app screen for provider secrets).
 - `src/lib/auth-secret.ts`, `src/instrumentation.ts`, `src/lib/session-cookie.ts`, `src/middleware.ts`, and for sign-in `src/lib/auth.ts` with `src/lib/auth/` (`credentials.ts`,
-  `password-policy.ts`, `password-hash.ts`, `throttle.ts`, `tokens.ts`, `registration-mode.ts`, `trust-host.ts`).
+  `password-policy.ts`, `password-hash.ts`, `throttle.ts`, `tokens.ts`, `registration-mode.ts`, `trust-host.ts`, and for identity providers `providers.ts`, `provider-signin.ts`,
+  `provider-callback.ts`, `adapter-guard.ts`).

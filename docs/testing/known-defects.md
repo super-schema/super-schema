@@ -382,3 +382,15 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   the referenced version's stored content into the event's own emission. A domain-scoped author who learns an id from outside their scope can therefore read what the pin resolves to through the event's preview.
 - where: `src/services/events/event.service.ts` (`updateEventDocument`, the reference and pin validation), `src/services/events/event-publish.service.ts`.
 - cost to fix: pass the caller's assignments into the document validation and refuse a pin or reference that no role of theirs covers (`entity.read` / `event.read`), the way the loaders do.
+
+## KD-047: no in-app screen stores the settings of an identity provider (not built)
+
+- status: no-test (a feature that was deliberately not built, not a malfunction: nothing can fail)
+- symptom: an administrator can add identity providers to the sign-in (Google, GitHub, Microsoft Entra ID, Okta, Keycloak, a generic OpenID Connect issuer: `docs/auth.md`), but only by setting `AUTH_PROVIDERS` and the
+  `AUTH_PROVIDER_<KEY>_*` names in the environment of the server and restarting it. The Admin area has no screen where a provider is added, its client secret entered, or its allowed domains changed.
+- why it is not built: a screen that takes a client secret puts a secret in the database, and the app has no encrypted secret storage: a key held outside the database, rotation, a secret that is never shown again
+  or logged, an audit entry for each change, and a way to apply a change to a running server (the Auth.js provider list is read when the server starts). Doing it without that would store provider secrets in
+  clear text next to the data they protect.
+- where: `src/lib/auth/providers.ts` (the table and the environment settings), `docs/auth.md` ("Not built").
+- cost to fix: an encrypted settings table (envelope encryption with a key from the environment or a KMS), a platform-administrator-only screen over it with audit entries, and a provider list that is
+  resolved per request (or on a change signal) instead of at start-up; the registry's checks (`resolveProviderRegistry`) already take any source of settings, not only the environment.
