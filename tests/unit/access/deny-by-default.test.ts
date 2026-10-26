@@ -28,11 +28,6 @@ const PENDING_TASK_5B: Record<string, string> = {
   "src/app/(dashboard)/admin/actions.ts#getDomainsAdminAction": "5b admin",
   "src/app/(dashboard)/admin/actions.ts#createDomainAdminAction": "5b admin",
   "src/app/(dashboard)/deployments/actions.ts#getDeploymentOverviewAction": "5b deployments",
-  "src/app/(dashboard)/governance/actions.ts#getGovernanceRequestsAction": "5b governance + retention",
-  "src/app/(dashboard)/governance/actions.ts#approveGovernanceRequestAction": "5b governance + retention",
-  "src/app/(dashboard)/governance/actions.ts#rejectGovernanceRequestAction": "5b governance + retention",
-  "src/app/(dashboard)/governance/retention/actions.ts#getEntitiesForRetentionAction": "5b governance + retention",
-  "src/app/(dashboard)/governance/retention/actions.ts#updateRetentionPolicyAction": "5b governance + retention",
 };
 
 /** TEMPORARY. Route handlers still unguarded, keyed `<route path>#<METHOD>` -> owning surface. */

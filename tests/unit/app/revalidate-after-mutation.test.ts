@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   acknowledgeLossyMapping: vi.fn(),
   guardSubject: vi.fn(),
   guardActiveTenant: vi.fn(),
+  authorizeSubject: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
@@ -37,6 +38,7 @@ vi.mock("@/lib/action-context", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/action-context")>()),
   guardSubject: mocks.guardSubject,
   guardActiveTenant: mocks.guardActiveTenant,
+  authorizeSubject: mocks.authorizeSubject,
 }));
 vi.mock("@/services/rbac.service", () => ({
   getEffectiveRole: mocks.getEffectiveRole,
@@ -151,6 +153,7 @@ beforeEach(() => {
   const allowed = { allowed: true as const, principal: principalOf([assign.global()], { userId: "user-1" }), resource: { tenantId: "tenant-a" } };
   mocks.guardSubject.mockResolvedValue(allowed);
   mocks.guardActiveTenant.mockResolvedValue(allowed);
+  mocks.authorizeSubject.mockResolvedValue({ success: true, data: { principal: allowed.principal, resource: allowed.resource } });
   for (const { service } of ACTIONS) mocks[service].mockResolvedValue(OK);
 });
 
@@ -174,6 +177,7 @@ describe.each(ACTIONS)("$name", ({ service, call, paths }) => {
     const nobody = { allowed: false as const, refusal: { error: "Not authenticated", code: "UNAUTHORIZED" as const } };
     mocks.guardSubject.mockResolvedValue(nobody);
     mocks.guardActiveTenant.mockResolvedValue(nobody);
+    mocks.authorizeSubject.mockResolvedValue({ success: false, error: { code: "UNAUTHORIZED", message: "Not authenticated" } });
     const result = (await call()) as { error?: string };
     expect(result.error).toBe("Not authenticated");
     expect(mocks[service]).not.toHaveBeenCalled();

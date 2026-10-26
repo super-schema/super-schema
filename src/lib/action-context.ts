@@ -300,6 +300,14 @@ const RESOURCE_REFS = {
     const row = await prisma.trait.findUnique({ where: { id }, select: OWNER });
     return row ? ownerRef(row) : null;
   },
+  // A governance request is about an entity but has no foreign key to it (a deleted entity leaves its request behind): the request lives where
+  // its entity lives, and a request whose entity is gone lives nowhere (nobody sees it). Two look-ups EVERY time, the second for a blank id when
+  // the request is missing, so a missing request and a request of another tenant cost the same.
+  governanceRequest: async (id: string) => {
+    const request = await prisma.governanceRequest.findUnique({ where: { id }, select: { entityId: true } });
+    const entity = await prisma.entity.findUnique({ where: { id: request?.entityId ?? "" }, select: OWNER });
+    return request && entity ? ownerRef(entity) : null;
+  },
 } as const;
 
 /** The kinds of stored row `resolveResourceRef` can place (one per model the actions address by a bare id). */

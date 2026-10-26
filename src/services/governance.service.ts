@@ -5,10 +5,12 @@
  * Persistence: Prisma `governanceRequest` and `governanceApproval` tables.
  *
  * All write operations are audited via withAudit().
- * RBAC checks enforced: only Steward/Admin can approve/reject.
+ * Access checks enforced here as well as by the action in front of it: deciding a request is `governance.decide` over the request's entity
+ * (a steward or above where the entity lives), judged by the policy over the caller's assignments, never by a role name.
  */
 
 import type { Prisma } from "@/generated/prisma/client";
+import { can, effectiveRole, type Assignment, type ResourceRef } from "@/lib/access";
 import { prisma } from "@/lib/db";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
@@ -26,7 +28,11 @@ import type {
 
 export interface GovernanceContext {
   userId: string;
-  userRole: string;
+  /**
+   * The caller's role assignments (the principal's, as the action authorized them). The service re-judges `governance.decide` over the
+   * request's entity with them; a context with none allows nothing.
+   */
+  assignments?: readonly Assignment[];
   domainId?: string;
   /**
    * The tenant being viewed. When set, only the requests of entities of that tenant exist for the caller: another tenant's request
@@ -41,15 +47,22 @@ async function entityInTenant(entityId: string, tenantId: string): Promise<boole
   return row !== null;
 }
 
-// ---------------------------------------------------------------------------
-// Allowed roles for approve/reject
-// ---------------------------------------------------------------------------
-
-const APPROVER_ROLES = ["STEWARD", "ADMIN"];
-
-function canApproveOrReject(role: string): boolean {
-  return APPROVER_ROLES.includes(role.toUpperCase());
+/**
+ * Where the entity a request is about lives (its tenant, domain and product), or null when there is no such entity, or, with a `tenantId`, when
+ * it belongs to another tenant (that answers exactly like a missing one). A request has no foreign key to its entity, so this is the only way to say
+ * whose it is. A product-level entity whose domain column is empty takes its product's domain.
+ */
+async function entityPlace(entityId: string, tenantId: string | undefined): Promise<ResourceRef | null> {
+  const row = await prisma.entity.findFirst({
+    where: tenantId === undefined ? { id: entityId } : { id: entityId, tenantId },
+    select: PLACE_SELECT,
+  });
+  return row ? placeOf(row) : null;
 }
+
+const PLACE_SELECT = { tenantId: true, domainId: true, productId: true, product: { select: { domainId: true } } } as const;
+type PlaceRow = { tenantId: string; domainId?: string | null; productId?: string | null; product?: { domainId?: string | null } | null };
+const placeOf = (row: PlaceRow): ResourceRef => ({ tenantId: row.tenantId, domainId: row.domainId ?? row.product?.domainId ?? null, productId: row.productId ?? null });
 
 // ---------------------------------------------------------------------------
 // Prisma row → app type mappers
@@ -162,23 +175,23 @@ async function decide(
 ): Promise<Result<GovernanceApproval>> {
   const verb = decision === "APPROVE" ? "approve" : "reject";
   const decided = decision === "APPROVE" ? "approved" : "rejected";
-  if (!canApproveOrReject(ctx.userRole)) {
-    return err({
-      code: "FORBIDDEN",
-      message: `Only Steward or Admin roles can ${verb} governance requests`,
-      suggestedFix: decision === "APPROVE" ? "Contact a data steward or admin for approval." : "Contact a data steward or admin.",
-    });
-  }
 
   const request = await prisma.governanceRequest.findUnique({
     where: { id: requestId },
   });
-  if (!request || (ctx.tenantId !== undefined && !(await entityInTenant(request.entityId, ctx.tenantId)))) {
+  // Where the request's entity lives decides who may see and decide it: a request of another tenant, one whose entity is gone and one nothing of the
+  // caller's covers all read as missing; one the caller sees but may not decide (below a steward there) is a generic refusal.
+  const place = request ? await entityPlace(request.entityId, ctx.tenantId) : null;
+  const assignments = [...(ctx.assignments ?? [])];
+  if (!request || !place || effectiveRole(assignments, place) === null) {
     return err({
       code: "NOT_FOUND",
       message: `Governance request "${requestId}" not found`,
       suggestedFix: "Verify the request ID and try again.",
     });
+  }
+  if (!can(assignments, "governance.decide", place)) {
+    return err({ code: "FORBIDDEN", message: "You do not have permission to do this" });
   }
 
   const notPending = (status: string): Result<GovernanceApproval> =>
@@ -281,7 +294,7 @@ export async function getPendingRequests(
  * Get all governance requests (for dashboard). With `tenantId`, only the requests of entities of that tenant: the impact report of a
  * request names its entity, its summary and the owners of the consumers it affects.
  */
-export async function getAllRequests(tenantId?: string): Promise<Result<GovernanceRequest[]>> {
+export async function getAllRequests(tenantId?: string, visible?: (place: ResourceRef) => boolean): Promise<Result<GovernanceRequest[]>> {
   const rows = await prisma.governanceRequest.findMany({
     orderBy: { createdAt: "desc" },
   });
@@ -289,9 +302,11 @@ export async function getAllRequests(tenantId?: string): Promise<Result<Governan
 
   const entities = await prisma.entity.findMany({
     where: { tenantId, id: { in: [...new Set(rows.map((row) => row.entityId))] } },
-    select: { id: true },
+    select: { id: true, ...PLACE_SELECT },
   });
-  const inTenant = new Set(entities.map((entity) => entity.id));
+  // The requests of entities of the tenant; with `visible`, only those whose entity the caller may read (a domain- or product-scoped caller is not
+  // told the requests, entity names and impact reports of domains their roles do not cover).
+  const inTenant = new Set(entities.filter((entity) => visible === undefined || visible(placeOf(entity))).map((entity) => entity.id));
   return ok(rows.filter((row) => inTenant.has(row.entityId)).map(toGovernanceRequest));
 }
 

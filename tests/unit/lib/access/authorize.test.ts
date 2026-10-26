@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => {
     prisma: {
       entity: delegate(), field: delegate(), domain: delegate(), product: delegate(), modelDefinition: delegate(), modelFieldDefinition: delegate(),
       sharedEnum: delegate(), customScalar: delegate(), unionType: delegate(), serviceDefinition: delegate(), operation: delegate(),
-      eventSpec: delegate(), trait: delegate(), tenant: delegate(),
+      eventSpec: delegate(), trait: delegate(), tenant: delegate(), governanceRequest: delegate(),
     },
   };
 });
@@ -310,5 +310,31 @@ describe("resolveResourceRef (one query per call; tenant, domain and product of 
   it("lets a database failure propagate (callers answer it generically, never as 'not found')", async () => {
     mocks.prisma.entity.findUnique.mockRejectedValue(new Error("connection lost"));
     await expect(resolveResourceRef("entity", "id-1")).rejects.toThrow("connection lost");
+  });
+
+  describe("governanceRequest (a request has no foreign key to its entity: it lives where its entity lives)", () => {
+    const entityRow = { tenantId: T1, domainId: "dom-a", productId: "prod-a1", product: { domainId: "dom-a" } };
+
+    it("is the place of the request's entity, from two look-ups", async () => {
+      mocks.prisma.governanceRequest.findUnique.mockResolvedValue({ entityId: "ent-9" });
+      mocks.prisma.entity.findUnique.mockResolvedValue(entityRow);
+      expect(await resolveResourceRef("governanceRequest", "req-1")).toEqual({ tenantId: T1, domainId: "dom-a", productId: "prod-a1" });
+      expect(mocks.prisma.governanceRequest.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "req-1" } }));
+      expect(mocks.prisma.entity.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "ent-9" } }));
+    });
+
+    it("is null for a missing request and for a request whose entity is gone, and a missing request costs the same two look-ups", async () => {
+      mocks.prisma.governanceRequest.findUnique.mockResolvedValue(null);
+      mocks.prisma.entity.findUnique.mockResolvedValue(null);
+      expect(await resolveResourceRef("governanceRequest", "req-none")).toBeNull();
+      expect([mocks.prisma.governanceRequest.findUnique.mock.calls.length, mocks.prisma.entity.findUnique.mock.calls.length]).toEqual([1, 1]);
+      mocks.prisma.governanceRequest.findUnique.mockResolvedValue({ entityId: "ent-gone" });
+      expect(await resolveResourceRef("governanceRequest", "req-ghost")).toBeNull();
+    });
+
+    it("is null for a malformed id without any query", async () => {
+      expect(await resolveResourceRef("governanceRequest", 5)).toBeNull();
+      expect(mocks.prisma.governanceRequest.findUnique).not.toHaveBeenCalled();
+    });
   });
 });

@@ -25,16 +25,22 @@ import {
 } from "@/services/compliance.service";
 import { prisma } from "@/lib/db";
 import type { ServiceContext } from "@/types/service-context";
+import { assign } from "../../helpers/access-mocks";
 
+// A platform administrator (the compliance rules over the caller's assignments: the role rules themselves are pinned in compliance-service-access.test.ts).
 const mockCtx: ServiceContext = {
   userId: "user-1",
   userRole: "ADMIN",
+  assignments: [assign.global()],
   prisma: prisma as unknown as ServiceContext["prisma"],
 };
 
+// Somebody who holds a role in the tenant but not one that reaches the compliance pages.
 const unauthorizedCtx: ServiceContext = {
   userId: "user-1",
   userRole: "VIEWER",
+  assignments: [assign.tenant("VIEWER", "tenant-1")],
+  tenantId: "tenant-1",
   prisma: prisma as unknown as ServiceContext["prisma"],
 };
 

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { can, readableScopes, type ActionId } from "@/lib/access";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -16,19 +17,38 @@ import type {
 import { domainLabel } from "@/lib/entity-placement";
 
 // ============================================================
-// RBAC helpers
+// Access: the policy over the caller's assignments (no role names here)
 // ============================================================
 
-const COMPLIANCE_ROLES = ["COMPLIANCE_OFFICER", "STEWARD", "ADMIN", "AUTHOR"];
+type ComplianceAction = Extract<ActionId, "compliance.query" | "compliance.gaps" | "compliance.audit" | "compliance.export">;
 
-function assertComplianceRole(ctx: ServiceContext): Result<void> {
-  if (!COMPLIANCE_ROLES.includes(ctx.userRole)) {
-    return err({
-      code: "FORBIDDEN",
-      message: "Insufficient permissions — requires Compliance Officer, Steward, or Admin role",
-    });
+const FORBIDDEN = { code: "FORBIDDEN", message: "You do not have permission to do this" } as const;
+
+/** The tenant a context with no tenant in view is judged over: no tenant has this id, so only a GLOBAL role (a platform administrator) covers it. */
+const NO_TENANT = "-";
+
+/**
+ * Tenant-wide access (the audit trail and its export): `action` must be held over the TENANT as a whole (a tenant or global role). A domain-
+ * or product-scoped role does not reach it. With no tenant in view (`ctx.tenantId` absent) only a platform administrator passes.
+ */
+function assertComplianceTenant(ctx: ServiceContext, action: ComplianceAction): Result<void> {
+  return can([...(ctx.assignments ?? [])], action, { tenantId: ctx.tenantId ?? NO_TENANT }) ? ok(undefined as unknown as void) : err({ ...FORBIDDEN });
+}
+
+/**
+ * Access to the FIELDS of the entities of the tenant in view (Query and Gaps, judged per entity): a role over the whole tenant reads them all, a
+ * domain- or product-scoped one only the entities under its domains and products (`entityRestriction`, applied in the query), one that reaches none
+ * is refused. With no tenant in view only a platform administrator passes, over every entity.
+ */
+function complianceEntityScope(ctx: ServiceContext, action: ComplianceAction): Result<{ entityRestriction: Record<string, unknown> | null }> {
+  const assignments = [...(ctx.assignments ?? [])];
+  if (ctx.tenantId === undefined) {
+    return can(assignments, action, { tenantId: NO_TENANT }) ? ok({ entityRestriction: null }) : err({ ...FORBIDDEN });
   }
-  return ok(undefined as unknown as void);
+  const scopes = readableScopes(assignments, action, ctx.tenantId);
+  if (scopes.all) return ok({ entityRestriction: null });
+  if (scopes.domainIds.length === 0 && scopes.productIds.length === 0) return err({ ...FORBIDDEN });
+  return ok({ entityRestriction: { OR: [{ domainId: { in: scopes.domainIds } }, { productId: { in: scopes.productIds } }] } });
 }
 
 /**
@@ -49,14 +69,16 @@ export async function queryFields(
   pagination: Pagination = { page: 1, pageSize: 25, sortBy: "entityName", sortOrder: "asc" },
   ctx: ServiceContext
 ): Promise<Result<{ fields: ComplianceFieldResult[]; total: number }>> {
-  const roleCheck = assertComplianceRole(ctx);
-  if (!roleCheck.success) return roleCheck as Result<never>;
+  const scope = complianceEntityScope(ctx, "compliance.query");
+  if (!scope.success) return scope as Result<never>;
 
   try {
     // Build where clause
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = {};
     const entityWhere: Record<string, unknown> = {};
+    // Only the entities the caller's roles cover (a domain- or product-scoped caller; absent for a tenant-wide role)
+    if (scope.data.entityRestriction) entityWhere.AND = [scope.data.entityRestriction];
 
     // Domain filter
     if (filters.domains && filters.domains.length > 0) {
@@ -261,14 +283,15 @@ export async function detectGaps(
   filters: GapFilter = {},
   ctx: ServiceContext
 ): Promise<Result<{ gaps: ComplianceGap[]; summary: GapSummary }>> {
-  const roleCheck = assertComplianceRole(ctx);
-  if (!roleCheck.success) return roleCheck as Result<never>;
+  const scope = complianceEntityScope(ctx, "compliance.gaps");
+  if (!scope.success) return scope as Result<never>;
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = {};
 
     const entityWhere: Record<string, unknown> = {};
+    if (scope.data.entityRestriction) entityWhere.AND = [scope.data.entityRestriction];
     if (filters.domains && filters.domains.length > 0) entityWhere.domainId = { in: filters.domains };
     // The tenant being viewed (a field has no tenant of its own: its entity does)
     if (ctx.tenantId !== undefined) entityWhere.tenantId = ctx.tenantId;
@@ -428,9 +451,16 @@ export async function queryAuditTrail(
   pagination: AuditPagination = { page: 1, pageSize: 50 },
   ctx: ServiceContext
 ): Promise<Result<{ entries: AuditTrailEntry[]; total: number }>> {
-  const roleCheck = assertComplianceRole(ctx);
-  if (!roleCheck.success) return roleCheck as Result<never>;
+  const access = assertComplianceTenant(ctx, "compliance.audit");
+  if (!access.success) return access as Result<never>;
+  return readAuditTrail(filters, pagination);
+}
 
+/** The audit trail itself, after the caller's access was decided (`compliance.audit` to read it, `compliance.export` to export it). */
+async function readAuditTrail(
+  filters: AuditTrailFilter,
+  pagination: AuditPagination
+): Promise<Result<{ entries: AuditTrailEntry[]; total: number }>> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = {};
@@ -496,11 +526,9 @@ export async function exportAuditTrail(
   filters: AuditTrailFilter = {},
   ctx: ServiceContext
 ): Promise<Result<AuditTrailEntry[]>> {
-  const result = await queryAuditTrail(
-    filters,
-    { page: 1, pageSize: 10000 },
-    ctx
-  );
+  const access = assertComplianceTenant(ctx, "compliance.export");
+  if (!access.success) return access as Result<never>;
+  const result = await readAuditTrail(filters, { page: 1, pageSize: 10000 });
   if (!result.success) return result as Result<never>;
   return ok(result.data.entries);
 }

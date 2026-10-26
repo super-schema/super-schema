@@ -162,7 +162,8 @@ describe("updateRetentionPolicyAction", () => {
     for (const bad of [new Date(), new Map(), [], null, undefined, "P1Y", 5]) {
       expect(await retention(bad)).toEqual({ error: "The retention policy must be an object", code: "VALIDATION_ERROR" });
     }
-    expect(p.entity.findUnique).not.toHaveBeenCalled();
+    // The guard reads the entity's place first (one look-up, nothing else): the payload is only checked after it, and nothing is written.
+    expect(p.entity.findUnique).toHaveBeenCalledTimes(7);
     expect(p.entity.update).not.toHaveBeenCalled();
   });
 

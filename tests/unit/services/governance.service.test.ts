@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { assign } from "../../helpers/access-mocks";
 
 // ---------------------------------------------------------------------------
 // In-memory stores for the Prisma mock
@@ -27,8 +28,9 @@ let approvals: Array<{
 }> = [];
 let reqCounter = 0;
 let aprCounter = 0;
-// The entities the requests are about, and the tenant each belongs to (a request has no foreign key to its entity).
-let entities: Array<{ id: string; tenantId: string }> = [];
+// The entities the requests are about, and where each lives (a request has no foreign key to its entity): its tenant, and its domain and product.
+let entities: Array<{ id: string; tenantId: string; domainId?: string | null; productId?: string | null }> = [];
+const placeRow = (e: { tenantId: string; domainId?: string | null; productId?: string | null }) => ({ tenantId: e.tenantId, domainId: e.domainId ?? null, productId: e.productId ?? null, product: null });
 
 vi.mock("@/lib/db", () => {
   const prisma: Record<string, unknown> = {
@@ -97,10 +99,13 @@ vi.mock("@/lib/db", () => {
       }),
     },
     entity: {
-      findFirst: vi.fn(async (args: { where: { id: string; tenantId: string } }) =>
-        entities.find((e) => e.id === args.where.id && e.tenantId === args.where.tenantId) ?? null),
+      // With no tenant in the filter (a caller that is not a page) the entity is found by its id alone, like the database does.
+      findFirst: vi.fn(async (args: { where: { id: string; tenantId?: string } }) => {
+        const found = entities.find((e) => e.id === args.where.id && (args.where.tenantId === undefined || e.tenantId === args.where.tenantId));
+        return found ? { id: found.id, ...placeRow(found) } : null;
+      }),
       findMany: vi.fn(async (args: { where: { tenantId: string; id: { in: string[] } } }) =>
-        entities.filter((e) => e.tenantId === args.where.tenantId && args.where.id.in.includes(e.id)).map((e) => ({ id: e.id }))),
+        entities.filter((e) => e.tenantId === args.where.tenantId && args.where.id.in.includes(e.id)).map((e) => ({ id: e.id, ...placeRow(e) }))),
     },
     governanceApproval: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
@@ -157,23 +162,39 @@ import type { ChangeClassification } from "@/types/schemas/classification";
 // Helpers
 // ---------------------------------------------------------------------------
 
+// The callers hold their role over tenant-a, where the entities of these tests live (the service judges `governance.decide` over the request's entity).
 const stewardCtx: GovernanceContext = {
   userId: "steward-1",
-  userRole: "STEWARD",
+  assignments: [assign.tenant("STEWARD", "tenant-a")],
   domainId: "dom-1",
 };
 
 const adminCtx: GovernanceContext = {
   userId: "admin-1",
-  userRole: "ADMIN",
+  assignments: [assign.tenant("ADMIN", "tenant-a")],
+  domainId: "dom-1",
+};
+
+const complianceOfficerCtx: GovernanceContext = {
+  userId: "co-1",
+  assignments: [assign.tenant("COMPLIANCE_OFFICER", "tenant-a")],
   domainId: "dom-1",
 };
 
 const authorCtx: GovernanceContext = {
   userId: "author-1",
-  userRole: "AUTHOR",
+  assignments: [assign.tenant("AUTHOR", "tenant-a")],
   domainId: "dom-1",
 };
+
+const viewerCtx: GovernanceContext = {
+  userId: "viewer-1",
+  assignments: [assign.tenant("VIEWER", "tenant-a")],
+  domainId: "dom-1",
+};
+
+/** The entity most tests make a request about. */
+const ENT_1 = { id: "ent-1", tenantId: "tenant-a", domainId: "dom-1", productId: "prod-1" };
 
 function makeClassification(
   changeType: ChangeClassification["changeType"] = "non-breaking"
@@ -193,6 +214,7 @@ function makeClassification(
 describe("Governance Service", () => {
   beforeEach(async () => {
     await _resetGovernanceStore();
+    entities = [ENT_1];
   });
 
   describe("tenant scope", () => {
@@ -217,6 +239,18 @@ describe("Governance Service", () => {
       const result = await getAllRequests("tenant-a");
 
       expect(result.success && result.data.map((r) => r.id)).toEqual([mine.id]);
+    });
+
+    it("with a visibility filter, only the requests whose entity the caller may read are listed", async () => {
+      entities = [
+        { id: "ent-home", tenantId: "tenant-a", domainId: "dom-1", productId: "prod-1" },
+        { id: "ent-sibling", tenantId: "tenant-a", domainId: "dom-2", productId: "prod-2" },
+      ];
+      const own = await createRequest("ent-home", 2, makeClassification("breaking"), null, stewardCtx, "Home");
+      await createRequest("ent-sibling", 2, makeClassification("breaking"), null, stewardCtx, "Sibling");
+      if (!own.success) throw new Error("setup");
+      const result = await getAllRequests("tenant-a", (place) => place.domainId === "dom-1");
+      expect(result.success && result.data.map((r) => r.id)).toEqual([own.data.id]);
     });
 
     it("without a tenant (a caller that is not a page) the list is everything, as it was", async () => {
@@ -273,11 +307,12 @@ describe("Governance Service", () => {
       expect(approvals).toEqual([]);
     });
 
-    it("approve and reject of the tenant's own request work, and the role gate is unchanged (an author is refused in any tenant)", async () => {
+    it("approve and reject of the tenant's own request work, and an author is refused (a generic refusal)", async () => {
       const { mine } = await twoRequests();
 
       const refused = await approveRequest(mine.id, null, { ...authorCtx, tenantId: "tenant-a" });
       expect(!refused.success && refused.error.code).toBe("FORBIDDEN");
+      expect(!refused.success && refused.error.message).toBe("You do not have permission to do this");
 
       const approved = await approveRequest(mine.id, "fine", { ...stewardCtx, tenantId: "tenant-a" });
       expect(approved.success).toBe(true);
@@ -289,7 +324,7 @@ describe("Governance Service", () => {
   // FINAL WAVE 2b, G9: a decision is ONE atomic step: two stewards deciding at once cannot both win.
   describe("two decisions at once", () => {
     beforeEach(() => {
-      entities = [];
+      entities = [ENT_1];
     });
 
     it("exactly one of two simultaneous decisions is recorded; the other is told the request was already decided", async () => {
@@ -564,6 +599,46 @@ describe("Governance Service", () => {
 
       const result = await approveRequest(createResult.data.id, null, adminCtx);
       expect(result.success).toBe(true);
+    });
+
+    it("a Compliance Officer can approve and reject (steward and above)", async () => {
+      for (const decide of [approveRequest, rejectRequest]) {
+        const created = await createRequest("ent-1", 2, makeClassification("breaking"), null, authorCtx);
+        if (!created.success) throw new Error("setup");
+        expect((await decide(created.data.id, null, complianceOfficerCtx)).success).toBe(true);
+      }
+    });
+
+    it("a Viewer is refused, and so is a caller with no assignments or none over the entity: nothing is decided", async () => {
+      const created = await createRequest("ent-1", 2, makeClassification("breaking"), null, authorCtx);
+      if (!created.success) throw new Error("setup");
+      const viewer = await approveRequest(created.data.id, null, viewerCtx);
+      expect(!viewer.success && viewer.error.code).toBe("FORBIDDEN");
+      for (const assignments of [undefined, [], [assign.tenant("ADMIN", "tenant-b")], [assign.domain("ADMIN", "tenant-a", "dom-other")]]) {
+        const refused = await approveRequest(created.data.id, null, { userId: "x", assignments });
+        expect(!refused.success && refused.error.code, JSON.stringify(assignments)).toBe("NOT_FOUND");
+      }
+      expect(approvals).toEqual([]);
+      const stored = await getRequest(created.data.id);
+      expect(stored.success && stored.data.status).toBe("PENDING");
+    });
+
+    it("a domain-scoped steward decides the requests of ITS domain only; a product-scoped one those of its product only", async () => {
+      const created = await createRequest("ent-1", 2, makeClassification("breaking"), null, authorCtx);
+      if (!created.success) throw new Error("setup");
+      const sibling = { userId: "s", assignments: [assign.domain("STEWARD", "tenant-a", "dom-other")] };
+      expect((await approveRequest(created.data.id, null, sibling)).success).toBe(false);
+      const siblingProduct = { userId: "s", assignments: [assign.product("STEWARD", "tenant-a", "dom-1", "prod-other")] };
+      expect((await approveRequest(created.data.id, null, siblingProduct)).success).toBe(false);
+      const own = { userId: "s", assignments: [assign.product("STEWARD", "tenant-a", "dom-1", "prod-1")] };
+      expect((await approveRequest(created.data.id, null, own)).success).toBe(true);
+    });
+
+    it("a request of an entity that no longer exists is missing for everybody, a platform administrator included (it has no place)", async () => {
+      const created = await createRequest("ent-gone", 2, makeClassification("breaking"), null, authorCtx);
+      if (!created.success) throw new Error("setup");
+      const result = await approveRequest(created.data.id, null, { userId: "a", assignments: [assign.global()] });
+      expect(!result.success && result.error.code).toBe("NOT_FOUND");
     });
   });
 
