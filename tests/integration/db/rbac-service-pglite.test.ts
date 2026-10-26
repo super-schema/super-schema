@@ -220,6 +220,31 @@ describe("the audit trail of grants and revokes, on a real database (KD-035)", (
     });
   });
 
+  it("a tenant's entries list only the roles the user holds in THAT tenant: what they hold in another tenant (or at platform level) is not in them", async () => {
+    const w = await makeWorld();
+    const admin = await makeUser("admin");
+    const target = await makeUser("target");
+    await grantTenantAdmin(admin.id, w.tenantA.id);
+    const inB = scopeKey({ kind: "TENANT", tenantId: w.tenantB.id });
+    await db().userRole.create({ data: { userId: target.id, role: "STEWARD", scopeKey: inB, tenantId: w.tenantB.id } });
+    await grantGlobalAdmin(target.id);
+
+    const granted = await assignRole({ userId: target.id, role: "AUTHOR", domainId: w.domainA.id }, ctxOf(admin.id));
+    expect(granted.success).toBe(true);
+    if (!granted.success) return;
+    expect((await removeRole(granted.data.id, ctxOf(admin.id))).success).toBe(true);
+
+    const log = await entries();
+    expect(log).toHaveLength(2);
+    expect(log[0]).toMatchObject({ tenantId: w.tenantA.id, beforeState: { roles: [] }, afterState: { roles: [{ role: "AUTHOR", scopeKey: `D:${w.domainA.id}` }] } });
+    expect(log[1]).toMatchObject({ tenantId: w.tenantA.id, afterState: { roles: [] } });
+    // nothing of the other tenant, or of the platform, anywhere in what the tenant's compliance officers can read
+    const text = JSON.stringify(log.map((row) => [row.beforeState, row.afterState]));
+    expect(text).not.toContain(w.tenantB.id);
+    expect(text).not.toContain("STEWARD");
+    expect(text).not.toContain('"scopeKey":"G"');
+  });
+
   it("a platform grant is a platform-level entry (no tenant)", async () => {
     const admin = await makeUser("admin");
     const target = await makeUser("target");

@@ -154,8 +154,13 @@ export async function assignRole(
         });
       }
 
-      // What the user held before: the audit entry says what changed, not only that something did.
-      const before = await tx.userRole.findMany({ where: { userId }, orderBy: { createdAt: "asc" }, select: { role: true, scopeKey: true } });
+      // What the user held before: the audit entry says what changed, not only that something did. A tenant's entry lists only what the user holds in
+      // THAT tenant: the entry is read by that tenant's compliance officers, who must not learn what the same person holds elsewhere.
+      const before = await tx.userRole.findMany({
+        where: scope.kind === "GLOBAL" ? { userId } : { userId, tenantId: scope.tenantId },
+        orderBy: { createdAt: "asc" },
+        select: { role: true, scopeKey: true },
+      });
 
       const created = await tx.userRole.create({
         data: { userId, role, scopeKey: key, ...scopeColumns(scope), grantedById: ctx.userId },
@@ -233,7 +238,12 @@ export async function removeRole(
         }
       }
 
-      const before = await tx.userRole.findMany({ where: { userId: roleRow.userId }, orderBy: { createdAt: "asc" }, select: { id: true, role: true, scopeKey: true } });
+      // Only what the user holds in the tenant the entry is written for (a platform-level row's entry lists them all): see `assignRole`.
+      const before = await tx.userRole.findMany({
+        where: roleRow.tenantId ? { userId: roleRow.userId, tenantId: roleRow.tenantId } : { userId: roleRow.userId },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, role: true, scopeKey: true },
+      });
       await tx.userRole.delete({ where: { id } });
 
       await tx.auditLog.create({
