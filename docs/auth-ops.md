@@ -117,6 +117,39 @@ A wrong, expired and used token get the same page and the same words. An invitat
 the invitation carries, and is audited; a reset link sets a new password, kills the user's other outstanding reset links, and signs nobody in. A session that is already signed in
 stays valid until it expires (the session is a signed token with no record on the server to revoke): disabling the user is what stops it, on the next request.
 
+**The creator is judged again when the link is used.** An invitation is a promise of roles its creator could grant. At acceptance the creator is read from the database again
+(`acceptInvitation`): a creator who has since been **disabled, demoted or removed from a tenant** can no longer promise them, so each role they may still grant (`grantAllowed`) is
+given and the others are **skipped and listed in the audit entry** (`INVITATION_ACCEPTED`, `afterState.skipped`, each with its reason: `creator-cannot-grant`, or `scope-gone` for
+a domain or product that has since been deleted). An invitation none of whose roles survives makes a roleless account (it sees "no access yet"). The e-mail was the creator's to
+invite either way.
+
+### Administering users (what the Admin screens call)
+
+`src/services/user.service.ts` (the one place to import from; the parts live in `invitation.service.ts`, `user-directory.service.ts`, `rbac.service.ts`). Every function answers
+`Result<T, ServiceError>` and never throws; the actor is **read from the database inside the SERIALIZABLE transaction that decides** (the context's label counts for nothing), and the
+change and its audit entry commit together.
+
+| Function | Who | What |
+| --- | --- | --- |
+| `inviteUser({ email, roles, ttlHours? })` | an administrator allowed by `grantAllowed` for **every** role and scope asked | one-time link (`token`, `path`, `url`) and expiry; the address is normalized; an address that already has an account is refused; an earlier pending invitation for the same address that the inviter administers is replaced |
+| `revokeInvitation(id)` | an administrator who reaches it | a **pending** invitation only; its link then answers the generic "not valid" |
+| `listPendingInvitations()` | tenant administrator, platform administrator | the pending invitations in reach, roles by name |
+| `setUserDisabled(userId, disabled)` | platform administrator: anyone; tenant administrator: a user whose roles all lie in their tenants | disable or enable; **never yourself, never the last enabled platform administrator**; disabling ends the user's reset links; takes effect on the next request |
+| `createResetLink(userId)` | as `setUserDisabled` | a one-hour link; earlier links of that user stop working; not for a disabled account |
+| `assignRole` / `removeRole` (`revokeRole`) | an administrator who covers the scope | every grant and revoke is audited (`ROLE_ASSIGNED`, `ROLE_REMOVED`) |
+| `listUsers({ tenantId? })` | tenant administrator, platform administrator | users (status, last sign-in, roles by the names of their scopes) and the pending invitations, as far as the caller reaches |
+| `getRoleMatrix(tenantId)` | an administrator of that tenant | users by scopes (the tenant, its domains, their products), the highest role per cell |
+
+**Accounts are never deleted.** Audit rows point at their user and are immutable, so a user who has done anything cannot be removed; a person who must lose access is **disabled**
+(refused at sign-in and on the next request). No code path deletes a user (`tests/unit/access/no-user-delete.test.ts` keeps it so).
+
+**Reach.** A tenant administrator administers a user who holds at least one role in a tenant they administer and **whose every role lies in tenants they administer**. A user with a
+platform role, with a role in another tenant too, or with no role at all is out of reach (only a platform administrator touches them), and so is a user, an invitation or a tenant that
+does not exist: **a target out of reach answers byte for byte like a missing one** (`NOT_FOUND`, "User not found" / "Invitation not found" / "Tenant not found"), so a tenant
+administrator cannot probe other tenants. The one refusal that says why is the one about yourself. Inviting an address that already has an account is told plainly to a platform
+administrator and to one who can see that account (it holds a role in their tenant); to any other tenant administrator the answer is the hedged `INVITATION_REFUSED` ("if the person
+already has an account, ask an administrator to assign their roles"): it does not say whether there is one (the refusal itself still shows that the address cannot be invited).
+
 ### Sessions
 
 A session lasts **12 hours** and is renewed at most once an hour (`maxAge` and `updateAge` in `src/lib/auth.ts`). **A signed-in user is known by the id in the session, and only by it.** There is no

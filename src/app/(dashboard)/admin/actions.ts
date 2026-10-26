@@ -5,9 +5,10 @@ import { ACTIONS, type ActionId } from "@/lib/access";
 import { contextOf, guardActiveTenant } from "@/lib/action-context";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import type { ServiceContext } from "@/types/service-context";
-import { getUsers, updateUser } from "@/services/user.service";
-import { assignRole, removeRole } from "@/services/rbac.service";
+import { createResetLink, getUsers, inviteUser, listPendingInvitations, listUsers, revokeInvitation, setUserDisabled, updateUser } from "@/services/user.service";
+import { assignRole, getRoleMatrix, removeRole } from "@/services/rbac.service";
 import type { AssignRoleInput } from "@/types/schemas/rbac";
+import type { InviteUserInput } from "@/types/schemas/user-admin";
 import {
   runHealthCheck,
   getUsageMetrics,
@@ -93,6 +94,80 @@ export async function removeRoleAction(roleId: string) {
   if (!result.success) return { error: result.error.message };
   revalidateSchemas();
   return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// The user administration the Admin screens call: the directory, invitations, disabling, reset links, the role matrix. Every one is the tenant
+// administrator's act (`user.manage`, over the tenant in view; a platform administrator passes it too); the services judge the rest themselves from
+// the caller's STORED roles (which users, which scopes, which invitations the caller reaches), and answer `{ error, code }` with no existence oracle.
+// A refusal never carries more than the service's own generic text.
+// ---------------------------------------------------------------------------
+
+type Failure = { error: string; code: string };
+const failure = (e: { code: string; message: string; details?: object }): Failure & { details?: object } => ({ error: e.message, code: e.code, ...(e.details ? { details: e.details } : {}) });
+
+/** The users and pending invitations the caller reaches, with status, last sign-in and the roles by the names of their scopes. */
+export async function listUsersAction(options?: { tenantId?: string }) {
+  const access = await gate("user.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await listUsers(access.ctx, options);
+  if (!result.success) return failure(result.error);
+  return { success: true as const, data: result.data };
+}
+
+/** Users by scopes for one tenant (the tenant in view when none is named). */
+export async function getRoleMatrixAction(tenantId?: string) {
+  const access = await gate("user.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await getRoleMatrix(tenantId ?? (access.ctx.tenantId as string), access.ctx);
+  if (!result.success) return failure(result.error);
+  return { success: true as const, data: result.data };
+}
+
+export async function listPendingInvitationsAction() {
+  const access = await gate("user.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await listPendingInvitations(access.ctx);
+  if (!result.success) return failure(result.error);
+  return { success: true as const, data: result.data };
+}
+
+/** Invite a person by link: the answer carries the one-time link (shown once) and its expiry. */
+export async function inviteUserAction(input: InviteUserInput) {
+  const access = await gate("user.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await inviteUser(input, access.ctx);
+  if (!result.success) return failure(result.error);
+  revalidateSchemas();
+  return { success: true as const, data: result.data };
+}
+
+export async function revokeInvitationAction(invitationId: string) {
+  const access = await gate("user.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await revokeInvitation(invitationId, access.ctx);
+  if (!result.success) return failure(result.error);
+  revalidateSchemas();
+  return { success: true as const };
+}
+
+/** Disable (true) or enable (false) an account. Accounts are never deleted. */
+export async function setUserDisabledAction(userId: string, disabled: boolean) {
+  const access = await gate("user.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await setUserDisabled(userId, disabled, access.ctx);
+  if (!result.success) return failure(result.error);
+  revalidateSchemas();
+  return { success: true as const, data: result.data };
+}
+
+/** A one-hour link for a person to set a new password: the answer carries it (shown once). */
+export async function createResetLinkAction(userId: string) {
+  const access = await gate("user.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await createResetLink(userId, access.ctx);
+  if (!result.success) return failure(result.error);
+  return { success: true as const, data: result.data };
 }
 
 export async function getHealthAction() {

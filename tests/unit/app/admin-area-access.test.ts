@@ -22,6 +22,7 @@ const h = vi.hoisted(() => {
   return {
     activeTenant: fn(), revalidatePath: fn(),
     getUsers: fn(), updateUser: fn(), assignRole: fn(), removeRole: fn(),
+    listUsers: fn(), getRoleMatrix: fn(), listPendingInvitations: fn(), inviteUser: fn(), revokeInvitation: fn(), setUserDisabled: fn(), createResetLink: fn(),
     runHealthCheck: fn(), getUsageMetrics: fn(), getActivityMetrics: fn(), getErrorSummary: fn(),
     getEmitterConfigs: fn(), updateEmitterConfig: fn(), getDomainsAdmin: fn(), createDomainAdmin: fn(),
   };
@@ -32,8 +33,11 @@ vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
 vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).principalModule);
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.activeTenant }));
-vi.mock("@/services/user.service", () => ({ getUsers: h.getUsers, updateUser: h.updateUser }));
-vi.mock("@/services/rbac.service", () => ({ assignRole: h.assignRole, removeRole: h.removeRole }));
+vi.mock("@/services/user.service", () => ({
+  getUsers: h.getUsers, updateUser: h.updateUser, listUsers: h.listUsers, listPendingInvitations: h.listPendingInvitations, inviteUser: h.inviteUser,
+  revokeInvitation: h.revokeInvitation, setUserDisabled: h.setUserDisabled, createResetLink: h.createResetLink,
+}));
+vi.mock("@/services/rbac.service", () => ({ assignRole: h.assignRole, removeRole: h.removeRole, getRoleMatrix: h.getRoleMatrix }));
 vi.mock("@/services/health.service", () => ({
   runHealthCheck: h.runHealthCheck, getUsageMetrics: h.getUsageMetrics, getActivityMetrics: h.getActivityMetrics, getErrorSummary: h.getErrorSummary,
 }));
@@ -44,7 +48,8 @@ import * as admin from "@/app/(dashboard)/admin/actions";
 
 const GENERIC_FORBIDDEN = "You do not have permission to do this";
 const SERVICES = [
-  h.getUsers, h.updateUser, h.assignRole, h.removeRole, h.runHealthCheck, h.getUsageMetrics, h.getActivityMetrics, h.getErrorSummary,
+  h.getUsers, h.updateUser, h.assignRole, h.removeRole, h.listUsers, h.getRoleMatrix, h.listPendingInvitations, h.inviteUser, h.revokeInvitation,
+  h.setUserDisabled, h.createResetLink, h.runHealthCheck, h.getUsageMetrics, h.getActivityMetrics, h.getErrorSummary,
   h.getEmitterConfigs, h.updateEmitterConfig, h.getDomainsAdmin, h.createDomainAdmin, h.revalidatePath,
 ];
 const reached = () => SERVICES.filter((service) => service.mock.calls.length > 0);
@@ -57,6 +62,13 @@ const OPS: Op[] = [
   { label: "updateUserNameAction (another user)", call: () => admin.updateUserNameAction("someone-else", "New"), kind: "tenant-admin" },
   { label: "assignRoleAction", call: () => admin.assignRoleAction({ userId: "u2", role: "VIEWER", tenantId: T }), kind: "tenant-admin" },
   { label: "removeRoleAction", call: () => admin.removeRoleAction("role-1"), kind: "tenant-admin" },
+  { label: "listUsersAction", call: () => admin.listUsersAction(), kind: "tenant-admin" },
+  { label: "getRoleMatrixAction", call: () => admin.getRoleMatrixAction(), kind: "tenant-admin" },
+  { label: "listPendingInvitationsAction", call: () => admin.listPendingInvitationsAction(), kind: "tenant-admin" },
+  { label: "inviteUserAction", call: () => admin.inviteUserAction({ email: "a@example.test", roles: [{ role: "VIEWER", tenantId: T }] }), kind: "tenant-admin" },
+  { label: "revokeInvitationAction", call: () => admin.revokeInvitationAction("inv-1"), kind: "tenant-admin" },
+  { label: "setUserDisabledAction", call: () => admin.setUserDisabledAction("u2", true), kind: "tenant-admin" },
+  { label: "createResetLinkAction", call: () => admin.createResetLinkAction("u2"), kind: "tenant-admin" },
   { label: "getHealthAction", call: () => admin.getHealthAction(), kind: "platform" },
   { label: "getEmitterConfigsAction", call: () => admin.getEmitterConfigsAction(), kind: "platform" },
   { label: "updateEmitterConfigAction", call: () => admin.updateEmitterConfigAction({} as never), kind: "platform" },
@@ -136,7 +148,14 @@ describe("the context the user and role services receive", () => {
     await admin.getUsersAction();
     await admin.assignRoleAction({ userId: "u2", role: "VIEWER", tenantId: T });
     await admin.removeRoleAction("role-1");
-    for (const service of [h.getUsers, h.assignRole, h.removeRole]) {
+    await admin.listUsersAction();
+    await admin.getRoleMatrixAction();
+    await admin.listPendingInvitationsAction();
+    await admin.inviteUserAction({ email: "a@example.test", roles: [{ role: "VIEWER", tenantId: T }] });
+    await admin.revokeInvitationAction("inv-1");
+    await admin.setUserDisabledAction("u2", true);
+    await admin.createResetLinkAction("u2");
+    for (const service of [h.getUsers, h.assignRole, h.removeRole, h.listUsers, h.getRoleMatrix, h.listPendingInvitations, h.inviteUser, h.revokeInvitation, h.setUserDisabled, h.createResetLink]) {
       const ctx = service.mock.calls[0].find((arg: unknown) => typeof arg === "object" && arg !== null && "assignments" in arg);
       expect(ctx).toMatchObject({ userId: "admin-9", assignments, tenantId: T });
     }
@@ -153,6 +172,51 @@ describe("the context the user and role services receive", () => {
     signInAs(principalOf([assign.global()]));
     await admin.getHealthAction();
     expect(h.getActivityMetrics).toHaveBeenCalledWith(expect.anything(), T);
+  });
+});
+
+describe("the user administration actions: what the Admin screens get back", () => {
+  it("a refusal of the service reaches the screen as { error, code } with the service's own text, and the lists and links answer { success, data }", async () => {
+    h.inviteUser.mockResolvedValue({ success: false, error: { code: "INVITATION_REFUSED", message: "This address cannot be invited.", details: { field: "email" } } });
+    expect(await admin.inviteUserAction({ email: "a@example.test", roles: [{ role: "VIEWER", tenantId: T }] })).toEqual({
+      error: "This address cannot be invited.",
+      code: "INVITATION_REFUSED",
+      details: { field: "email" },
+    });
+    h.setUserDisabled.mockResolvedValue({ success: false, error: { code: "NOT_FOUND", message: "User not found" } });
+    expect(await admin.setUserDisabledAction("u2", true)).toEqual({ error: "User not found", code: "NOT_FOUND" });
+    h.createResetLink.mockResolvedValue({ success: true, data: { userId: "u2", token: "t", path: "/reset/t", url: null, expiresAt: new Date(0), invalidatedLinks: 0 } });
+    expect(await admin.createResetLinkAction("u2")).toMatchObject({ success: true, data: { path: "/reset/t" } });
+    h.listUsers.mockResolvedValue({ success: true, data: { items: [], truncated: false } });
+    expect(await admin.listUsersAction()).toEqual({ success: true, data: { items: [], truncated: false } });
+  });
+
+  it("what changes something evicts the cached /schemas pages after it succeeds, and a failure or a reading does not", async () => {
+    h.inviteUser.mockResolvedValue({ success: true, data: {} });
+    h.revokeInvitation.mockResolvedValue({ success: true, data: undefined });
+    h.setUserDisabled.mockResolvedValue({ success: true, data: {} });
+    await admin.inviteUserAction({ email: "a@example.test", roles: [{ role: "VIEWER", tenantId: T }] });
+    await admin.revokeInvitationAction("inv-1");
+    await admin.setUserDisabledAction("u2", false);
+    expect(h.revalidatePath).toHaveBeenCalledTimes(3);
+    vi.clearAllMocks();
+    h.setUserDisabled.mockResolvedValue({ success: false, error: { code: "FORBIDDEN", message: "x" } });
+    await admin.setUserDisabledAction("u2", true);
+    await admin.listUsersAction();
+    await admin.getRoleMatrixAction();
+    expect(h.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("the role matrix is the tenant in view's unless a tenant is named", async () => {
+    await admin.getRoleMatrixAction();
+    expect(h.getRoleMatrix.mock.calls[0][0]).toBe(T);
+    await admin.getRoleMatrixAction("tenant-9");
+    expect(h.getRoleMatrix.mock.calls[1][0]).toBe("tenant-9");
+  });
+
+  it("the list takes the tenant filter the screen asks for", async () => {
+    await admin.listUsersAction({ tenantId: "tenant-9" });
+    expect(h.listUsers).toHaveBeenCalledWith(expect.objectContaining({ userId: expect.any(String) }), { tenantId: "tenant-9" });
   });
 });
 
