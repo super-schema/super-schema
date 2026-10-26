@@ -271,6 +271,17 @@ describe("getEntitiesForRetentionAction", () => {
     expect(await getEntitiesForRetentionAction()).toEqual({ error: "Entities not found", entities: [] });
     expect(h.findManyEntities).not.toHaveBeenCalled();
   });
+
+  it("KD-046: each row's metadata keeps the retention policy and drops the stored generated schemas (the files of whole closures)", async () => {
+    signInAs(tenantMember("VIEWER", T));
+    h.activeTenant.mockResolvedValue(T);
+    h.findManyEntities.mockResolvedValue([
+      { id: "e1", name: "Order", domain: { name: "Sales" }, fields: [], metadata: { retentionPolicy: { days: 30 }, schemaVersions: { avro: [{ output: "iban" }] } } },
+    ]);
+    const answer = (await getEntitiesForRetentionAction()) as { entities: Array<{ metadata: unknown }> };
+    expect(answer.entities[0].metadata).toEqual({ retentionPolicy: { days: 30 } });
+    expect(JSON.stringify(answer)).not.toContain("iban");
+  });
 });
 
 describe("updateRetentionPolicyAction", () => {

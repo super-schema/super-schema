@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { can, readableWhere } from "@/lib/access";
 import { entityCapabilities } from "@/lib/access/capabilities";
+import { omitSchemaVersions } from "@/lib/access/schema-version-redaction";
 import { getPrincipal } from "@/lib/access/principal";
 import type { Prisma } from "@/generated/prisma/client";
 import { domainLabel } from "@/lib/entity-placement";
@@ -152,7 +153,9 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
         domainSlug: entity.domain?.slug ?? null,
         productSlug: entity.product?.slug ?? null,
         productName: entity.product?.name ?? null,
-        metadata: entity.metadata as Record<string, unknown> | null,
+        // The stored generated schemas are not part of the page (the Schemas tab asks for them through `getSchemaVersionsAction`, which redacts them for
+        // the reader): they would put the files of every entity of a closure, a wider role's included, into the page a reader of this entity receives (KD-046).
+        metadata: omitSchemaVersions(entity.metadata) as Record<string, unknown> | null,
         ...toDraftVersionState({ hasUnpublishedChanges: entity.hasUnpublishedChanges, latestVersion: entity.latestVersion }),
       },
       domainPolicy: domainPolicy as Record<string, unknown> | null,

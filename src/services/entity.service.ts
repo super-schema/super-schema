@@ -14,6 +14,7 @@ import {
 } from "@/types/schemas/entity.schema";
 import type { Prisma } from "@/generated/prisma/client";
 import { ctxCan, readableScopes } from "@/lib/access";
+import { omitSchemaVersions, redactEntityMetadata } from "@/lib/access/schema-version-redaction";
 import { canTransition } from "@/lib/entity-lifecycle";
 import { entityUpdateTouchesDraft, withSourceStale } from "@/lib/entity-versioning/draft-state";
 import { generateSlug } from "@/lib/slug";
@@ -147,7 +148,8 @@ export async function getEntities(
     },
     orderBy: { updatedAt: "desc" },
   });
-  return ok(entities);
+  // A list never shows the stored generated schemas (they hold the files of whole closures, which the caller's roles may not all cover: KD-046).
+  return ok(entities.map((entity) => ({ ...entity, metadata: omitSchemaVersions(entity.metadata) })));
 }
 
 /**
@@ -183,7 +185,10 @@ export async function getEntityById(
     });
   }
   const { product: _product, ...entity } = found;
-  return ok(entity);
+  // The stored generated schemas in the metadata carry the files of every entity of the closure they were made from, a wider role's included: the
+  // caller gets the copy their own roles cover (KD-046). The caller may read this entity (checked above), which is what the redaction needs of the root.
+  const metadata = await redactEntityMetadata(prisma, entity.metadata, { root: { entityId: entity.id, place }, assignments: ctx.assignments });
+  return ok({ ...entity, metadata });
 }
 
 export async function updateEntity(

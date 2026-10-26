@@ -24,6 +24,7 @@ import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
 import { withUnionFieldsAsString } from "@/lib/compiler/union-fields";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import { checkTypeSpecImports, TYPESPEC_IMPORT_NOT_ALLOWED } from "@/lib/typespec/import-guard";
+import { bundleFileContents } from "./bundle";
 
 const execFileAsync = promisify(execFile);
 
@@ -634,16 +635,7 @@ async function collectTextFiles(rootDir: string): Promise<EmittedFile[]> {
 }
 
 export function bundleGeneratedFiles(files: EmittedFile[]): string {
-  if (files.length === 1) {
-    return files[0].content;
-  }
-
-  return files
-    .map(
-      (file) =>
-        `===== ${file.relativePath} =====\n${file.content.trimEnd()}`
-    )
-    .join("\n\n");
+  return bundleFileContents(files.map((file) => ({ path: file.relativePath, content: file.content })));
 }
 
 function getTspBinaryPath(): string {

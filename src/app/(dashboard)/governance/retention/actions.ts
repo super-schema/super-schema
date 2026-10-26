@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@/generated/prisma/client";
 import { readableScopes } from "@/lib/access";
+import { omitSchemaVersions } from "@/lib/access/schema-version-redaction";
 import { guardActiveTenant, guardSubject, unexpectedFailure } from "@/lib/action-context";
 import { isPlainObject } from "@/lib/editable-fields";
 import { RetentionPolicySchema } from "@/types/schemas/retention-policy.schema";
@@ -40,7 +41,8 @@ export async function getEntitiesForRetentionAction() {
         id: e.id,
         name: e.name,
         domainName: domainLabel(e.domain),
-        metadata: e.metadata as Record<string, unknown> | null,
+        // The retention table reads the retention policy; the stored generated schemas stay out (they hold the files of whole closures: KD-046).
+        metadata: omitSchemaVersions(e.metadata) as Record<string, unknown> | null,
         fields: e.fields.map((f) => ({ name: f.name, type: f.type, classification: f.classification })),
       })),
     };

@@ -104,6 +104,16 @@ describe("loadEntityWorkspace", () => {
     });
   });
 
+  it("KD-046: the page props carry the entity's metadata WITHOUT the stored generated schemas (they hold the files of whole closures, sent to the browser)", async () => {
+    const secret = { "json-schema": [{ version: 1, status: "draft", output: "x", files: [{ path: "Secret.json", content: "iban", entityId: "other" }] }] };
+    mockEntityFindFirst.mockResolvedValueOnce(entityRow({ metadata: { owner: "x", schemaVersions: secret } }));
+
+    const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+
+    expect(data?.props.entity.metadata).toEqual({ owner: "x" });
+    expect(JSON.stringify(data?.props)).not.toContain("iban");
+  });
+
   it("resolves by slug first, scoped by product and tenant", async () => {
     mockEntityFindFirst.mockResolvedValueOnce(entityRow());
 

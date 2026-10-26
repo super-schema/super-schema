@@ -51,6 +51,17 @@ export interface SchemaVersion {
   };
   publishedAt?: string;
   deployedAt?: string;
+  /**
+   * Set ONLY on a copy handed to a reader (never stored): the files of entities that reader's roles do not cover were taken out of `files`, `output`
+   * was rebuilt from what is left and the resolution lost those entities (KD-046, `redactSchemaVersionsMap`). Absent on a version shown whole.
+   */
+  redacted?: SchemaVersionRedaction;
+}
+
+/** What was held back from a reader of a stored version: how many files, and how many entities of the closure they belonged to. */
+export interface SchemaVersionRedaction {
+  hiddenFiles: number;
+  hiddenEntities: number;
 }
 
 export type SchemaVersionsMap = Record<string, SchemaVersion[]>;

@@ -13,6 +13,7 @@ import type { UpdateEntityInput } from "@/types/schemas/entity.schema";
 import type { Relationship } from "@/types/schemas/entity-metadata.schema";
 import type { DiffResult } from "@/services/version-history/version.types";
 import { can, entityReader, type ActionId, type ResourceRef } from "@/lib/access";
+import { redactSchemaVersions } from "@/lib/access/schema-version-redaction";
 import type { Principal } from "@/lib/access/principal";
 import { authorizeSubject, contextOf, failureOf, guardActiveTenant, guardSubject, notFoundFailure, unexpectedFailure } from "@/lib/action-context";
 import {
@@ -1039,8 +1040,13 @@ export async function getSchemaVersionsAction(entityId: string) {
     const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
     if (!entity) return { ...notFoundFailure("Entity") };
 
+    // The stored versions carry the generated files of every entity of the closure they were made from (a wider role may have made them): the reader
+    // gets the copy their own roles cover (KD-046), the stored value stays whole for the writers.
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
-    const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
+    const schemaVersions = await redactSchemaVersions(prisma, meta.schemaVersions ?? {}, {
+      root: { entityId, place: { tenantId: access.resource.tenantId, domainId: access.resource.domainId ?? null, productId: access.resource.productId ?? null } },
+      assignments: access.principal.assignments,
+    });
     return { success: true, schemaVersions };
   } catch (e: unknown) {
     return { ...unexpectedFailure("getSchemaVersionsAction", e) };

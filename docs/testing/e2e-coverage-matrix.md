@@ -102,5 +102,5 @@ machine and could not be: their 40 smoke runs (20 tests x 2 browsers) were not r
 
 Expected failures that keep the run green (the `[KD-nnn ...]` tests of the guard): KD-014, KD-015, KD-017 and KD-019 each fail as stated (a fifth, the webhook creation by the API key, was fixed with the access-control work), and the run reports them as passed.
 
-Known defects at this release (`docs/testing/known-defects.md`): **4 open**, each pinned by a test that fails as stated (KD-014, KD-015, KD-017, KD-019), 28 `no-test` (a gap or a design limit that nothing in the suite pins: KD-034, KD-036 to KD-039 are new this wave, KD-043, KD-044 and KD-046 came with the access-control work) and 3 `dead-code` (KD-004, KD-005, KD-022).
+Known defects at this release (`docs/testing/known-defects.md`): **4 open**, each pinned by a test that fails as stated (KD-014, KD-015, KD-017, KD-019), 27 `no-test` (a gap or a design limit that nothing in the suite pins: KD-034, KD-036 to KD-039 are new this wave, KD-043 and KD-044 came with the access-control work) and 3 `dead-code` (KD-004, KD-005, KD-022).
 <!-- final-run:end -->

@@ -150,6 +150,20 @@ administrator cannot probe other tenants. The one refusal that says why is the o
 administrator and to one who can see that account (it holds a role in their tenant); to any other tenant administrator the answer is the hedged `INVITATION_REFUSED` ("if the person
 already has an account, ask an administrator to assign their roles"): it does not say whether there is one (the refusal itself still shows that the address cannot be invited).
 
+### Stored generated schemas and who reads them
+
+A generated schema is stored in the entity's `metadata.schemaVersions` with the files of **every entity of the closure it was made from**. A version made by a wider role (a tenant
+administrator) therefore holds files of entities a narrower reader of the root (a steward of one domain) may not read. **Every reader of the stored versions gets a copy**
+(`src/lib/access/schema-version-redaction.ts`): the files of entities its roles do not cover are removed (a file with no `entityId` is the root's), `output` is rebuilt from the files that
+are left with the generator's own bundling, the unreadable entities leave the resolution (and its free-text notes), and the copy says `redacted: { hiddenFiles, hiddenEntities }`; the Schemas tab
+shows "N files of referenced entities are hidden for your role". The stored value is never changed (publishing and deploying go on from the whole list). Tenant and platform administrators, and
+holders who cover every referenced entity, get the stored version as it is. Two cases hide the **whole** version, because one file there carries more than the entity it is tagged with:
+the OpenAPI and Avro targets (each file inlines the entities it refers to, and the reference graph is not stored) and a Protobuf reference cycle (one shared file, tagged with its first member
+only). An entity deleted since the version was made is judged as a tenant-level entity of the root's tenant. The surfaces: the Schemas tab (`getSchemaVersionsAction`),
+`GET /api/v1/schemas/:id` (`metadata`), the entity page (the stored versions are not sent at all), the retention table, the entity list and the change log (the audit states drop them). The git
+export writes the stored file sets whole: it is a platform administrator's act. `tests/unit/access/schema-versions-scan.test.ts` fails when a new reader of `schemaVersions` is neither redacted nor recorded
+with its reason.
+
 ### Sessions
 
 A session lasts **12 hours** and is renewed at most once an hour (`maxAge` and `updateAge` in `src/lib/auth.ts`). **A signed-in user is known by the id in the session, and only by it.** There is no

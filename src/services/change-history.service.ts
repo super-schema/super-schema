@@ -6,6 +6,7 @@
  */
 
 import { prisma } from "@/lib/db";
+import { withoutStoredSchemaVersions } from "@/lib/access/schema-version-redaction";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -139,10 +140,12 @@ function auditRecordsToTimeline(
     userId: a.userId,
     action: a.action,
     entityType: a.entityType,
+    // A state is the entity row as it was, and the row holds the stored generated schemas (the files of whole closures, a wider role's included): every
+    // reader of the entity reads this log, so those stay out of it (KD-046). The log shows what changed, never the generated files.
     metadata: {
       entityId: a.entityId,
-      beforeState: a.beforeState,
-      afterState: a.afterState,
+      beforeState: withoutStoredSchemaVersions(a.beforeState),
+      afterState: withoutStoredSchemaVersions(a.afterState),
     },
   }));
 }
