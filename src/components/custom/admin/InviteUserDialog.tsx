@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -56,6 +56,14 @@ function InviteContent({ scopes, scopesError, onClose, onInvited }: { scopes: Gr
   const [result, setResult] = useState<InviteUserResult | null>(null);
 
   const update = (key: number, change: (row: Row) => Row) => setRows((current) => current.map((row) => (row.key === key ? change(row) : row)));
+
+  useEffect(() => {
+    // The places the caller may grant arrive after the dialog opened (they are read once by the page): a row still without a place gets the only tenant on
+    // offer, as it would have had it been made later. A place the person already chose is left alone.
+    if (!scopes) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRows((current) => current.map((row) => (row.selection.platform || row.selection.tenantId ? row : { ...row, selection: defaultSelection(scopes.scopes, row.role) })));
+  }, [scopes]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();

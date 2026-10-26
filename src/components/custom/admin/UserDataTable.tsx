@@ -37,7 +37,7 @@ function RoleBadges({ roles }: { roles: ListedRole[] }) {
           >
             <Shield className="w-3 h-3" aria-hidden="true" />
             {r.role}
-            <span className="opacity-70">({scopeText(r)})</span>
+            <span className="font-normal">({scopeText(r)})</span>
           </span>
         );
       })}

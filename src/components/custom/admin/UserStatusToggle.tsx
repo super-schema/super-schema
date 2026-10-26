@@ -50,7 +50,7 @@ export function UserStatusToggle({ user, onChanged }: UserStatusToggleProps) {
     <>
       <GuardedButton
         type="button"
-        variant={disabling ? "destructive" : "outline"}
+        variant="outline"
         size="sm"
         data-testid="user-status-toggle"
         data-action={disabling ? "disable" : "enable"}
@@ -86,7 +86,7 @@ export function UserStatusToggle({ user, onChanged }: UserStatusToggleProps) {
           )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
-            <Button type="button" variant={disabling ? "destructive" : "default"} onClick={confirm} disabled={busy} data-testid="user-status-confirm">
+            <Button type="button" onClick={confirm} disabled={busy} data-testid="user-status-confirm">
               {busy && <Loader2 className="animate-spin" aria-hidden="true" />}
               {disabling ? "Disable account" : "Enable account"}
             </Button>

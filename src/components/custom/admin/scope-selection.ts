@@ -91,5 +91,5 @@ export function describeSelection(scopes: readonly GrantableScope[], selection: 
   return scopes.find((scope) => scope.scopeKey === key)?.label ?? null;
 }
 
-/** The roles of the ladder in order, the ones a caller may grant somewhere first-class: used by the role selects. */
+/** The roles of the ladder, lowest first: what the role selects list (which of them a place accepts is the picker's business, `tenantOptions` and the like). */
 export const ASSIGNABLE_ROLES: readonly Role[] = ROLE_HIERARCHY;
