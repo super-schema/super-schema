@@ -335,9 +335,10 @@ describe("loadEntityWorkspace", () => {
 
     it.each([
       ["AUTHOR", { write: true, publish: false, deploy: false, overrideEntity: true, overrideGlobal: false }],
-      ["STEWARD", { write: true, publish: true, deploy: true, overrideEntity: true, overrideGlobal: true }],
-      ["COMPLIANCE_OFFICER", { write: true, publish: true, deploy: true, overrideEntity: true, overrideGlobal: true }],
-      ["ADMIN", { write: true, publish: true, deploy: true, overrideEntity: true, overrideGlobal: true }],
+      // A global override changes every tenant's mapping (the table has no tenant column): only a PLATFORM administrator is offered it, whatever a role holds in the tenant.
+      ["STEWARD", { write: true, publish: true, deploy: true, overrideEntity: true, overrideGlobal: false }],
+      ["COMPLIANCE_OFFICER", { write: true, publish: true, deploy: true, overrideEntity: true, overrideGlobal: false }],
+      ["ADMIN", { write: true, publish: true, deploy: true, overrideEntity: true, overrideGlobal: false }],
     ] as const)("a tenant %s is offered what the action table gives that role", async (role, expected) => {
       signInAs(tenantMember(role, "tenant-1"));
       inDomain();

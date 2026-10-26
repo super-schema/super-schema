@@ -87,6 +87,11 @@ vi.mock("@/lib/db", () => ({
         return deleted;
       }),
     },
+    // Where the entity of a per-entity override lives (the service judges the caller's roles over it).
+    entity: {
+      findUnique: vi.fn().mockResolvedValue({ tenantId: "tenant-1", domainId: "dom-1", productId: null, product: null }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     lossyMappingAck: {
       upsert: vi.fn().mockImplementation(async (args: {
         where: { entityId_sourceType_targetFormat_userId: { entityId: string; sourceType: string; targetFormat: string; userId: string } };
@@ -134,6 +139,7 @@ import {
 import { resolveMapping } from "@/lib/type-mapping/mapping-engine";
 import { getDefaultPolicies } from "@/lib/type-mapping/default-mappings";
 import type { ServiceContext } from "@/types/service-context";
+import { assign } from "../../helpers/access-mocks";
 
 // ---------------------------------------------------------------------------
 // Mock contexts
@@ -142,24 +148,28 @@ import type { ServiceContext } from "@/types/service-context";
 const adminCtx: ServiceContext = {
   userId: "admin-1",
   userRole: "ADMIN",
+  assignments: [assign.global()],
   prisma: {} as ServiceContext["prisma"],
 };
 
 const stewardCtx: ServiceContext = {
   userId: "steward-1",
   userRole: "STEWARD",
+  assignments: [assign.tenant("STEWARD", "tenant-1")],
   prisma: {} as ServiceContext["prisma"],
 };
 
 const authorCtx: ServiceContext = {
   userId: "author-1",
   userRole: "AUTHOR",
+  assignments: [assign.tenant("AUTHOR", "tenant-1")],
   prisma: {} as ServiceContext["prisma"],
 };
 
 const viewerCtx: ServiceContext = {
   userId: "viewer-1",
   userRole: "VIEWER",
+  assignments: [assign.tenant("VIEWER", "tenant-1")],
   prisma: {} as ServiceContext["prisma"],
 };
 
@@ -304,7 +314,7 @@ describe("Type Mapping Override Governance", () => {
   // -------------------------------------------------------------------------
 
   describe("RBAC enforcement", () => {
-    it("Steward can create global override", async () => {
+    it("a tenant Steward cannot create a global override (it changes every tenant's mapping: a platform administrator's act)", async () => {
       const result = await createGlobalOverride(
         {
           sourceType: "string",
@@ -315,10 +325,8 @@ describe("Type Mapping Override Governance", () => {
         },
         stewardCtx
       );
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.approvedBy).toBe("steward-1");
-      }
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.error.code).toBe("PERMISSION_DENIED");
     });
 
     it("Admin can create global override", async () => {

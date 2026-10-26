@@ -223,7 +223,7 @@ async function decide(
 
 /**
  * Approve a governance request.
- * Only Steward/Admin roles can approve.
+ * Needs governance.decide over the request's entity (a steward or above).
  */
 export async function approveRequest(
   requestId: string,
@@ -235,7 +235,7 @@ export async function approveRequest(
 
 /**
  * Reject a governance request.
- * Only Steward/Admin roles can reject.
+ * Needs governance.decide over the request's entity (a steward or above).
  */
 export async function rejectRequest(
   requestId: string,

@@ -79,6 +79,11 @@ vi.mock("@/lib/db", () => ({
         return deleted;
       }),
     },
+    // Where the entity of a per-entity override lives (the service judges the caller's roles over it).
+    entity: {
+      findUnique: vi.fn().mockResolvedValue({ tenantId: "tenant-1", domainId: "dom-1", productId: null, product: null }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     lossyMappingAck: {
       upsert: vi.fn().mockResolvedValue({}),
       count: vi.fn().mockResolvedValue(0),
@@ -95,6 +100,7 @@ import {
 } from "@/services/type-mapping.service";
 import { prisma } from "@/lib/db";
 import type { ServiceContext } from "@/types/service-context";
+import { assign } from "../../helpers/access-mocks";
 
 // ---------------------------------------------------------------------------
 // Mock contexts
@@ -103,24 +109,28 @@ import type { ServiceContext } from "@/types/service-context";
 const adminCtx: ServiceContext = {
   userId: "admin-1",
   userRole: "ADMIN",
+  assignments: [assign.global()],
   prisma: {} as ServiceContext["prisma"],
 };
 
 const stewardCtx: ServiceContext = {
   userId: "steward-1",
   userRole: "STEWARD",
+  assignments: [assign.tenant("STEWARD", "tenant-1")],
   prisma: {} as ServiceContext["prisma"],
 };
 
 const authorCtx: ServiceContext = {
   userId: "author-1",
   userRole: "AUTHOR",
+  assignments: [assign.tenant("AUTHOR", "tenant-1")],
   prisma: {} as ServiceContext["prisma"],
 };
 
 const viewerCtx: ServiceContext = {
   userId: "viewer-1",
   userRole: "VIEWER",
+  assignments: [assign.tenant("VIEWER", "tenant-1")],
   prisma: {} as ServiceContext["prisma"],
 };
 
@@ -238,21 +248,28 @@ describe("Type Mapping Service", () => {
       }
     });
 
-    it("allows Steward to create override", async () => {
+    it("denies a tenant Steward a GLOBAL override: it changes every tenant's mapping, so only a platform administrator makes one", async () => {
       const result = await createOverride(overrideInput, stewardCtx);
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.isOverride).toBe(true);
-        expect(result.data.approvedBy).toBe("steward-1");
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("PERMISSION_DENIED");
+        expect(result.error.message).toBe("You do not have permission to do this");
       }
+      expect(overrideRows).toHaveLength(0);
     });
 
-    it("denies Author from creating global override", async () => {
+    it("allows a Steward a PER-ENTITY override (typemapping.entity over the entity)", async () => {
+      const result = await createOverride({ ...overrideInput, entityId: "ent-1" }, stewardCtx);
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.approvedBy).toBe("steward-1");
+    });
+
+    it("denies Author from creating global override, and names no role", async () => {
       const result = await createOverride(overrideInput, authorCtx);
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe("PERMISSION_DENIED");
-        expect(result.error.suggestedFix).toContain("AUTHOR");
+        expect(JSON.stringify(result.error)).not.toMatch(/AUTHOR|STEWARD|ADMIN|current role/);
       }
     });
 
@@ -299,12 +316,12 @@ describe("Type Mapping Service", () => {
           mappedType: "string/byte",
           isLossy: false,
         },
-        stewardCtx
+        adminCtx
       );
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.approvedBy).toBe("steward-1");
+        expect(result.data.approvedBy).toBe("admin-1");
       }
     });
 

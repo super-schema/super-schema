@@ -252,7 +252,7 @@ export function TypeMappingOverrideDialog({
                   <div className="flex items-center gap-1.5 text-body-small font-medium text-foreground">
                     Create Global Override
                     <Badge variant="secondary" className="text-[10px]">
-                      Steward/Admin
+                      Platform admin
                     </Badge>
                   </div>
                   <div className="text-caption text-muted-foreground">

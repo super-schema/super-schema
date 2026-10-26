@@ -19,7 +19,7 @@ export type EntityCapabilities = {
   deploy: boolean;
   /** Create a per-entity type-mapping override or acknowledge a lossy mapping (`typemapping.entity`). */
   overrideEntity: boolean;
-  /** Create a global type-mapping override (`typemapping.global`, judged over the entity's tenant). */
+  /** Create a global type-mapping override (`typemapping.global`: it reaches every tenant, so a platform administrator's act). */
   overrideGlobal: boolean;
 };
 
@@ -39,6 +39,6 @@ export function entityCapabilities(assignments: Assignment[], resource: Resource
     publish: can(assignments, "entity.publish", resource),
     deploy: can(assignments, "deploy.run", resource),
     overrideEntity: can(assignments, "typemapping.entity", resource),
-    overrideGlobal: can(assignments, "typemapping.global", { tenantId: resource.tenantId }),
+    overrideGlobal: can(assignments, "typemapping.global", resource),
   };
 }

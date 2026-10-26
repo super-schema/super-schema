@@ -25,7 +25,6 @@ const DEFINITIONS = [
  * as the PLATFORM role (not a role over a resource), so the worst it does today is refuse a tenant administrator, never admit one.
  */
 const PENDING_TASK_5B: Record<string, string> = {
-  "src/services/type-mapping.service.ts": "type-mapping (typemapping.global / typemapping.entity)",
   "src/app/api/v1/health/route.ts": "API v1 (Task 6)",
   "src/app/api/v1/middleware.ts": "API v1 principal (Task 6)",
   "src/server/api/procedures.ts": "dead oRPC routers: deleted in Task 7",

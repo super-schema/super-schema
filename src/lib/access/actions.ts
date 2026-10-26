@@ -126,9 +126,6 @@ export const ACTIONS = freezeTable({
   "domain.update": { minRole: "STEWARD", level: "resource" },
   // create a domain: createDomainAction, createDomainAdminAction (decided at tenant scope) [the tenant]
   "domain.create": { minRole: "STEWARD", level: "tenant" },
-  // global type-mapping override: createTypeMappingOverride (scope global), createGlobalOverride, createOverride without an entity, deleteOverride of a
-  // global override. The override table has no tenant column, so it reaches every tenant [the active tenant]
-  "typemapping.global": { minRole: "STEWARD", level: "tenant" },
 
   // ── Compliance: COMPLIANCE_OFFICER ─────────────────────────────────────────────────────────────────────────────────────────────
   // POST /api/compliance/query: queryFields (rows are entities: filter by the entity's scope) [the entity of each row, or the tenant]
@@ -165,6 +162,10 @@ export const ACTIONS = freezeTable({
   "classification.manage": { minRole: "ADMIN", level: "global" },
   // tenant creation (a platform task; there is no tenant creation action yet: `npm run tenant:create`) [none: global]
   "tenant.create": { minRole: "ADMIN", level: "global" },
+  // global type-mapping override: createTypeMappingOverride (scope global), createGlobalOverride, createOverride without an entity, deleteOverride of a
+  // global override. The override table has no tenant column, so a global override changes the mapping of EVERY tenant: the design table says STEWARD,
+  // and the review ruling (Task 5b) restricts it to a platform administrator until the table is tenant-keyed [none: global]
+  "typemapping.global": { minRole: "ADMIN", level: "global" },
 
   // ── The principal's own data: any active principal, role or not ────────────────────────────────────────────────────────────────
   // notifications: GET/POST /api/v1/notifications (list, count, mark read, mark all read), notification.service [the principal]

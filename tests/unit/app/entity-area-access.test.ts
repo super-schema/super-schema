@@ -97,7 +97,6 @@ const OPS: Op[] = [
   { label: "updateEntityRelationshipsAction", call: () => actions.updateEntityRelationshipsAction("ent-1", []), needs: ["entity.write"] },
   { label: "emitEntityAction", call: () => actions.emitEntityAction("ent-1"), needs: ["entity.read"] },
   { label: "createTypeMappingOverrideAction (per-entity)", call: () => actions.createTypeMappingOverrideAction({ ...REF_INPUT, scope: "per-entity", entityId: "ent-1" }), needs: ["typemapping.entity"] },
-  { label: "createTypeMappingOverrideAction (global)", call: () => actions.createTypeMappingOverrideAction({ ...REF_INPUT, scope: "global", entityId: "ent-1" }), needs: ["typemapping.global"], subject: "tenant" },
   { label: "acknowledgeLossyMappingAction", call: () => actions.acknowledgeLossyMappingAction({ entityId: "ent-1", sourceType: "string", targetFormat: "avro" }), needs: ["typemapping.entity"] },
   { label: "getVersionHistoryAction", call: () => actions.getVersionHistoryAction("ent-1"), needs: ["entity.read"] },
   { label: "compareVersionsAction", call: () => actions.compareVersionsAction("ent-1", 1, 2), needs: ["entity.read"] },
@@ -147,6 +146,8 @@ function normalize(answer: unknown): unknown {
             : undefined;
   return code ? { error: a.error, code } : { error: a.error };
 }
+
+const normalizeAnswer = (answer: unknown) => normalize(answer);
 
 /** `setFieldReferenceAction` answers a Result; the rest answer `{ error, code }`: read both as one shape. */
 function unwrapResult(result: { success: boolean; error?: { code: string; message: string } }): unknown {
@@ -315,6 +316,34 @@ describe("updateEntityMetadataAction: which keys, and who", () => {
     h.entityFindUnique.mockClear();
     await patch({ unknown: 1 });
     expect(h.entityFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("createTypeMappingOverrideAction (global): a platform administrator's act, because the override table has no tenant column", () => {
+  const global = () => actions.createTypeMappingOverrideAction({ ...REF_INPUT, scope: "global", entityId: "ent-1" });
+
+  it("answers nobody signed in 'Not authenticated' and reaches nothing", async () => {
+    signedOut();
+    expect(normalizeAnswer(await global())).toEqual(NOT_AUTHENTICATED);
+    expect(reached()).toHaveLength(0);
+  });
+
+  it("refuses EVERY tenant-scoped role, an administrator of the tenant and of several tenants included, with the one generic text", async () => {
+    for (const role of ROLE_HIERARCHY) {
+      signInAs(tenantMember(role, T));
+      expect(normalizeAnswer(await global()), role).toEqual(GENERIC_FORBIDDEN);
+    }
+    signInAs(principalOf([assign.tenant("ADMIN", T), assign.tenant("ADMIN", OTHER), assign.domain("ADMIN", T, "dom-a")]));
+    expect(normalizeAnswer(await global())).toEqual(GENERIC_FORBIDDEN);
+    signInAs(roleless());
+    expect(normalizeAnswer(await global())).toEqual(GENERIC_FORBIDDEN);
+    expect(reached()).toHaveLength(0);
+  });
+
+  it("lets a platform administrator through", async () => {
+    signInAs(principalOf([assign.global()]));
+    expect(normalizeAnswer(await global())).not.toMatchObject({ code: "FORBIDDEN" });
+    expect(normalizeAnswer(await global())).not.toMatchObject({ code: "UNAUTHORIZED" });
   });
 });
 

@@ -132,7 +132,6 @@ const EXPECTED_ACTIONS: ReadonlyArray<readonly [string, Role | null, Level]> = [
   ["product.update", "STEWARD", "resource"],
   ["domain.update", "STEWARD", "resource"],
   ["domain.create", "STEWARD", "tenant"],
-  ["typemapping.global", "STEWARD", "tenant"],
   // Compliance: COMPLIANCE_OFFICER
   ["compliance.query", "COMPLIANCE_OFFICER", "resource"],
   ["compliance.gaps", "COMPLIANCE_OFFICER", "resource"],
@@ -150,6 +149,8 @@ const EXPECTED_ACTIONS: ReadonlyArray<readonly [string, Role | null, Level]> = [
   ["git.manage", "ADMIN", "global"],
   ["classification.manage", "ADMIN", "global"],
   ["tenant.create", "ADMIN", "global"],
+  // A global override reaches every tenant (no tenant column): ADMIN at the platform, not the STEWARD of the design table (Task 5b ruling)
+  ["typemapping.global", "ADMIN", "global"],
   // The principal's own data: any active principal, role or not
   ["notification.own", null, "self"],
   ["profile.own", null, "self"],
@@ -191,9 +192,12 @@ describe("ACTIONS (the action table, single source)", () => {
       expect(spec[id].minRole, id).toBe("AUTHOR");
     }
     // publish, deploy, mark deployed, deprecate/retire, governance approve/reject, retention policy edit, global type-mapping override, create product, create domain: STEWARD
-    for (const id of ["entity.publish", "event.publish", "deploy.run", "entity.lifecycle", "governance.decide", "retention.write", "typemapping.global", "product.create", "domain.create"]) {
+    // (the global type-mapping override is NOT here: the design says STEWARD, but the override table has no tenant column, so it changes every tenant's
+    // mapping and the Task 5b review ruling made it a platform administrator's act: ADMIN, global level, pinned in the snapshot above)
+    for (const id of ["entity.publish", "event.publish", "deploy.run", "entity.lifecycle", "governance.decide", "retention.write", "product.create", "domain.create"]) {
       expect(spec[id].minRole, id).toBe("STEWARD");
     }
+    expect(spec["typemapping.global"]).toEqual({ minRole: "ADMIN", level: "global" });
     // create domain is decided at tenant scope
     expect(spec["domain.create"].level).toBe("tenant");
     // compliance Query/Gaps/Audit/export: COMPLIANCE_OFFICER
