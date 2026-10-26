@@ -136,7 +136,7 @@ describe("schema import actions", () => {
     });
     expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
       where: { id: "missing-user" },
-      select: { id: true },
+      select: { id: true, disabledAt: true },
     });
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });

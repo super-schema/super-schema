@@ -3,7 +3,6 @@ import { scopeKey } from "@/lib/access/scope";
 
 interface SessionUserIdentity {
   id?: string | null;
-  email?: string | null;
 }
 
 export interface GlobalAdminAccess {
@@ -22,6 +21,9 @@ const globalAdminRoleSelect = {
  * Is the signed-in user a global administrator? A pure read: nothing is created here. The old rule that made the earliest registered user
  * the administrator when none existed (a write from a read path) is gone; the first administrator comes from the seed or
  * `npm run admin:create` (src/lib/admin-bootstrap.ts).
+ *
+ * The user is found by the session's id alone (no fallback by e-mail: a stale id is nobody) and a disabled user is nobody too.
+ * `authorize("platform.admin", ...)` is the guard for new code (src/lib/action-context.ts); this stays for the callers Task 5 has not migrated.
  */
 export async function resolveGlobalAdminAccess(
   user: SessionUserIdentity | null | undefined
@@ -30,19 +32,9 @@ export async function resolveGlobalAdminAccess(
 
   const userById = await prisma.user.findUnique({
     where: { id: user.id },
-    select: { id: true, roles: globalAdminRoleSelect },
+    select: { id: true, disabledAt: true, roles: globalAdminRoleSelect },
   });
 
-  if (userById) {
-    return { userId: userById.id, isAdmin: userById.roles.length > 0 };
-  }
-
-  if (!user.email) return null;
-
-  const userByEmail = await prisma.user.findUnique({
-    where: { email: user.email },
-    select: { id: true, roles: globalAdminRoleSelect },
-  });
-
-  return userByEmail ? { userId: userByEmail.id, isAdmin: userByEmail.roles.length > 0 } : null;
+  if (!userById || userById.disabledAt) return null;
+  return { userId: userById.id, isAdmin: userById.roles.length > 0 };
 }

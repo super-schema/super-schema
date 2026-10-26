@@ -72,11 +72,11 @@ describe("createEntityWithFieldsAction session reconciliation", () => {
     mockEnsureDefaultProductId.mockResolvedValue("prd-default");
   });
 
-  it("uses the current user row when the session id is stale but email still matches", async () => {
-    mockPrisma.user.findUnique
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: "current-user-id" })
-      .mockResolvedValueOnce({ id: "current-user-id" });
+  it("refuses a stale session id even when its e-mail matches a real account (the user is found by id alone: no e-mail fallback)", async () => {
+    // The account exists under its e-mail (a fallback would find it and act as it); nothing has the stale id.
+    mockPrisma.user.findUnique.mockImplementation(async (args: { where: { id?: string; email?: string } }) =>
+      args.where.email === "owner@example.com" ? { id: "current-user-id", disabledAt: null } : null
+    );
 
     const result = await createEntityWithFieldsAction("domain-1", {
       name: "Customer",
@@ -84,25 +84,20 @@ describe("createEntityWithFieldsAction session reconciliation", () => {
       fields: [],
     });
 
-    expect(result).toEqual({ success: true, entityId: "entity-1" });
-    expect(mockPrisma.user.findUnique).toHaveBeenNthCalledWith(1, {
-      where: { id: "stale-user-id" },
-      select: { id: true },
-    });
-    expect(mockPrisma.user.findUnique).toHaveBeenNthCalledWith(2, {
-      where: { email: "owner@example.com" },
-      select: { id: true },
-    });
-    expect(mockTx.entity.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ ownerId: "current-user-id", tenantId: "tenant-1" }),
-      })
-    );
-    expect(mockPrisma.auditLog.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ userId: "current-user-id" }),
-      })
-    );
+    expect(result).toEqual({ error: "Your session is stale. Sign out and sign in again, then create the entity." });
+    expect(mockPrisma.user.findUnique).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({ where: { id: "stale-user-id" }, select: { id: true, disabledAt: true } });
+    expect(mockTx.entity.create).not.toHaveBeenCalled();
+    expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a disabled user, with the same answer as a missing one", async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ id: "stale-user-id", disabledAt: new Date("2026-10-01T00:00:00Z") });
+
+    const result = await createEntityWithFieldsAction("domain-1", { name: "Customer", description: "Customer entity", fields: [] });
+
+    expect(result).toEqual({ error: "Your session is stale. Sign out and sign in again, then create the entity." });
+    expect(mockTx.entity.create).not.toHaveBeenCalled();
   });
 
   it("stores the entity-level vendor extensions of a single-entity import at metadata.custom.extensions", async () => {

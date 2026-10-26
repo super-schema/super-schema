@@ -99,9 +99,9 @@ describe("toActionResult", () => {
 });
 
 describe("getActionContext", () => {
-  it("resolves the user through resolveCurrentUserId (id, then email fallback) and uses the resolved id for the role", async () => {
+  it("resolves the user through resolveCurrentUserId by the session's id alone (no e-mail is passed on) and uses the resolved id for the role", async () => {
     const ctx = await getActionContext();
-    expect(h.resolveCurrentUserId).toHaveBeenCalledWith({ id: "session-id", email: "a@example.test" });
+    expect(h.resolveCurrentUserId).toHaveBeenCalledWith({ id: "session-id" });
     expect(h.getEffectiveRole).toHaveBeenCalledWith("db-user", null, expect.objectContaining({ userId: "db-user" }));
     expect(ctx).toMatchObject({ userId: "db-user", userRole: "AUTHOR" });
   });

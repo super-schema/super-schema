@@ -65,8 +65,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (session.user && token.sub) {
         session.user.id = token.sub;
       }
-      // Explicitly propagate email so resolveCurrentUserId email-fallback works
-      // even when session.user.id is stale (e.g. after DB reset + reseed)
+      // Propagate the e-mail for display only. The user is always resolved by session.user.id: there is no look-up by e-mail, so a stale id
+      // (after a database reset + reseed) is nobody and signs in again (src/lib/access/principal.ts, src/lib/current-user.ts).
       if (session.user && typeof token.email === "string") {
         session.user.email = token.email;
       }

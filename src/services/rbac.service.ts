@@ -10,11 +10,12 @@
 
 import { prisma } from "@/lib/db";
 import { scopeKey } from "@/lib/access/scope";
+import { assignmentsFromRows } from "@/lib/access/assignments";
+import { effectiveRole as policyRole, globalRole, roleAtLeast } from "@/lib/access/policy";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import {
-  ROLE_HIERARCHY,
   SYSTEM_ONLY_ROLES,
   DOMAIN_SCOPED_ROLES,
   AssignRoleInputSchema,
@@ -228,49 +229,40 @@ export async function removeRole(
 }
 
 // ---------------------------------------------------------------------------
-// getEffectiveRole — determine the most permissive role for a user + domain
+// getEffectiveRole — the role a user holds, by the policy engine
 // ---------------------------------------------------------------------------
 
+/**
+ * The highest role the user holds over a domain (`domainId`) or, with no domain, at the platform (global) scope. A thin reading of the
+ * policy (`@/lib/access`): the user's valid assignments, judged by `effectiveRole` against the domain and the tenant it lives in, so a
+ * global role applies everywhere, a tenant role in every domain of its tenant, a domain role in its domain, and nothing across tenants.
+ * A disabled user holds no role. New code asks `authorize` (src/lib/action-context.ts) for a decision; this stays for the callers that
+ * still read a role (Task 5 migrates them).
+ */
 export async function getEffectiveRole(
   userId: string,
   domainId: string | null,
   _ctx: ServiceContext
 ): Promise<Result<Role | null>> {
   const userRoles = await prisma.userRole.findMany({
-    where: { userId },
+    where: { userId, user: { disabledAt: null } },
   });
 
-  if (userRoles.length === 0) {
+  const assignments = assignmentsFromRows(userRoles);
+  if (assignments.length === 0) {
     return ok(null);
   }
 
-  // Filter to applicable roles, by scope key:
-  // - system-level roles (the global scope) apply everywhere
-  // - domain-specific roles apply only within their domain
-  // Tenant- and product-scoped rows are not read here: this legacy function knows two scopes (the scoped decision is `@/lib/access`).
-  const globalKey = scopeKey({ kind: "GLOBAL" });
-  const domainKey = domainId ? `D:${domainId}` : null;
-  const applicable = userRoles.filter(
-    (r) => r.scopeKey === globalKey || (domainKey !== null && r.scopeKey === domainKey)
-  );
-
-  if (applicable.length === 0) {
-    return ok(null);
+  // No domain asked about, or nothing but platform roles: the global role is the answer, no look-up needed.
+  if (!domainId || assignments.every((a) => a.scope.kind === "GLOBAL")) {
+    return ok(globalRole(assignments));
   }
 
-  // Return the most permissive (highest in hierarchy)
-  let maxIndex = -1;
-  let maxRole: Role | null = null;
-
-  for (const r of applicable) {
-    const idx = ROLE_HIERARCHY.indexOf(r.role as Role);
-    if (idx > maxIndex) {
-      maxIndex = idx;
-      maxRole = r.role as Role;
-    }
+  const domain = await prisma.domain.findUnique({ where: { id: domainId }, select: { tenantId: true } });
+  if (!domain) {
+    return ok(globalRole(assignments));
   }
-
-  return ok(maxRole);
+  return ok(policyRole(assignments, { tenantId: domain.tenantId, domainId }));
 }
 
 // ---------------------------------------------------------------------------
@@ -286,11 +278,5 @@ export async function hasPermission(
   const effectiveResult = await getEffectiveRole(userId, domainId, ctx);
   if (!effectiveResult.success) return effectiveResult;
 
-  const effectiveRole = effectiveResult.data;
-  if (!effectiveRole) return ok(false);
-
-  const effectiveIndex = ROLE_HIERARCHY.indexOf(effectiveRole);
-  const requiredIndex = ROLE_HIERARCHY.indexOf(requiredRole);
-
-  return ok(effectiveIndex >= requiredIndex);
+  return ok(roleAtLeast(effectiveResult.data, requiredRole));
 }

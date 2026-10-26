@@ -5,10 +5,12 @@
  * matcher does not see, a future refactor) still gets a 401 and no query is made.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assign, userRow } from "../../helpers/access-mocks";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   prisma: {
+    user: { findUnique: vi.fn() },
     tenant: { findMany: vi.fn() },
     domain: { findMany: vi.fn() },
     product: { findMany: vi.fn() },
@@ -24,7 +26,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/db", () => ({ prisma: mocks.prisma }));
-vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.activeTenantId }));
+vi.mock("@/lib/active-tenant", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/active-tenant")>()), getActiveTenantId: mocks.activeTenantId }));
 
 import { GET as getDomainsTree } from "@/app/api/domains-tree/route";
 import { GET as getTenants } from "@/app/api/tenants/route";
@@ -34,6 +36,8 @@ const SESSION = { user: { id: "user-1", email: "a@b.c" }, expires: "2999-01-01" 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The signed-in user exists, is not disabled and administers the platform (the principal loader reads this row).
+  mocks.prisma.user.findUnique.mockResolvedValue(userRow([assign.global()], { id: "user-1" }));
   mocks.activeTenantId.mockResolvedValue("tenant-1");
   mocks.prisma.tenant.findMany.mockResolvedValue([
     { id: "tenant-1", name: "Default", slug: "default", description: "", isSystem: true, _count: { domains: 2 } },
@@ -50,6 +54,16 @@ const queriesMade = () =>
   Object.values(mocks.prisma).reduce((sum, model) => sum + Object.values(model).reduce((n, fn) => n + (fn as ReturnType<typeof vi.fn>).mock.calls.length, 0), 0);
 
 describe("requireSession", () => {
+  it("is 401 for a session whose user is disabled or does not exist, as for no session", async () => {
+    mocks.auth.mockResolvedValue(SESSION);
+    for (const row of [userRow([assign.global()], { id: "user-1", disabledAt: new Date("2026-10-01T00:00:00Z") }), null]) {
+      mocks.prisma.user.findUnique.mockResolvedValue(row);
+      const denied = await requireSession();
+      expect(denied?.status).toBe(401);
+      expect(await denied?.json()).toEqual({ error: "Not authenticated" });
+    }
+  });
+
   it("is null for a session with a user, and a 401 'Not authenticated' without one", async () => {
     mocks.auth.mockResolvedValue(SESSION);
     expect(await requireSession()).toBeNull();

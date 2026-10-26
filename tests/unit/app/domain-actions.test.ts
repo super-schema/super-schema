@@ -130,7 +130,7 @@ describe("deleteDomainAction", () => {
 
     expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
       where: { id: "admin-1" },
-      select: { id: true, roles: { where: { role: "ADMIN", scopeKey: "G" }, select: { id: true }, take: 1 } },
+      select: { id: true, disabledAt: true, roles: { where: { role: "ADMIN", scopeKey: "G" }, select: { id: true }, take: 1 } },
     });
   });
 

@@ -30,4 +30,4 @@ export {
   type SelfActionSpec,
 } from "./actions";
 
-export { can, effectiveRole, grantAllowed, roleAtLeast } from "./policy";
+export { can, contextRole, effectiveRole, globalRole, grantAllowed, roleAtLeast } from "./policy";

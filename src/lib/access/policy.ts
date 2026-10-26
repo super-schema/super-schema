@@ -43,6 +43,22 @@ export function effectiveRole(assignments: Assignment[], resource: ResourceRef):
   return best < 0 ? null : (ROLE_HIERARCHY[best] ?? null);
 }
 
+/** The best role held at GLOBAL scope (platform level) only, else `null`: what a code path that has no resource to judge against can ask. */
+export function globalRole(assignments: Assignment[]): Role | null {
+  const best = bestRank(assignments, (scope) => scope.kind === "GLOBAL");
+  return best < 0 ? null : (ROLE_HIERARCHY[best] ?? null);
+}
+
+/**
+ * The role to show a service that still reads `ctx.userRole` instead of asking the policy (the services Task 5 migrates): the role the
+ * principal holds over `resource` (the global role when there is none), else the lowest rung of the ladder. Failing closed to the lowest
+ * rung is the old `getActionContext` rule; it is a label for legacy checks, never the decision: `authorize` is.
+ */
+export function contextRole(assignments: Assignment[], resource?: ResourceRef): Role {
+  const held = resource === undefined ? globalRole(assignments) : effectiveRole(assignments, resource);
+  return held ?? ROLE_HIERARCHY[0];
+}
+
 /**
  * May the principal holding `assignments` perform `action` on `resource`? Judged by the action's level in the table (see `./actions`):
  * `resource` against the scopes containing the resource, `tenant` against TENANT and GLOBAL assignments of the resource's tenant only,

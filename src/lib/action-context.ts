@@ -4,6 +4,9 @@ import { unstable_rethrow } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { AuditUserMissingError } from "@/lib/audit";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { ACTIONS, can, contextRole, effectiveRole, isActionId, type ActionId, type ResourceRef } from "@/lib/access";
+import { isNoTenantAccess } from "@/lib/access/no-tenant-access";
+import { getPrincipal, type Principal } from "@/lib/access/principal";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { parseScopeTarget } from "@/services/events/service-guards";
 import { resolveCurrentUserId } from "@/lib/current-user";
@@ -16,53 +19,222 @@ import type { ServiceContext } from "@/types/service-context";
 export const NOT_AUTHENTICATED = { success: false, error: "Not authenticated", code: "UNAUTHORIZED" } as const satisfies ActionResult<never>;
 
 /**
- * Same user + role resolution as the data-type / API actions: the session user is mapped to a `User` row
- * by id, then by email (`resolveCurrentUserId`), and the effective role fails closed to VIEWER (D16).
- * Returns null when there is no session or the session points at a user that no longer exists
- * (a stale session is treated as not authenticated — the caller signs in again).
+ * The LEGACY service context (the older data-type / API / events actions): the session user id is mapped to a `User` row by id ALONE
+ * (`resolveCurrentUserId`: no e-mail fallback; a missing or disabled user throws `AuditUserMissingError`) and `userRole` is the role the
+ * user holds at global scope, failing closed to the lowest rung. Returns null when there is no session or the session points at nobody
+ * (a stale session is treated as not authenticated: the caller signs in again). New code asks `authorize` instead and builds its context
+ * from the principal it returns (`contextOf`); this stays for the callers Task 5 has not migrated yet.
  */
 export async function getActionContext(): Promise<ServiceContext | null> {
   const session = await auth();
   if (!session?.user?.id) return null;
   let userId: string;
   try {
-    userId = await resolveCurrentUserId(session.user);
+    userId = await resolveCurrentUserId({ id: session.user.id });
   } catch (e: unknown) {
     if (e instanceof AuditUserMissingError) return null;
     throw e;
   }
-  const role = await getEffectiveRole(userId, null, { userId, userRole: "VIEWER", prisma });
-  return { userId, userRole: role.success && role.data ? role.data : "VIEWER", prisma };
+  const role = await getEffectiveRole(userId, null, { userId, userRole: contextRole([]), prisma });
+  return { userId, userRole: role.success && role.data ? role.data : contextRole([]), prisma };
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// authorize: the one decision every guarded call asks (access-control design, goal 3)
+// ---------------------------------------------------------------------------------------------------------------------------------
+
+/**
+ * The answer for a resource the caller cannot see: exactly this for a missing row and for a row of a tenant (or a domain, or a product)
+ * the principal holds no role in, so a foreign resource is indistinguishable from a missing one. A caller whose wire shape differs (the
+ * `Domain "x" not found` of `resolveScope`, an `Entity not found`) passes its own to `authorizeSubject` and gets IT for both cases.
+ */
+export const NOT_FOUND_MESSAGE = "Not found";
+export function notFoundError(): ServiceError {
+  return { code: "NOT_FOUND", message: NOT_FOUND_MESSAGE };
+}
+
+/** The refusal of a principal who can see the resource but holds too low a role: one generic text, naming no role, action or resource. */
+const forbiddenError = (): ServiceError => ({ code: "FORBIDDEN", message: "You do not have permission to do this" });
+const unauthorizedError = (): ServiceError => ({ code: "UNAUTHORIZED", message: "Not authenticated" });
+
+/**
+ * THE decision, pure and synchronous: may `principal` perform `action` on `resource`?
+ *
+ * - no principal (nobody signed in, a disabled user, a stale session): UNAUTHORIZED;
+ * - an action id that is not in the table: FORBIDDEN (it is a bug; it must never be allowed);
+ * - `self` actions (own notifications and profile): any principal passes, role or not;
+ * - `global` (platform) actions: only a GLOBAL ADMIN; anyone else is FORBIDDEN (there is no resource to hide);
+ * - every other action is judged against the resource. A principal who CANNOT SEE the resource gets `notFound` (NOT_FOUND, the very
+ *   answer for a missing resource): for a resource-level action that is "no role of theirs covers the resource" (another tenant, a
+ *   sibling domain, a tenant-level entity for a domain role), for a tenant-wide action "holds no role in the tenant". One who can see it
+ *   but holds too low a role gets FORBIDDEN, with a message that says nothing else.
+ */
+export function authorizePrincipal(
+  principal: Principal | null,
+  action: ActionId,
+  resource: ResourceRef,
+  notFound: ServiceError = notFoundError()
+): Result<Principal, ServiceError> {
+  if (!principal) return { success: false, error: unauthorizedError() };
+  if (!isActionId(action)) return { success: false, error: forbiddenError() };
+
+  const spec = ACTIONS[action];
+  if (spec.level === "self") return ok(principal);
+  if (spec.level === "global") return can(principal.assignments, action, resource) ? ok(principal) : { success: false, error: forbiddenError() };
+
+  const visible = spec.level === "resource" ? effectiveRole(principal.assignments, resource) !== null : can(principal.assignments, "tenant.access", resource);
+  if (!visible) return { success: false, error: { ...notFound } };
+  return can(principal.assignments, action, resource) ? ok(principal) : { success: false, error: forbiddenError() };
+}
+
+/** May the current principal perform `action` on `resource`? The principal comes back on success, so the caller can build its context from it. */
+export async function authorize(action: ActionId, resource: ResourceRef): Promise<Result<Principal, ServiceError>> {
+  return authorizePrincipal(await getPrincipal(), action, resource);
+}
+
+/** `authorize` for a decision about a tenant as a whole (create a domain, manage users, switch to it). */
+export async function authorizeTenant(action: ActionId, tenantId: string): Promise<Result<Principal, ServiceError>> {
+  return authorize(action, { tenantId });
+}
+
+/**
+ * Where a stored row lives, from the row itself: one `findUnique` per kind with the tenant, domain and product it hangs under (itself, or
+ * through its parent: field -> entity, model field -> model, operation -> service, product -> domain). It generalises the by-id ownership
+ * map of the older actions: those only needed the tenant, authorization needs the whole chain (a domain-scoped role is judged against the
+ * row's domain, a product-scoped one against its product).
+ */
+const OWNER = { tenantId: true, domainId: true, productId: true, product: { select: { domainId: true } } } as const;
+
+type OwnerRow = { tenantId: string; domainId?: string | null; productId?: string | null; product?: { domainId?: string | null } | null };
+
+/** A row with its own tenant / domain / product columns. A row in a product whose domain column is empty takes its product's domain, so a domain role still reaches it. */
+const ownerRef = (row: OwnerRow): ResourceRef => ({ tenantId: row.tenantId, domainId: row.domainId ?? row.product?.domainId ?? null, productId: row.productId ?? null });
+const domainRef = (tenantId: string, domainId: string | null | undefined): ResourceRef => ({ tenantId, domainId: domainId ?? null, productId: null });
+
+const RESOURCE_REFS = {
+  entity: async (id: string) => {
+    const row = await prisma.entity.findUnique({ where: { id }, select: OWNER });
+    return row ? ownerRef(row) : null;
+  },
+  field: async (id: string) => {
+    const row = await prisma.field.findUnique({ where: { id }, select: { entity: { select: OWNER } } });
+    return row ? ownerRef(row.entity) : null;
+  },
+  domain: async (id: string) => {
+    const row = await prisma.domain.findUnique({ where: { id }, select: { tenantId: true } });
+    return row ? domainRef(row.tenantId, id) : null;
+  },
+  product: async (id: string) => {
+    const row = await prisma.product.findUnique({ where: { id }, select: { domainId: true, domain: { select: { tenantId: true } } } });
+    return row ? { tenantId: row.domain.tenantId, domainId: row.domainId ?? null, productId: id } : null;
+  },
+  model: async (id: string) => {
+    const row = await prisma.modelDefinition.findUnique({ where: { id }, select: { domainId: true, domain: { select: { tenantId: true } } } });
+    return row ? domainRef(row.domain.tenantId, row.domainId) : null;
+  },
+  modelField: async (id: string) => {
+    const row = await prisma.modelFieldDefinition.findUnique({ where: { id }, select: { model: { select: { domainId: true, domain: { select: { tenantId: true } } } } } });
+    return row ? domainRef(row.model.domain.tenantId, row.model.domainId) : null;
+  },
+  sharedEnum: async (id: string) => {
+    const row = await prisma.sharedEnum.findUnique({ where: { id }, select: OWNER });
+    return row ? ownerRef(row) : null;
+  },
+  customScalar: async (id: string) => {
+    const row = await prisma.customScalar.findUnique({ where: { id }, select: OWNER });
+    return row ? ownerRef(row) : null;
+  },
+  unionType: async (id: string) => {
+    const row = await prisma.unionType.findUnique({ where: { id }, select: OWNER });
+    return row ? ownerRef(row) : null;
+  },
+  service: async (id: string) => {
+    const row = await prisma.serviceDefinition.findUnique({ where: { id }, select: OWNER });
+    return row ? ownerRef(row) : null;
+  },
+  operation: async (id: string) => {
+    const row = await prisma.operation.findUnique({ where: { id }, select: { service: { select: OWNER } } });
+    return row ? ownerRef(row.service) : null;
+  },
+  event: async (id: string) => {
+    const row = await prisma.eventSpec.findUnique({ where: { id }, select: OWNER });
+    return row ? ownerRef(row) : null;
+  },
+  trait: async (id: string) => {
+    const row = await prisma.trait.findUnique({ where: { id }, select: OWNER });
+    return row ? ownerRef(row) : null;
+  },
+} as const;
+
+/** The kinds of stored row `resolveResourceRef` can place (one per model the actions address by a bare id). */
+export type ResourceKind = keyof typeof RESOURCE_REFS;
+
+/**
+ * The tenant, domain and product a row lives under, or null when there is no such row. A malformed id (not a non-blank string) and a kind
+ * that is not one of ours are null WITHOUT a query, so a client-supplied value can never reach a Prisma validator and come back as its message.
+ * A database failure propagates (callers answer it generically, never as "not found").
+ */
+export async function resolveResourceRef(kind: ResourceKind, id: unknown): Promise<ResourceRef | null> {
+  if (typeof id !== "string" || id.trim() === "") return null;
+  if (typeof kind !== "string" || !Object.hasOwn(RESOURCE_REFS, kind)) return null;
+  return RESOURCE_REFS[kind](id);
+}
+
+/** What a guarded call is about: where the resource lives (a reference), or a stored row to look up (kind and id). */
+export type AccessSubject = ResourceRef | { kind: ResourceKind; id: unknown };
+
+const isRowSubject = (subject: AccessSubject): subject is { kind: ResourceKind; id: unknown } =>
+  typeof subject === "object" && subject !== null && "kind" in subject;
+
+/**
+ * `authorize` for a subject that may still have to be looked up. A row that does not exist and a row the principal cannot see answer with
+ * the same `notFound` (default: `notFoundError()`), so the caller's wire shape stays one thing. On success the principal and the resolved
+ * resource come back (the resource is what a service context is judged over: `contextOf`).
+ */
+export async function authorizeSubject(
+  action: ActionId,
+  subject: AccessSubject,
+  notFound: ServiceError = notFoundError()
+): Promise<Result<{ principal: Principal; resource: ResourceRef }, ServiceError>> {
+  const principal = await getPrincipal();
+  if (!principal) return { success: false, error: unauthorizedError() };
+  const resource = isRowSubject(subject) ? await resolveResourceRef(subject.kind, subject.id) : subject;
+  if (!resource) return { success: false, error: { ...notFound } };
+  const decided = authorizePrincipal(principal, action, resource, notFound);
+  return decided.success ? ok({ principal, resource }) : decided;
+}
+
+/**
+ * The service context of a decision: `userRole` is the role the principal holds OVER THE RESOURCE (the lowest rung when none applies), so
+ * a service that still reads `ctx.userRole` sees what the policy saw. A label for legacy checks, never the decision.
+ */
+export function contextOf(principal: Principal, resource?: ResourceRef): ServiceContext {
+  return { userId: principal.userId, userRole: contextRole(principal.assignments, resource), prisma };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// Active-tenant guards (the older, role-less ownership checks). Task 5 moves each caller to `authorize`; until then they keep
+// their call shapes: the row must lie in the caller's ACTIVE tenant, and the active tenant is one the caller may access.
+// ---------------------------------------------------------------------------------------------------------------------------------
 
 /**
  * Soft-grouping scope guard for rows addressed by a bare id (the older data-type / API / model-field / entity-field actions
  * take no owner target): the row must belong to the caller's ACTIVE tenant, the same scoping the pages and the Events
  * actions use. A row of another tenant reads exactly like a missing one (callers answer NOT_FOUND, never FORBIDDEN), so an
- * id guessed from another tenant reveals nothing.
+ * id guessed from another tenant reveals nothing. A caller who may access no tenant at all (`NoTenantAccess`) is outside every one.
  */
 export async function isInActiveTenant(rowTenantId: string | null | undefined): Promise<boolean> {
-  return typeof rowTenantId === "string" && rowTenantId === (await getActiveTenantId());
+  if (typeof rowTenantId !== "string") return false;
+  try {
+    return rowTenantId === (await getActiveTenantId());
+  } catch (e: unknown) {
+    if (isNoTenantAccess(e)) return false;
+    throw e;
+  }
 }
 
-/** Reads the tenant a by-id row belongs to (its own `tenantId`, or the one of the parent it hangs under); null / undefined = no such row. */
-const TENANT_OF = {
-  entity: async (id: string) => (await prisma.entity.findUnique({ where: { id }, select: { tenantId: true } }))?.tenantId,
-  field: async (id: string) => (await prisma.field.findUnique({ where: { id }, select: { entity: { select: { tenantId: true } } } }))?.entity.tenantId,
-  domain: async (id: string) => (await prisma.domain.findUnique({ where: { id }, select: { tenantId: true } }))?.tenantId,
-  product: async (id: string) => (await prisma.product.findUnique({ where: { id }, select: { domain: { select: { tenantId: true } } } }))?.domain.tenantId,
-  model: async (id: string) => (await prisma.modelDefinition.findUnique({ where: { id }, select: { domain: { select: { tenantId: true } } } }))?.domain.tenantId,
-  modelField: async (id: string) =>
-    (await prisma.modelFieldDefinition.findUnique({ where: { id }, select: { model: { select: { domain: { select: { tenantId: true } } } } } }))?.model.domain.tenantId,
-  sharedEnum: async (id: string) => (await prisma.sharedEnum.findUnique({ where: { id }, select: { tenantId: true } }))?.tenantId,
-  customScalar: async (id: string) => (await prisma.customScalar.findUnique({ where: { id }, select: { tenantId: true } }))?.tenantId,
-  unionType: async (id: string) => (await prisma.unionType.findUnique({ where: { id }, select: { tenantId: true } }))?.tenantId,
-  service: async (id: string) => (await prisma.serviceDefinition.findUnique({ where: { id }, select: { tenantId: true } }))?.tenantId,
-  operation: async (id: string) => (await prisma.operation.findUnique({ where: { id }, select: { service: { select: { tenantId: true } } } }))?.service.tenantId,
-} as const;
-
-/** The kinds of by-id row `inActiveTenant` can check (one per model the older actions address by a bare id). */
-export type TenantScopedKind = keyof typeof TENANT_OF;
+/** The kinds of by-id row `inActiveTenant` can check: the kinds `resolveResourceRef` places. */
+export type TenantScopedKind = ResourceKind;
 
 /**
  * The by-id ownership guard of the older entity / model / API / data-type / product actions: true only when the row `id` names
@@ -71,10 +243,12 @@ export type TenantScopedKind = keyof typeof TENANT_OF;
  * another tenant are all `false`, so a caller answers the three with the one identical NOT_FOUND and an id guessed from
  * another tenant reveals nothing. Create-style actions pass their PARENT id (an entity for a field, a model for a model
  * field, a service for an operation, a domain for a product). Call it before any read of or write to the row.
+ *
+ * It asks for NO role: the role-aware guard is `authorize` / `authorizeSubject` (Task 5 migrates the callers).
  */
 export async function inActiveTenant(kind: TenantScopedKind, id: unknown): Promise<boolean> {
   if (typeof id !== "string" || id.trim() === "") return false;
-  return isInActiveTenant(await TENANT_OF[kind](id));
+  return isInActiveTenant((await resolveResourceRef(kind, id))?.tenantId);
 }
 
 /** The id a scope target names and the label `resolveScope` uses for it. */
@@ -95,21 +269,34 @@ const missingTargetMessage = (target: ScopeTarget) => {
   return `${label} "${typeof id === "string" ? id : ""}" not found`;
 };
 
+/** The not-found answer for a scope target: the one `resolveScope` gives a missing one, and so the one for every target the caller may not see. */
+const missingTargetError = (target: ScopeTarget): ServiceError => ({ code: "NOT_FOUND", message: missingTargetMessage(target) });
+
 /**
- * `inActiveTenant` for a create's `ScopeTarget` (a domain or product id taken from the client): resolves the target and
- * answers the very NOT_FOUND `resolveScope` gives a missing one when it belongs to another tenant. A malformed target (not an
- * object, a non-string or blank id) is NOT_FOUND too, WITHOUT a query: it can never reach a Prisma validator and come back as
- * its message. Success carries nothing: the write that follows re-resolves the target itself.
+ * Where a create's `ScopeTarget` (a domain or product id taken from the client) lives, when it lies in the ACTIVE tenant: resolves the
+ * target and answers the very NOT_FOUND `resolveScope` gives a missing one when it belongs to another tenant. A malformed target (not an
+ * object, a non-string or blank id) is NOT_FOUND too, WITHOUT a query: it can never reach a Prisma validator and come back as its message.
  */
-export async function targetInActiveTenant(target: ScopeTarget): Promise<Result<undefined>> {
+async function ownedTargetRef(target: ScopeTarget): Promise<Result<ResourceRef>> {
   if (typeof target !== "object" || target === null) return err({ code: "NOT_FOUND", message: "Target not found" });
   const { id } = targetId(target);
-  if (typeof id !== "string" || id.trim() === "") return err({ code: "NOT_FOUND", message: missingTargetMessage(target) });
+  if (typeof id !== "string" || id.trim() === "") return err(missingTargetError(target));
   const scope = await resolveScope(prisma, target);
   if (!scope.success) return scope;
-  if (!(await isInActiveTenant(scope.data.tenantId))) return err({ code: "NOT_FOUND", message: missingTargetMessage(target) });
-  return ok(undefined);
+  if (!(await isInActiveTenant(scope.data.tenantId))) return err(missingTargetError(target));
+  return ok({ tenantId: scope.data.tenantId, domainId: scope.data.domainId, productId: scope.data.productId });
 }
+
+/**
+ * `inActiveTenant` for a create's `ScopeTarget`: succeeds when the target lies in the active tenant, else the NOT_FOUND `resolveScope`
+ * gives a missing one. Success carries nothing: the write that follows re-resolves the target itself. Asks for no role (see `inActiveTenant`).
+ */
+export async function targetInActiveTenant(target: ScopeTarget): Promise<Result<undefined>> {
+  const owned = await ownedTargetRef(target);
+  return owned.success ? ok(undefined) : owned;
+}
+
+type Guarded<T> = () => Promise<Result<T>>;
 
 /**
  * The PARENT check of the Events actions (channels, messages, event specs, traits and their publish / preview / list actions):
@@ -118,12 +305,23 @@ export async function targetInActiveTenant(target: ScopeTarget): Promise<Result<
  * the NOT_FOUND `resolveScope` gives an unknown one and `run` (the service call) never starts. A malformed target skips the
  * check on purpose: the service parses it with the same `parseScopeTarget` and answers its own VALIDATION_ERROR, so no write is
  * reachable and that answer stays unchanged. The service-level `assertOwnedBy` stays behind this check.
+ *
+ * With an `action` (`withOwnedTarget(action, target, run)`) the target must also be one the principal may perform `action` on: a target
+ * they cannot see is answered with the missing-target NOT_FOUND above (identical, whole), one they can see but hold too low a role over
+ * is FORBIDDEN, generic. Without an action it is the older role-less check (Task 5 gives each caller its action).
  */
-export async function withOwnedTarget<T>(target: unknown, run: () => Promise<Result<T>>): Promise<Result<T>> {
+export async function withOwnedTarget<T>(action: ActionId, target: unknown, run: Guarded<T>): Promise<Result<T>>;
+export async function withOwnedTarget<T>(target: unknown, run: Guarded<T>): Promise<Result<T>>;
+export async function withOwnedTarget<T>(...args: [ActionId, unknown, Guarded<T>] | [unknown, Guarded<T>]): Promise<Result<T>> {
+  const [action, target, run] = args.length === 3 ? args : [null, args[0], args[1]];
   const parsed = parseScopeTarget(target);
   if (parsed.success) {
-    const owned = await targetInActiveTenant(parsed.data);
+    const owned = await ownedTargetRef(parsed.data);
     if (!owned.success) return owned;
+    if (action !== null) {
+      const allowed = await authorizeSubject(action, owned.data, missingTargetError(parsed.data));
+      if (!allowed.success) return err(allowed.error);
+    }
   }
   return run();
 }
@@ -137,11 +335,14 @@ const STALE_SESSION_ERROR = "Your session is stale. Sign out and sign in again, 
  * An unexpected throw in an older (non-Result) action: Next's control-flow errors (`redirect()`, `notFound()`, ...) are re-thrown
  * through `unstable_rethrow` first; a stale session (`AuditUserMissingError`: the session's user no longer exists) is answered
  * with its one actionable line; everything else is logged server-side (`label` + the original) and answered with the generic
- * message: raw driver / Prisma / TypeError text (paths, source excerpts, column names) never reaches the browser.
+ * message: raw driver / Prisma / TypeError text (paths, source excerpts, column names) never reaches the browser. A caller with no
+ * tenant access (`NoTenantAccess`) is answered NOT_FOUND.
  */
 export function unexpectedFailure(label: string, e: unknown) {
   unstable_rethrow(e);
   if (e instanceof AuditUserMissingError) return { error: STALE_SESSION_ERROR, code: "UNAUTHORIZED" as const };
+  // A caller who may access no tenant at all sees nothing: the answer is the not-found every refusal to see gets, not an error.
+  if (isNoTenantAccess(e)) return { error: NOT_FOUND_MESSAGE, code: "NOT_FOUND" as const };
   console.error(`[${label}] unexpected error`, e);
   return { error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" as const };
 }
@@ -191,29 +392,61 @@ export function toActionResult<T>(result: Result<T>, label = "action"): ActionRe
   };
 }
 
+/** What a guarded mutation needs before it may run: the action it performs and the resource it performs it on. */
+export type MutationAccess = {
+  action: ActionId;
+  /** Where the resource lives (a reference), or a stored row to look up (kind and id). */
+  resource: AccessSubject;
+  /** The answer for a resource that does not exist AND for one the principal cannot see (default `notFoundError()`): one shape for both. */
+  notFound?: ServiceError;
+};
+
+type Mutation<T> = (ctx: ServiceContext) => Promise<Result<T>>;
+
 /**
- * The shared shape of every mutating events server action: authenticate, run the service call, and
+ * The shared shape of every mutating server action: authenticate, authorize, run the service call, and
  * revalidate `/schemas` (layout) on success only (`staleTimes.dynamic = 30` would otherwise serve stale pages).
- * Read-only actions use `getActionContext` + `toActionResult` directly and never revalidate. A failed Result goes through
+ * Read-only actions use `authorize` + `toActionResult` directly and never revalidate. A failed Result goes through
  * `toActionResult`, so a `DB_ERROR` / `INTERNAL_ERROR` never reaches the browser with its raw text (`label` names the action
  * in the server-side log of that failure).
+ *
+ * `runMutation({ action, resource }, run, label)`: `authorizeSubject` decides first (nobody: NOT_AUTHENTICATED; a resource the principal
+ * cannot see: NOT_FOUND, the answer a missing one gets; too low a role: FORBIDDEN) and `run` gets a context whose `userRole` is the role
+ * the principal holds over the resource. `runMutation(run, label)` is the older call shape, kept as an adapter until Task 5 gives each
+ * caller its action: it authenticates through the legacy `getActionContext` and asks for no role.
  *
  * An unexpected REJECTION from the session lookup or from `run` (a driver / Prisma validation error from a service that
  * lets malformed client input reach a query, a lost connection) is caught here as well: it is logged server-side and
  * returned as a generic `INTERNAL_ERROR` instead of an unhandled 500 carrying the raw text. Next's own control-flow throws
  * (`redirect()`, `notFound()`, `forbidden()`, `unauthorized()`, dynamic-rendering bailouts) are NOT failures: they are
  * re-thrown untouched through `unstable_rethrow`, which owns the list of such errors (digest `NEXT_REDIRECT`,
- * `NEXT_HTTP_ERROR_FALLBACK;…`, …), so the framework still sees them. Revalidation sits outside the try: a write that
+ * `NEXT_HTTP_ERROR_FALLBACK;…`, …), so the framework still sees them. A caller with no tenant access (`NoTenantAccess`, thrown by a
+ * service or guard that asks for the active tenant) is answered NOT_FOUND. Revalidation sits outside the try: a write that
  * has already committed is never reported as a failure.
  */
-export async function runMutation<T>(run: (ctx: ServiceContext) => Promise<Result<T>>, label = "mutation"): Promise<ActionResult<T>> {
+export async function runMutation<T>(access: MutationAccess, run: Mutation<T>, label?: string): Promise<ActionResult<T>>;
+export async function runMutation<T>(run: Mutation<T>, label?: string): Promise<ActionResult<T>>;
+export async function runMutation<T>(first: MutationAccess | Mutation<T>, second?: Mutation<T> | string, third?: string): Promise<ActionResult<T>> {
+  const legacy = typeof first === "function";
+  const access = legacy ? null : first;
+  const run = (legacy ? first : second) as Mutation<T>;
+  const label = ((legacy ? second : third) as string | undefined) ?? "mutation";
+
   let result: Result<T>;
   try {
-    const ctx = await getActionContext();
+    let ctx: ServiceContext | null;
+    if (access) {
+      const allowed = await authorizeSubject(access.action, access.resource, access.notFound);
+      if (!allowed.success) return toActionResult({ success: false, error: allowed.error }, label);
+      ctx = contextOf(allowed.data.principal, allowed.data.resource);
+    } else {
+      ctx = await getActionContext();
+    }
     if (!ctx) return NOT_AUTHENTICATED;
     result = await run(ctx);
   } catch (e: unknown) {
     unstable_rethrow(e);
+    if (isNoTenantAccess(e)) return { success: false, error: NOT_FOUND_MESSAGE, code: "NOT_FOUND" };
     console.error(`[${label}] unexpected error`, e);
     return { success: false, error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" };
   }

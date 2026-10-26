@@ -507,13 +507,42 @@ describe("RBAC Service", () => {
       expect(await _getRoleStore()).toEqual([]);
     });
 
-    it("a tenant-scoped or product-scoped row is not read by the legacy effective-role lookup (it knows the global and domain scopes only)", async () => {
+    it("is the policy engine's reading: a tenant-scoped row applies to a domain of that tenant, a product-scoped row does not reach the domain above it", async () => {
       roleStore.push(
-        { id: "t", userId: "user-1", role: "ADMIN", scopeKey: "T:tenant-a", tenantId: "tenant-a", domainId: null, grantedById: null, createdAt: new Date() },
+        { id: "t", userId: "user-1", role: "AUTHOR", scopeKey: "T:tenant-a", tenantId: "tenant-a", domainId: null, grantedById: null, createdAt: new Date() },
         { id: "p", userId: "user-1", role: "STEWARD", scopeKey: "P:prod-1", tenantId: "tenant-a", domainId: "dom-1", grantedById: null, createdAt: new Date() }
       );
-      const result = await getEffectiveRole("user-1", "dom-1", adminCtx);
-      expect(result).toEqual({ success: true, data: null });
+      // dom-1 is a domain of tenant-a: the tenant AUTHOR row applies; the product STEWARD row covers its product only.
+      expect(await getEffectiveRole("user-1", "dom-1", adminCtx)).toEqual({ success: true, data: "AUTHOR" });
+      // Asked about no domain, only the platform (global) role counts: neither row is one.
+      expect(await getEffectiveRole("user-1", null, adminCtx)).toEqual({ success: true, data: null });
+    });
+
+    it("a tenant-scoped row of ANOTHER tenant does not apply (nothing crosses tenants)", async () => {
+      roleStore.push(
+        { id: "t", userId: "user-1", role: "ADMIN", scopeKey: "T:tenant-b", tenantId: "tenant-b", domainId: null, grantedById: null, createdAt: new Date() }
+      );
+      expect(await getEffectiveRole("user-1", "dom-1", adminCtx)).toEqual({ success: true, data: null });
+    });
+
+    it("never counts a global row of a role other than ADMIN, nor a row whose key and columns disagree (the policy skips what is not a valid assignment)", async () => {
+      roleStore.push(
+        { id: "g", userId: "user-1", role: "AUTHOR", scopeKey: "G", tenantId: null, domainId: null, grantedById: null, createdAt: new Date() },
+        { id: "x", userId: "user-1", role: "ADMIN", scopeKey: "D:dom-1", tenantId: "tenant-a", domainId: "dom-2", grantedById: null, createdAt: new Date() }
+      );
+      expect(await getEffectiveRole("user-1", "dom-1", adminCtx)).toEqual({ success: true, data: null });
+      expect(await getEffectiveRole("user-1", null, adminCtx)).toEqual({ success: true, data: null });
+    });
+
+    it("reads the roles of an ACTIVE user only (the query excludes a disabled user's rows)", async () => {
+      await getEffectiveRole("user-1", null, adminCtx);
+      expect(prisma.userRole.findMany).toHaveBeenLastCalledWith({ where: { userId: "user-1", user: { disabledAt: null } } });
+    });
+
+    it("hasPermission follows it: a tenant AUTHOR may author in a domain of the tenant and not steward there", async () => {
+      roleStore.push({ id: "t", userId: "user-1", role: "AUTHOR", scopeKey: "T:tenant-a", tenantId: "tenant-a", domainId: null, grantedById: null, createdAt: new Date() });
+      expect(await hasPermission("user-1", "AUTHOR", "dom-1", adminCtx)).toEqual({ success: true, data: true });
+      expect(await hasPermission("user-1", "STEWARD", "dom-1", adminCtx)).toEqual({ success: true, data: false });
     });
 
     it("removing a tenant-scoped ADMIN row is not stopped by the last-global-admin rule, removing the last global one is", async () => {

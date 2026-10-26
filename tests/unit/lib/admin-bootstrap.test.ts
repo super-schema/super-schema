@@ -229,7 +229,7 @@ describe("no bootstrap from a request path", () => {
     expect(mockPrisma.user.findUnique).toHaveBeenCalledTimes(1);
     expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
       where: { id: "first-user" },
-      select: { id: true, roles: { where: { role: "ADMIN", scopeKey: "G" }, select: { id: true }, take: 1 } },
+      select: { id: true, disabledAt: true, roles: { where: { role: "ADMIN", scopeKey: "G" }, select: { id: true }, take: 1 } },
     });
     expect(mockPrisma.user.findFirst).not.toHaveBeenCalled();
     expect(mockPrisma.user.create).not.toHaveBeenCalled();
