@@ -85,8 +85,13 @@ export type ScopeLabel = {
   label: string;
 };
 
-/** A role held (`id` is the `user_roles` row, what `removeRole` takes) or promised by an invitation (`id` is null: nothing to remove yet). */
-export type ListedRole = { id: string | null; role: Role; scope: ScopeLabel };
+/**
+ * A role held (`id` is the `user_roles` row, what `removeRole` takes) or promised by an invitation (`id` is null: nothing to remove yet).
+ * `removeBlockedReason` is the service's own sentence when removing this row would be refused right now (your own administrator role, the last platform
+ * administrator's), so a screen can disable the control and say why without ever reading a role name; `null` (or absent: invitation roles, which go with
+ * the invitation) means nothing blocks it. The server still refuses it.
+ */
+export type ListedRole = { id: string | null; role: Role; scope: ScopeLabel; removeBlockedReason?: string | null };
 
 export type UserStatus = "active" | "disabled" | "invited";
 
@@ -110,6 +115,12 @@ export type ListedUser = {
   manageable: boolean;
   /** Is this the caller's own account? (One may not disable oneself.) */
   isSelf: boolean;
+  /**
+   * Why disabling this account is unavailable right now, in a sentence a screen can show (yourself; the last platform administrator; an account the caller
+   * cannot change from here, which names no tenant and no role), or `null` when it is available. An invitation has no account: its sentence says so. The
+   * server refuses it all the same.
+   */
+  disableBlockedReason: string | null;
 };
 
 export type ListUsersResult = { items: ListedUser[]; truncated: boolean };
@@ -144,5 +155,21 @@ export type RoleMatrix = {
   tenantName: string;
   scopes: MatrixScope[];
   rows: MatrixRow[];
+  truncated: boolean;
+};
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// The scopes a caller may grant a role in (the scope pickers)
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+
+/** One place a role may be granted: a tenant, a domain of it or a product of that domain, with the roles `grantAllowed` accepts there. */
+export type GrantableScope = ScopeLabel & { kind: "TENANT" | "DOMAIN" | "PRODUCT"; depth: 0 | 1 | 2; roles: Role[] };
+
+export type GrantableScopes = {
+  /** Tenants first, each followed by its domains, each followed by its products. Only scopes the caller may grant at least one role in. */
+  scopes: GrantableScope[];
+  /** May the caller grant at platform scope (a platform administrator only; the role is ADMIN only)? */
+  canGrantPlatform: boolean;
+  /** The list was cut at the bound. */
   truncated: boolean;
 };

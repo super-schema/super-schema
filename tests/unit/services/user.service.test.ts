@@ -11,7 +11,7 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
-import { getUsers, getUserById, updateUser } from "@/services/user.service";
+import { getUserById, updateUser } from "@/services/user.service";
 import type { ServiceContext } from "@/types/service-context";
 import { assign } from "../../helpers/access-mocks";
 
@@ -105,49 +105,6 @@ describe("User Service", () => {
       { id: "role-1", userId: "user-1", role: "VIEWER", domainId: "dom-1", createdAt: new Date("2026-01-03") },
       { id: "role-2", userId: "user-1", role: "ADMIN", domainId: null, createdAt: new Date("2026-01-04") },
     ];
-  });
-
-  describe("getUsers", () => {
-    it("lists the users of the database (oldest first) with their roles and the name of each role's domain", async () => {
-      const result = await getUsers(adminCtx);
-      expect(result.success).toBe(true);
-      if (!result.success) return;
-      expect(result.data.map((u) => u.email)).toEqual(["alice@example.com", "bob@example.com"]);
-      const alice = result.data.find((u) => u.id === "user-1")!;
-      expect(alice.roles).toEqual([
-        { id: "role-1", role: "VIEWER", domainId: "dom-1", domainName: "Payments" },
-        { id: "role-2", role: "ADMIN", domainId: null, domainName: undefined },
-      ]);
-      expect(result.data.find((u) => u.id === "user-2")!.roles).toEqual([]);
-    });
-
-    it("sees a user that was added to the database after an earlier call (no store of its own)", async () => {
-      await getUsers(adminCtx);
-      users.push(row("user-3", null, "carol@example.com", "2026-02-01"));
-      const result = await getUsers(adminCtx);
-      expect(result.success && result.data.map((u) => u.email)).toContain("carol@example.com");
-    });
-
-    it("asks the role table only for the listed users", async () => {
-      await getUsers(adminCtx);
-      expect(fakePrisma.userRole.findMany).toHaveBeenCalledTimes(1);
-      expect(fakePrisma.userRole.findMany.mock.calls[0][0].where).toEqual({ userId: { in: ["user-1", "user-2"] } });
-    });
-
-    it("never selects the password hash", async () => {
-      await getUsers(adminCtx);
-      const select = (fakePrisma.user.findMany.mock.calls[0][0] as { select: Record<string, boolean> }).select;
-      expect(select).toBeDefined();
-      expect(select.password).toBeUndefined();
-      expect(Object.keys(select).sort()).toEqual(["createdAt", "email", "id", "image", "name"]);
-    });
-
-    it("rejects non-Admin users", async () => {
-      const result = await getUsers(viewerCtx);
-      expect(result.success).toBe(false);
-      if (!result.success) expect(result.error.code).toBe("FORBIDDEN");
-      expect(fakePrisma.user.findMany).not.toHaveBeenCalled();
-    });
   });
 
   describe("getUserById", () => {
@@ -259,19 +216,6 @@ describe("User Service", () => {
       ];
     });
 
-    it("a platform administrator lists every user with every role", async () => {
-      const result = await getUsers(adminCtx);
-      expect(result.success && result.data.map((u) => u.id)).toEqual(["user-1", "user-2", "user-3"]);
-      expect(result.success && result.data.find((u) => u.id === "user-1")!.roles.map((r) => r.id)).toEqual(["role-a", "role-g", "role-c"]);
-    });
-
-    it("a tenant administrator lists only the users with a role in the tenant in view, with only the roles held there", async () => {
-      const result = await getUsers(tenantAdminCtx);
-      expect(result.success && result.data.map((u) => u.id)).toEqual(["user-1"]);
-      expect(result.success && result.data[0].roles.map((r) => r.id)).toEqual(["role-a"]);
-      expect(fakePrisma.userRole.findMany.mock.calls[0][0].where).toEqual({ userId: { in: ["user-1"] }, tenantId: "tenant-1" });
-    });
-
     it("a user outside the tenant reads exactly like a missing one, by id", async () => {
       const outside = await getUserById("user-2", tenantAdminCtx);
       const missing = await getUserById("nonexistent", tenantAdminCtx);
@@ -293,8 +237,8 @@ describe("User Service", () => {
       const domainAdmin = { ...tenantAdminCtx, assignments: [assign.domain("ADMIN", "tenant-1", "dom-1")] };
       const noTenant = { ...tenantAdminCtx, tenantId: undefined };
       for (const ctx of [elsewhere, domainAdmin, noTenant]) {
-        const list = await getUsers(ctx);
-        expect(!list.success && list.error.code).toBe("FORBIDDEN");
+        const read = await getUserById("user-1", ctx);
+        expect(!read.success && read.error.code).toBe("FORBIDDEN");
         const rename = await updateUser({ id: "user-1", name: "X" }, ctx);
         expect(!rename.success && rename.error.code).toBe("FORBIDDEN");
       }

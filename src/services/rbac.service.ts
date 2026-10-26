@@ -30,7 +30,9 @@ import {
   holdsGrantingRole,
   isAdministrative,
   isPlatformAdmin,
+  LAST_ADMIN_ROLE_MESSAGE,
   resolveTarget,
+  SELF_ADMIN_ROLE_MESSAGE,
   roleSummary,
   scopeColumns,
 } from "./admin-shared";
@@ -212,7 +214,7 @@ export async function removeRole(
       if (isAdministrative(roleRow.role) && roleRow.userId === ctx.userId) {
         return err({
           code: "FORBIDDEN",
-          message: "Cannot remove your own admin role",
+          message: SELF_ADMIN_ROLE_MESSAGE,
           suggestedFix: "Ask another admin to remove your role if needed.",
         });
       }
@@ -225,7 +227,7 @@ export async function removeRole(
         if (remaining < 1) {
           return err({
             code: "FORBIDDEN",
-            message: "Cannot remove the last admin role — at least one admin must remain",
+            message: LAST_ADMIN_ROLE_MESSAGE,
             suggestedFix: "Assign another user as Admin before removing this one.",
           });
         }

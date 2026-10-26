@@ -46,7 +46,6 @@ vi.mock("@/services/rbac.service", () => ({
   removeRole: mocks.removeRole,
 }));
 vi.mock("@/services/user.service", () => ({
-  getUsers: vi.fn(),
   updateUser: mocks.updateUser,
 }));
 vi.mock("@/services/health.service", () => ({

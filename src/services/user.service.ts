@@ -31,13 +31,15 @@ import {
   commonTenantId,
   forbidden as genericForbidden,
   isAdministrative,
+  LAST_PLATFORM_ADMIN_DISABLE_MESSAGE,
   reaches,
+  SELF_DISABLE_MESSAGE,
   userNotFound as genericUserNotFound,
 } from "./admin-shared";
 
 // The administration of the user list and of invitations lives next to this file and is re-exported here, so the one place to import from is this one.
 export { inviteUser, listPendingInvitations, revokeInvitation } from "./invitation.service";
-export { getRoleMatrix, listUsers } from "./user-directory.service";
+export { getRoleMatrix, listGrantableScopes, listUsers } from "./user-directory.service";
 
 /** The columns a user row exposes here. Never the password hash. */
 export interface UserRecord {
@@ -95,39 +97,6 @@ async function loadRoles(ctx: ServiceContext, userIds: string[], tenantId: strin
     include: { domain: { select: { name: true } } },
     orderBy: { createdAt: "asc" },
   });
-}
-
-// ---------------------------------------------------------------------------
-// getUsers — fetch all users with their roles (Admin only)
-// ---------------------------------------------------------------------------
-
-export async function getUsers(
-  ctx: ServiceContext
-): Promise<Result<UserWithRoles[]>> {
-  const scope = administeredScope(ctx);
-  if (!scope) return forbidden();
-
-  const users = await ctx.prisma.user.findMany({
-    where: scope.tenantId === null ? {} : { roles: { some: { tenantId: scope.tenantId } } },
-    select: USER_SELECT,
-    orderBy: { createdAt: "asc" },
-  });
-  const roles = await loadRoles(
-    ctx,
-    users.map((u) => u.id),
-    scope.tenantId
-  );
-
-  return ok(
-    users.map((u) => ({
-      id: u.id,
-      name: u.name,
-      email: u.email,
-      image: u.image,
-      createdAt: u.createdAt,
-      roles: toRoles(roles.filter((r) => r.userId === u.id)),
-    }))
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +220,7 @@ export async function setUserDisabled(userId: string, disabled: boolean, ctx: Se
 
       // Nobody disables themselves (an administrator who locks themselves out cannot undo it): said before any look-up, it reveals nothing about anyone.
       if (disabled && userId === ctx.userId) {
-        return err({ code: "FORBIDDEN", message: "You cannot disable your own account", suggestedFix: "Ask another administrator." });
+        return err({ code: "FORBIDDEN", message: SELF_DISABLE_MESSAGE, suggestedFix: "Ask another administrator." });
       }
 
       const target =
@@ -269,7 +238,7 @@ export async function setUserDisabled(userId: string, disabled: boolean, ctx: Se
         if (others < 1) {
           return err({
             code: "FORBIDDEN",
-            message: "Cannot disable the last platform administrator: at least one must stay enabled",
+            message: LAST_PLATFORM_ADMIN_DISABLE_MESSAGE,
             suggestedFix: "Make another user a platform administrator first.",
           });
         }

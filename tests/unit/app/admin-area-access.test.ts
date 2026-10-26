@@ -21,7 +21,7 @@ const h = vi.hoisted(() => {
   const fn = () => vi.fn();
   return {
     activeTenant: fn(), revalidatePath: fn(),
-    getUsers: fn(), updateUser: fn(), assignRole: fn(), removeRole: fn(),
+    getGrantableScopes: fn(), updateUser: fn(), assignRole: fn(), removeRole: fn(),
     listUsers: fn(), getRoleMatrix: fn(), listPendingInvitations: fn(), inviteUser: fn(), revokeInvitation: fn(), setUserDisabled: fn(), createResetLink: fn(),
     runHealthCheck: fn(), getUsageMetrics: fn(), getActivityMetrics: fn(), getErrorSummary: fn(),
     getEmitterConfigs: fn(), updateEmitterConfig: fn(), getDomainsAdmin: fn(), createDomainAdmin: fn(),
@@ -34,7 +34,7 @@ vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
 vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).principalModule);
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.activeTenant }));
 vi.mock("@/services/user.service", () => ({
-  getUsers: h.getUsers, updateUser: h.updateUser, listUsers: h.listUsers, listPendingInvitations: h.listPendingInvitations, inviteUser: h.inviteUser,
+  listGrantableScopes: h.getGrantableScopes, updateUser: h.updateUser, listUsers: h.listUsers, listPendingInvitations: h.listPendingInvitations, inviteUser: h.inviteUser,
   revokeInvitation: h.revokeInvitation, setUserDisabled: h.setUserDisabled, createResetLink: h.createResetLink,
 }));
 vi.mock("@/services/rbac.service", () => ({ assignRole: h.assignRole, removeRole: h.removeRole, getRoleMatrix: h.getRoleMatrix }));
@@ -48,7 +48,7 @@ import * as admin from "@/app/(dashboard)/admin/actions";
 
 const GENERIC_FORBIDDEN = "You do not have permission to do this";
 const SERVICES = [
-  h.getUsers, h.updateUser, h.assignRole, h.removeRole, h.listUsers, h.getRoleMatrix, h.listPendingInvitations, h.inviteUser, h.revokeInvitation,
+  h.getGrantableScopes, h.updateUser, h.assignRole, h.removeRole, h.listUsers, h.getRoleMatrix, h.listPendingInvitations, h.inviteUser, h.revokeInvitation,
   h.setUserDisabled, h.createResetLink, h.runHealthCheck, h.getUsageMetrics, h.getActivityMetrics, h.getErrorSummary,
   h.getEmitterConfigs, h.updateEmitterConfig, h.getDomainsAdmin, h.createDomainAdmin, h.revalidatePath,
 ];
@@ -58,7 +58,7 @@ const errorOf = (answer: unknown) => (answer as { error?: string } | null)?.erro
 type Op = { label: string; call: () => Promise<unknown>; kind: "tenant-admin" | "platform" | "steward" | "member" };
 
 const OPS: Op[] = [
-  { label: "getUsersAction", call: () => admin.getUsersAction(), kind: "tenant-admin" },
+  { label: "getGrantableScopesAction", call: () => admin.getGrantableScopesAction(), kind: "tenant-admin" },
   { label: "updateUserNameAction (another user)", call: () => admin.updateUserNameAction("someone-else", "New"), kind: "tenant-admin" },
   { label: "assignRoleAction", call: () => admin.assignRoleAction({ userId: "u2", role: "VIEWER", tenantId: T }), kind: "tenant-admin" },
   { label: "removeRoleAction", call: () => admin.removeRoleAction("role-1"), kind: "tenant-admin" },
@@ -145,7 +145,7 @@ describe("the context the user and role services receive", () => {
   it("is the principal's: the user, the assignments and the tenant in view, never a role label", async () => {
     const assignments = [assign.tenant("ADMIN", T)];
     signInAs(principalOf(assignments, { userId: "admin-9" }));
-    await admin.getUsersAction();
+    await admin.getGrantableScopesAction();
     await admin.assignRoleAction({ userId: "u2", role: "VIEWER", tenantId: T });
     await admin.removeRoleAction("role-1");
     await admin.listUsersAction();
@@ -155,7 +155,7 @@ describe("the context the user and role services receive", () => {
     await admin.revokeInvitationAction("inv-1");
     await admin.setUserDisabledAction("u2", true);
     await admin.createResetLinkAction("u2");
-    for (const service of [h.getUsers, h.assignRole, h.removeRole, h.listUsers, h.getRoleMatrix, h.listPendingInvitations, h.inviteUser, h.revokeInvitation, h.setUserDisabled, h.createResetLink]) {
+    for (const service of [h.getGrantableScopes, h.assignRole, h.removeRole, h.listUsers, h.getRoleMatrix, h.listPendingInvitations, h.inviteUser, h.revokeInvitation, h.setUserDisabled, h.createResetLink]) {
       const ctx = service.mock.calls[0].find((arg: unknown) => typeof arg === "object" && arg !== null && "assignments" in arg);
       expect(ctx).toMatchObject({ userId: "admin-9", assignments, tenantId: T });
     }

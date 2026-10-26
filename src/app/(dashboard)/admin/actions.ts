@@ -5,7 +5,7 @@ import { ACTIONS, type ActionId } from "@/lib/access";
 import { contextOf, guardActiveTenant } from "@/lib/action-context";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import type { ServiceContext } from "@/types/service-context";
-import { createResetLink, getUsers, inviteUser, listPendingInvitations, listUsers, revokeInvitation, setUserDisabled, updateUser } from "@/services/user.service";
+import { createResetLink, inviteUser, listGrantableScopes, listPendingInvitations, listUsers, revokeInvitation, setUserDisabled, updateUser } from "@/services/user.service";
 import { assignRole, getRoleMatrix, removeRole } from "@/services/rbac.service";
 import type { AssignRoleInput } from "@/types/schemas/rbac";
 import type { InviteUserInput } from "@/types/schemas/user-admin";
@@ -56,14 +56,6 @@ async function gate(action: ActionId): Promise<{ ok: true; ctx: ServiceContext }
   // A platform item and the user's own things have no tenant (the guard did not look for one); every other one carries the tenant in view.
   const placeless = ACTIONS[action].level === "global" || ACTIONS[action].level === "self";
   return { ok: true, ctx: placeless ? ctx : { ...ctx, tenantId: access.resource.tenantId } };
-}
-
-export async function getUsersAction() {
-  const access = await gate("user.manage");
-  if (!access.ok) return { error: access.error };
-  const result = await getUsers(access.ctx);
-  if (!result.success) return { error: result.error.message };
-  return { success: true, data: result.data };
 }
 
 export async function updateUserNameAction(id: string, name: string) {
@@ -120,6 +112,15 @@ export async function getRoleMatrixAction(tenantId?: string) {
   const access = await gate("user.manage");
   if (!access.ok) return { error: access.error };
   const result = await getRoleMatrix(tenantId ?? (access.ctx.tenantId as string), access.ctx);
+  if (!result.success) return failure(result.error);
+  return { success: true as const, data: result.data };
+}
+
+/** The places the caller may grant a role in (tenants, domains, products, with the roles accepted there) and whether platform scope is theirs to grant: fills the scope pickers. */
+export async function getGrantableScopesAction() {
+  const access = await gate("user.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await listGrantableScopes(access.ctx);
   if (!result.success) return failure(result.error);
   return { success: true as const, data: result.data };
 }

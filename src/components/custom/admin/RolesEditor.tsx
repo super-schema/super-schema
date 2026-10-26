@@ -2,45 +2,60 @@
 
 import { useState } from "react";
 import { Plus, Trash2, Shield, Loader2 } from "lucide-react";
-import { ROLE_COLORS, ROLE_HIERARCHY, SYSTEM_ONLY_ROLES, type Role } from "@/types/schemas/rbac";
+import { Button } from "@/components/ui/button";
+import { ROLE_COLORS, type Role } from "@/types/schemas/rbac";
+import type { GrantableScopes, ListedRole } from "@/types/schemas/user-admin";
 import { assignRoleAction, removeRoleAction } from "@/app/(dashboard)/admin/actions";
+import { GuardedButton } from "./GuardedButton";
+import { ScopePicker } from "./ScopePicker";
+import { ASSIGNABLE_ROLES, defaultSelection, reconcileSelection, roleLabel, selectionToInput, type ScopeSelection } from "./scope-selection";
 
 interface RolesEditorProps {
   userId: string;
-  roles: { id: string; role: Role; domainId: string | null; domainName?: string }[];
+  roles: ListedRole[];
+  /** What the caller may grant (null while it loads or when it could not be read: roles can still be removed, none can be added). */
+  scopes: GrantableScopes | null;
   onChanged?: () => void;
 }
 
-export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
+const FIELD_CLASS = "w-full bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary";
+
+/**
+ * The roles of one person, and assigning more: a role is granted AT a scope (the platform, a tenant, a domain or a product), chosen with the scope picker
+ * from the places the caller may grant it in; the raw domain id the old editor asked for is gone. Removing asks first. A role the server would refuse to
+ * remove right now (your own administrator role, the last platform administrator's) has its control disabled with the reason; the server refuses it all the
+ * same, and every refusal shows the service's own message.
+ */
+export function RolesEditor({ userId, roles, scopes, onChanged }: RolesEditorProps) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newRole, setNewRole] = useState<Role>("VIEWER");
-  const [newDomainId, setNewDomainId] = useState("");
+  const [selection, setSelection] = useState<ScopeSelection>(() => defaultSelection(scopes?.scopes ?? [], "VIEWER"));
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const isSystemRole = SYSTEM_ONLY_ROLES.includes(newRole);
+  function openForm() {
+    setError(null);
+    setNewRole("VIEWER");
+    setSelection(defaultSelection(scopes?.scopes ?? [], "VIEWER"));
+    setShowAddForm(true);
+  }
 
   async function handleAddRole() {
     setError(null);
-    if (!isSystemRole && !newDomainId.trim()) {
-      setError("A domain is required for this role.");
+    const input = selectionToInput(selection);
+    if (input === null) {
+      setError("Choose where the role applies.");
       return;
     }
     setBusy(true);
-    const res = await assignRoleAction({
-      userId,
-      role: newRole,
-      domainId: isSystemRole ? undefined : newDomainId.trim(),
-    });
+    const res = await assignRoleAction({ userId, role: newRole, ...input });
     setBusy(false);
-    if (res.error) {
+    if ("error" in res && res.error) {
       setError(res.error);
       return;
     }
     setShowAddForm(false);
-    setNewRole("VIEWER");
-    setNewDomainId("");
     onChanged?.();
   }
 
@@ -49,12 +64,11 @@ export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
     setBusy(true);
     const res = await removeRoleAction(roleId);
     setBusy(false);
-    if (res.error) {
+    setConfirmRemove(null);
+    if ("error" in res && res.error) {
       setError(res.error);
-      setConfirmRemove(null);
       return;
     }
-    setConfirmRemove(null);
     onChanged?.();
   }
 
@@ -64,66 +78,64 @@ export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
       {roles.length === 0 ? (
         <p className="text-body-small text-muted-foreground">No roles assigned</p>
       ) : (
-        <div className="space-y-space-2">
-          {roles.map((r) => {
+        <ul className="space-y-space-2">
+          {roles.map((r, index) => {
             const colors = ROLE_COLORS[r.role];
+            const removable = r.id !== null;
             return (
-              <div
-                key={r.id}
+              <li
+                key={r.id ?? `${r.role}:${r.scope.scopeKey}:${index}`}
                 data-testid="role-item"
                 data-role={r.role}
-                data-domain-id={r.domainId ?? ""}
-                className="flex items-center justify-between p-space-2 rounded-md bg-muted/50"
+                data-scope-key={r.scope.scopeKey}
+                data-domain-id={r.scope.domainId ?? ""}
+                className="flex items-center justify-between gap-space-2 p-space-2 rounded-md bg-muted/50"
               >
-                <div className="flex items-center gap-space-2">
-                  <span
-                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-caption ${colors.bg} ${colors.text}`}
-                  >
-                    <Shield className="w-3 h-3" />
+                <div className="flex min-w-0 flex-wrap items-center gap-space-2">
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-caption ${colors.bg} ${colors.text}`}>
+                    <Shield className="w-3 h-3" aria-hidden="true" />
                     {r.role}
                   </span>
-                  {r.domainId ? (
-                    <span className="text-caption text-muted-foreground">
-                      {r.domainName ?? r.domainId}
-                    </span>
-                  ) : (
-                    <span className="text-caption bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 px-1.5 py-0.5 rounded">
-                      System
-                    </span>
-                  )}
+                  <span className="break-words text-caption text-muted-foreground" data-testid="role-scope">
+                    {r.scope.label}
+                  </span>
                 </div>
 
-                {confirmRemove === r.id ? (
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => handleRemoveRole(r.id)}
-                      data-testid="role-remove-confirm"
-                      className="text-caption text-destructive px-2 py-0.5 rounded hover:bg-destructive/10"
+                {removable &&
+                  (confirmRemove === r.id ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveRole(r.id as string)}
+                        data-testid="role-remove-confirm"
+                        disabled={busy}
+                        className="text-caption text-destructive px-2 py-0.5 rounded hover:bg-destructive/10"
+                      >
+                        Confirm
+                      </button>
+                      <button type="button" onClick={() => setConfirmRemove(null)} className="text-caption text-muted-foreground px-2 py-0.5 rounded hover:bg-muted">
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <GuardedButton
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      data-testid="role-remove"
+                      blockedReason={r.removeBlockedReason ?? null}
+                      onClick={() => setConfirmRemove(r.id)}
+                      aria-label={`Remove role ${roleLabel(r.role)} at ${r.scope.label}`}
+                      title={`Remove role ${roleLabel(r.role)}`}
+                      className="text-muted-foreground hover:text-destructive"
                     >
-                      Confirm
-                    </button>
-                    <button
-                      onClick={() => setConfirmRemove(null)}
-                      className="text-caption text-muted-foreground px-2 py-0.5 rounded hover:bg-muted"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setConfirmRemove(r.id)}
-                    data-testid="role-remove"
-                    className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                    title="Remove role"
-                    aria-label={`Remove role ${r.role}`}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
+                      <Trash2 aria-hidden="true" />
+                    </GuardedButton>
+                  ))}
+              </li>
             );
           })}
-        </div>
+        </ul>
       )}
 
       {/* Error display */}
@@ -134,71 +146,52 @@ export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
       )}
 
       {/* Add role form */}
-      {showAddForm ? (
+      {showAddForm && scopes ? (
         <div data-testid="role-add-form" className="p-space-3 rounded-md border border-border space-y-space-3">
-          <div className="space-y-space-2">
+          <div className="space-y-space-1">
             <label htmlFor="role-add-select" className="block text-caption text-muted-foreground">Role</label>
             <select
               id="role-add-select"
               data-testid="role-add-select"
               value={newRole}
-              onChange={(e) => setNewRole(e.target.value as Role)}
-              className="w-full bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none"
+              onChange={(event) => {
+                const role = event.target.value as Role;
+                setNewRole(role);
+                setSelection((current) => reconcileSelection(current, scopes.scopes, scopes.canGrantPlatform, role));
+              }}
+              className={FIELD_CLASS}
             >
-              {ROLE_HIERARCHY.map((role) => (
+              {ASSIGNABLE_ROLES.map((role) => (
                 <option key={role} value={role}>{role}</option>
               ))}
             </select>
           </div>
 
-          {!isSystemRole && (
-            <div className="space-y-space-2">
-              <label htmlFor="role-add-domain" className="block text-caption text-muted-foreground">Domain</label>
-              <input
-                id="role-add-domain"
-                data-testid="role-add-domain"
-                type="text"
-                placeholder="Domain ID"
-                value={newDomainId}
-                onChange={(e) => setNewDomainId(e.target.value)}
-                className="w-full bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none"
-              />
-            </div>
-          )}
-
-          {isSystemRole && (
-            <p className="text-caption text-muted-foreground">
-              This role is system-level (applies globally).
-            </p>
-          )}
+          <ScopePicker scopes={scopes} role={newRole} value={selection} onChange={setSelection} idPrefix={`role-add-${userId}`} />
 
           <div className="flex items-center gap-space-2">
-            <button
-              onClick={handleAddRole}
-              data-testid="role-add-submit"
-              disabled={busy}
-              className="px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small disabled:opacity-50 inline-flex items-center gap-1"
-            >
-              {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            <Button type="button" size="sm" onClick={handleAddRole} data-testid="role-add-submit" disabled={busy}>
+              {busy && <Loader2 className="animate-spin" aria-hidden="true" />}
               Add Role
-            </button>
-            <button
-              onClick={() => { setShowAddForm(false); setError(null); }}
-              className="px-space-3 py-1.5 rounded-md text-body-small text-muted-foreground hover:bg-muted"
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setShowAddForm(false);
+                setError(null);
+              }}
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
-        <button
-          onClick={() => setShowAddForm(true)}
-          data-testid="role-add-open"
-          className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md text-body-small text-primary hover:bg-primary/10 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
+        <Button type="button" variant="ghost" size="sm" onClick={openForm} data-testid="role-add-open" disabled={scopes === null} className="text-primary">
+          <Plus aria-hidden="true" />
           Add Role
-        </button>
+        </Button>
       )}
     </div>
   );

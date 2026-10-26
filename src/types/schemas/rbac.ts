@@ -79,22 +79,6 @@ export type ResourceRef = { tenantId: string; domainId?: string | null; productI
 export const GLOBAL_SCOPE_ROLES: readonly Role[] = Object.freeze(["ADMIN"] as const satisfies readonly Role[]);
 
 /**
- * Roles that must be system-level (domainId = null).
- *
- * @deprecated The legacy `domainId`-only model (no tenant or product scope, COMPLIANCE_OFFICER and ADMIN "system only"). Scope validity
- * is `isValidAssignment` in `@/lib/access` (GLOBAL only for ADMIN). Kept, unchanged, only because `rbac.service.assignRole` and the
- * `RolesEditor` still enforce the old rule; both move to the scope model in the principal / admin UI tasks, and this goes with them.
- */
-export const SYSTEM_ONLY_ROLES: Role[] = ["COMPLIANCE_OFFICER", "ADMIN"];
-
-/**
- * Roles that require a domainId.
- *
- * @deprecated See `SYSTEM_ONLY_ROLES`.
- */
-export const DOMAIN_SCOPED_ROLES: Role[] = ["VIEWER", "AUTHOR", "STEWARD"];
-
-/**
  * Where a role is assigned, by the ids the caller names: `productId` (a product), else `domainId` (a domain), else `tenantId` (a whole
  * tenant), else nothing (platform scope, ADMIN only). The service completes the full scope from the stored rows and refuses ids that
  * disagree (`rbac.service.assignRole`), so the tenant of a domain role is never taken from the caller.

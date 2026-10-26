@@ -30,6 +30,17 @@ export const userNotFound = <T>(): Result<T> => err({ code: "NOT_FOUND", message
 /** An invitation that is missing, already used, expired, or not the actor's to touch: one answer. */
 export const invitationNotFound = <T>(): Result<T> => err({ code: "NOT_FOUND", message: "Invitation not found", suggestedFix: "Verify the invitation and try again." });
 
+/**
+ * The sentences of the refusals that protect the administrators themselves. The services refuse with them AND the user list hands the same text to a screen
+ * as the reason a control is unavailable (`disableBlockedReason`, `removeBlockedReason`), so what the screen says and what the server says never differ.
+ */
+export const SELF_DISABLE_MESSAGE = "You cannot disable your own account";
+export const LAST_PLATFORM_ADMIN_DISABLE_MESSAGE = "Cannot disable the last platform administrator: at least one must stay enabled";
+export const SELF_ADMIN_ROLE_MESSAGE = "Cannot remove your own admin role";
+export const LAST_ADMIN_ROLE_MESSAGE = "Cannot remove the last admin role — at least one admin must remain";
+/** What a tenant administrator is told of an account in their list that they cannot disable or reset: it says nothing of why (no tenant, no role). */
+export const ACCOUNT_OUT_OF_REACH_MESSAGE = "This account cannot be changed from here.";
+
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 // Who is an administrator of what
 // ---------------------------------------------------------------------------------------------------------------------------------------------
