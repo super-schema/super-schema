@@ -5,8 +5,8 @@
  * `ctx.userRole` is the role a caller holds at PLATFORM scope and nothing else: it says nothing about a tenant, a domain or a product, so a
  * tenant administrator is not "the" ADMIN to it and a migrated steward or compliance officer looks like a viewer. A decision over a
  * resource is `authorize` / `authorizeInActiveTenant` (src/lib/action-context.ts) or, inside a service, `can` / `grantAllowed` over the
- * caller's assignments. This scan lists every source file that still mentions the label; the list only shrinks: a file that no longer
- * mentions it must leave the list, and a new file may not mention it at all.
+ * caller's assignments. This scan fails for any source file other than the context builders that mentions the label. The list of exceptions is EMPTY:
+ * the last readers were the dead oRPC routers under `src/server/api`, which nothing mounted and which were deleted with Task 7.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -19,25 +19,6 @@ const DEFINITIONS = [
   // `"user" | "userRole"`: the Prisma delegate of the `user_roles` table, not the label.
   join("src", "lib", "admin-bootstrap.ts"),
 ].map((path) => path.replaceAll("\\", "/"));
-
-/**
- * TEMPORARY. What still mentions the label after Task 6, each with its reason: the dead oRPC routers (Task 7 deletes them: nothing mounts them). No
- * service, no action and no route reads the label any more (Task 6 replaced the two API v1 context builders with the principal and the key's tenant and
- * role). Each one only sees the label as the PLATFORM role (not a role over a resource), so the worst it does today is refuse a tenant administrator.
- */
-const PENDING_TASK_5B: Record<string, string> = {
-  "src/server/api/procedures.ts": "dead oRPC routers: deleted in Task 7",
-  "src/server/api/routers/admin/classifications.ts": "dead oRPC routers: deleted in Task 7",
-  "src/server/api/routers/admin/domains.ts": "dead oRPC routers: deleted in Task 7",
-  "src/server/api/routers/admin/emitters.ts": "dead oRPC routers: deleted in Task 7",
-  "src/server/api/routers/admin/health.ts": "dead oRPC routers: deleted in Task 7",
-  "src/server/api/routers/admin/users.ts": "dead oRPC routers: deleted in Task 7",
-  "src/server/api/routers/annotation.ts": "dead oRPC routers: deleted in Task 7",
-  "src/server/api/routers/compliance.ts": "dead oRPC routers: deleted in Task 7",
-  "src/server/api/routers/domain.ts": "dead oRPC routers: deleted in Task 7",
-  "src/server/api/routers/entity.ts": "dead oRPC routers: deleted in Task 7",
-  "src/server/api/routers/field.ts": "dead oRPC routers: deleted in Task 7",
-};
 
 const READER = /\buserRole\b/;
 /** `prisma.userRole.findMany(...)`: the delegate of the `user_roles` table, not the label. */
@@ -54,28 +35,30 @@ function sourceFiles(dir: string, found: string[] = []): string[] {
 }
 
 const isComment = (line: string) => /^\s*(\/\/|\*|\/\*)/.test(line);
+const mentionsTheLabel = (text: string): boolean => text.split("\n").some((line) => !isComment(line) && READER.test(line.replace(DELEGATE, "")));
 
 function filesMentioningTheLabel(): string[] {
   return sourceFiles("src")
-    .filter((file) => readFileSync(file, "utf8").split("\n").some((line) => !isComment(line) && READER.test(line.replace(DELEGATE, ""))))
+    .filter((file) => mentionsTheLabel(readFileSync(file, "utf8")))
     .sort();
 }
 
 describe("the resource-relative role label is retired", () => {
   const mentioning = filesMentioningTheLabel();
 
-  it("only the context builders and the files on the temporary list mention the label", () => {
-    const unexpected = mentioning.filter((file) => !DEFINITIONS.includes(file) && !(file in PENDING_TASK_5B));
-    expect(unexpected).toEqual([]);
+  it("only the context builders mention the label: no service, action, route or router reads it", () => {
+    expect(mentioning.filter((file) => !DEFINITIONS.includes(file))).toEqual([]);
   });
 
-  it("the temporary list only shrinks: a file on it that no longer mentions the label must be removed from it", () => {
-    const stale = Object.keys(PENDING_TASK_5B).filter((file) => !mentioning.includes(file));
-    expect(stale).toEqual([]);
+  it("the scan finds the definitions (it is not vacuous)", () => {
+    expect(mentioning).toEqual(expect.arrayContaining(["src/lib/action-context.ts", "src/types/service-context.ts"]));
   });
 
-  it("the scan itself finds readers (it is not vacuous)", () => {
-    expect(mentioning.length).toBeGreaterThan(10);
+  it("the scan sees a reader and ignores a comment and the Prisma delegate (self-test)", () => {
+    expect(mentionsTheLabel("if (ctx.userRole !== 'ADMIN') return;")).toBe(true);
+    expect(mentionsTheLabel("const { userRole } = ctx;")).toBe(true);
+    expect(mentionsTheLabel("// ctx.userRole is retired\n * userRole")).toBe(false);
+    expect(mentionsTheLabel("await prisma.userRole.findMany({});")).toBe(false);
   });
 
   it("the services decided here ask the policy: rbac.service reads no label", () => {
@@ -83,5 +66,11 @@ describe("the resource-relative role label is retired", () => {
     const code = text.split("\n").filter((line) => !isComment(line)).join("\n");
     expect(code.replace(DELEGATE, "")).not.toMatch(READER);
     expect(code).toMatch(/grantAllowed\(/);
+  });
+
+  it("the dead oRPC routers are gone, and nothing imports them", () => {
+    expect(() => statSync("src/server")).toThrow();
+    const importers = sourceFiles("src").filter((file) => /from\s+["'](@\/server\/|(\.\.?\/)+server\/api)/.test(readFileSync(file, "utf8")));
+    expect(importers).toEqual([]);
   });
 });

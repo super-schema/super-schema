@@ -113,8 +113,8 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   page, and a reload removes it: nothing is saved. The Edit and Delete buttons do nothing. The levels the field editor, the compliance filters
   and the glossary offer are fixed lists in their own components, so a level made here would reach none of them.
 - where: `src/components/custom/admin/ClassificationList.tsx` (`useState(SYSTEM_CLASSIFICATION_DEFAULTS...)`). The persisted side exists and is
-  not used by the page: `classification-taxonomy.service.ts`, `src/server/api/routers/admin/classifications.ts`, `useAdminClassifications.ts`,
-  the seeded `classification_levels` rows.
+  not used by the page: `classification-taxonomy.service.ts`, the stub `useAdminClassifications.ts`, the seeded `classification_levels` rows. (The oRPC router
+  that used to sit in front of the service, `src/server/api/routers/admin/classifications.ts`, was mounted by nothing and is gone with the rest of `src/server/api`.)
 - pinned by: `admin.spec.ts`, "a level that was added is still listed after a reload".
 - cost to fix: server actions over the service for list / create / update / delete, the component reading them, then the pickers reading the
   same list (the larger part: each has the four names in code, and `PolicyTemplateSchema` enumerates them).
