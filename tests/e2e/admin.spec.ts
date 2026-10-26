@@ -32,7 +32,7 @@ import { afterServerAction } from "./helpers/entity-page";
 import { centerPanel, leftSidebar } from "./helpers/event-builder";
 import { test, expect, unique } from "./helpers/fixtures";
 import { waitForHydration } from "./helpers/hydration";
-import { registerSecondUser, withSecondUser } from "./helpers/second-user";
+import { registerThroughTheForm, signInThroughTheForm } from "./helpers/second-user";
 
 const ID = {
   tab: (name: string) => `admin-tab-${name}`,
@@ -147,16 +147,33 @@ test.describe("users", () => {
     await expect(row.getByTestId("user-last-sign-in-cell")).not.toHaveText("Never");
   });
 
-  test("a user who registers is listed, with no roles and no name", { tag: ["@regression"] }, async ({ authedPage: page, browser, baseURL }) => {
-    await withSecondUser(browser, baseURL, async (registered) => {
+  // Open-mode registration signs nobody in (it answers the same to a new and to a known address) and gives the account no role (access-control Task 4): the user is
+  // listed as active with nothing assigned, and what they see once they sign in themselves is the "no access yet" page (the rule itself: access-matrix.spec.ts).
+  test("a user who registers is listed as active, with no roles and no name; registering signed them in nowhere, and signing in themselves lands on /no-access", { tag: ["@regression"] }, async ({
+    authedPage: page,
+    browser,
+    baseURL,
+  }) => {
+    const registered = await registerThroughTheForm(browser, baseURL);
+    createdUsers.push(registered.email);
+    try {
       await openUsers(page);
       const row = await userRow(page, registered.email);
       await expect(row.getByRole("cell").nth(1)).toHaveText("—");
+      await expect(row.getByTestId("user-status")).toHaveAttribute("data-status", "active");
       await expect(row.getByTestId(ID.roleBadge)).toHaveCount(0);
 
       await row.click();
       await expect(panel(page).getByText("No roles assigned")).toBeVisible();
-    });
+
+      // The register page left them on the login page with a notice: no session. Signing in themselves takes them to the page that says they have no role.
+      await registered.page.goto("/schemas");
+      await expect(registered.page).toHaveURL((url) => url.pathname === "/login");
+      await signInThroughTheForm(registered.page, registered.email, registered.password, "no-access");
+      await expect(registered.page.getByTestId("no-access")).toBeVisible();
+    } finally {
+      await registered.context.close();
+    }
   });
 
   test("a user's name is edited, saved and listed after a reload; Save waits for a change", { tag: ["@regression"] }, async ({ authedPage: page }) => {
@@ -295,34 +312,28 @@ test.describe("users", () => {
     expect(await rolesOfUser(adminId)).toContainEqual({ role: "ADMIN", domainId: null });
   });
 
-  test("a visitor with no role is told it takes ADMIN on the Users, Domains, Emitters and Health tabs, and sees none of their data", { tag: ["@regression"] }, async ({
+  // Before the access-control work a signed-in visitor with no role saw each admin tab with "Requires ADMIN role"; now the dashboard answers a user with no role at the
+  // door: every page, the admin ones included, is the "no access yet" page (and /api/* answers nothing: access-matrix.spec.ts).
+  test("a visitor with no role is sent to /no-access from the Users, Domains, Emitters and Health tabs, and sees none of their data", { tag: ["@regression"] }, async ({
     browser,
     baseURL,
   }) => {
-    const visitor = await registerSecondUser(browser, baseURL, "e2e-visitor-");
+    const visitor = await registerThroughTheForm(browser, baseURL);
     createdUsers.push(visitor.email);
     try {
       const page = visitor.page;
-      for (const [path, heading] of [
-        ["/admin", "Users"],
-        ["/admin/domains", "Domains"],
-        ["/admin/emitters", "Emitters"],
-        ["/admin/health", "System Health"],
-      ] as const) {
+      await signInThroughTheForm(page, visitor.email, visitor.password, "no-access");
+      await expect(page.getByTestId("no-access-email")).toContainText(visitor.email);
+      for (const path of ["/admin", "/admin/domains", "/admin/emitters", "/admin/health"]) {
         await page.goto(path);
-        await expect(centerPanel(page).getByRole("heading", { name: heading, level: 2 })).toBeVisible();
-        await expect(centerPanel(page).getByRole("alert")).toContainText("Requires ADMIN role");
+        await expect(page).toHaveURL((url) => url.pathname === "/no-access");
+        await expect(page.getByTestId("no-access")).toBeVisible();
+        // No user, domain or emitter of the workspace is on the page, and the admin shell is not there.
+        await expect(page.getByTestId(ID.userRow)).toHaveCount(0);
+        await expect(page.getByTestId(ID.domainRow)).toHaveCount(0);
+        await expect(page.getByTestId(ID.emitterCard)).toHaveCount(0);
+        await expect(page.getByTestId(ID.tab("users"))).toHaveCount(0);
       }
-      // No user, domain or emitter leaks to a visitor whose role is missing.
-      await page.goto("/admin");
-      await expect(centerPanel(page).getByRole("alert")).toBeVisible();
-      await expect(centerPanel(page).getByTestId(ID.userRow)).toHaveCount(0);
-      await page.goto("/admin/domains");
-      await expect(centerPanel(page).getByRole("alert")).toBeVisible();
-      await expect(centerPanel(page).getByTestId(ID.domainRow)).toHaveCount(0);
-      await page.goto("/admin/emitters");
-      await expect(centerPanel(page).getByRole("alert")).toBeVisible();
-      await expect(centerPanel(page).getByTestId(ID.emitterCard)).toHaveCount(0);
     } finally {
       await visitor.context.close();
     }

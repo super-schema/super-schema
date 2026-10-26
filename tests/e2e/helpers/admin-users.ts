@@ -11,6 +11,7 @@
 import { expect, type Browser, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import { centerPanel } from "./event-builder";
 import { waitForHydration } from "./hydration";
+import { signInThroughTheForm } from "./second-user";
 
 export const NEW_PASSWORD_LABEL = "New password";
 export const CONFIRM_PASSWORD_LABEL = "Confirm password";
@@ -83,15 +84,9 @@ export async function fillNewPassword(page: Page, password: string, confirmation
   await page.getByLabel(CONFIRM_PASSWORD_LABEL, { exact: true }).fill(confirmation);
 }
 
-/** Sign somebody in through the login page of `page` and wait until the app has taken them to the dashboard. */
+/** Sign somebody in through the login page of `page` and wait until the app has taken them to the dashboard (`signInThroughTheForm`, helpers/second-user.ts, for a user with no role as well). */
 export async function signInThroughLoginPage(page: Page, email: string, password: string): Promise<void> {
-  await page.goto("/login");
-  await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
-  await waitForHydration(page.getByTestId("login-form"));
-  await page.getByLabel("Email", { exact: true }).fill(email);
-  await page.getByLabel("Password", { exact: true }).fill(password);
-  await page.getByTestId("login-submit").click();
-  await expect(page).toHaveURL((url) => url.pathname === "/schemas", { timeout: 60_000 });
+  await signInThroughTheForm(page, email, password);
 }
 
 /** A server action a page made, as it went over the wire: where to, which action, how the arguments were encoded. */

@@ -6,8 +6,8 @@
  *                            and the impact report in the panel beside the list; Approve and Reject ask for an optional comment first
  *                            (Cancel backs out), then move the request from Pending to History with the new status, the decision and
  *                            the comment recorded; the decision is kept after a reload; a request that is not pending offers neither;
- *                            a user without the Steward or Admin role cannot approve or reject, and the request stays pending (KD-015:
- *                            and the user is told nothing: pinned); the list holds the requests of the tenant being viewed, those about
+ *                            a user whose highest role is below Steward (an Author) cannot approve or reject, and the request stays
+ *                            pending (KD-015: and the user is told nothing: pinned); a user with no role at all sees no request; the list holds the requests of the tenant being viewed, those about
  *                            an entity of another tenant are in no tab.
  *                            No page or action of the product CREATES a request yet (governance.service.createRequest is called by
  *                            nothing), so the specs write the row, as the service does.
@@ -23,8 +23,8 @@
  *                            id and by action, expanded to its before / after state (the audit rows of the tenant being viewed: `audit_log.tenantId`).
  *   - Exports                CSV and JSON of the query and of the gaps, the audit trail's CSV: asserted through the browser's download
  *                            (file name, header row, a row for the data the test made).
- *   - Access                 a visitor with no role is refused by the compliance API (401 without a session, 403 without a role), and the
- *                            page says so.
+ *   - Access                 the compliance API answers 401 without a session, 404 to a user with no role (nothing is said about the tenant)
+ *                            and 403 to a Viewer, and the page says so (the rule per role: access-matrix.spec.ts).
  *
  * Page content is queried inside the center panel (`centerPanel`): a hard load streams the page behind its loading.tsx and Next leaves
  * a hidden copy of the streamed segment in <body>. Toasts are portals, queried on `page`.
@@ -50,6 +50,9 @@ import { centerPanel } from "./helpers/event-builder";
 import { test, expect, unique } from "./helpers/fixtures";
 import { waitForHydration } from "./helpers/hydration";
 import { withSecondUser } from "./helpers/second-user";
+
+/** The highest role that still may NOT decide a governance request (`governance.decide` is Steward and above: src/lib/access/actions.ts), over the tenant the tests work in. */
+const AUTHOR_ONLY = { roles: [{ role: "AUTHOR" as const }] };
 
 const requestedEntities: string[] = [];
 
@@ -230,14 +233,14 @@ test.describe("governance dashboard", () => {
     await expect(requestCard(page, auto.entityName)).toHaveCount(0);
   });
 
-  test("a user with no Steward or Admin role cannot decide: the request stays pending", { tag: ["@regression"] }, async ({ browser, baseURL, workspace }) => {
+  test("a user below Steward (an Author) cannot decide: the request stays pending", { tag: ["@regression"] }, async ({ browser, baseURL, workspace }) => {
     const { id, entityName } = await pendingRequest(workspace.entities[0].id);
     await withSecondUser(browser, baseURL, async (visitor) => {
       const page = visitor.page;
       await openGovernance(page);
       const card = requestCard(page, entityName);
-      // Any signed-in user sees the requests of the tenant they are viewing (who may see them is now decided by role, and only a request the user may decide shows the consumers' owners; the access matrix rewrites this spec); only a
-      // Steward or an Admin may decide.
+      // Updated for access control: this used to say "any signed-in user sees the requests of the tenant". Now a user sees the requests of a tenant they hold a role in (here an
+      // Author's: `governance.read` is Viewer), and a user with no role sees none (access-matrix.spec.ts); only a Steward or an Admin decides (`governance.decide`).
       await expect(card).toBeVisible();
 
       await card.getByTestId("governance-approve").click();
@@ -247,7 +250,7 @@ test.describe("governance dashboard", () => {
       expect((await governanceOutcome(id)).decisions).toEqual([]);
       await openGovernance(page);
       await expect(requestCard(page, entityName)).toHaveAttribute("data-status", "PENDING");
-    });
+    }, AUTHOR_ONLY);
   });
 
   test("a request about an entity of ANOTHER tenant is listed in no tab of this tenant, and the tenant's own request is", { tag: ["@regression"] }, async ({
@@ -272,7 +275,7 @@ test.describe("governance dashboard", () => {
     }
   });
 
-  test("a user with no Steward or Admin role cannot reject either: the request stays pending, with no decision recorded", { tag: ["@regression"] }, async ({
+  test("a user below Steward (an Author) cannot reject either: the request stays pending, with no decision recorded", { tag: ["@regression"] }, async ({
     browser,
     baseURL,
     workspace,
@@ -289,7 +292,7 @@ test.describe("governance dashboard", () => {
       expect((await governanceOutcome(id)).decisions).toEqual([]);
       await openGovernance(page);
       await expect(requestCard(page, entityName)).toHaveAttribute("data-status", "PENDING");
-    });
+    }, AUTHOR_ONLY);
   });
 
   // KD-015: the dashboard drops the action's error (`if ("success" in result)`): a refusal looks like nothing happened.
@@ -307,7 +310,7 @@ test.describe("governance dashboard", () => {
       expect((await governanceOutcome(id)).status).toBe("PENDING");
       // Looked for on the whole page: a toast is a portal, which `centerPanel` leaves out (and so is the text under the card).
       await expect(page.getByText(/steward|admin/i).first()).toBeVisible({ timeout: 3000 });
-    });
+    }, AUTHOR_ONLY);
   });
 });
 
@@ -825,15 +828,16 @@ test.describe("compliance: query, gaps, audit trail and exports", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("compliance access", () => {
-  test("the compliance API answers 401 without a session and 403 to a user with no role, and the page says so", { tag: ["@regression"] }, async ({
+  test("the compliance API answers 401 without a session, 404 to a user with no role and 403 to a Viewer, and the page says so", { tag: ["@regression"] }, async ({
     browser,
     baseURL,
     playwright,
   }) => {
+    const paths = ["/api/compliance/query", "/api/compliance/gaps", "/api/compliance/audit-trail"];
     // `playwright.request.newContext` carries the project's login unless it is told it has none.
     const anonymous = await playwright.request.newContext({ baseURL, storageState: { cookies: [], origins: [] } });
     try {
-      for (const path of ["/api/compliance/query", "/api/compliance/gaps", "/api/compliance/audit-trail"]) {
+      for (const path of paths) {
         const response = await anonymous.post(path, { data: { filters: {} }, maxRedirects: 0 });
         expect(response.status(), path).toBe(401);
         expect(await response.text(), path).not.toContain("entityName");
@@ -842,18 +846,37 @@ test.describe("compliance access", () => {
       await anonymous.dispose();
     }
 
+    // No role anywhere: the user is nobody's member, so the answer is the one of a tenant that is not there (a 403 would say the tenant exists), and the page is /no-access.
+    // (Updated for access control: this used to be a 403 for any signed-in user with no role.)
     await withSecondUser(browser, baseURL, async (visitor) => {
-      for (const path of ["/api/compliance/query", "/api/compliance/gaps", "/api/compliance/audit-trail"]) {
+      for (const path of paths) {
         const response = await visitor.context.request.post(path, { data: { filters: {} } });
-        expect(response.status(), path).toBe(403);
-        expect(((await response.json()) as { success: boolean }).success).toBe(false);
+        expect(response.status(), path).toBe(404);
+        const body = (await response.json()) as { success: boolean; error: string };
+        expect(body, path).toEqual({ success: false, error: "Not found" });
       }
       await visitor.page.goto("/compliance");
-      await expect(centerPanel(visitor.page).getByTestId("compliance-error")).toContainText("Insufficient permissions");
-      await expect(centerPanel(visitor.page).getByTestId("compliance-row")).toHaveCount(0);
+      await expect(visitor.page).toHaveURL((url) => url.pathname === "/no-access");
+      await expect(visitor.page.getByTestId("compliance-row")).toHaveCount(0);
     });
-  });
 
+    // A Viewer is a member (they read content) but compliance is the Compliance Officer's: 403, and the page's own message.
+    await withSecondUser(
+      browser,
+      baseURL,
+      async (viewer) => {
+        for (const path of paths) {
+          const response = await viewer.context.request.post(path, { data: { filters: {} } });
+          expect(response.status(), path).toBe(403);
+          expect(((await response.json()) as { success: boolean }).success).toBe(false);
+        }
+        await viewer.page.goto("/compliance");
+        await expect(centerPanel(viewer.page).getByTestId("compliance-error")).toContainText("You do not have permission to do this");
+        await expect(centerPanel(viewer.page).getByTestId("compliance-row")).toHaveCount(0);
+      },
+      { roles: [{ role: "VIEWER" }] },
+    );
+  });
 });
 
 test.describe("compliance tenants", () => {

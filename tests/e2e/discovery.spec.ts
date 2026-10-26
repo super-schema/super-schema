@@ -14,7 +14,7 @@
  *                      and none of the first tenant's; choosing the first again brings them back.
  *   - Notification bell  the unread count (9+ above nine), the list, Mark all as read (kept after a reload), opening a notification goes to
  *                      its entity and marks it read (kept), an empty mailbox says so. The user of each test is a user of its own
- *                      (registered through the UI): a notification belongs to a user, so the admin's mailbox is not shared.
+ *                      (a Viewer made through the database and signed in through the login form): a notification belongs to a user, so the admin's mailbox is not shared.
  *   - Notification history  `/notifications`: type and status filters, 25 rows to a page, Previous / Next and the page boundary
  *                      (KD-019: Next is enabled on a last page that is exactly full).
  *
@@ -41,6 +41,13 @@ import { centerPanel, leaveForm, leftSidebar } from "./helpers/event-builder";
 import { test, expect, unique } from "./helpers/fixtures";
 import { waitForHydration } from "./helpers/hydration";
 import { withSecondUser, type SecondUser } from "./helpers/second-user";
+
+/**
+ * A signed-in user with a mailbox of their own, for the notification tests. They are a VIEWER of the tenant the tests work in: a user with no role is sent to /no-access
+ * and sees no dashboard at all (and a notification belongs to the user, not to a role: `notification.own` needs no role, but the bell is on the dashboard). These tests
+ * used to register a user through the UI, who was signed in and could open everything; now a user is made with the role the scenario needs.
+ */
+const withViewer: typeof withSecondUser = (browser, baseURL, body, options = { roles: [{ role: "VIEWER" }] }) => withSecondUser(browser, baseURL, body, options);
 
 const MOD = "ControlOrMeta";
 
@@ -390,7 +397,7 @@ async function openAs(user: SecondUser, path = "/schemas"): Promise<Page> {
 
 test.describe("notification bell", () => {
   test("a user with no notifications sees no badge, and an empty list that says so", { tag: ["@regression"] }, async ({ browser, baseURL }) => {
-    await withSecondUser(browser, baseURL, async (user) => {
+    await withViewer(browser, baseURL, async (user) => {
       const page = await openAs(user);
       await expect(bell(page)).toBeVisible();
       await expect(bell(page)).toHaveAttribute("aria-label", "Notifications");
@@ -411,7 +418,7 @@ test.describe("notification bell", () => {
     browser,
     baseURL,
   }) => {
-    await withSecondUser(browser, baseURL, async (user) => {
+    await withViewer(browser, baseURL, async (user) => {
       const titles = { a: unique("Unread A "), b: unique("Unread B "), c: unique("Unread C "), done: unique("Already read ") };
       await createNotifications(user.id, [
         { title: titles.a, type: "DRIFT_ALERT", minutesAgo: 1 },
@@ -443,7 +450,7 @@ test.describe("notification bell", () => {
   });
 
   test("more than nine unread reads 9+", { tag: ["@regression"] }, async ({ browser, baseURL }) => {
-    await withSecondUser(browser, baseURL, async (user) => {
+    await withViewer(browser, baseURL, async (user) => {
       await createNotifications(
         user.id,
         Array.from({ length: 12 }, (_, i) => ({ title: unique(`Many ${i} `), minutesAgo: i })),
@@ -464,7 +471,7 @@ test.describe("notification bell", () => {
       workspace,
     }) => {
       const entity = workspace.entities[0];
-      await withSecondUser(browser, baseURL, async (user) => {
+      await withViewer(browser, baseURL, async (user) => {
         const opened = unique("Open me ");
         const other = unique("Leave me ");
         await createNotifications(user.id, [
@@ -514,7 +521,7 @@ test.describe("notification history", () => {
     browser,
     baseURL,
   }) => {
-    await withSecondUser(browser, baseURL, async (user) => {
+    await withViewer(browser, baseURL, async (user) => {
       const t = { drift1: unique("Drift one "), drift2: unique("Drift two "), gap: unique("Gap "), change: unique("Change ") };
       await createNotifications(user.id, [
         { title: t.drift1, type: "DRIFT_ALERT", body: "Schema drifted in BigQuery", minutesAgo: 1 },
@@ -557,7 +564,7 @@ test.describe("notification history", () => {
     browser,
     baseURL,
   }) => {
-    await withSecondUser(browser, baseURL, async (user) => {
+    await withViewer(browser, baseURL, async (user) => {
       await createNotifications(
         user.id,
         Array.from({ length: 26 }, (_, i) => ({ title: `Boundary ${String(i + 1).padStart(2, "0")} ${unique("")}`, type: i === 25 ? ("DRIFT_ALERT" as const) : ("CHANGE_COMPLETE" as const), minutesAgo: i })),
@@ -597,7 +604,7 @@ test.describe("notification history", () => {
     browser,
     baseURL,
   }) => {
-    await withSecondUser(browser, baseURL, async (user) => {
+    await withViewer(browser, baseURL, async (user) => {
       await createNotifications(
         user.id,
         Array.from({ length: 25 }, (_, i) => ({ title: `Exact ${String(i + 1).padStart(2, "0")} ${unique("")}`, minutesAgo: i })),

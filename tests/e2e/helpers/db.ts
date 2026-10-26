@@ -19,6 +19,9 @@
  */
 
 import { randomBytes } from "node:crypto";
+// The app's own password hash and e-mail normalization (plain TypeScript, no Next, no database): a user made here is a user the login form accepts.
+import { hashPassword } from "../../../src/lib/auth/password-hash";
+import { normalizeEmail } from "../../../src/lib/auth/password-policy";
 import { TEST_EMAIL } from "./auth-state";
 
 export interface PgPool {
@@ -399,6 +402,46 @@ export async function createUserWithPassword(input: { email: string; password: s
 }
 
 /**
+ * A user who signs in through the real login form: the e-mail normalized (trimmed, lower-cased) and the password stored by the app's own `hashPassword`
+ * (bcrypt, cost 12, `src/lib/auth/password-hash.ts`), so what the login checks is exactly what a registered user has. It costs about 300 ms of CPU
+ * (`createUserWithPassword` below is the cheap form for a test that signs in through the API). The user has no role: `grantRole` gives one.
+ * A user who acted in the app (an audit row points at them) cannot be deleted: `deleteUsersBestEffort`.
+ */
+export async function createUser(input: { email: string; password: string; name?: string | null }): Promise<{ id: string; email: string; password: string }> {
+  const email = normalizeEmail(input.email);
+  const id = newId();
+  await pg().query(`INSERT INTO users (id, email, name, password, "updatedAt") VALUES ($1, $2, $3, $4, now())`, [id, email, input.name ?? null, await hashPassword(input.password)]);
+  return { id, email, password: input.password };
+}
+
+/** Disable an account the way the administrator's switch does (`users.disabledAt`): the user's NEXT request is refused, a session cookie or not. */
+export async function disableUser(userId: string): Promise<void> {
+  await pg().query(`UPDATE users SET "disabledAt" = now() WHERE id = $1`, [userId]);
+}
+
+/** Enable it again. */
+export async function enableUser(userId: string): Promise<void> {
+  await pg().query(`UPDATE users SET "disabledAt" = NULL WHERE id = $1`, [userId]);
+}
+
+/**
+ * Delete users by e-mail, one at a time, and report the ones that stayed: a user an audit row points at (they created something in the app: the rows are
+ * immutable and the key restricts) cannot be deleted, and one failure must neither hide a test's own result nor keep the others from going. Returns the
+ * addresses that were left (the run's database is thrown away).
+ */
+export async function deleteUsersBestEffort(emails: readonly string[]): Promise<string[]> {
+  const left: string[] = [];
+  for (const email of emails) {
+    try {
+      await pg().query(`DELETE FROM users WHERE email = $1`, [email]);
+    } catch {
+      left.push(email);
+    }
+  }
+  return left;
+}
+
+/**
  * A token as the app issues one: 32 random bytes as base64url, and only their SHA-256 stored (src/lib/auth/tokens.ts). There is no e-mail to read a link
  * from, so a spec makes the row itself and opens `/invite/<token>` or `/reset/<token>`.
  */
@@ -450,15 +493,35 @@ export async function createResetTokenRow(userId: string, options: { expiresInHo
 }
 
 /**
- * A role for a user, as the app stores it (`scopeKey` and the id columns agree): at the tenant's scope, or at one domain's (`domainId`). Goes with the user
- * (cascade). A global administrator is the seeded admin; a spec that needs a user with a LOWER role gives it here.
+ * Where a role is held: `"GLOBAL"` (the platform: valid for ADMIN only), a tenant, one of its domains (`domainId`) or one of that domain's products
+ * (`domainId` and `productId`).
  */
-export async function grantRoleRow(userId: string, role: string, scope: { tenantId: string; domainId?: string }): Promise<void> {
-  const scopeKey = scope.domainId ? `D:${scope.domainId}` : `T:${scope.tenantId}`;
+export type RoleScope = "GLOBAL" | { tenantId: string; domainId?: string; productId?: string };
+
+/**
+ * A role for a user, as the app stores it: `scopeKey` (`G`, `T:<id>`, `D:<id>`, `P:<id>`) and the id columns agree (the table's CHECK refuses a row
+ * where they do not). Goes with the user (cascade). The seeded administrator is the platform ADMIN; a test that needs somebody with a LOWER role, or
+ * a role in a place of its own, gives it here. A product's role names its domain too (`domainId`), as the table requires.
+ */
+export async function grantRole(userId: string, role: string, scope: RoleScope): Promise<void> {
+  const columns =
+    scope === "GLOBAL"
+      ? { scopeKey: "G", tenantId: null, domainId: null, productId: null }
+      : scope.productId
+        ? { scopeKey: `P:${scope.productId}`, tenantId: scope.tenantId, domainId: scope.domainId ?? null, productId: scope.productId }
+        : scope.domainId
+          ? { scopeKey: `D:${scope.domainId}`, tenantId: scope.tenantId, domainId: scope.domainId, productId: null }
+          : { scopeKey: `T:${scope.tenantId}`, tenantId: scope.tenantId, domainId: null, productId: null };
+  if (scope !== "GLOBAL" && scope.productId && !scope.domainId) throw new Error("grantRole: a product's role needs its domainId as well");
   await pg().query(
-    `INSERT INTO user_roles (id, "userId", role, "scopeKey", "tenantId", "domainId") VALUES ($1, $2, $3, $4, $5, $6)`,
-    [newId(), userId, role, scopeKey, scope.tenantId, scope.domainId ?? null],
+    `INSERT INTO user_roles (id, "userId", role, "scopeKey", "tenantId", "domainId", "productId") VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [newId(), userId, role, columns.scopeKey, columns.tenantId, columns.domainId, columns.productId],
   );
+}
+
+/** `grantRole` at a tenant's or one domain's scope (the older name; specs written before `RoleScope` use it). */
+export async function grantRoleRow(userId: string, role: string, scope: { tenantId: string; domainId?: string }): Promise<void> {
+  await grantRole(userId, role, scope);
 }
 
 /** The role rows (`user_roles`) of a user: [{ role, domainId }]. */
@@ -786,10 +849,11 @@ export async function deleteVisualFixtures(rows: VisualFixtures | undefined): Pr
 
 /**
  * An entity (one key field `id`) in a given product of a domain: `createWorkspaceRows` only puts its entities in its own product, and the
- * ambiguity of a bare-name reference needs the same name in two. `name` is a plain identifier; it goes with the domain.
+ * ambiguity of a bare-name reference needs the same name in two. `name` is a plain identifier; it goes with the domain. `inTenantId` names the
+ * tenant of the domain when it is not the one the seeded admin sees (a test tenant of its own).
  */
-export async function createEntityInProduct(domainId: string, productId: string, name: string): Promise<{ id: string; name: string; slug: string; fieldId: string }> {
-  const tenantId = await activeTenantId();
+export async function createEntityInProduct(domainId: string, productId: string, name: string, inTenantId?: string): Promise<{ id: string; name: string; slug: string; fieldId: string }> {
+  const tenantId = inTenantId ?? (await activeTenantId());
   const ownerId = await seededOwnerId();
   const row = { id: newId(), name, slug: name.toLowerCase(), fieldId: newId() };
   await pg().query(
@@ -838,16 +902,9 @@ export async function tenantName(tenantId: string): Promise<string> {
   return name;
 }
 
-/**
- * A role for a user at ANY scope, as the app stores it (`scopeKey` and the id columns agree): `{ tenantId }` is the tenant's, `+ domainId` a domain's,
- * `+ productId` a product's. `grantRoleRow` is the tenant or domain case of this.
- */
+/** `grantRole` at any scope (the older name: `{ tenantId }` is the tenant's, `+ domainId` a domain's, `+ productId` a product's). */
 export async function grantScopedRoleRow(userId: string, role: string, scope: { tenantId: string; domainId?: string; productId?: string }): Promise<void> {
-  const scopeKey = scope.productId ? `P:${scope.productId}` : scope.domainId ? `D:${scope.domainId}` : `T:${scope.tenantId}`;
-  await pg().query(
-    `INSERT INTO user_roles (id, "userId", role, "scopeKey", "tenantId", "domainId", "productId") VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [newId(), userId, role, scopeKey, scope.tenantId, scope.domainId ?? null, scope.productId ?? null],
-  );
+  await grantRole(userId, role, scope);
 }
 
 /** The role rows of a user as `{ role, scopeKey }`, ordered by scope key then role. */
