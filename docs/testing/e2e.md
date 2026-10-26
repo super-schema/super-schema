@@ -582,6 +582,12 @@ that. Until a week of nightly runs says that it never fails by itself, `e2e-visu
   exit 2 there, while a bare `node scripts/e2e-phases.mjs` with a bad `E2E_GLOBAL_TIMEOUT_MS` only meets it when Playwright loads
   `playwright.config.ts`: Playwright throws and the phase exits **1** (a bad `E2E_STALL_MS` is exit 2 in both).
   Ctrl-C ends the run and the teardown removes its container as usual.
+  The same end-of-run hang was seen again on 2026-10-26 (Node 20.19.4, twice in about a dozen runs of a spec or two: every test had passed, the workers sat idle until `E2E_STALL_MS` ended the run with 124), and
+  once as `Tearing down "context" exceeded the test timeout of 60000ms` on a test whose assertions had all passed, with Google Chrome and with Playwright's bundled Chromium alike: it is not Chrome's. With
+  `video: "retain-on-failure"` every context records a video, so closing one waits for the encoder, and under load that is where the time goes. A hunt for it: `E2E_STALL_MS=240000`; the tests' own result is in the list.
+- **Timeouts under load**: the default is 8 workers, and on a laptop that is also running other work (a load average above 30) they time out tests that pass alone, and WHICH tests changes from run to run
+  (the whole regression tier on Chromium, 353 tests: 8 workers, 14.6 minutes and 5 failures, every one a wait that ran out, in five different specs; the run before it, 2 failures in two other specs; the same tier with
+  `-- --workers=4`, 6.8 minutes, 0 failures). A failure that passes alone and moves between runs is load: run the tier with `node scripts/e2e-release.mjs --tier regression --project chromium --project serial-after -- --workers=4`.
 - **"the Playwright image ... is not on this machine"** (exit 3, before anything is provisioned): `docker pull mcr.microsoft.com/playwright:v<version>-jammy` (the version of
   `@playwright/test` in `node_modules`; about 2.5 GB). The runner never pulls it. A `ss-e2e-visual-*` container left by a killed run: `docker rm -f <name>`.
 - **The browser run in the image cannot reach the app** (the setup login times out, `ECONNREFUSED` on the app's port): on macOS the container reaches the host through
