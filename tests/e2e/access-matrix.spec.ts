@@ -106,12 +106,16 @@ async function publishedVersionsOf(entityId: string): Promise<number> {
 
 const role = (name: SecondUserRole["role"], scope: SecondUserRole["scope"]): SecondUserRole => ({ role: name, scope });
 
-/** The person's own calls to the app's endpoints: their browser context's session, each with a client address of its own (the REST API limits emit and validate per address). */
+/**
+ * The person's own calls to the app's endpoints: their browser context's session, each with a client address of its own (the REST API limits emit and validate per address).
+ * `maxRetries`: the first call after the server closed an idle keep-alive socket is reset (ECONNRESET: seen once in the 3x run on Chromium, in the first POST of a test), and
+ * that is the only error Playwright retries; the request never reached the app, so sending it again is not a second write.
+ */
 function apiOf(user: SecondUser) {
   const headers = { "x-forwarded-for": madeUpClientAddress() };
   return {
-    get: (path: string): Promise<APIResponse> => user.context.request.get(path, { headers }),
-    post: (path: string, data: unknown = {}): Promise<APIResponse> => user.context.request.post(path, { headers, data }),
+    get: (path: string): Promise<APIResponse> => user.context.request.get(path, { headers, maxRetries: 3 }),
+    post: (path: string, data: unknown = {}): Promise<APIResponse> => user.context.request.post(path, { headers, data, maxRetries: 3 }),
   };
 }
 
