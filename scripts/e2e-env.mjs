@@ -63,8 +63,9 @@ export function setValues(run) {
     AUTH_URL: run.baseUrl,
     AUTH_TRUST_HOST: "true",
     // The client address of the sign-in throttle and of the REST API's rate limit comes from X-Forwarded-For ONLY when this is 1 (src/lib/auth/throttle.ts
-    // `clientIp`). The run trusts it: tests/e2e/api-v1.spec.ts sends an address of its own per test so the 100-a-minute limit never couples two tests, and a
-    // request with no header (the browser) is the one constant address, as without the setting. A developer's own value is dropped (the AUTH_ prefix).
+    // `clientIp`). The run trusts it: tests/e2e/api-v1.spec.ts sends an address of its own per test so the 100-a-minute limit never couples two tests. A request
+    // with no header (the browser's) reaches the app with the socket's own loopback address, which `clientIp` treats as the one shared bucket (ceiling 100), as
+    // without the setting. A developer's own value is dropped (the AUTH_ prefix).
     AUTH_TRUST_PROXY: "1",
     // Registration is OPEN for the app under test (src/lib/auth/registration-mode.ts; the default is `invite`): the browser suite registers its own users through the
     // register page, and they hold no role. `invite` and `closed` are covered at the unit and action level (tests/unit/app/register-actions.test.ts).

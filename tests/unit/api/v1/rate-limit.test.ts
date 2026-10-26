@@ -56,6 +56,16 @@ describe("the client address", () => {
     expect(checkRateLimit(from("another-garbage"))?.status).toBe(429);
   });
 
+  it("with trust on and no proxy in front the socket's own loopback address (what next start writes into the header) is the one shared bucket, not a client", () => {
+    process.env.AUTH_TRUST_PROXY = "1";
+    for (let i = 0; i < 100; i += 1) expect(checkRateLimit(from(["127.0.0.1", "::1", "::ffff:127.0.0.1"][i % 3])), String(i)).toBeNull();
+    // the three spellings and a request with no header at all used up one allowance together
+    expect(checkRateLimit(from("127.0.0.1"))?.status).toBe(429);
+    expect(checkRateLimit(from())?.status).toBe(429);
+    // a real client address next to them is not limited by it
+    expect(checkRateLimit(from(fresh()))).toBeNull();
+  });
+
   it("the allowance comes back when the window is over", () => {
     process.env.AUTH_TRUST_PROXY = "1";
     const a = fresh();

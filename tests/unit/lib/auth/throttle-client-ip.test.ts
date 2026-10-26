@@ -41,6 +41,19 @@ describe("clientIp", () => {
     expect(clientIp(headers({ "x-forwarded-for": ",203.0.113.7" }), env)).toBe(UNTRUSTED_IP);
   });
 
+  // `next start` puts the socket's own address in X-Forwarded-For when a request carries none (base-server.js: `x-forwarded-for ??= remoteAddress`), so with trust on
+  // and no proxy in front EVERY client arrives as the loopback address. That is not a client: it is the shared bucket, with the shared ceiling.
+  it("a loopback address (what Next itself writes when no proxy did) is the shared bucket, not a client of its own", () => {
+    const env = { AUTH_TRUST_PROXY: "1" };
+    for (const value of ["127.0.0.1", "127.0.0.2", "127.255.255.254", "::1", "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1", "::FFFF:127.0.0.1", "127.0.0.1, 203.0.113.7"]) {
+      expect(clientIp(headers({ "x-forwarded-for": value }), env), value).toBe(UNTRUSTED_IP);
+    }
+    // an address that only looks like one is still an address
+    for (const value of ["128.0.0.1", "126.255.255.255", "::2", "2001:db8::1", "::ffff:128.0.0.1", "10.0.0.1"]) {
+      expect(clientIp(headers({ "x-forwarded-for": value }), env), value).toBe(value.toLowerCase());
+    }
+  });
+
   it("does not read any other header (X-Real-IP, Forwarded, CF-Connecting-IP are not the contract)", () => {
     const env = { AUTH_TRUST_PROXY: "1" };
     expect(clientIp(headers({ "x-real-ip": "203.0.113.7", forwarded: "for=203.0.113.8", "cf-connecting-ip": "203.0.113.9" }), env)).toBe(UNTRUSTED_IP);

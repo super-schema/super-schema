@@ -64,14 +64,24 @@ export const hashEmail = (email: string): string => keyedDigest("email", normali
 /** The stored form of a client address (or of `UNTRUSTED_IP`): HMAC-SHA-256 (hex), keyed with the auth secret. */
 export const hashIp = (ip: string): string => keyedDigest("ip", ip);
 
+/** The loopback addresses: 127.0.0.0/8, ::1 (any spelling) and their IPv4-mapped form. */
+function isLoopback(address: string): boolean {
+  const mapped = address.replace(/^::ffff:/i, "");
+  if (isIP(mapped) === 4) return mapped.startsWith("127.");
+  return /^(0{0,4}:){1,7}0{0,3}1$/.test(address) || address === "::1";
+}
+
 /**
  * The client address of a request: the left-most entry of `X-Forwarded-For` when `AUTH_TRUST_PROXY` is exactly "1" and the entry is an IP
- * address, else `UNTRUSTED_IP`. A header that is missing, empty or garbage does not make a bucket of its own.
+ * address, else `UNTRUSTED_IP`. A header that is missing, empty or garbage does not make a bucket of its own, and neither does a LOOPBACK
+ * address: `next start` writes the socket's own address into the header when a request carries none, so with trust on and no proxy in front every
+ * client arrives as 127.0.0.1 / ::1, which tells clients apart no better than no header at all (the shared bucket, with the shared ceiling).
  */
 export function clientIp(headers: { get(name: string): string | null }, env: Readonly<Record<string, string | undefined>> = process.env): string {
   if (env.AUTH_TRUST_PROXY !== "1") return UNTRUSTED_IP;
   const first = (headers.get("x-forwarded-for") ?? "").split(",")[0]?.trim() ?? "";
-  return first !== "" && isIP(first) !== 0 ? first.toLowerCase() : UNTRUSTED_IP;
+  if (first === "" || isIP(first) === 0 || isLoopback(first)) return UNTRUSTED_IP;
+  return first.toLowerCase();
 }
 
 /**

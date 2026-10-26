@@ -47,7 +47,8 @@ or `AUTH_TRUST_HOST=true` there). The e2e release runner sets both for its own a
 **The client address** (`AUTH_TRUST_PROXY`, used by the sign-in throttle, below, and by the REST API's rate limit: 100 requests a minute per address on `emit`, `validate` and
 `event-specs`). Set `AUTH_TRUST_PROXY=1` only when a reverse proxy in front of the app **sets
 `X-Forwarded-For` itself and overwrites whatever the client sent** (nginx `proxy_set_header X-Forwarded-For $remote_addr;`, most cloud load balancers). The app then
-takes the **left-most** entry as the client address. If the proxy appends instead of overwriting, a client can write that header and choose its own bucket:
+takes the **left-most** entry as the client address (a loopback address, 127.0.0.0/8 or `::1`, counts as no address: `next start` writes the socket's own address into the header when a request
+carries none, so with the setting on and no proxy in front everybody would otherwise be one client with a ceiling of five). If the proxy appends instead of overwriting, a client can write that header and choose its own bucket:
 leave the setting off. Without it every request is in one shared bucket (see "Throttling"), and **a header a REST API caller makes up buys no fresh rate-limit
 allowance** (KD-028: the limiter used to read `X-Forwarded-For` unconditionally). The 429 answer of the REST API is its own error envelope,
 `{ "success": false, "error": { "code": "RATE_LIMITED", "message": ..., "details": { "retryAfter": <seconds> } } }`, with `Retry-After` and `X-RateLimit-*` headers. The limiter is
