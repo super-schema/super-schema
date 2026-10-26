@@ -5,7 +5,8 @@
  */
 import type { Result } from "@/types/result";
 import { err, ok } from "@/types/result";
-import { getActionContext, sanitizeActionError } from "@/lib/action-context";
+import { getPrincipal } from "@/lib/access/principal";
+import { sanitizeActionError } from "@/lib/action-context";
 import { withCompileTimeout } from "@/lib/compiler/import-limits";
 import { ImportLimiter, urlImportLimiter } from "@/lib/importers/import-limiter";
 import { DEFAULT_LIMITS } from "@/lib/importers/jsonschema-ref-resolver";
@@ -29,8 +30,10 @@ export function runJsonSchemaUrlImport(url: string, deps?: UrlImportDeps, option
 }
 
 async function runInner(url: string, deps?: UrlImportDeps, options?: UrlImportOptions): Promise<Result<TypeSpecImportResult>> {
-  const ctx = await getActionContext();
-  if (!ctx) return err({ code: "UNAUTHORIZED", message: "Not authenticated" });
+  // The action in front of this core asked the policy (`import.run`) before calling it; the core only needs to know WHO is importing, for the per-user
+  // admission window: the principal (by id; nobody for no session, a disabled user or a stale one).
+  const principal = await getPrincipal();
+  if (!principal) return err({ code: "UNAUTHORIZED", message: "Not authenticated" });
 
   if (typeof url !== "string" || !url.trim()) {
     return err({
@@ -50,7 +53,7 @@ async function runInner(url: string, deps?: UrlImportDeps, options?: UrlImportOp
   // Admission control (see import-limiter.ts): a slot per running import and a per-user window. Taken after the cheap checks above, so a
   // malformed request costs the user nothing. The slot is released when the import itself ends, not when the action stops waiting for it
   // (a timeout abandons the import, it does not cancel it, and the next one must not start on top of it).
-  const slot = (options?.limiter ?? urlImportLimiter).acquire(ctx.userId);
+  const slot = (options?.limiter ?? urlImportLimiter).acquire(principal.userId);
   if (!slot.ok) {
     return err({
       code: slot.reason === "busy" ? "IMPORT_BUSY" : "RATE_LIMITED",

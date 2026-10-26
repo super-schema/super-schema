@@ -21,8 +21,9 @@ const DEFINITIONS = [
 ].map((path) => path.replaceAll("\\", "/"));
 
 /**
- * TEMPORARY. The readers the access-control Task 5b / 6 / 7 still have to move to the policy, by owning area. Each one only sees the label
- * as the PLATFORM role (not a role over a resource), so the worst it does today is refuse a tenant administrator, never admit one.
+ * TEMPORARY. What still mentions the label after Task 5b, each with its reason: the API v1 context builders (Task 6 replaces them with the principal
+ * and the key's tenant and role) and the dead oRPC routers (Task 7 deletes them: nothing mounts them). No service and no action reads the label any
+ * more. Each one only sees the label as the PLATFORM role (not a role over a resource), so the worst it does today is refuse a tenant administrator.
  */
 const PENDING_TASK_5B: Record<string, string> = {
   "src/app/api/v1/health/route.ts": "API v1 (Task 6)",

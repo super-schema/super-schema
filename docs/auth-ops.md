@@ -119,11 +119,13 @@ look-up by e-mail: after a database reset and reseed an old session names a user
 the end of the session. A signed-in user who holds no role in any tenant lands on `/no-access` (which shows who is signed in, says to ask an administrator, and offers to sign out), and the tenant they
 work in (the `active_tenant` cookie) is only ever one they hold a role in.
 
-A role limits what a user may change, and it also decides which tenants the user may open. The entity, schema, publish, deploy, domain-asset, import and glossary actions ask the
-policy before they read or write: the resource must lie in the tenant in view and a role of the user's must cover it (a domain- or product-scoped role judges at that domain or product;
-a viewer reads, an author edits, a steward publishes and deploys, a tenant administrator deletes a domain). The product, event, trait, governance, retention, deployments, admin
-actions, the API routes and the page loaders still check the tenant only until the rest of the access-control work has moved them (KD-034 in `docs/testing/known-defects.md`; the
-deny-by-default test lists each by name).
+A role limits what a user may change, and it also decides which tenants the user may open. **Every server action** asks the policy before it reads or writes (the deny-by-default
+test fails for a new one that does not): the resource must lie in the tenant in view and a role of the user's must cover it (a domain- or product-scoped role judges at that domain or
+product; a viewer reads, an author edits, a steward publishes, deploys, makes a product or a domain and decides governance requests, a compliance officer reads the compliance pages, a tenant
+administrator deletes a domain or a product and manages the tenant's users and roles). Platform items (health, emitter configuration, webhooks, git configuration, the classification taxonomy and a
+*global* type-mapping override, which changes every tenant's mapping) are for a global administrator only, whatever a user holds in a tenant. Lists across the tenant (governance requests, the retention
+page, the deployment overview, external event references, "who uses", a concept's linked fields) show a user only what their roles cover. What does not ask the policy yet: the API routes (`/api/*`,
+`/api/v1`) and the page loaders that read the database directly (KD-034 in `docs/testing/known-defects.md`; the deny-by-default test lists each route by name).
 
 What to do on any deployment that is not a laptop:
 
@@ -131,7 +133,7 @@ What to do on any deployment that is not a laptop:
    A database that was seeded earlier keeps `admin@admin.com` / `admin`: change that password straight away (there is no UI for it yet: update the
    `User.password` bcrypt hash in the database, or delete the user once you have another administrator).
 2. Behind a reverse proxy: let it overwrite `X-Forwarded-For` and set `AUTH_TRUST_PROXY=1`; also keep a rate limit on `/api/auth/*` at the proxy (the throttle covers password attempts, not requests that never reach the check).
-3. Keep the app on a private network, or behind an authenticating proxy (SSO, a VPN), until the roles are enforced everywhere (KD-034).
+3. Keep the app on a private network, or behind an authenticating proxy (SSO, a VPN), until the API routes and the page loaders ask the policy too (KD-034).
 
 ## Health endpoint
 

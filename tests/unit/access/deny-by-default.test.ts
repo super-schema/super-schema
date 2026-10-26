@@ -8,17 +8,17 @@
  * The scan reads the syntax tree (tests/helpers/access-scan.ts): a guard that is only named in a comment or a string counts for nothing, and
  * a guard that comes after the function's first prisma / service / fetch call counts for nothing either. Its own behaviour is pinned below.
  *
- * TEMPORARY while access-control Task 5 and 6 are in progress: `PENDING_TASK_5B` (server actions) and `PENDING_TASK_6` (routes) name what is
- * still unguarded, each with its owning area, so the test is green now. The lists only shrink: an entry whose function is in fact guarded (or
- * no longer exists) fails the test until it is removed, so 5b and Task 6 must empty them and cannot leave a stale entry behind.
+ * TEMPORARY while access-control Task 6 is in progress: `PENDING_TASK_6` (routes) names what is still unguarded, each with its owning surface, so
+ * the test is green now. The list only shrinks: an entry whose handler is in fact guarded (or no longer exists) fails the test until it is
+ * removed, so Task 6 must empty it and cannot leave a stale entry behind. `PENDING_TASK_5B` (server actions) is EMPTY since Task 5b: every
+ * server action is guarded or public, and a new one with neither fails the first test.
  */
 import { describe, expect, it } from "vitest";
 import { PUBLIC_ACTIONS, PUBLIC_ROUTES, isPublicRoute } from "@/lib/access/public-actions";
 import { analyzeModule, scanRepository } from "../../helpers/access-scan";
 
-/** TEMPORARY. Server actions still unguarded, keyed `<file>#<function>` -> owning area (the agent that guards them). */
-const PENDING_TASK_5B: Record<string, string> = {
-};
+/** EMPTY (Task 5b is done). Server actions still unguarded, keyed `<file>#<function>` -> owning area; an entry here fails once the action is guarded. */
+const PENDING_TASK_5B: Record<string, string> = {};
 
 /** TEMPORARY. Route handlers still unguarded, keyed `<route path>#<METHOD>` -> owning surface. */
 const PENDING_TASK_6: Record<string, string> = {

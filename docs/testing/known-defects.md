@@ -209,15 +209,15 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - cost to fix: decide where a request is raised (a breaking publish, a classification change) and call it there, in the same transaction as the
   publish, and where the gate is asked (before an emission); this is a product decision, not a fix.
 
-## KD-023: who may SEE governance requests is not decided
+## KD-023: a viewer sees the whole impact report of a governance request
 
-- status: no-test (a policy question; `governance-compliance.spec.ts` shows the current rule in a comment: any signed-in user sees the requests of the tenant they are viewing)
-- symptom: the dashboard lists the requests of the tenant being viewed to any signed-in user, whatever their role (registration is open). A
-  request's impact report carries the entity's name, a summary of the change and the e-mail of the owner of each affected consumer. Deciding
-  (approve, reject) is limited to Steward and Admin; seeing is not limited at all.
-- where: `src/app/(dashboard)/governance/actions.ts` (`getGovernanceRequestsAction`: a session and no role).
-- cost to fix: a role floor for the list (and a narrower impact report for the roles below it), with the access-control work: tenant-, domain- and
-  product-scoped roles. Which tenant's requests a user sees is the tenant cookie, which is not an access boundary either: KD-034.
+- status: no-test (a policy question; the rule that decides WHO may see a request is in place and unit-tested, `governance-area-access.test.ts`: this is what is left of it)
+- symptom: who sees which requests is decided now (access-control Task 5b): a user needs a role in the tenant being viewed, and a request is listed only when their roles cover the entity it is
+  about (`governance.read` over that entity; a domain- or product-scoped role sees the requests of its own domains and products, a user with no role sees none). Deciding is `governance.decide`
+  (a steward and above). What is left: every role that may SEE a request sees its whole impact report, which carries the entity's name, a summary of the change and the e-mail of the owner of each
+  affected consumer, down to a viewer. (`governance-compliance.spec.ts` still says in a comment that the rule is "not yet decided": the spec is rewritten with the access matrix, Task 9.)
+- where: `src/app/(dashboard)/governance/actions.ts` (`getGovernanceRequestsAction`), `src/services/governance.service.ts` (`getAllRequests`).
+- cost to fix: a narrower impact report for the roles below steward (the consumers' owners' e-mails are the sensitive part); a product decision, not a policy one.
 
 ## KD-024: no caller can create a webhook endpoint through the REST API
 
@@ -329,15 +329,16 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   a user who holds a role in the tenant that is not in view, and for a global administrator) AND a covering role (`authorizeInActiveTenant`); the entity, field, schema, publish,
   deploy, type-mapping (per entity), TypeSpec-source, version, domain-asset, import, entity-creation and tenant-level-entity actions, the Domains list, the domain create and delete
   and the glossary ask it before they read or write (domain- and product-scoped roles are judged at the row's own domain and product).
-  What is NOT yet a boundary, and is listed by name (with its owning area) in `PENDING_TASK_5B` and `PENDING_TASK_6` of `tests/unit/access/deny-by-default.test.ts`: the product,
-  event, trait, usage, governance, retention, deployments-overview and admin actions; the global type-mapping service checks, the other services that read a role label; the
-  `/api/*` and `/api/v1` routes; and every server-component loader that reads the database directly except the entity workspace. They still check the ACTIVE TENANT only (`inActiveTenant`
-  and its siblings, each marked `TODO(access-control task 5)`) or nothing, so a user with any role in a tenant can still do what the old rules allowed there until those move to
-  `authorize`. KD-016, KD-020 and KD-023 must not be read as a boundary either.
+  Fixed since (access-control Task 5b, the second half): the product, event, trait, usage, governance, retention, deployment-overview, admin (users, roles, domains, platform items) and
+  type-mapping actions and services ask it too, so `PENDING_TASK_5B` of `tests/unit/access/deny-by-default.test.ts` is EMPTY: every server action is guarded or public, and no service or action reads
+  the platform role label (`no-role-label.test.ts` lists what still mentions it: the API v1 context builders and the dead oRPC routers). Lists across the tenant are filtered to what the caller's roles
+  cover, in the query. What is NOT yet a boundary, and is listed by name in `PENDING_TASK_6`: the `/api/*` and `/api/v1` routes (a session on `/api/v1` is still a viewer, the API key still a platform
+  administrator), and every server-component loader that reads the database directly except the entity workspace. They still check the ACTIVE TENANT only or nothing, so a user with any role in a tenant
+  can still read through them what the old rules allowed there. KD-016 and KD-020 must not be read as a boundary either.
   The first write-up of this entry (and the Task 3 report) said a role-less or disabled user reached nothing through the older actions: that was wrong. Until Task 5 they reached,
   with a valid session and no role, `getDeploymentOverviewAction` and `getDomainsAction` (every tenant's entity names, versions and domains), the eight glossary actions (which ran as a
   hard-coded AUTHOR for ANY session), the three import actions (the converter, the compiler and an outbound fetch on their say-so), and `/api/v1/*` (a session there is a VIEWER). The
-  Domains list, the three import actions and the glossary are closed now; `getDeploymentOverviewAction` and `/api/v1` are still open (Tasks 5b and 6), and registration was open until Task 4.
+  Domains list, the three import actions, the glossary and `getDeploymentOverviewAction` are closed now; `/api/v1` is still open (Task 6), and registration was open until Task 4.
   `/api/ai/generate-entity` checks that the domain it is given belongs to the tenant being viewed (an id of another tenant answers like an unknown one), which is the same soft rule.
 - where: `src/lib/active-tenant.ts`, `setActiveTenantAction`, `src/app/api/tenants/route.ts`.
 - cost to fix: the rest of the access-control work: every action, route and page loader asks `authorize(action, resource)` (Tasks 5 and 6), so the role and the scope decide, not the tenant alone.
@@ -434,3 +435,21 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   (`nestedSchemaNodes` looks through a wrapper member without reporting what its `$ref` brings).
 - where: `src/lib/importers/jsonschema.importer.ts` (`nullableWrapperMembers`, `nestedSchemaNodes`: a view found under a wrapper is walked but not reported; `buildFields` takes the definition views of the field's own `$ref`s only).
 - cost to fix: have `buildFields` add the inline-definition views of the wrapper members to the field's annotation sources, with a test of the shape above (description, vendor key, constraints).
+
+## KD-043: the glossary is one list for every tenant
+
+- status: no-test (a design limit of the table: the access rule is the owner's, "read: viewer anywhere in the tenant, write: author anywhere in the tenant", and it is unit-tested; what it cannot say is "in whose glossary")
+- symptom: `business_concepts` has no tenant column, and a concept's name is unique across the whole database. An author of ANY tenant creates, edits or (when nothing is linked to it) deletes a concept that every
+  other tenant reads, and a name taken in one tenant is taken in all. What a tenant cannot see is the OTHER tenants' links: a concept's field links are listed only for fields of the tenant being viewed that the
+  caller may read (`business-concept.service.ts`, `getConcepts` / `getConceptById`). The refusal to delete a linked concept still counts links of every tenant.
+- where: `prisma/schema.prisma` (`BusinessConcept`), `src/services/business-concept.service.ts`, `src/app/(dashboard)/glossary/actions.ts`.
+- cost to fix: a `tenantId` on `BusinessConcept` (unique per tenant) and a migration that gives the existing concepts to every tenant that links one; or restricting writes to a global administrator.
+
+## KD-044: an event document can name an entity or an event its author may not read
+
+- status: no-test (the readers are closed, the saved reference is not)
+- symptom: the pin picker, the pinned schema and the external-reference loaders answer only for entities and events the caller's roles cover (access-control Task 5b). Saving an event document whose message pins an
+  entity, or whose reference names an event, of a domain or product outside the author's roles is not refused: the references are validated against the TENANT, not against the author's scope, and publishing resolves
+  the referenced version's stored content into the event's own emission. A domain-scoped author who learns an id from outside their scope can therefore read what the pin resolves to through the event's preview.
+- where: `src/services/events/event.service.ts` (`updateEventDocument`, the reference and pin validation), `src/services/events/event-publish.service.ts`.
+- cost to fix: pass the caller's assignments into the document validation and refuse a pin or reference that no role of theirs covers (`entity.read` / `event.read`), the way the loaders do.

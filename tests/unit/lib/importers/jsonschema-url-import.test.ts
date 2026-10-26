@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({ ctx: vi.fn() }));
+// WHO is importing is the principal (a user id, or nobody); the policy was asked by the action in front of this core.
+vi.mock("@/lib/access/principal", () => ({ getPrincipal: h.ctx }));
 vi.mock("@/lib/action-context", () => ({
-  getActionContext: h.ctx,
   sanitizeActionError: async (r: unknown) => {
     try {
       return await r;

@@ -18,7 +18,6 @@ const h = vi.hoisted(() => ({
   compile: vi.fn(),
   convert: vi.fn(),
   urlImport: vi.fn(),
-  getActionContext: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));

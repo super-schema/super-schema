@@ -1,10 +1,10 @@
 // @vitest-environment node
 /**
  * The older role-less guards of src/lib/action-context.ts (`inActiveTenant`, `isInActiveTenant`, `targetInActiveTenant`, `runMutation(run)` and
- * `withOwnedTarget(target, run)` without an action) still work, as adapters, until access-control Task 5 gives every caller its action. Every
- * line that still uses one carries `TODO(access-control task 5)`, so that task (and the deny-by-default scan) can list what is left, and a
- * NEW use of an adapter cannot slip in unmarked: a new guarded call passes an action (`runMutation({ action, resource }, run)`,
- * `withOwnedTarget("<action>", target, run)`) or asks `authorize` / `authorizeSubject`.
+ * `withOwnedTarget(target, run)` without an action, and the `getActionContext` chain) asked the ACTIVE TENANT only and no role. Access-control
+ * Task 5 gave every caller its action, so NOTHING outside action-context.ts uses one any more (they stay exported, with their own tests, until
+ * the cleanup removes them): this scan keeps it so. A new guarded call passes an action (`runMutation({ action, resource }, run)`,
+ * `withOwnedTarget("<action>", target, run)`) or asks `authorize` / `authorizeSubject` / `guardSubject`.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 const MARKER = "TODO(access-control task 5)";
 
 /** A call of a role-less adapter, not a call that names an action (`runMutation({` / `withOwnedTarget("`). */
-const ADAPTER_CALL = /\b(inActiveTenant|isInActiveTenant|targetInActiveTenant|runMutation|withOwnedTarget)\(/;
+const ADAPTER_CALL = /\b(inActiveTenant|isInActiveTenant|targetInActiveTenant|runMutation|withOwnedTarget|getActionContext)\(/;
 const GUARDED_CALL = /\b(runMutation\(\s*\{|withOwnedTarget\(\s*["'`])/;
 
 /** Where the adapters are defined, and nothing else is exempt. */
@@ -46,9 +46,8 @@ function adapterUses(): Array<{ file: string; line: number; text: string; marked
 }
 
 describe("legacy role-less guard adapters", () => {
-  it("every use carries the marker access-control Task 5 searches for", () => {
-    const unmarked = adapterUses().filter((use) => !use.marked);
-    expect(unmarked.map((use) => `${use.file}:${use.line}  ${use.text.slice(0, 100)}`)).toEqual([]);
+  it("no source file uses a role-less adapter (every caller asks the policy)", () => {
+    expect(adapterUses().map((use) => `${use.file}:${use.line}  ${use.text.slice(0, 100)}`)).toEqual([]);
   });
 
   it("the scan itself recognises an adapter call and a guarded one (it is not vacuous, now that Task 5b moved the callers)", () => {
@@ -58,7 +57,6 @@ describe("legacy role-less guard adapters", () => {
     expect(adapter("  return withOwnedTarget(target, async () => save());")).toBe(true);
     expect(adapter('  return runMutation({ action: "entity.write", resource }, run);')).toBe(false);
     expect(adapter('  return withOwnedTarget("event.write", target, run);')).toBe(false);
-    expect(adapterUses().length).toBeGreaterThanOrEqual(0);
   }, 30_000);
 
   it("a marker is only ever on a line that is an adapter use (no stale markers)", () => {
