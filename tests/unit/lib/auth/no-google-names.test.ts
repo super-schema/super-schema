@@ -58,14 +58,15 @@ describe("no Google-specific setting is left", () => {
   it("has no GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_ALLOWED_DOMAINS or any other bare GOOGLE_ name", () => {
     const hits: string[] = [];
     for (const file of files) {
-      readFileSync(file, "utf8")
-        .split("\n")
-        .forEach((line, index) => {
-          if (BARE_GOOGLE_NAME.test(line)) hits.push(`${path.relative(REPO, file)}:${index + 1}: ${line.trim().slice(0, 120)}`);
-        });
+      const text = readFileSync(file, "utf8");
+      if (!text.includes("GOOGLE_")) continue; // the cheap test first: most files never say it
+      text.split("\n").forEach((line, index) => {
+        if (BARE_GOOGLE_NAME.test(line)) hits.push(`${path.relative(REPO, file)}:${index + 1}: ${line.trim().slice(0, 120)}`);
+      });
     }
     expect(hits, "the settings of a provider are AUTH_PROVIDER_<KEY>_* (docs/auth.md); the Google-only names are gone").toEqual([]);
-  });
+    // (a whole-repository scan: 5 s under the load of the whole suite, so a 60 s limit instead of the default 5 s)
+  }, 60_000);
 
   it("the settings docs show Google through the generic names only", () => {
     const docs = readFileSync(path.join(REPO, "docs", "auth.md"), "utf8");
