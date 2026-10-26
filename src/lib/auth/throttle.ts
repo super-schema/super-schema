@@ -12,7 +12,7 @@
  *     is by hash, so nothing here can tell them apart. A password attempt takes its place BEFORE its password is compared (`reserveLoginAttempt`: a
  *     `pending` row that counts as a failure until it is settled), so attempts made at the same moment cannot all pass the check.
  *   - registration (`register`): every ATTEMPT counts against the client address (5 in 15 minutes): a success creates an account, which is
- *     what is being limited.
+ *     what is being limited. An attempt takes its place BEFORE the work (`reserveCountedAttempt`), like a password attempt does.
  *   - accepting an invitation (`invite_accept`) and using a reset link (`reset_consume`): 5 FAILURES in 15 minutes per client address.
  *   - a sign-in through an identity provider that the policy REFUSED (`provider_refused:<reason>`, outcome `refused`: src/lib/auth/provider-callback.ts)
  *     counts, whatever the reason, against the client address (5 in 15 minutes; the shared bucket's ceiling when no proxy is trusted). The reason is the tail
@@ -207,6 +207,17 @@ export type LoginReservation = { id: string; locked: boolean; retryAfterSeconds?
 export async function reserveLoginAttempt(input: { email: string; ip: string }, now: Date = new Date()): Promise<LoginReservation> {
   const id = await insertEvent("login", { email: input.email, ip: input.ip, outcome: "pending" }, now);
   const waits = await lockWaits(input, "login", now, true);
+  return waits.length === 0 ? { id, locked: false } : { id, locked: true, retryAfterSeconds: Math.max(...waits) };
+}
+
+/**
+ * `reserveLoginAttempt` for a kind in which EVERY attempt counts (`register`): the `attempt` row is written first and the count includes it, so of any
+ * number of simultaneous attempts from one address at most `limit` are let through. There is nothing to settle for an attempt that is let through; one that
+ * is refused is settled as `locked` (`settleAuthEvent`) so that it stops counting. Throws on a database failure; the caller fails closed.
+ */
+export async function reserveCountedAttempt(kind: Extract<ThrottleKind, "register">, input: { ip: string }, now: Date = new Date()): Promise<LoginReservation> {
+  const id = await insertEvent(kind, { ip: input.ip, outcome: "attempt" }, now);
+  const waits = await lockWaits(input, kind, now, true);
   return waits.length === 0 ? { id, locked: false } : { id, locked: true, retryAfterSeconds: Math.max(...waits) };
 }
 

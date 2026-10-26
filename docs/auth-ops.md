@@ -151,7 +151,7 @@ inserts that follow (no scheduler). No screen clears a lock: it lifts when its w
 | Endpoint | What counts | Limit |
 | --- | --- | --- |
 | Sign-in | failures, per e-mail hash **and**, independently, per client-address hash | 5 in 15 minutes each; a success resets the e-mail's count (not the address's); an attempt refused because of the lock is recorded but does not count. An attempt takes its place BEFORE its password is compared (a `pending` row that counts as a failure until it is settled), so requests that arrive together cannot all be tried: at most 5 passwords per e-mail and window |
-| `/register` (open mode) | every attempt | 5 in 15 minutes per client address |
+| `/register` (open mode) | every attempt, counted from the moment it takes its place (before the password is hashed) | 5 in 15 minutes per client address |
 | `/invite/<token>` and `/reset/<token>` | dead-link failures (a wrong, expired or used token), not a password the policy refused | 5 in 15 minutes per client address; a locked address gets the same "not valid or expired" answer |
 | Sign-in through an identity provider ([`auth.md`](auth.md)) | refusals by the provider policy (`provider_refused:<reason>` rows), whatever the reason | 5 in 15 minutes per client address (the shared ceiling without a trusted proxy); the password login is not locked by it; a locked address is refused with the same generic answer |
 
@@ -159,7 +159,7 @@ Without `AUTH_TRUST_PROXY=1` every request is in **one shared address bucket**, 
 lock everybody out) and the per-e-mail limit (5) is the protection that matters. Set `AUTH_TRUST_PROXY=1` behind a proxy that overwrites `X-Forwarded-For` (above) to get a
 bucket per client. A throttle that cannot be read, or in which a sign-in cannot take its place, refuses the attempt (fail closed). An attempt that never settles (the process died during the compare) stays counted as a failure for the rest of its window, which errs toward the lock.
 
-Only the password sign-in reserves its place. `/register`, `/invite/<token>`, `/reset/<token>` and the provider check read the count and write afterwards, so a burst of simultaneous requests can pass their limit by about the size of the burst. None of them lets a guess be tried against a secret that can be found by guessing: an invitation or reset token is 32 random bytes, and registration only makes an account with no role.
+The password sign-in and `/register` reserve their place: the row is written first and counted with the others, so of any number of simultaneous requests at most five are let through (a refused one stops counting). `/invite/<token>`, `/reset/<token>` and the provider check read the count and write afterwards, so a burst of simultaneous requests can pass their limit by about the size of the burst. None of them lets a guess be tried against a secret that can be found by guessing: an invitation or reset token is 32 random bytes, and a refused provider sign-in tries no password.
 
 ### Invitation and reset links
 

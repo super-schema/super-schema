@@ -5,7 +5,16 @@
  * Server only (it reads the request's headers).
  */
 import { headers } from "next/headers";
-import { clientIp, isThrottled, recordAuthEvent, type AuthEventKind, type AuthEventOutcome, type ThrottleKind } from "@/lib/auth/throttle";
+import {
+  clientIp,
+  isThrottled,
+  recordAuthEvent,
+  reserveCountedAttempt,
+  settleAuthEvent,
+  type AuthEventKind,
+  type AuthEventOutcome,
+  type ThrottleKind,
+} from "@/lib/auth/throttle";
 
 /** The client address bucket of the request being served (`clientIp`: a trusted proxy header, else the constant bucket). */
 export async function requestIp(): Promise<string> {
@@ -24,6 +33,28 @@ export async function isBlocked(kind: Exclude<ThrottleKind, "provider_refused">,
     return throttled;
   } catch (error) {
     console.error(`[auth] could not read the ${kind} throttle; refusing the attempt`, error);
+    return true;
+  }
+}
+
+/**
+ * Takes this address's place in `kind` BEFORE the work is done, and says whether the attempt is refused (true). For a kind in which every attempt counts
+ * (`register`), asking first and recording afterwards lets any number of simultaneous attempts all pass the question: the row is written first and counted
+ * with the others (`reserveCountedAttempt`). A refused attempt stops counting, so refusing does not extend the lock. Fails CLOSED, like `isBlocked`.
+ */
+export async function reserveAttempt(kind: Extract<ThrottleKind, "register">, ip: string): Promise<boolean> {
+  try {
+    const reservation = await reserveCountedAttempt(kind, { ip });
+    if (reservation.locked) {
+      try {
+        await settleAuthEvent(reservation.id, "locked");
+      } catch (error) {
+        console.error(`[auth] could not settle a refused ${kind} attempt; it stays counted`, error);
+      }
+    }
+    return reservation.locked;
+  } catch (error) {
+    console.error(`[auth] could not take a place in the ${kind} throttle; refusing the attempt`, error);
     return true;
   }
 }

@@ -7,7 +7,7 @@ import { INVALID_LINK_MESSAGE, REGISTRATION_CLOSED_MESSAGE } from "@/lib/auth/me
 import { hashPassword } from "@/lib/auth/password-hash";
 import { normalizeEmail, validatePassword } from "@/lib/auth/password-policy";
 import { registrationMode } from "@/lib/auth/registration-mode";
-import { isBlocked, recordQuietly, requestIp } from "@/lib/auth/request-guard";
+import { requestIp, reserveAttempt } from "@/lib/auth/request-guard";
 import { acceptInvitationAction } from "../invite/[token]/actions";
 
 export type RegisterState = {
@@ -69,8 +69,7 @@ async function registerOpen(formData: FormData): Promise<RegisterState | undefin
   if (!policy.ok) return { fieldErrors: { password: policy.message } };
 
   const ip = await requestIp();
-  if (await isBlocked("register", ip)) return { error: "Too many attempts. Try again in a few minutes." };
-  await recordQuietly("register", { ip, outcome: "attempt" });
+  if (await reserveAttempt("register", ip)) return { error: "Too many attempts. Try again in a few minutes." };
 
   try {
     const passwordHash = await hashPassword(password);

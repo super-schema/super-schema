@@ -122,6 +122,18 @@ describe("registering in open mode", () => {
     expect(await register("sixth@example.com")).toEqual({ redirectTo: "/login?notice=registered" });
   }, 120_000);
 
+  it("simultaneous registrations from one address: never more than five are let through (asking first and recording afterwards would let all of them through)", async () => {
+    const refusal = { state: { error: "Too many attempts. Try again in a few minutes." } };
+    const results = await Promise.all(Array.from({ length: 20 }, (_, i) => register(`burst${i}@example.com`)));
+    const refused = results.filter((result) => JSON.stringify(result) === JSON.stringify(refusal)).length;
+    const accounts = await db().user.count();
+    expect(accounts).toBeLessThanOrEqual(5);
+    // every attempt that was let through made its account; every other was refused, and a refused attempt stops counting
+    expect(accounts).toBe(20 - refused);
+    expect(await db().authEvent.count({ where: { kind: "register", outcome: "attempt" } })).toBe(accounts);
+    expect(await db().authEvent.count({ where: { kind: "register", outcome: "locked" } })).toBe(refused);
+  }, 180_000);
+
   it("keeps only hashes of the address and of the e-mail in the throttle rows", async () => {
     await register("hashed@example.com");
     const rows = await db().authEvent.findMany();

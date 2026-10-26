@@ -16,8 +16,7 @@ const mocks = vi.hoisted(() => {
     transaction: vi.fn(),
     hashPassword: vi.fn(),
     requestIp: vi.fn(),
-    isBlocked: vi.fn(),
-    recordQuietly: vi.fn(),
+    reserveAttempt: vi.fn(),
     signIn: vi.fn(),
     acceptInvitationAction: vi.fn(),
     redirect: vi.fn((to: string) => {
@@ -35,7 +34,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 vi.mock("@/lib/auth/password-hash", () => ({ hashPassword: mocks.hashPassword }));
-vi.mock("@/lib/auth/request-guard", () => ({ requestIp: mocks.requestIp, isBlocked: mocks.isBlocked, recordQuietly: mocks.recordQuietly }));
+vi.mock("@/lib/auth/request-guard", () => ({ requestIp: mocks.requestIp, reserveAttempt: mocks.reserveAttempt }));
 vi.mock("@/lib/auth", () => ({ signIn: mocks.signIn }));
 vi.mock("@/app/(auth)/invite/[token]/actions", () => ({ acceptInvitationAction: mocks.acceptInvitationAction }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
@@ -71,8 +70,7 @@ beforeEach(() => {
   mocks.create.mockResolvedValue({ id: "new-user" });
   mocks.hashPassword.mockResolvedValue("hashed-password");
   mocks.requestIp.mockResolvedValue(IP);
-  mocks.isBlocked.mockResolvedValue(false);
-  mocks.recordQuietly.mockResolvedValue(undefined);
+  mocks.reserveAttempt.mockResolvedValue(false);
   mocks.acceptInvitationAction.mockResolvedValue({ error: INVALID_LINK_MESSAGE, invalid: true });
 });
 
@@ -80,7 +78,7 @@ describe("AUTH_REGISTRATION=closed", () => {
   it("refuses, and touches nothing: no throttle, no hash, no look-up, no account", async () => {
     mode("closed");
     expect(await outcome()).toEqual({ state: { error: REGISTRATION_CLOSED_MESSAGE } });
-    expect(mocks.isBlocked).not.toHaveBeenCalled();
+    expect(mocks.reserveAttempt).not.toHaveBeenCalled();
     expect(mocks.hashPassword).not.toHaveBeenCalled();
     expect(mocks.findUnique).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();
@@ -147,14 +145,20 @@ describe("AUTH_REGISTRATION=open", () => {
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
-  it("throttles per client address first and records the attempt (a success counts: an account is what is being limited)", async () => {
+  it("takes its place in the per-address throttle BEFORE any work (a success counts: an account is what is being limited)", async () => {
+    mocks.reserveAttempt.mockImplementation(async () => {
+      expect(mocks.hashPassword).not.toHaveBeenCalled();
+      expect(mocks.findUnique).not.toHaveBeenCalled();
+      expect(mocks.create).not.toHaveBeenCalled();
+      return false;
+    });
     await outcome();
-    expect(mocks.isBlocked).toHaveBeenCalledWith("register", IP);
-    expect(mocks.recordQuietly).toHaveBeenCalledWith("register", { ip: IP, outcome: "attempt" });
+    expect(mocks.reserveAttempt).toHaveBeenCalledWith("register", IP);
+    expect(mocks.create).toHaveBeenCalledTimes(1);
   });
 
   it("a locked address is told so, with nothing created and no bcrypt run", async () => {
-    mocks.isBlocked.mockResolvedValue(true);
+    mocks.reserveAttempt.mockResolvedValue(true);
     const result = await outcome();
     expect(result).toEqual({ state: { error: "Too many attempts. Try again in a few minutes." } });
     expect(mocks.hashPassword).not.toHaveBeenCalled();
@@ -168,7 +172,7 @@ describe("AUTH_REGISTRATION=open", () => {
       vi.clearAllMocks();
       mocks.hashPassword.mockResolvedValue("hashed-password");
       mocks.requestIp.mockResolvedValue(IP);
-      mocks.isBlocked.mockResolvedValue(false);
+      mocks.reserveAttempt.mockResolvedValue(false);
       mocks.findUnique.mockResolvedValue({ id: "someone" });
 
       const existing = await outcome();
@@ -179,7 +183,7 @@ describe("AUTH_REGISTRATION=open", () => {
       expect(mocks.create).not.toHaveBeenCalled();
       expect(mocks.signIn).not.toHaveBeenCalled();
       // The attempt counts the same.
-      expect(mocks.recordQuietly).toHaveBeenCalledWith("register", { ip: IP, outcome: "attempt" });
+      expect(mocks.reserveAttempt).toHaveBeenCalledWith("register", IP);
     });
 
     it("also when the database refuses the duplicate that won the race (or differs only by letter case)", async () => {
@@ -206,7 +210,7 @@ describe("AUTH_REGISTRATION=open", () => {
       expect(await outcome(registration(overrides))).toEqual({ state: { fieldErrors } });
       expect(mocks.findUnique).not.toHaveBeenCalled();
       expect(mocks.hashPassword).not.toHaveBeenCalled();
-      expect(mocks.isBlocked).not.toHaveBeenCalled();
+      expect(mocks.reserveAttempt).not.toHaveBeenCalled();
     });
 
     it.each([

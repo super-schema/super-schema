@@ -25,6 +25,7 @@ import {
   hashIp,
   isThrottled,
   recordAuthEvent,
+  reserveCountedAttempt,
   reserveLoginAttempt,
   settleAuthEvent,
 } from "@/lib/auth/throttle";
@@ -383,5 +384,57 @@ describe("a password attempt takes its place before it is tried (reserveLoginAtt
     const row = await db().authEvent.findUniqueOrThrow({ where: { id: place.id } });
     expect(row).toMatchObject({ kind: "login", outcome: "pending", emailHash: hashEmail("visible.name@example.test"), ipHash: hashIp("203.0.113.200") });
     expect(JSON.stringify(row).toLowerCase()).not.toMatch(/visible|example\.test|203\.0\.113/);
+  }, 60_000);
+});
+
+describe("a registration takes its place before it is made (reserveCountedAttempt)", () => {
+  const counted = (ip: string) => db().authEvent.count({ where: { ipHash: hashIp(ip), kind: "register", outcome: "attempt" } });
+
+  it("lets exactly five attempts through for one address and refuses the sixth, as the question asked after the fact did", async () => {
+    const ip = "203.0.113.50";
+    const results = [];
+    for (let i = 0; i < 6; i++) results.push(await reserveCountedAttempt("register", { ip }, NOW));
+    expect(results.map((r) => r.locked)).toEqual([false, false, false, false, false, true]);
+    expect(results[5].retryAfterSeconds).toBeGreaterThan(0);
+    expect(results[5].retryAfterSeconds).toBeLessThanOrEqual(15 * 60);
+    expect((await reserveCountedAttempt("register", { ip: "203.0.113.51" }, NOW)).locked).toBe(false);
+  }, 60_000);
+
+  it("a refused attempt settles as 'locked' and stops counting, so the refusals do not extend the lock", async () => {
+    const ip = "203.0.113.52";
+    for (let i = 0; i < 5; i++) await reserveCountedAttempt("register", { ip }, NOW);
+    const refused = await reserveCountedAttempt("register", { ip }, NOW);
+    expect(refused.locked).toBe(true);
+    expect(await counted(ip)).toBe(6);
+    await settleAuthEvent(refused.id, "locked");
+    expect(await counted(ip)).toBe(5);
+  }, 60_000);
+
+  it("only registrations of that address count: login failures and other addresses leave it alone", async () => {
+    const ip = "203.0.113.53";
+    await failTimes(5, "a@example.test", ip);
+    for (let i = 0; i < 5; i++) await reserveCountedAttempt("register", { ip: "203.0.113.54" }, NOW);
+    expect((await reserveCountedAttempt("register", { ip }, NOW)).locked).toBe(false);
+  }, 60_000);
+
+  it("attempts older than the window no longer count", async () => {
+    const ip = "203.0.113.55";
+    for (let i = 0; i < 5; i++) await recordAuthEvent("register", { ip, outcome: "attempt" }, ago(THROTTLE_WINDOW_MS + MINUTE));
+    expect((await reserveCountedAttempt("register", { ip }, NOW)).locked).toBe(false);
+  }, 60_000);
+
+  it("simultaneous attempts from one address: never more than five are let through", async () => {
+    for (let round = 0; round < 3; round++) {
+      await db().authEvent.deleteMany();
+      const places = await Promise.all(Array.from({ length: 20 }, () => reserveCountedAttempt("register", { ip: "203.0.113.60" })));
+      expect(places.filter((place) => !place.locked).length).toBeLessThanOrEqual(THROTTLE_MAX_FAILURES);
+    }
+  }, 120_000);
+
+  it("a row says 'attempt' with the address's hash only", async () => {
+    const place = await reserveCountedAttempt("register", { ip: "203.0.113.200" }, NOW);
+    const row = await db().authEvent.findUniqueOrThrow({ where: { id: place.id } });
+    expect(row).toMatchObject({ kind: "register", outcome: "attempt", emailHash: null, ipHash: hashIp("203.0.113.200") });
+    expect(JSON.stringify(row)).not.toContain("203.0.113");
   }, 60_000);
 });
