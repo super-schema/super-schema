@@ -7,6 +7,7 @@
 
 import crypto from "crypto";
 import type { Prisma } from "@/generated/prisma/client";
+import { ctxCan } from "@/lib/access";
 import { prisma } from "@/lib/db";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
@@ -106,7 +107,7 @@ export async function createEndpoint(
   ctx: ServiceContext
 ): Promise<Result<WebhookEndpoint>> {
   // RBAC: Admin only
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "platform.admin")) {
     return err({
       code: "FORBIDDEN",
       message: "Only Admin users can create webhook endpoints",
@@ -139,7 +140,7 @@ export async function updateEndpoint(
   input: UpdateWebhookEndpointInput,
   ctx: ServiceContext
 ): Promise<Result<WebhookEndpoint>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "platform.admin")) {
     return err({
       code: "FORBIDDEN",
       message: "Only Admin users can update webhook endpoints",
@@ -179,7 +180,7 @@ export async function deleteEndpoint(
   id: string,
   ctx: ServiceContext
 ): Promise<Result<void>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "platform.admin")) {
     return err({
       code: "FORBIDDEN",
       message: "Only Admin users can delete webhook endpoints",
@@ -201,7 +202,7 @@ export async function deleteEndpoint(
 export async function getEndpoints(
   ctx: ServiceContext
 ): Promise<Result<WebhookEndpoint[]>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "platform.admin")) {
     return err({
       code: "FORBIDDEN",
       message: "Only Admin users can view webhook endpoints",
@@ -216,7 +217,7 @@ export async function getDeliveries(
   endpointId: string,
   ctx: ServiceContext
 ): Promise<Result<WebhookDelivery[]>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "platform.admin")) {
     return err({
       code: "FORBIDDEN",
       message: "Only Admin users can view webhook deliveries",

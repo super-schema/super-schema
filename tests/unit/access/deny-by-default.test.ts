@@ -18,15 +18,6 @@ import { analyzeModule, scanRepository } from "../../helpers/access-scan";
 
 /** TEMPORARY. Server actions still unguarded, keyed `<file>#<function>` -> owning area (the agent that guards them). */
 const PENDING_TASK_5B: Record<string, string> = {
-  "src/app/(dashboard)/admin/actions.ts#getUsersAction": "5b admin",
-  "src/app/(dashboard)/admin/actions.ts#updateUserNameAction": "5b admin",
-  "src/app/(dashboard)/admin/actions.ts#assignRoleAction": "5b admin",
-  "src/app/(dashboard)/admin/actions.ts#removeRoleAction": "5b admin",
-  "src/app/(dashboard)/admin/actions.ts#getHealthAction": "5b admin",
-  "src/app/(dashboard)/admin/actions.ts#getEmitterConfigsAction": "5b admin",
-  "src/app/(dashboard)/admin/actions.ts#updateEmitterConfigAction": "5b admin",
-  "src/app/(dashboard)/admin/actions.ts#getDomainsAdminAction": "5b admin",
-  "src/app/(dashboard)/admin/actions.ts#createDomainAdminAction": "5b admin",
 };
 
 /** TEMPORARY. Route handlers still unguarded, keyed `<route path>#<METHOD>` -> owning surface. */

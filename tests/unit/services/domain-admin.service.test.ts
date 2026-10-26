@@ -22,6 +22,7 @@ import {
 } from "@/services/domain-admin.service";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import type { ServiceContext } from "@/types/service-context";
+import { assign } from "../../helpers/access-mocks";
 
 // ---------------------------------------------------------------------------
 // A small stateful stand-in for the `domain` Prisma delegate. Its rows live here (the "database"), not in the service: a service that
@@ -99,8 +100,11 @@ const fakePrisma = {
   },
 };
 
-const adminCtx: ServiceContext = { userId: "admin-1", userRole: "ADMIN", prisma: fakePrisma as unknown as ServiceContext["prisma"] };
-const viewerCtx: ServiceContext = { userId: "viewer-1", userRole: "VIEWER", prisma: fakePrisma as unknown as ServiceContext["prisma"] };
+const adminCtx: ServiceContext = { userId: "admin-1", userRole: "ADMIN", assignments: [assign.global()], prisma: fakePrisma as unknown as ServiceContext["prisma"] };
+const ctxWith = (assignments: ServiceContext["assignments"]): ServiceContext => ({ userId: "user-x", userRole: "VIEWER", assignments, prisma: fakePrisma as unknown as ServiceContext["prisma"] });
+// A viewer of the tenant in view, and somebody who holds a role in ANOTHER tenant only.
+const viewerCtx = ctxWith([assign.tenant("VIEWER", ACTIVE_TENANT)]);
+const strangerCtx = ctxWith([assign.tenant("ADMIN", "tenant-z")]);
 
 function seed(partial: Partial<Row> & { name: string }): Row {
   const row: Row = {
@@ -175,8 +179,8 @@ describe("Domain Admin Service", () => {
       expect(result.success && result.data[0].policyTemplateStatus).toBe("No template");
     });
 
-    it("rejects non-Admin users", async () => {
-      const result = await getDomainsAdmin(viewerCtx);
+    it("rejects somebody with no role in the tenant", async () => {
+      const result = await getDomainsAdmin(strangerCtx);
       expect(result.success).toBe(false);
       if (!result.success) expect(result.error.code).toBe("FORBIDDEN");
       expect(fakePrisma.domain.findMany).not.toHaveBeenCalled();
@@ -410,12 +414,67 @@ describe("Domain Admin Service", () => {
     });
   });
 
-  describe("getDomainAdminById role gate", () => {
-    it("rejects non-Admin users like every other function of the service, and reads nothing", async () => {
+  describe("who may do what (the policy over the caller's assignments)", () => {
+    it("reading: a viewer of the tenant reads a domain; somebody with no role in it reads it as missing, a list is refused them", async () => {
       const row = seed({ name: "Finance" });
-      const result = await getDomainAdminById(row.id, viewerCtx);
-      expect(!result.success && result.error.code).toBe("FORBIDDEN");
-      expect(fakePrisma.domain.findFirst).not.toHaveBeenCalled();
+      expect((await getDomainAdminById(row.id, viewerCtx)).success).toBe(true);
+      const hidden = await getDomainAdminById(row.id, strangerCtx);
+      const missing = await getDomainAdminById("nonexistent", strangerCtx);
+      expect(JSON.stringify(hidden).replace(row.id, "<id>")).toBe(JSON.stringify(missing).replace("nonexistent", "<id>"));
+      expect(!hidden.success && hidden.error.code).toBe("NOT_FOUND");
+      const list = await getDomainsAdmin(strangerCtx);
+      expect(!list.success && list.error.code).toBe("FORBIDDEN");
+      expect(fakePrisma.domain.findMany).not.toHaveBeenCalled();
+    });
+
+    it("the list holds the domains the caller's roles cover: every one for a tenant-wide role, only its own for a domain-scoped one", async () => {
+      const a = seed({ name: "Alpha" });
+      seed({ name: "Beta" });
+      const all = await getDomainsAdmin(viewerCtx);
+      expect(all.success && all.data.map((d) => d.name)).toEqual(["Alpha", "Beta"]);
+      const own = await getDomainsAdmin(ctxWith([assign.domain("VIEWER", ACTIVE_TENANT, a.id)]));
+      expect(own.success && own.data.map((d) => d.name)).toEqual(["Alpha"]);
+    });
+
+    it("creating is a steward's act over the whole tenant (a compliance officer and an administrator too): nothing is written below it", async () => {
+      for (const role of ["VIEWER", "AUTHOR"] as const) {
+        const result = await createDomainAdmin({ name: "Nope" }, ctxWith([assign.tenant(role, ACTIVE_TENANT)]));
+        expect(!result.success && result.error, role).toEqual(expect.objectContaining({ code: "FORBIDDEN", message: "You do not have permission to do this" }));
+      }
+      expect((await createDomainAdmin({ name: "S" }, ctxWith([assign.domain("STEWARD", ACTIVE_TENANT, "dom-x")]))).success).toBe(false);
+      expect((await createDomainAdmin({ name: "N" }, strangerCtx)).success).toBe(false);
+      expect(fakePrisma.domain.create).not.toHaveBeenCalled();
+      for (const role of ["STEWARD", "COMPLIANCE_OFFICER", "ADMIN"] as const) {
+        expect((await createDomainAdmin({ name: `By ${role}` }, ctxWith([assign.tenant(role, ACTIVE_TENANT)]))).success, role).toBe(true);
+      }
+    });
+
+    it("updating is a steward's act over THE DOMAIN: a steward of the domain may, of a sibling domain it reads as missing, an author is refused", async () => {
+      const mine = seed({ name: "Mine" });
+      const sibling = seed({ name: "Sibling" });
+      expect((await updateDomainAdmin({ id: mine.id, description: "x" }, ctxWith([assign.domain("STEWARD", ACTIVE_TENANT, mine.id)]))).success).toBe(true);
+      const wrong = await updateDomainAdmin({ id: sibling.id, description: "x" }, ctxWith([assign.domain("STEWARD", ACTIVE_TENANT, mine.id)]));
+      expect(!wrong.success && wrong.error.code).toBe("NOT_FOUND");
+      const low = await updateDomainAdmin({ id: mine.id, description: "x" }, ctxWith([assign.domain("AUTHOR", ACTIVE_TENANT, mine.id)]));
+      expect(!low.success && low.error.code).toBe("FORBIDDEN");
+      expect(rows.find((r) => r.id === sibling.id)!.description).toBe("");
+    });
+
+    it("deleting is a tenant administrator's act: a domain administrator and a steward do not reach it", async () => {
+      const row = seed({ name: "Doomed" });
+      for (const ctx of [ctxWith([assign.domain("ADMIN", ACTIVE_TENANT, row.id)]), ctxWith([assign.tenant("STEWARD", ACTIVE_TENANT)]), strangerCtx]) {
+        const result = await deleteDomainAdmin(row.id, ctx);
+        expect(!result.success && result.error.code).toBe("FORBIDDEN");
+      }
+      expect(fakePrisma.domain.delete).not.toHaveBeenCalled();
+      expect((await deleteDomainAdmin(row.id, ctxWith([assign.tenant("ADMIN", ACTIVE_TENANT)]))).success).toBe(true);
+    });
+
+    it("works in the tenant the action put in the context, not another one read from the cookie", async () => {
+      seed({ name: "Here" });
+      seed({ name: "Elsewhere", tenantId: "tenant-b" });
+      const list = await getDomainsAdmin({ ...ctxWith([assign.global()]), tenantId: "tenant-b" });
+      expect(list.success && list.data.map((d) => d.name)).toEqual(["Elsewhere"]);
     });
   });
 

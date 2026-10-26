@@ -31,6 +31,7 @@ import type { ServiceContext } from "@/types/service-context";
 import type { SchemaVersion, SchemaVersionsMap } from "@/types/schema-version";
 import type { EmittedFile } from "@/lib/typespec-official/closure-emit";
 import type { TargetOutput } from "@/lib/emission/emission.types";
+import { assign } from "../../helpers/access-mocks";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -753,7 +754,7 @@ describe("exportedTargetSummary", () => {
 
 const adminCtx: ServiceContext = {
   userId: "user-admin",
-  userRole: "ADMIN",
+  userRole: "ADMIN", assignments: [assign.global()],
   prisma: prisma as unknown as ServiceContext["prisma"],
 };
 

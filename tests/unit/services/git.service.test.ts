@@ -38,16 +38,17 @@ import {
 import { prisma } from "@/lib/db";
 import type { ServiceContext } from "@/types/service-context";
 import type { TargetOutput } from "@/lib/emission/emission.types";
+import { assign } from "../../helpers/access-mocks";
 
 const adminCtx: ServiceContext = {
   userId: "user-admin",
-  userRole: "ADMIN",
+  userRole: "ADMIN", assignments: [assign.global()],
   prisma: prisma as unknown as ServiceContext["prisma"],
 };
 
 const authorCtx: ServiceContext = {
   userId: "user-author",
-  userRole: "AUTHOR",
+  userRole: "AUTHOR", assignments: [assign.tenant("AUTHOR", "tenant-1")],
   prisma: prisma as unknown as ServiceContext["prisma"],
 };
 

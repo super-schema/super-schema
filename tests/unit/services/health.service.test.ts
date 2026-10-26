@@ -49,16 +49,17 @@ import {
   _setEmitterChecker,
 } from "@/services/health.service";
 import type { ServiceContext } from "@/types/service-context";
+import { assign } from "../../helpers/access-mocks";
 
 const adminCtx: ServiceContext = {
   userId: "admin-1",
-  userRole: "ADMIN",
+  userRole: "ADMIN", assignments: [assign.global()],
   prisma: null as unknown as ServiceContext["prisma"],
 };
 
 const viewerCtx: ServiceContext = {
   userId: "viewer-1",
-  userRole: "VIEWER",
+  userRole: "VIEWER", assignments: [assign.tenant("VIEWER", "tenant-1")],
   prisma: null as unknown as ServiceContext["prisma"],
 };
 

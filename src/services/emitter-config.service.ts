@@ -6,6 +6,7 @@
  */
 
 import { Prisma } from "@/generated/prisma/client";
+import { ctxCan } from "@/lib/access";
 import { prisma } from "@/lib/db";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
@@ -77,7 +78,7 @@ function toConfigRecord(row: {
 export async function getEmitterConfigs(
   ctx: ServiceContext
 ): Promise<Result<EmitterConfigWithStats[]>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "emitter.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",
@@ -104,7 +105,7 @@ export async function getEmitterConfigByName(
   name: string,
   ctx: ServiceContext
 ): Promise<Result<EmitterConfigWithStats>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "emitter.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",
@@ -140,7 +141,7 @@ export async function updateEmitterConfig(
   input: UpdateEmitterConfigInput,
   ctx: ServiceContext
 ): Promise<Result<EmitterConfigRecord>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "emitter.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",
@@ -193,7 +194,7 @@ export async function testEmitter(
   _entityId: string,
   ctx: ServiceContext
 ): Promise<Result<TestEmitterResult>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "emitter.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",
@@ -247,7 +248,7 @@ export async function getTypeMappingsForTarget(
   targetFormat: string,
   ctx: ServiceContext
 ): Promise<Result<TypeMappingPolicyRecord[]>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "emitter.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",
@@ -275,7 +276,7 @@ export async function createTypeMappingOverride(
   input: { targetFormat: string; sourceType: string; mappedType: string },
   ctx: ServiceContext
 ): Promise<Result<TypeMappingPolicyRecord>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "emitter.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",
@@ -307,7 +308,7 @@ export async function updateTypeMapping(
   mappedType: string,
   ctx: ServiceContext
 ): Promise<Result<TypeMappingPolicyRecord>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "emitter.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",
@@ -346,7 +347,7 @@ export async function deleteTypeMappingOverride(
   id: string,
   ctx: ServiceContext
 ): Promise<Result<void>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "emitter.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",

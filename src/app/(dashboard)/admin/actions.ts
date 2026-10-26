@@ -1,10 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { ACTIONS, type ActionId } from "@/lib/access";
+import { contextOf, guardActiveTenant } from "@/lib/action-context";
 import { getActiveTenantId } from "@/lib/active-tenant";
-import { getEffectiveRole } from "@/services/rbac.service";
 import type { ServiceContext } from "@/types/service-context";
 import { getUsers, updateUser } from "@/services/user.service";
 import { assignRole, removeRole } from "@/services/rbac.service";
@@ -37,62 +36,75 @@ function revalidateSchemas() {
   revalidatePath("/schemas", "layout");
 }
 
-async function resolveCtx(): Promise<
-  { ok: true; ctx: ServiceContext } | { ok: false; error: string }
-> {
-  const session = await auth();
-  if (!session?.user?.id) return { ok: false, error: "Not authenticated" };
-  const userId = session.user.id;
-  let userRole = "VIEWER";
-  const roleResult = await getEffectiveRole(userId, null, { userId, userRole, prisma });
-  if (roleResult.success && roleResult.data) userRole = roleResult.data;
-  return { ok: true, ctx: { userId, userRole, prisma } };
+/**
+ * The guard of every admin action, BEFORE anything is read or written. What each asks (the action table is the single source):
+ * - the users of the tenant and their roles (list, edit another user's name, assign, remove): `user.manage`, a TENANT administrator's act over the
+ *   tenant in view (a domain- or product-scoped administrator does not reach it); the service narrows the rows to that tenant, and `assignRole` /
+ *   `removeRole` judge the grant itself (`grantAllowed`: nobody grants beyond the scope they administer);
+ * - the platform items (health and metrics: `platform.admin`; emitter configuration: `emitter.manage`): a GLOBAL administrator only, whatever
+ *   they hold in a tenant;
+ * - the domains: listing is any role in the tenant (the service lists the domains the roles cover), creating is `domain.create` (a steward or above
+ *   over the whole tenant).
+ * Nobody signed in is told so, a user with no role in the tenant reads it as not found, too low a role gets one generic refusal. The context the
+ * service receives is the principal's (the user, their assignments, and for tenant items the tenant in view), never a role label.
+ */
+async function gate(action: ActionId): Promise<{ ok: true; ctx: ServiceContext } | { ok: false; error: string }> {
+  const access = await guardActiveTenant(action, { label: "Tenant" });
+  if (!access.allowed) return { ok: false, error: access.refusal.error };
+  const ctx = contextOf(access.principal);
+  // A platform item and the user's own things have no tenant (the guard did not look for one); every other one carries the tenant in view.
+  const placeless = ACTIONS[action].level === "global" || ACTIONS[action].level === "self";
+  return { ok: true, ctx: placeless ? ctx : { ...ctx, tenantId: access.resource.tenantId } };
 }
 
 export async function getUsersAction() {
-  const auth = await resolveCtx();
-  if (!auth.ok) return { error: auth.error };
-  const result = await getUsers(auth.ctx);
+  const access = await gate("user.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await getUsers(access.ctx);
   if (!result.success) return { error: result.error.message };
   return { success: true, data: result.data };
 }
 
 export async function updateUserNameAction(id: string, name: string) {
-  const auth = await resolveCtx();
-  if (!auth.ok) return { error: auth.error };
-  const result = await updateUser({ id, name }, auth.ctx);
+  // Your own name is yours to change (`profile.own`: any signed-in user); anybody else's needs `user.manage`.
+  const self = await gate("profile.own");
+  if (!self.ok) return { error: self.error };
+  const access = id === self.ctx.userId ? self : await gate("user.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await updateUser({ id, name }, access.ctx);
   if (!result.success) return { error: result.error.message };
   revalidateSchemas();
   return { success: true, data: result.data };
 }
 
 export async function assignRoleAction(input: AssignRoleInput) {
-  const auth = await resolveCtx();
-  if (!auth.ok) return { error: auth.error };
-  const result = await assignRole(input, auth.ctx);
+  const access = await gate("user.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await assignRole(input, access.ctx);
   if (!result.success) return { error: result.error.message };
   revalidateSchemas();
   return { success: true, data: result.data };
 }
 
 export async function removeRoleAction(roleId: string) {
-  const auth = await resolveCtx();
-  if (!auth.ok) return { error: auth.error };
-  const result = await removeRole(roleId, auth.ctx);
+  const access = await gate("user.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await removeRole(roleId, access.ctx);
   if (!result.success) return { error: result.error.message };
   revalidateSchemas();
   return { success: true };
 }
 
 export async function getHealthAction() {
-  const auth = await resolveCtx();
-  if (!auth.ok) return { error: auth.error };
+  const access = await gate("platform.admin");
+  if (!access.ok) return { error: access.error };
+  const { ctx } = access;
   const [health, usage, activity, errors] = await Promise.all([
-    runHealthCheck(auth.ctx, { detail: "admin" }),
-    getUsageMetrics(auth.ctx),
+    runHealthCheck(ctx, { detail: "admin" }),
+    getUsageMetrics(ctx),
     // The governance count is the dashboard's: the requests of the tenant being viewed.
-    getActivityMetrics(auth.ctx, await getActiveTenantId()),
-    getErrorSummary(auth.ctx),
+    getActivityMetrics(ctx, await getActiveTenantId()),
+    getErrorSummary(ctx),
   ]);
   if (!health.success) return { error: health.error.message };
   if (!usage.success) return { error: usage.error.message };
@@ -110,34 +122,34 @@ export async function getHealthAction() {
 }
 
 export async function getEmitterConfigsAction() {
-  const auth = await resolveCtx();
-  if (!auth.ok) return { error: auth.error };
-  const result = await getEmitterConfigs(auth.ctx);
+  const access = await gate("emitter.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await getEmitterConfigs(access.ctx);
   if (!result.success) return { error: result.error.message };
   return { success: true as const, data: result.data };
 }
 
 export async function updateEmitterConfigAction(input: UpdateEmitterConfigInput) {
-  const auth = await resolveCtx();
-  if (!auth.ok) return { error: auth.error };
-  const result = await updateEmitterConfig(input, auth.ctx);
+  const access = await gate("emitter.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await updateEmitterConfig(input, access.ctx);
   if (!result.success) return { error: result.error.message };
   revalidateSchemas();
   return { success: true as const, data: result.data };
 }
 
 export async function getDomainsAdminAction() {
-  const auth = await resolveCtx();
-  if (!auth.ok) return { error: auth.error };
-  const result = await getDomainsAdmin(auth.ctx);
+  const access = await gate("tenant.access");
+  if (!access.ok) return { error: access.error };
+  const result = await getDomainsAdmin(access.ctx);
   if (!result.success) return { error: result.error.message };
   return { success: true as const, data: result.data };
 }
 
 export async function createDomainAdminAction(input: CreateDomainAdminInput) {
-  const auth = await resolveCtx();
-  if (!auth.ok) return { error: auth.error };
-  const result = await createDomainAdmin(input, auth.ctx);
+  const access = await gate("domain.create");
+  if (!access.ok) return { error: access.error };
+  const result = await createDomainAdmin(input, access.ctx);
   if (!result.success) return { error: result.error.message };
   revalidateSchemas();
   return { success: true as const, data: result.data };

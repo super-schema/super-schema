@@ -60,12 +60,14 @@ async function authenticateWithApiKey(token: string): Promise<AuthResult> {
     return { authenticated: false };
   }
 
-  // API key is valid — return a system-level context
+  // API key is valid — return a system-level context. It carries the platform administrator assignment the key has always stood for (the services
+  // decide with `can` over `assignments` now, not from the label); Task 6 binds the key to a tenant and a role (`API_KEY_TENANT_ID`, `API_KEY_ROLE`).
   return {
     authenticated: true,
     context: {
       userId: "api-key-user",
       userRole: "ADMIN",
+      assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }],
       prisma,
     },
   };

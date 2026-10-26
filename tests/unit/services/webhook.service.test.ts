@@ -144,16 +144,17 @@ import {
 } from "@/services/webhook.service";
 import type { ServiceContext } from "@/types/service-context";
 import type { CreateWebhookEndpointInput } from "@/types/schemas/webhook";
+import { assign } from "../../helpers/access-mocks";
 
 const adminCtx: ServiceContext = {
   userId: "admin-1",
-  userRole: "ADMIN",
+  userRole: "ADMIN", assignments: [assign.global()],
   prisma: {} as ServiceContext["prisma"],
 };
 
 const userCtx: ServiceContext = {
   userId: "user-1",
-  userRole: "AUTHOR",
+  userRole: "AUTHOR", assignments: [assign.tenant("AUTHOR", "tenant-1")],
   prisma: {} as ServiceContext["prisma"],
 };
 

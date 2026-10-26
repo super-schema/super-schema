@@ -22,6 +22,8 @@ vi.mock("@/lib/db", () => ({
       findUnique: vi.fn(),
       findMany: vi.fn(),
     },
+    entity: { findUnique: vi.fn() },
+    field: { findUnique: vi.fn() },
     user: {
       findMany: vi.fn(),
     },
@@ -37,22 +39,27 @@ import {
 } from "@/services/annotation.service";
 import { prisma } from "@/lib/db";
 import type { ServiceContext } from "@/types/service-context";
+import { assign } from "../../helpers/access-mocks";
 
 const mockCtx: ServiceContext = {
   userId: "user-1",
   userRole: "AUTHOR",
+  assignments: [assign.tenant("AUTHOR", "tenant-1")],
   prisma: prisma as unknown as ServiceContext["prisma"],
 };
 
 const adminCtx: ServiceContext = {
   userId: "admin-1",
   userRole: "ADMIN",
+  assignments: [assign.tenant("ADMIN", "tenant-1")],
   prisma: prisma as unknown as ServiceContext["prisma"],
 };
 
 describe("Annotation Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The entity the annotations of these tests are on, in tenant-1 (the administrator's tenant).
+    vi.mocked(prisma.entity.findUnique).mockResolvedValue({ tenantId: "tenant-1", domainId: "dom-1", productId: "prod-1", product: { domainId: "dom-1" } } as never);
   });
 
   // ============================================================
@@ -275,6 +282,30 @@ describe("Annotation Service", () => {
       const result = await resolveAnnotation("ann-1", adminCtx);
 
       expect(result.success).toBe(true);
+    });
+
+    it("moderating another user's annotation is judged over the annotated entity: an administrator of another tenant, a domain administrator of a sibling domain and a caller with no assignments are refused", async () => {
+      vi.mocked(prisma.auditLog.findUnique).mockResolvedValue({
+        id: "ann-1", action: "annotation.create", entityType: "Annotation", entityId: "ent-1", userId: "other-user", timestamp: new Date(), beforeState: null,
+        afterState: { entityId: "ent-1", content: "x", taggedUserIds: [], resolved: false },
+        user: { id: "other-user", name: "Jane", image: null },
+      } as never);
+      for (const assignments of [[assign.tenant("ADMIN", "tenant-9")], [assign.domain("ADMIN", "tenant-1", "dom-sibling")], [], undefined]) {
+        const result = await resolveAnnotation("ann-1", { ...adminCtx, assignments });
+        expect(result.success, JSON.stringify(assignments)).toBe(false);
+      }
+      // a domain administrator of the entity's own domain may
+      expect((await resolveAnnotation("ann-1", { ...adminCtx, assignments: [assign.domain("ADMIN", "tenant-1", "dom-1")] })).success).toBe(true);
+    });
+
+    it("an annotation on a missing entity can be moderated by nobody but its author", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.auditLog.findUnique).mockResolvedValue({
+        id: "ann-1", action: "annotation.create", entityType: "Annotation", entityId: "ent-gone", userId: "other-user", timestamp: new Date(), beforeState: null,
+        afterState: { entityId: "ent-gone", content: "x", taggedUserIds: [], resolved: false },
+        user: { id: "other-user", name: "Jane", image: null },
+      } as never);
+      expect((await resolveAnnotation("ann-1", { ...adminCtx, assignments: [assign.global()] })).success).toBe(false);
     });
 
     it("rejects non-author non-admin from resolving", async () => {

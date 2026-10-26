@@ -1,11 +1,16 @@
 /**
- * User Management Service — Admin-only user reads and name edits, with role data.
+ * User Management Service — user reads and name edits, with role data, for whoever administers users (`user.manage`).
+ *
+ * Who sees whom: a PLATFORM administrator (global ADMIN) sees every user with every role; a TENANT administrator sees the users who hold a role
+ * somewhere in the tenant in view (`ctx.tenantId`) and, of those, only the roles held in that tenant, never another tenant's or a platform role.
+ * A user outside the tenant reads exactly like a missing one. A context with no tenant in view and no platform role is refused.
  *
  * Users and their roles live in the database (`users`, `user_roles`) and are read through `ctx.prisma`; the service keeps no
  * state of its own, so what the Admin page lists is what the database holds, across requests and restarts.
  * All service functions return Result<T>.
  */
 
+import { ctxCan } from "@/lib/access";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
@@ -52,11 +57,21 @@ function toRoles(rows: RoleRow[]): UserWithRoles["roles"] {
   }));
 }
 
-/** The role rows of the given users, with the name of the domain a role is scoped to. */
-async function loadRoles(ctx: ServiceContext, userIds: string[]): Promise<RoleRow[]> {
+/**
+ * What the caller may administer: a platform administrator everything (`tenantId` null), a tenant administrator the tenant in view, nobody
+ * else (null: refused). The answer names the tenant the user rows and role rows are restricted to.
+ */
+function administeredScope(ctx: ServiceContext): { tenantId: string | null } | null {
+  if (ctxCan(ctx, "platform.admin")) return { tenantId: null };
+  if (ctx.tenantId !== undefined && ctxCan(ctx, "user.manage", { tenantId: ctx.tenantId })) return { tenantId: ctx.tenantId };
+  return null;
+}
+
+/** The role rows of the given users, with the name of the domain a role is scoped to; with a tenant, only the roles held in that tenant. */
+async function loadRoles(ctx: ServiceContext, userIds: string[], tenantId: string | null): Promise<RoleRow[]> {
   if (userIds.length === 0) return [];
   return ctx.prisma.userRole.findMany({
-    where: { userId: { in: userIds } },
+    where: { userId: { in: userIds }, ...(tenantId !== null && { tenantId }) },
     include: { domain: { select: { name: true } } },
     orderBy: { createdAt: "asc" },
   });
@@ -69,12 +84,18 @@ async function loadRoles(ctx: ServiceContext, userIds: string[]): Promise<RoleRo
 export async function getUsers(
   ctx: ServiceContext
 ): Promise<Result<UserWithRoles[]>> {
-  if (ctx.userRole !== "ADMIN") return forbidden();
+  const scope = administeredScope(ctx);
+  if (!scope) return forbidden();
 
-  const users = await ctx.prisma.user.findMany({ select: USER_SELECT, orderBy: { createdAt: "asc" } });
+  const users = await ctx.prisma.user.findMany({
+    where: scope.tenantId === null ? {} : { roles: { some: { tenantId: scope.tenantId } } },
+    select: USER_SELECT,
+    orderBy: { createdAt: "asc" },
+  });
   const roles = await loadRoles(
     ctx,
-    users.map((u) => u.id)
+    users.map((u) => u.id),
+    scope.tenantId
   );
 
   return ok(
@@ -97,12 +118,17 @@ export async function getUserById(
   id: string,
   ctx: ServiceContext
 ): Promise<Result<UserWithRoles>> {
-  if (ctx.userRole !== "ADMIN") return forbidden();
+  const scope = administeredScope(ctx);
+  if (!scope) return forbidden();
 
-  const user = await ctx.prisma.user.findUnique({ where: { id }, select: USER_SELECT });
+  // A user of no role in the tenant in view is, to a tenant administrator, a user that does not exist.
+  const user = await ctx.prisma.user.findFirst({
+    where: scope.tenantId === null ? { id } : { id, roles: { some: { tenantId: scope.tenantId } } },
+    select: USER_SELECT,
+  });
   if (!user) return userNotFound(id);
 
-  const roles = await loadRoles(ctx, [user.id]);
+  const roles = await loadRoles(ctx, [user.id], scope.tenantId);
   return ok({
     id: user.id,
     name: user.name,
@@ -121,7 +147,9 @@ export async function updateUser(
   input: UpdateUserInput,
   ctx: ServiceContext
 ): Promise<Result<UserRecord>> {
-  if (ctx.userRole !== "ADMIN") return forbidden();
+  // Nobody learns what a valid input looks like without the right to change a name: your own is yours (`profile.own`), another's needs `user.manage`.
+  const namesSelf = typeof input === "object" && input !== null && (input as { id?: unknown }).id === ctx.userId;
+  if (!namesSelf && !administeredScope(ctx)) return forbidden();
 
   const parsed = UpdateUserInputSchema.safeParse(input);
   if (!parsed.success) {
@@ -132,7 +160,16 @@ export async function updateUser(
     });
   }
 
-  const existing = await ctx.prisma.user.findUnique({ where: { id: parsed.data.id }, select: { id: true, name: true } });
+  // Your own name is yours to change (`profile.own`); another user's is for whoever administers users (`user.manage`), and for a tenant
+  // administrator only a user who holds a role in the tenant in view (any other reads as missing).
+  const isSelf = parsed.data.id === ctx.userId;
+  const scope = isSelf ? { tenantId: null } : administeredScope(ctx);
+  if (!scope) return forbidden();
+
+  const existing = await ctx.prisma.user.findFirst({
+    where: scope.tenantId === null ? { id: parsed.data.id } : { id: parsed.data.id, roles: { some: { tenantId: scope.tenantId } } },
+    select: { id: true, name: true },
+  });
   if (!existing) return userNotFound(parsed.data.id);
 
   try {

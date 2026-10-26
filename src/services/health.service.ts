@@ -8,6 +8,7 @@
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { ctxCan } from "@/lib/access";
 import { prisma } from "@/lib/db";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import { countPendingRequests } from "@/services/governance.service";
@@ -312,7 +313,7 @@ export async function runHealthCheck(
 export async function getUsageMetrics(
   ctx: ServiceContext
 ): Promise<Result<UsageMetrics>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "platform.admin")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",
@@ -351,7 +352,7 @@ export async function getActivityMetrics(
   /** The tenant being viewed: "Pending Governance" then counts the way the governance dashboard lists (requests of entities of that tenant). */
   tenantId?: string
 ): Promise<Result<ActivityMetrics>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "platform.admin")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",
@@ -403,7 +404,7 @@ export async function getActivityMetrics(
 export async function getErrorSummary(
   ctx: ServiceContext
 ): Promise<Result<ErrorSummary>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "platform.admin")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",
@@ -434,7 +435,7 @@ export async function getErrorDetails(
   errorType: string,
   ctx: ServiceContext
 ): Promise<Result<AuditLogEntry[]>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "platform.admin")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",

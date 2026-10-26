@@ -41,10 +41,11 @@ import { prisma } from "@/lib/db";
 import type { ServiceContext } from "@/types/service-context";
 import type { TargetOutput } from "@/lib/emission/emission.types";
 import type { MigrationArtifacts } from "@/lib/migration/migration.types";
+import { assign } from "../../helpers/access-mocks";
 
 const authorCtx: ServiceContext = {
   userId: "user-author",
-  userRole: "AUTHOR",
+  userRole: "AUTHOR", assignments: [assign.tenant("AUTHOR", "tenant-1")],
   prisma: prisma as unknown as ServiceContext["prisma"],
 };
 

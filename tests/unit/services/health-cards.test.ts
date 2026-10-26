@@ -40,8 +40,9 @@ import {
   _resetHealthStore,
 } from "@/services/health.service";
 import type { ServiceContext } from "@/types/service-context";
+import { assign } from "../../helpers/access-mocks";
 
-const adminCtx: ServiceContext = { userId: "admin-1", userRole: "ADMIN", prisma: null as unknown as ServiceContext["prisma"] };
+const adminCtx: ServiceContext = { userId: "admin-1", userRole: "ADMIN", assignments: [assign.global()], prisma: null as unknown as ServiceContext["prisma"] };
 
 describe("what the Health cards count (the audit actions that are written)", () => {
   beforeEach(() => {

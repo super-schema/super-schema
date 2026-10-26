@@ -25,16 +25,7 @@ const DEFINITIONS = [
  * as the PLATFORM role (not a role over a resource), so the worst it does today is refuse a tenant administrator, never admit one.
  */
 const PENDING_TASK_5B: Record<string, string> = {
-  "src/app/(dashboard)/admin/actions.ts": "admin (user/role/domain/emitter/health actions): tenant ADMIN within the tenant, platform items global ADMIN",
-  "src/services/annotation.service.ts": "annotations (service only; router unmounted)",
-  "src/services/classification-taxonomy.service.ts": "admin (classification.manage, global)",
-  "src/services/domain-admin.service.ts": "admin domains (domain.create / delete / update)",
-  "src/services/emitter-config.service.ts": "admin (emitter.manage, global)",
-  "src/services/git.service.ts": "admin (git.manage, global)",
-  "src/services/health.service.ts": "admin (platform.admin, global)",
   "src/services/type-mapping.service.ts": "type-mapping (typemapping.global / typemapping.entity)",
-  "src/services/user.service.ts": "admin users (user.manage)",
-  "src/services/webhook.service.ts": "admin (platform.admin, global)",
   "src/app/api/v1/health/route.ts": "API v1 (Task 6)",
   "src/app/api/v1/middleware.ts": "API v1 principal (Task 6)",
   "src/server/api/procedures.ts": "dead oRPC routers: deleted in Task 7",

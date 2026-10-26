@@ -8,6 +8,7 @@
  * Service functions interact with Prisma and wrap operations in withAudit().
  */
 
+import { ctxCan } from "@/lib/access";
 import { prisma } from "@/lib/db";
 import { withAudit } from "@/lib/audit";
 import { ok, err } from "@/types/result";
@@ -587,20 +588,21 @@ export async function configureRepository(
   input: ConfigureRepositoryInput,
   ctx: ServiceContext
 ): Promise<Result<GitConfigResponse>> {
+  // The right to configure comes first: nobody learns what a valid configuration looks like without it.
+  if (!ctxCan(ctx, "git.manage")) {
+    return err({
+      code: "FORBIDDEN",
+      message: "Admin role required to configure Git repository",
+      suggestedFix: "Contact an administrator to configure Git integration.",
+    });
+  }
+
   const parsed = ConfigureRepositoryInputSchema.safeParse(input);
   if (!parsed.success) {
     return err({
       code: "VALIDATION_ERROR",
       message: parsed.error.issues[0].message,
       suggestedFix: "Check the Git configuration fields and try again.",
-    });
-  }
-
-  if (ctx.userRole !== "ADMIN") {
-    return err({
-      code: "FORBIDDEN",
-      message: "Admin role required to configure Git repository",
-      suggestedFix: "Contact an administrator to configure Git integration.",
     });
   }
 
@@ -660,7 +662,7 @@ export async function testConnection(
   configId: string,
   ctx: ServiceContext
 ): Promise<Result<{ connected: boolean; error?: string }>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "git.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Admin role required to test Git connection",
@@ -817,7 +819,7 @@ export async function exportEntity(
 export async function exportAll(
   ctx: ServiceContext
 ): Promise<Result<GitExportResult>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "git.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Admin role required for bulk export",
@@ -906,7 +908,7 @@ export async function enableExport(
   configId: string,
   ctx: ServiceContext
 ): Promise<Result<GitConfigResponse>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "git.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Admin role required to enable Git export",
@@ -946,7 +948,7 @@ export async function disableExport(
   configId: string,
   ctx: ServiceContext
 ): Promise<Result<GitConfigResponse>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "git.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Admin role required to disable Git export",
@@ -985,7 +987,7 @@ export async function disableExport(
 export async function getConfig(
   ctx: ServiceContext
 ): Promise<Result<GitConfigResponse | null>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "git.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Admin role required to view Git configuration",

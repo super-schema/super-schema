@@ -7,6 +7,7 @@
  */
 
 import { Prisma } from "@/generated/prisma/client";
+import { ctxCan, effectiveRole, type ActionId } from "@/lib/access";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { domainDeleteBlocker } from "@/lib/domain-deletion";
@@ -50,9 +51,22 @@ interface DomainRow {
 const forbidden = () =>
   err({
     code: "FORBIDDEN",
-    message: "Requires ADMIN role",
+    message: "You do not have permission to do this",
     suggestedFix: "Contact your administrator",
   });
+
+/** The tenant the caller works in: the one the action put in the context, else the one in view (the cookie the principal may access). */
+const tenantOf = async (ctx: ServiceContext): Promise<string> => ctx.tenantId ?? (await getActiveTenantId());
+
+/**
+ * May the caller do `action` over the domain `domainId` of the tenant? Null when allowed; else the refusal: a domain nothing of the caller's covers
+ * reads as missing (the answer for a domain that does not exist), one they see but may not change is a generic FORBIDDEN.
+ */
+function refusalOver(ctx: ServiceContext, action: ActionId, tenantId: string, domainId: string) {
+  const place = { tenantId, domainId };
+  if (ctxCan(ctx, action, place)) return null;
+  return effectiveRole([...(ctx.assignments ?? [])], place) === null ? domainNotFound(domainId) : forbidden();
+}
 
 const domainNotFound = (id: string) =>
   err({
@@ -139,16 +153,18 @@ const staleSession = () =>
 export async function getDomainsAdmin(
   ctx: ServiceContext
 ): Promise<Result<DomainWithStats[]>> {
-  if (ctx.userRole !== "ADMIN") return forbidden();
+  const tenantId = await tenantOf(ctx);
+  if (!ctxCan(ctx, "tenant.access", { tenantId })) return forbidden();
 
   const rows = await ctx.prisma.domain.findMany({
-    where: { tenantId: await getActiveTenantId() },
+    where: { tenantId },
     orderBy: [{ isSystem: "desc" }, { name: "asc" }],
     include: { _count: { select: { entities: true } } },
   });
 
+  // Only the domains the caller's roles cover (`domain.read`): a domain-scoped role lists its domain, a tenant-wide role every one.
   return ok(
-    rows.map((row) => {
+    rows.filter((row) => ctxCan(ctx, "domain.read", { tenantId, domainId: row.id })).map((row) => {
       const policyTemplate = parseTemplate(row.policyTemplate);
       return {
         id: row.id,
@@ -173,10 +189,11 @@ export async function getDomainAdminById(
   id: string,
   ctx: ServiceContext
 ): Promise<Result<DomainRecord>> {
-  if (ctx.userRole !== "ADMIN") return forbidden();
-
-  const row = await ctx.prisma.domain.findFirst({ where: { id, tenantId: await getActiveTenantId() } });
+  const tenantId = await tenantOf(ctx);
+  const row = await ctx.prisma.domain.findFirst({ where: { id, tenantId } });
   if (!row) return domainNotFound(id);
+  const refused = refusalOver(ctx, "domain.read", tenantId, row.id);
+  if (refused) return refused;
   return ok(toRecord(row));
 }
 
@@ -188,7 +205,8 @@ export async function createDomainAdmin(
   input: CreateDomainAdminInput,
   ctx: ServiceContext
 ): Promise<Result<DomainRecord>> {
-  if (ctx.userRole !== "ADMIN") return forbidden();
+  // Making a domain is a tenant-level decision (a steward or above over the whole tenant).
+  if (!ctxCan(ctx, "domain.create", { tenantId: await tenantOf(ctx) })) return forbidden();
 
   const parsed = CreateDomainAdminInputSchema.safeParse(input);
   if (!parsed.success) {
@@ -221,7 +239,9 @@ export async function updateDomainAdmin(
   input: UpdateDomainAdminInput,
   ctx: ServiceContext
 ): Promise<Result<DomainRecord>> {
-  if (ctx.userRole !== "ADMIN") return forbidden();
+  const tenantId = await tenantOf(ctx);
+  // Nobody learns what a valid input looks like without a role over some domain of the tenant.
+  if (!ctxCan(ctx, "tenant.access", { tenantId })) return forbidden();
 
   const parsed = UpdateDomainAdminInputSchema.safeParse(input);
   if (!parsed.success) {
@@ -232,9 +252,10 @@ export async function updateDomainAdmin(
     });
   }
 
-  const tenantId = await getActiveTenantId();
   const existing = await ctx.prisma.domain.findFirst({ where: { id: parsed.data.id, tenantId } });
   if (!existing) return domainNotFound(parsed.data.id);
+  const refused = refusalOver(ctx, "domain.update", tenantId, existing.id);
+  if (refused) return refused;
 
   const data: Prisma.DomainUpdateInput = {};
 
@@ -288,10 +309,12 @@ export async function deleteDomainAdmin(
   id: string,
   ctx: ServiceContext
 ): Promise<Result<void>> {
-  if (ctx.userRole !== "ADMIN") return forbidden();
+  // Deleting a domain is a tenant administrator's act over the whole tenant (a domain-scoped administrator does not reach it).
+  const tenantId = await tenantOf(ctx);
+  if (!ctxCan(ctx, "domain.delete", { tenantId })) return forbidden();
 
   const domain = await ctx.prisma.domain.findFirst({
-    where: { id, tenantId: await getActiveTenantId() },
+    where: { id, tenantId },
     include: { _count: { select: { entities: true, ...EVENTS_ASSET_COUNT_SELECT } } },
   });
   if (!domain) return domainNotFound(id);

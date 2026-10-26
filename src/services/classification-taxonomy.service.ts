@@ -6,6 +6,7 @@
  * All functions return Result<T>.
  */
 
+import { ctxCan } from "@/lib/access";
 import { prisma } from "@/lib/db";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
@@ -107,7 +108,7 @@ export async function createClassification(
   input: CreateClassificationInput,
   ctx: ServiceContext
 ): Promise<Result<ClassificationLevel>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "classification.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",
@@ -161,7 +162,7 @@ export async function updateClassification(
   input: UpdateClassificationInput,
   ctx: ServiceContext
 ): Promise<Result<ClassificationLevel>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "classification.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",
@@ -213,7 +214,7 @@ export async function deleteClassification(
   id: string,
   ctx: ServiceContext
 ): Promise<Result<void>> {
-  if (ctx.userRole !== "ADMIN") {
+  if (!ctxCan(ctx, "classification.manage")) {
     return err({
       code: "FORBIDDEN",
       message: "Requires ADMIN role",

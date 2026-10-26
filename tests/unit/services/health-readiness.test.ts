@@ -33,8 +33,9 @@ import {
 } from "@/services/health.service";
 import type { ComponentStatus } from "@/types/schemas/health";
 import type { ServiceContext } from "@/types/service-context";
+import { assign } from "../../helpers/access-mocks";
 
-const ctx: ServiceContext = { userId: "system", userRole: "ADMIN", prisma: null as unknown as ServiceContext["prisma"] };
+const ctx: ServiceContext = { userId: "system", userRole: "ADMIN", assignments: [assign.global()], prisma: null as unknown as ServiceContext["prisma"] };
 
 const healthy = (name: string): ComponentStatus => ({ name, status: "healthy", message: "ok" });
 const status = (name: string, s: ComponentStatus["status"], message: string = s): ComponentStatus => ({ name, status: s, message });

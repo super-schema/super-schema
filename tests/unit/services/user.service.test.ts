@@ -9,6 +9,7 @@ vi.mock("@/lib/audit", () => ({
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { getUsers, getUserById, updateUser } from "@/services/user.service";
 import type { ServiceContext } from "@/types/service-context";
+import { assign } from "../../helpers/access-mocks";
 
 // ---------------------------------------------------------------------------
 // A small stateful stand-in for the three Prisma delegates the service reads: `user`, `userRole`, and the `domain` a role names.
@@ -27,6 +28,7 @@ interface RoleRow {
   userId: string;
   role: string;
   domainId: string | null;
+  tenantId?: string | null;
   createdAt: Date;
 }
 
@@ -34,16 +36,22 @@ let users: UserRow[] = [];
 let roles: RoleRow[] = [];
 let domains: Array<{ id: string; name: string }> = [];
 
-type Where = { userId?: { in: string[] } | string; id?: string };
+type Where = { userId?: { in: string[] } | string; id?: string; tenantId?: string };
+type UserWhere = { id?: string; roles?: { some: { tenantId: string } } };
+
+/** The database's reading of `where` for a user: by id and, for a tenant administrator, only users with a role in that tenant. */
+const userMatches = (u: UserRow, where?: UserWhere) =>
+  (where?.id === undefined || u.id === where.id) && (where?.roles === undefined || roles.some((r) => r.userId === u.id && r.tenantId === where.roles!.some.tenantId));
 
 const fakePrisma = {
   user: {
-    findMany: vi.fn(async (args?: { orderBy?: { createdAt: "asc" | "desc" } }) => {
-      const rows = [...users];
+    findMany: vi.fn(async (args?: { where?: UserWhere; orderBy?: { createdAt: "asc" | "desc" } }) => {
+      const rows = users.filter((u) => userMatches(u, args?.where));
       if (args?.orderBy?.createdAt === "asc") rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
       return rows;
     }),
     findUnique: vi.fn(async (args: { where: { id: string } }) => users.find((u) => u.id === args.where.id) ?? null),
+    findFirst: vi.fn(async (args: { where?: UserWhere }) => users.find((u) => userMatches(u, args.where)) ?? null),
     update: vi.fn(async (args: { where: { id: string }; data: { name?: string } }) => {
       const row = users.find((u) => u.id === args.where.id);
       if (!row) throw Object.assign(new Error("Record to update not found."), { code: "P2025" });
@@ -55,16 +63,16 @@ const fakePrisma = {
   userRole: {
     findMany: vi.fn(async (args: { where: Where }) => {
       const wanted = args.where.userId;
-      const matches = roles.filter((r) =>
-        typeof wanted === "string" ? r.userId === wanted : wanted ? wanted.in.includes(r.userId) : true,
+      const matches = roles.filter(
+        (r) => (typeof wanted === "string" ? r.userId === wanted : wanted ? wanted.in.includes(r.userId) : true) && (args.where.tenantId === undefined || r.tenantId === args.where.tenantId),
       );
       return matches.map((r) => ({ ...r, domain: r.domainId ? { name: domains.find((d) => d.id === r.domainId)?.name ?? "" } : null }));
     }),
   },
 };
 
-const adminCtx: ServiceContext = { userId: "admin-1", userRole: "ADMIN", prisma: fakePrisma as unknown as ServiceContext["prisma"] };
-const viewerCtx: ServiceContext = { userId: "viewer-1", userRole: "VIEWER", prisma: fakePrisma as unknown as ServiceContext["prisma"] };
+const adminCtx: ServiceContext = { userId: "admin-1", userRole: "ADMIN", assignments: [assign.global()], prisma: fakePrisma as unknown as ServiceContext["prisma"] };
+const viewerCtx: ServiceContext = { userId: "viewer-1", userRole: "VIEWER", assignments: [assign.tenant("VIEWER", "tenant-1")], prisma: fakePrisma as unknown as ServiceContext["prisma"] };
 
 const row = (id: string, name: string | null, email: string, createdAt: string): UserRow => ({
   id,
@@ -74,6 +82,15 @@ const row = (id: string, name: string | null, email: string, createdAt: string):
   createdAt: new Date(createdAt),
   updatedAt: new Date(createdAt),
 });
+
+/** A tenant administrator of tenant-1 with that tenant in view. */
+const tenantAdminCtx: ServiceContext = {
+  userId: "tadmin-1",
+  userRole: "VIEWER",
+  assignments: [assign.tenant("ADMIN", "tenant-1")],
+  tenantId: "tenant-1",
+  prisma: fakePrisma as unknown as ServiceContext["prisma"],
+};
 
 describe("User Service", () => {
   beforeEach(() => {
@@ -223,6 +240,73 @@ describe("User Service", () => {
     it("passes an unrelated database error on as a failure, never as NOT_FOUND", async () => {
       fakePrisma.user.update.mockRejectedValueOnce(Object.assign(new Error("connection lost"), { code: "P1001" }));
       await expect(updateUser({ id: "user-1", name: "X" }, adminCtx)).rejects.toThrow("connection lost");
+    });
+  });
+
+  describe("who sees whom", () => {
+    beforeEach(() => {
+      // user-1 holds a role in tenant-1 (and a platform one); user-2 holds one in tenant-2 only; user-3 holds none.
+      users.push(row("user-3", "Carol", "carol@example.com", "2026-01-05"));
+      roles = [
+        { id: "role-a", userId: "user-1", role: "AUTHOR", domainId: "dom-1", tenantId: "tenant-1", createdAt: new Date("2026-01-03") },
+        { id: "role-g", userId: "user-1", role: "ADMIN", domainId: null, tenantId: null, createdAt: new Date("2026-01-04") },
+        { id: "role-b", userId: "user-2", role: "VIEWER", domainId: null, tenantId: "tenant-2", createdAt: new Date("2026-01-05") },
+        { id: "role-c", userId: "user-1", role: "VIEWER", domainId: null, tenantId: "tenant-2", createdAt: new Date("2026-01-06") },
+      ];
+    });
+
+    it("a platform administrator lists every user with every role", async () => {
+      const result = await getUsers(adminCtx);
+      expect(result.success && result.data.map((u) => u.id)).toEqual(["user-1", "user-2", "user-3"]);
+      expect(result.success && result.data.find((u) => u.id === "user-1")!.roles.map((r) => r.id)).toEqual(["role-a", "role-g", "role-c"]);
+    });
+
+    it("a tenant administrator lists only the users with a role in the tenant in view, with only the roles held there", async () => {
+      const result = await getUsers(tenantAdminCtx);
+      expect(result.success && result.data.map((u) => u.id)).toEqual(["user-1"]);
+      expect(result.success && result.data[0].roles.map((r) => r.id)).toEqual(["role-a"]);
+      expect(fakePrisma.userRole.findMany.mock.calls[0][0].where).toEqual({ userId: { in: ["user-1"] }, tenantId: "tenant-1" });
+    });
+
+    it("a user outside the tenant reads exactly like a missing one, by id", async () => {
+      const outside = await getUserById("user-2", tenantAdminCtx);
+      const missing = await getUserById("nonexistent", tenantAdminCtx);
+      expect(!outside.success && outside.error.code).toBe("NOT_FOUND");
+      expect(!missing.success && missing.error.code).toBe("NOT_FOUND");
+      expect((await getUserById("user-3", tenantAdminCtx)).success).toBe(false);
+      expect((await getUserById("user-1", tenantAdminCtx)).success).toBe(true);
+    });
+
+    it("a tenant administrator renames a user of the tenant and cannot rename one outside it (it reads as missing, nothing is written)", async () => {
+      expect((await updateUser({ id: "user-1", name: "Alice B" }, tenantAdminCtx)).success).toBe(true);
+      const outside = await updateUser({ id: "user-2", name: "Nope" }, tenantAdminCtx);
+      expect(!outside.success && outside.error.code).toBe("NOT_FOUND");
+      expect(users.find((u) => u.id === "user-2")!.name).toBe("Bob");
+    });
+
+    it("an administrator of another tenant, a domain-scoped administrator and a context with no tenant in view are refused", async () => {
+      const elsewhere = { ...tenantAdminCtx, assignments: [assign.tenant("ADMIN", "tenant-9")] };
+      const domainAdmin = { ...tenantAdminCtx, assignments: [assign.domain("ADMIN", "tenant-1", "dom-1")] };
+      const noTenant = { ...tenantAdminCtx, tenantId: undefined };
+      for (const ctx of [elsewhere, domainAdmin, noTenant]) {
+        const list = await getUsers(ctx);
+        expect(!list.success && list.error.code).toBe("FORBIDDEN");
+        const rename = await updateUser({ id: "user-1", name: "X" }, ctx);
+        expect(!rename.success && rename.error.code).toBe("FORBIDDEN");
+      }
+      expect(fakePrisma.user.findMany).not.toHaveBeenCalled();
+      expect(fakePrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it("anybody changes their OWN name; nobody else's without user.manage", async () => {
+      users.push(row("viewer-1", "Vera", "vera@example.com", "2026-01-06"));
+      expect((await updateUser({ id: "viewer-1", name: "Vera B" }, viewerCtx)).success).toBe(true);
+      const other = await updateUser({ id: "user-1", name: "Hacked" }, viewerCtx);
+      expect(!other.success && other.error.code).toBe("FORBIDDEN");
+      expect(users.find((u) => u.id === "user-1")!.name).toBe("Alice");
+      // an invalid input is not described to somebody who may not change that name
+      const probe = await updateUser({ id: "user-1", name: "" }, viewerCtx);
+      expect(!probe.success && probe.error.code).toBe("FORBIDDEN");
     });
   });
 });

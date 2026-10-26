@@ -1,3 +1,4 @@
+import { ctxCan, type ResourceRef } from "@/lib/access";
 import { prisma } from "@/lib/db";
 import { withAudit } from "@/lib/audit";
 import { ok, err } from "@/types/result";
@@ -21,6 +22,19 @@ export function extractMentionedUserIds(content: string): string[] {
     ids.push(match[1]);
   }
   return [...new Set(ids)];
+}
+
+/** Where the entity (or the field's entity) an annotation is on lives, or null when it names none or the row is gone. */
+async function annotatedPlace(afterState: unknown): Promise<ResourceRef | null> {
+  const { entityId, fieldId } = (afterState ?? {}) as { entityId?: unknown; fieldId?: unknown };
+  const owner = { tenantId: true, domainId: true, productId: true, product: { select: { domainId: true } } } as const;
+  const row =
+    typeof entityId === "string" && entityId !== ""
+      ? await prisma.entity.findUnique({ where: { id: entityId }, select: owner })
+      : typeof fieldId === "string" && fieldId !== ""
+        ? (await prisma.field.findUnique({ where: { id: fieldId }, select: { entity: { select: owner } } }))?.entity
+        : null;
+  return row ? { tenantId: row.tenantId, domainId: row.domainId ?? row.product?.domainId ?? null, productId: row.productId ?? null } : null;
 }
 
 // ============================================================
@@ -189,12 +203,15 @@ export async function resolveAnnotation(
       });
     }
 
-    // RBAC: only author or Admin can resolve
-    if (original.userId !== ctx.userId && ctx.userRole !== "ADMIN") {
-      return err({
-        code: "FORBIDDEN",
-        message: "Only the author or an Admin can resolve annotations",
-      });
+    // Access: the author resolves their own; anybody else needs `annotation.moderate` over the entity (or the field's entity) the annotation is on.
+    if (original.userId !== ctx.userId) {
+      const place = await annotatedPlace(original.afterState);
+      if (!place || !ctxCan(ctx, "annotation.moderate", place)) {
+        return err({
+          code: "FORBIDDEN",
+          message: "Only the author or an Admin can resolve annotations",
+        });
+      }
     }
 
     const afterState = (original.afterState || {}) as Record<string, unknown>;
