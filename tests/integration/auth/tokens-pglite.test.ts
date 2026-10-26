@@ -47,6 +47,8 @@ async function fixtures() {
   const domain = await db().domain.create({ data: { tenantId: tenant.id, name: "Payments", slug: fresh("payments") } });
   const product = await db().product.create({ data: { domainId: domain.id, name: "Ledger", slug: fresh("ledger") } });
   const creator = await db().user.create({ data: { email: `${fresh("creator")}@example.test`, name: "Creator" } });
+  // The creator is a platform administrator: acceptance judges what they may still grant (`grantAllowed`), and an ADMIN may grant everything.
+  await db().userRole.create({ data: { userId: creator.id, role: "ADMIN", scopeKey: "G" } });
   const scopes = {
     global: { kind: "GLOBAL" } as const,
     tenant: { kind: "TENANT", tenantId: tenant.id } as const,
@@ -349,6 +351,149 @@ describe("acceptInvitation", () => {
 
     expect(await findValidInvitation(live.token)).toEqual({ email: "peek@example.test" });
     for (const token of [used.token, expired.token, generateToken().token, "garbage", undefined as never]) expect(await findValidInvitation(token)).toBeNull();
+  }, 60_000);
+});
+
+describe("acceptInvitation judges the creator AGAIN (Task 4 ruling d): what they can no longer grant is skipped and listed, nothing else", () => {
+  /** An invitation by a creator who holds `creatorRoles` NOW (the roles they held when they made it are whatever the test then changes). */
+  async function invitedBy(
+    creatorRoles: (f: Awaited<ReturnType<typeof fixtures>>) => Array<{ role: string; scopeKey: string; tenantId?: string; domainId?: string }>,
+    roles: (f: Awaited<ReturnType<typeof fixtures>>) => Assignment[],
+    email = `${fresh("invited")}@example.test`
+  ) {
+    const f = await fixtures();
+    // The fixture's creator is a platform administrator; the test decides what they are at acceptance.
+    await db().userRole.deleteMany({ where: { userId: f.creator.id } });
+    const created = await createInvitation({ email, roles: roles(f), createdById: f.creator.id });
+    if (!created.success) throw new Error(`invitation not created: ${created.error.message}`);
+    for (const row of creatorRoles(f)) await db().userRole.create({ data: { userId: f.creator.id, ...row } });
+    return { f, ...created.data };
+  }
+  const rolesOf = (userId: string) => db().userRole.findMany({ where: { userId }, orderBy: { scopeKey: "asc" } });
+  const entryOf = (userId: string) => db().auditLog.findFirstOrThrow({ where: { action: "INVITATION_ACCEPTED", entityId: userId } });
+
+  it("a creator who has since LOST their administrator role: the account is made, roleless, and every skipped role is in the audit entry", async () => {
+    const { f, token } = await invitedBy(
+      () => [],
+      (f) => [
+        { role: "AUTHOR", scope: f.scopes.domain },
+        { role: "VIEWER", scope: f.scopes.tenant },
+      ]
+    );
+    const result = await acceptInvitation(token, { name: "Late", password: GOOD });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(await rolesOf(result.data.userId)).toEqual([]);
+    const entry = await entryOf(result.data.userId);
+    expect(entry.afterState).toMatchObject({
+      roles: [],
+      skipped: expect.arrayContaining([
+        { role: "AUTHOR", scopeKey: `D:${f.domain.id}`, reason: "creator-cannot-grant" },
+        { role: "VIEWER", scopeKey: `T:${f.tenant.id}`, reason: "creator-cannot-grant" },
+      ]),
+    });
+    expect(((entry.afterState as { skipped: unknown[] }).skipped)).toHaveLength(2);
+  }, 60_000);
+
+  it("a creator who was a platform administrator and is now the administrator of ONE tenant: that tenant's roles are given, a platform role and another tenant's are skipped", async () => {
+    const { f, token } = await invitedBy(
+      (f) => [{ role: "ADMIN", scopeKey: `T:${f.tenant.id}`, tenantId: f.tenant.id }],
+      (f) => [
+        { role: "AUTHOR", scope: f.scopes.domain },
+        { role: "ADMIN", scope: f.scopes.global },
+      ]
+    );
+    const result = await acceptInvitation(token, { name: "Partly", password: GOOD });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const rows = await rolesOf(result.data.userId);
+    expect(rows.map((r) => [r.role, r.scopeKey, r.grantedById])).toEqual([["AUTHOR", `D:${f.domain.id}`, f.creator.id]]);
+    expect((await entryOf(result.data.userId)).afterState).toMatchObject({
+      roles: [{ role: "AUTHOR", scopeKey: `D:${f.domain.id}` }],
+      skipped: [{ role: "ADMIN", scopeKey: "G", reason: "creator-cannot-grant" }],
+    });
+  }, 60_000);
+
+  it("a creator who is still a platform administrator: everything is given, and no `skipped` key is written", async () => {
+    const { f, token } = await invitedBy(
+      () => [{ role: "ADMIN", scopeKey: "G" }],
+      (f) => [
+        { role: "ADMIN", scope: f.scopes.tenant },
+        { role: "VIEWER", scope: f.scopes.product },
+      ]
+    );
+    const result = await acceptInvitation(token, { name: "Whole", password: GOOD });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(await rolesOf(result.data.userId)).toHaveLength(2);
+    expect((await entryOf(result.data.userId)).afterState).not.toHaveProperty("skipped");
+    expect(f.creator.id).toBeTruthy();
+  }, 60_000);
+
+  it("a creator who is DISABLED grants nothing; enabled again before the link is used, they grant it all", async () => {
+    const { f, token } = await invitedBy(
+      () => [{ role: "ADMIN", scopeKey: "G" }],
+      (f) => [{ role: "VIEWER", scope: f.scopes.tenant }]
+    );
+    await db().user.update({ where: { id: f.creator.id }, data: { disabledAt: new Date() } });
+    const first = await acceptInvitation(token, { name: "A", password: GOOD });
+    expect(first.success).toBe(true);
+    if (!first.success) return;
+    expect(await rolesOf(first.data.userId)).toEqual([]);
+
+    const again = await invitedBy(
+      () => [{ role: "ADMIN", scopeKey: "G" }],
+      (f) => [{ role: "VIEWER", scope: f.scopes.tenant }]
+    );
+    await db().user.update({ where: { id: again.f.creator.id }, data: { disabledAt: new Date() } });
+    await db().user.update({ where: { id: again.f.creator.id }, data: { disabledAt: null } });
+    const second = await acceptInvitation(again.token, { name: "B", password: GOOD });
+    expect(second.success && (await rolesOf(second.data.userId))).toHaveLength(1);
+  }, 120_000);
+
+  it("a domain administrator who made an invitation for their domain and for a sibling: only their domain is given", async () => {
+    const { f, token } = await invitedBy(
+      (f) => [{ role: "ADMIN", scopeKey: `D:${f.domain.id}`, tenantId: f.tenant.id, domainId: f.domain.id }],
+      (f) => [{ role: "AUTHOR", scope: f.scopes.domain }]
+    );
+    const sibling = await db().domain.create({ data: { tenantId: f.tenant.id, name: "Sibling", slug: fresh("sibling") } });
+    await db().invitationRole.create({ data: { invitationId: (await db().invitation.findFirstOrThrow({ where: { createdById: f.creator.id } })).id, role: "VIEWER", scopeKey: `D:${sibling.id}` } });
+    const result = await acceptInvitation(token, { name: "Sib", password: GOOD });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect((await rolesOf(result.data.userId)).map((r) => r.scopeKey)).toEqual([`D:${f.domain.id}`]);
+    expect((await entryOf(result.data.userId)).afterState).toMatchObject({ skipped: [{ role: "VIEWER", scopeKey: `D:${sibling.id}`, reason: "creator-cannot-grant" }] });
+  }, 60_000);
+
+  it("a role whose domain has since been deleted is skipped with its own reason (scope-gone), and the rest is still given", async () => {
+    const { f, token } = await invitedBy(
+      () => [{ role: "ADMIN", scopeKey: "G" }],
+      (f) => [
+        { role: "VIEWER", scope: f.scopes.tenant },
+        { role: "AUTHOR", scope: f.scopes.domain },
+      ]
+    );
+    await db().domain.delete({ where: { id: f.domain.id } });
+    const result = await acceptInvitation(token, { name: "Gone", password: GOOD });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect((await rolesOf(result.data.userId)).map((r) => r.scopeKey)).toEqual([`T:${f.tenant.id}`]);
+    expect((await entryOf(result.data.userId)).afterState).toMatchObject({ skipped: [{ role: "AUTHOR", scopeKey: `D:${f.domain.id}`, reason: "scope-gone" }] });
+  }, 60_000);
+
+  it("the audit entry of a skipped acceptance names no e-mail and no token", async () => {
+    const email = "private.person@example.test";
+    const { token } = await invitedBy(
+      () => [],
+      (f) => [{ role: "VIEWER", scope: f.scopes.tenant }],
+      email
+    );
+    const result = await acceptInvitation(token, { name: "Private", password: GOOD });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const text = JSON.stringify(await entryOf(result.data.userId));
+    expect(text).not.toContain(email);
+    expect(text).not.toContain(token);
   }, 60_000);
 });
 

@@ -13,13 +13,15 @@
  * A wrong, a malformed, an expired and a used token get ONE answer, `INVALID_LINK_MESSAGE`, in one shape: nothing tells which it was. A refusal that
  * is about the password (the policy) or the e-mail (already an account) is a different answer, and it does not spend the token.
  *
- * Out of scope here (Task 7): whether the person creating an invitation may grant its roles (`grantAllowed`), and revoking an invitation. This module
- * accepts the roles and scopes that `isValidAssignment` accepts, and `acceptInvitation` skips any that no longer are valid (a deleted domain).
+ * Who may INVITE with which roles, and revoking an invitation, are decisions of the administration service (`inviteUser`, `revokeInvitation`,
+ * `src/services/invitation.service.ts`); `createInvitation` accepts the roles and scopes that `isValidAssignment` accepts. At ACCEPTANCE the creator is
+ * judged again (`acceptInvitation`): a role the creator can no longer grant is skipped and listed in the audit entry.
  */
 import { createHash, randomBytes } from "node:crypto";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
-import { isValidAssignment, parseScopeKey, scopeKey, type Assignment, type Scope } from "@/lib/access";
+import { grantAllowed, isValidAssignment, parseScopeKey, scopeKey, type Assignment, type Scope } from "@/lib/access";
+import { loadActorAssignments } from "@/lib/access/granter";
 import { INVALID_LINK_MESSAGE } from "@/lib/auth/messages";
 import { hashPassword } from "@/lib/auth/password-hash";
 import { normalizeEmail, validatePassword } from "@/lib/auth/password-policy";
@@ -95,60 +97,79 @@ export async function createInvitation(input: {
   createdById: string;
   ttlHours?: number;
 }): Promise<Result<{ invitationId: string; token: string; expiresAt: Date }>> {
+  const checked = checkInvitation(input);
+  if (!checked.success) return checked;
+  try {
+    return await prisma.$transaction((tx) => insertInvitation(tx, { ...checked.data, createdById: String(input.createdById) }));
+  } catch (error) {
+    return internalFailure("createInvitation", error);
+  }
+}
+
+/** What an invitation is made of once its input has been checked: the normalized e-mail, the distinct valid assignments, the lifetime. */
+export type CheckedInvitation = { email: string; assignments: Assignment[]; ttlHours: number };
+
+/**
+ * Checks the input of an invitation without touching the database: a bad e-mail, a TTL outside 1 hour to 30 days, too many roles and an assignment
+ * that is not valid (a global role other than ADMIN, an unknown role, an incomplete scope) are refused; duplicates are folded. Shared by
+ * `createInvitation` and the administration service that decides WHO may invite (`inviteUser`).
+ */
+export function checkInvitation(input: { email: string; roles: readonly Assignment[]; ttlHours?: number }): Result<CheckedInvitation> {
   const email = normalizeEmail(input.email);
   if (email === "" || email.length > MAX_EMAIL_LENGTH || !/^[^\s@]+@[^\s@]+$/.test(email)) {
-    return err({ code: "VALIDATION_ERROR", message: "Enter a valid e-mail address." });
+    return err({ code: "VALIDATION_ERROR", message: "Enter a valid e-mail address.", details: { field: "email" } });
   }
   const ttlHours = input.ttlHours ?? INVITATION_TTL_HOURS;
   if (typeof ttlHours !== "number" || !Number.isFinite(ttlHours) || ttlHours < 1 || ttlHours > MAX_TTL_HOURS) {
-    return err({ code: "VALIDATION_ERROR", message: `An invitation lasts from 1 hour to ${MAX_TTL_HOURS / 24} days.` });
+    return err({ code: "VALIDATION_ERROR", message: `An invitation lasts from 1 hour to ${MAX_TTL_HOURS / 24} days.`, details: { field: "ttlHours" } });
   }
   if (!Array.isArray(input.roles) || input.roles.length > MAX_ROLES_PER_INVITATION) {
-    return err({ code: "VALIDATION_ERROR", message: `An invitation carries at most ${MAX_ROLES_PER_INVITATION} roles.` });
+    return err({ code: "VALIDATION_ERROR", message: `An invitation carries at most ${MAX_ROLES_PER_INVITATION} roles.`, details: { field: "roles" } });
   }
   const unique = new Map<string, Assignment>();
   for (const assignment of input.roles) {
     if (!assignment || !isValidAssignment(assignment.role, assignment.scope)) {
-      return err({ code: "VALIDATION_ERROR", message: "One of the roles is not a valid assignment." });
+      return err({ code: "VALIDATION_ERROR", message: "One of the roles is not a valid assignment.", details: { field: "roles" } });
     }
     unique.set(`${assignment.role}\u0000${scopeKey(assignment.scope)}`, assignment);
   }
-  const assignments = [...unique.values()];
+  return ok({ email, assignments: [...unique.values()], ttlHours });
+}
 
+/**
+ * Writes the invitation and its audit entry inside the caller's transaction (so a service that decides in a SERIALIZABLE one can make the invitation
+ * and what it replaces commit together). The creator must exist: the invitation is nobody's otherwise. Returns the token once, in the clear.
+ */
+export async function insertInvitation(
+  tx: Tx,
+  input: CheckedInvitation & { createdById: string }
+): Promise<Result<{ invitationId: string; token: string; expiresAt: Date }>> {
   const { token, tokenHash } = generateToken();
-  const expiresAt = new Date(Date.now() + ttlHours * HOUR_MS);
-  try {
-    const invitationId = await prisma.$transaction(async (tx) => {
-      const creator = await tx.user.findUnique({ where: { id: String(input.createdById) }, select: { id: true } });
-      if (!creator) throw new Refusal(err({ code: "VALIDATION_ERROR", message: "The person creating the invitation does not exist." }));
-      const invitation = await tx.invitation.create({
-        data: {
-          emailLower: email,
-          tokenHash,
-          expiresAt,
-          createdById: creator.id,
-          roles: { create: assignments.map((a) => ({ role: a.role, scopeKey: scopeKey(a.scope) })) },
-        },
-        select: { id: true },
-      });
-      await tx.auditLog.create({
-        data: {
-          action: "INVITATION_CREATED",
-          entityType: "Invitation",
-          entityId: invitation.id,
-          userId: creator.id,
-          tenantId: commonTenantId(assignments.map((a) => a.scope)),
-          // The invited address stays in `invitations`; the immutable log holds what was granted, not who.
-          afterState: { roles: assignments.map((a) => ({ role: a.role, scopeKey: scopeKey(a.scope) })), expiresAt: expiresAt.toISOString() },
-        },
-      });
-      return invitation.id;
-    });
-    return ok({ invitationId, token, expiresAt });
-  } catch (error) {
-    if (error instanceof Refusal) return error.result;
-    return internalFailure("createInvitation", error);
-  }
+  const expiresAt = new Date(Date.now() + input.ttlHours * HOUR_MS);
+  const creator = await tx.user.findUnique({ where: { id: input.createdById }, select: { id: true } });
+  if (!creator) return err({ code: "VALIDATION_ERROR", message: "The person creating the invitation does not exist." });
+  const invitation = await tx.invitation.create({
+    data: {
+      emailLower: input.email,
+      tokenHash,
+      expiresAt,
+      createdById: creator.id,
+      roles: { create: input.assignments.map((a) => ({ role: a.role, scopeKey: scopeKey(a.scope) })) },
+    },
+    select: { id: true },
+  });
+  await tx.auditLog.create({
+    data: {
+      action: "INVITATION_CREATED",
+      entityType: "Invitation",
+      entityId: invitation.id,
+      userId: creator.id,
+      tenantId: commonTenantId(input.assignments.map((a) => a.scope)),
+      // The invited address stays in `invitations`; the immutable log holds what was granted, not who.
+      afterState: { roles: input.assignments.map((a) => ({ role: a.role, scopeKey: scopeKey(a.scope) })), expiresAt: expiresAt.toISOString() },
+    },
+  });
+  return ok({ invitationId: invitation.id, token, expiresAt });
 }
 
 type LiveInvitation = { id: string; emailLower: string; createdById: string; roles: { role: string; scopeKey: string }[] };
@@ -175,7 +196,7 @@ export async function findValidInvitation(token: string): Promise<{ email: strin
  * (the key names one id). null (skip) for a malformed key, a tenant, domain or product that no longer exists, an unknown role, or an assignment
  * that is not valid (a global role other than ADMIN).
  */
-async function completeAssignment(tx: Tx, row: { role: string; scopeKey: string }): Promise<Assignment | null> {
+export async function completeAssignment(tx: Tx, row: { role: string; scopeKey: string }): Promise<Assignment | null> {
   if (!isRole(row.role)) return null;
   const parsed = parseScopeKey(row.scopeKey);
   if (!parsed) return null;
@@ -249,10 +270,23 @@ export async function acceptInvitation(token: string, input: { name?: string | n
       }
       const user = await tx.user.create({ data: { email: invitation.emailLower, name, password: passwordHash }, select: { id: true, email: true } });
 
+      // The authority of whoever made the invitation is judged NOW, not when they made it (decision of Task 4, ruling d): an invitation is a promise
+      // of roles the creator could grant, and a creator who has since been disabled, demoted or removed from a tenant can no longer promise them. Each
+      // role they may still grant (`grantAllowed`, from their stored assignments) is given; the others are skipped and listed in the audit entry; an
+      // invitation none of whose roles survives makes a roleless account. The e-mail address was the creator's to invite either way.
+      const creator = await loadActorAssignments(tx, invitation.createdById);
       const granted: Assignment[] = [];
+      const skipped: Array<{ role: string; scopeKey: string; reason: "scope-gone" | "creator-cannot-grant" }> = [];
       for (const row of invitation.roles) {
         const assignment = await completeAssignment(tx, row);
-        if (!assignment) continue;
+        if (!assignment) {
+          skipped.push({ role: row.role, scopeKey: row.scopeKey, reason: "scope-gone" });
+          continue;
+        }
+        if (!creator || !grantAllowed([...creator], assignment.role, assignment.scope)) {
+          skipped.push({ role: row.role, scopeKey: row.scopeKey, reason: "creator-cannot-grant" });
+          continue;
+        }
         await tx.userRole.create({ data: { userId: user.id, role: assignment.role, ...roleColumns(assignment.scope), grantedById: invitation.createdById } });
         granted.push(assignment);
       }
@@ -263,8 +297,13 @@ export async function acceptInvitation(token: string, input: { name?: string | n
           entityType: "User",
           entityId: user.id,
           userId: user.id,
+          // The tenant of what was granted, else (nothing was) of what was asked for.
           tenantId: commonTenantId(granted.map((a) => a.scope)),
-          afterState: { invitationId: invitation.id, roles: granted.map((a) => ({ role: a.role, scopeKey: scopeKey(a.scope) })) },
+          afterState: {
+            invitationId: invitation.id,
+            roles: granted.map((a) => ({ role: a.role, scopeKey: scopeKey(a.scope) })),
+            ...(skipped.length > 0 ? { skipped } : {}),
+          },
         },
       });
       return ok({ userId: user.id, email: user.email });
@@ -288,22 +327,45 @@ export async function acceptInvitation(token: string, input: { name?: string | n
  */
 export async function createResetToken(userId: string, options: { issuedById?: string } = {}): Promise<Result<{ token: string; expiresAt: Date }>> {
   if (typeof userId !== "string" || userId === "") return err({ code: "NOT_FOUND", message: "Not found" });
-  const { token, tokenHash } = generateToken();
-  const expiresAt = new Date(Date.now() + RESET_TTL_HOURS * HOUR_MS);
   try {
-    await prisma.$transaction(async (tx) => {
-      const user = await tx.user.findUnique({ where: { id: userId }, select: { id: true } });
-      if (!user) throw new Refusal(err({ code: "NOT_FOUND", message: "Not found" }));
-      await tx.authToken.create({ data: { userId: user.id, kind: "RESET", tokenHash, expiresAt } });
-      await tx.auditLog.create({
-        data: { action: "PASSWORD_RESET_ISSUED", entityType: "User", entityId: user.id, userId: options.issuedById ?? user.id, afterState: { expiresAt: expiresAt.toISOString() } },
-      });
-    });
-    return ok({ token, expiresAt });
+    const made = await prisma.$transaction((tx) => insertResetToken(tx, { userId, issuedById: options.issuedById ?? userId }));
+    return made.success ? ok({ token: made.data.token, expiresAt: made.data.expiresAt }) : made;
   } catch (error) {
-    if (error instanceof Refusal) return error.result;
     return internalFailure("createResetToken", error);
   }
+}
+
+/**
+ * Writes a reset token and its audit entry (`PASSWORD_RESET_ISSUED`, by `issuedById`, in `tenantId` when the issuer acts in one) inside the caller's
+ * transaction, and with `revokeOthers` ends every earlier unused reset token of the user first (a new link replaces the old ones: only one is ever
+ * live), answering how many LIVE ones that stopped. NOT_FOUND for no such user. The token is returned once, in the clear.
+ */
+export async function insertResetToken(
+  tx: Tx,
+  input: { userId: string; issuedById: string; tenantId?: string | null; revokeOthers?: boolean }
+): Promise<Result<{ token: string; expiresAt: Date; invalidatedLinks: number }>> {
+  const user = await tx.user.findUnique({ where: { id: input.userId }, select: { id: true } });
+  if (!user) return err({ code: "NOT_FOUND", message: "Not found" });
+  const { token, tokenHash } = generateToken();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + RESET_TTL_HOURS * HOUR_MS);
+  let invalidatedLinks = 0;
+  if (input.revokeOthers) {
+    invalidatedLinks = await tx.authToken.count({ where: { userId: user.id, kind: "RESET", usedAt: null, expiresAt: { gt: now } } });
+    await tx.authToken.updateMany({ where: { userId: user.id, kind: "RESET", usedAt: null }, data: { usedAt: now } });
+  }
+  await tx.authToken.create({ data: { userId: user.id, kind: "RESET", tokenHash, expiresAt } });
+  await tx.auditLog.create({
+    data: {
+      action: "PASSWORD_RESET_ISSUED",
+      entityType: "User",
+      entityId: user.id,
+      userId: input.issuedById,
+      ...(input.tenantId ? { tenantId: input.tenantId } : {}),
+      afterState: { expiresAt: expiresAt.toISOString(), ...(input.revokeOthers ? { invalidatedLinks } : {}) },
+    },
+  });
+  return ok({ token, expiresAt, invalidatedLinks });
 }
 
 type LiveReset = { id: string; userId: string; email: string };
