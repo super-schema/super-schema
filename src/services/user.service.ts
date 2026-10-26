@@ -11,13 +11,33 @@
  */
 
 import { ctxCan } from "@/lib/access";
+import { loadActorAssignments } from "@/lib/access/granter";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
+import { resetLink } from "@/lib/auth/links";
+import { insertResetToken } from "@/lib/auth/tokens";
+import { runSerializable } from "@/lib/serializable-transaction";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import type { UserWithRoles } from "@/types/schemas/rbac";
 import type { Role } from "@/types/schemas/rbac";
 import { UpdateUserInputSchema, type UpdateUserInput } from "@/types/schemas/user";
+import type { ResetLinkResult, SetUserDisabledResult } from "@/types/schemas/user-admin";
+import {
+  GRANTING_ROLE,
+  administeredBy,
+  administersSomething,
+  answering,
+  commonTenantId,
+  forbidden as genericForbidden,
+  isAdministrative,
+  reaches,
+  userNotFound as genericUserNotFound,
+} from "./admin-shared";
+
+// The administration of the user list and of invitations lives next to this file and is re-exported here, so the one place to import from is this one.
+export { inviteUser, listPendingInvitations, revokeInvitation } from "./invitation.service";
+export { getRoleMatrix, listUsers } from "./user-directory.service";
 
 /** The columns a user row exposes here. Never the password hash. */
 export interface UserRecord {
@@ -199,4 +219,114 @@ export async function updateUser(
     if (typeof e === "object" && e !== null && (e as { code?: unknown }).code === "P2025") return userNotFound(parsed.data.id);
     throw e;
   }
+}
+
+// ---------------------------------------------------------------------------
+// The life cycle of an account: disable / enable, and a link to set a new password
+//
+// An account is NEVER deleted by this service or any other: audit rows point at their user and are immutable, so a user who has done anything cannot be
+// removed. A person who must lose access is DISABLED (they are refused at sign-in and on the next request: the principal loader checks `disabledAt`).
+//
+// Who may do this to whom: a platform administrator to anyone; a tenant administrator to a user who holds at least one role in a tenant they administer and
+// whose EVERY role lies in tenants they administer (`reaches`). A user outside that reach answers exactly like a user that does not exist. The actor is read
+// from the database inside the SERIALIZABLE transaction that decides, like `assignRole`, and the entry that records the change is written in it.
+// ---------------------------------------------------------------------------
+
+/**
+ * Disables (`disabled` true) or enables (false) an account. Refusals: `FORBIDDEN` (the actor administers nothing, or tries to disable THEMSELVES, or to
+ * disable the LAST enabled platform administrator: the platform must keep one), `NOT_FOUND` (no such user, or one outside the actor's reach: one answer).
+ * Disabling also ends the user's outstanding reset links (a disabled account cannot be reset, and a link must not outlive the decision). Doing what is
+ * already done changes nothing and writes nothing (`changed: false`). Audited as `USER_DISABLED` / `USER_ENABLED`, by the actor, in the tenant the
+ * user's roles share (none when they span tenants or hold a platform role).
+ */
+export async function setUserDisabled(userId: string, disabled: boolean, ctx: ServiceContext): Promise<Result<SetUserDisabledResult>> {
+  if (typeof disabled !== "boolean") {
+    return err({ code: "VALIDATION_ERROR", message: "Say whether the account is to be disabled or enabled.", suggestedFix: "Pass true to disable, false to enable." });
+  }
+  return answering("setUserDisabled", () =>
+    runSerializable(async (tx): Promise<Result<SetUserDisabledResult>> => {
+      const actor = await loadActorAssignments(tx, ctx.userId);
+      const administered = actor ? administeredBy(actor) : null;
+      if (!actor || !administered || !administersSomething(administered)) return genericForbidden();
+
+      // Nobody disables themselves (an administrator who locks themselves out cannot undo it): said before any look-up, it reveals nothing about anyone.
+      if (disabled && userId === ctx.userId) {
+        return err({ code: "FORBIDDEN", message: "You cannot disable your own account", suggestedFix: "Ask another administrator." });
+      }
+
+      const target =
+        typeof userId === "string" && userId.trim() !== ""
+          ? await tx.user.findUnique({ where: { id: userId }, select: { id: true, disabledAt: true, roles: { select: { role: true, scopeKey: true, tenantId: true } } } })
+          : null;
+      if (!target || !reaches(administered, target.roles)) return genericUserNotFound();
+
+      if ((target.disabledAt !== null) === disabled) return ok({ userId: target.id, disabled, changed: false, revokedResetLinks: 0 });
+
+      if (disabled && target.roles.some((row) => row.scopeKey === "G" && isAdministrative(row.role))) {
+        // The platform keeps one enabled administrator. Read inside this SERIALIZABLE transaction: two administrators disabling each other at the same
+        // moment cannot both pass (one of them is run again, finds the other already disabled, and is refused).
+        const others = await tx.userRole.count({ where: { role: GRANTING_ROLE, scopeKey: "G", userId: { not: target.id }, user: { disabledAt: null } } });
+        if (others < 1) {
+          return err({
+            code: "FORBIDDEN",
+            message: "Cannot disable the last platform administrator: at least one must stay enabled",
+            suggestedFix: "Make another user a platform administrator first.",
+          });
+        }
+      }
+
+      const now = new Date();
+      await tx.user.update({ where: { id: target.id }, data: { disabledAt: disabled ? now : null } });
+      let revokedResetLinks = 0;
+      if (disabled) {
+        revokedResetLinks = await tx.authToken.count({ where: { userId: target.id, kind: "RESET", usedAt: null, expiresAt: { gt: now } } });
+        await tx.authToken.updateMany({ where: { userId: target.id, kind: "RESET", usedAt: null }, data: { usedAt: now } });
+      }
+      await tx.auditLog.create({
+        data: {
+          action: disabled ? "USER_DISABLED" : "USER_ENABLED",
+          entityType: "User",
+          entityId: target.id,
+          userId: ctx.userId,
+          tenantId: commonTenantId(target.roles.map((row) => row.tenantId)),
+          beforeState: { disabledAt: target.disabledAt ? target.disabledAt.toISOString() : null },
+          afterState: { disabledAt: disabled ? now.toISOString() : null, ...(disabled ? { revokedResetLinks } : {}) },
+        },
+      });
+      return ok({ userId: target.id, disabled, changed: true, revokedResetLinks });
+    })
+  );
+}
+
+/**
+ * A link that lets a person set a new password (valid one hour; there is no e-mail service, so the administrator hands it over). Same authority as
+ * `setUserDisabled`; any earlier reset link of that user stops working (only one is ever live). A DISABLED account cannot be reset (its link would be dead
+ * on use): enable it first. Audited (`PASSWORD_RESET_ISSUED`, by the actor, in the tenant the user's roles share), the token only ever shown here.
+ */
+export async function createResetLink(userId: string, ctx: ServiceContext): Promise<Result<ResetLinkResult>> {
+  return answering("createResetLink", () =>
+    runSerializable(async (tx): Promise<Result<ResetLinkResult>> => {
+      const actor = await loadActorAssignments(tx, ctx.userId);
+      const administered = actor ? administeredBy(actor) : null;
+      if (!actor || !administered || !administersSomething(administered)) return genericForbidden();
+
+      const target =
+        typeof userId === "string" && userId.trim() !== ""
+          ? await tx.user.findUnique({ where: { id: userId }, select: { id: true, disabledAt: true, roles: { select: { role: true, scopeKey: true, tenantId: true } } } })
+          : null;
+      if (!target || !reaches(administered, target.roles)) return genericUserNotFound();
+      if (target.disabledAt !== null) {
+        return err({ code: "VALIDATION_ERROR", message: "This account is disabled. Enable it before making a reset link.", suggestedFix: "Enable the account, then make the link." });
+      }
+
+      const made = await insertResetToken(tx, {
+        userId: target.id,
+        issuedById: ctx.userId,
+        tenantId: commonTenantId(target.roles.map((row) => row.tenantId)),
+        revokeOthers: true,
+      });
+      if (!made.success) return genericUserNotFound();
+      return ok({ userId: target.id, token: made.data.token, ...resetLink(made.data.token), expiresAt: made.data.expiresAt, invalidatedLinks: made.data.invalidatedLinks });
+    })
+  );
 }

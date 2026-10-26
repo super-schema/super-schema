@@ -6,6 +6,10 @@ vi.mock("@/lib/audit", () => ({
   withAudit: vi.fn(async ({ fn }: { fn: () => Promise<unknown> }) => fn()),
 }));
 
+// The service now also holds the life-cycle functions, which run their own transactions through the app's client (tested on a real database in
+// tests/integration/db/user-lifecycle-pglite.test.ts): this file only reads and renames through the context's client, so the app's own is a stand-in.
+vi.mock("@/lib/db", () => ({ prisma: {} }));
+
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { getUsers, getUserById, updateUser } from "@/services/user.service";
 import type { ServiceContext } from "@/types/service-context";

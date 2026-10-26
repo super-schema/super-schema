@@ -253,6 +253,9 @@ export async function removeRole(
 /** The plan's name for `removeRole`: the same function. */
 export const revokeRole = removeRole;
 
+// Users by scopes for one tenant (reads only; it lives with the rest of the user directory).
+export { getRoleMatrix } from "./user-directory.service";
+
 // ---------------------------------------------------------------------------
 // getEffectiveRole — the role a user holds, by the policy engine
 // ---------------------------------------------------------------------------
