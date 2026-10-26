@@ -520,9 +520,11 @@ test.describe("a visitor with a forged or stale session cookie", () => {
 
   test("odd spellings of the endpoint's address (//api, /API, an encoded letter, an encoded slash under /login) serve no data without a session", { tag: ["@regression"] }, async ({
     request,
+    baseURL,
   }) => {
     for (const path of ["//api/domains-tree", "/API/domains-tree", "/%61pi/domains-tree", "/api/domains-tree/", "/login%2F..%2Fapi%2Fdomains-tree"]) {
-      const response = await request.get(path, { maxRedirects: 0, failOnStatusCode: false });
+      // An absolute URL: a path that starts with `//` resolved against the base URL is a host ("//api/x" is http://api/x), so it would never reach the app.
+      const response = await request.get(`${baseURL!.replace(/\/$/, "")}${path}`, { maxRedirects: 0, failOnStatusCode: false });
       expect(response.status(), `${path} answered ${response.status()}`).not.toBe(200);
       expect(await response.text(), `${path} served the explorer's data`).not.toMatch(/Playground|"domains"/);
     }
