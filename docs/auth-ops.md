@@ -1,9 +1,26 @@
 # Authentication: what to configure and what to know before you run it
 
-Short and operational. The access-control work (roles per tenant, domain and product) is still landing: the sections below say what is true now and what is
-not yet. Sign-in itself (registration modes, passwords, throttling, invitation and reset links, sessions) is described in full here. Identity providers an
-administrator can add next to the local accounts (Google, GitHub, Microsoft Entra ID, Okta, Keycloak, a generic OpenID Connect issuer; none by default) are in
-[`auth.md`](auth.md), with the settings, the rules, the risk of linking existing users and worked examples.
+Short and operational. It covers sign-in (registration modes, passwords, throttling, invitation and reset links, sessions), the first administrator,
+the scoped roles and user management, the REST API key, the tenant of the audit trail, and how to roll back the access-control migration. Identity
+providers an administrator can add next to the local accounts (Google, GitHub, Microsoft Entra ID, Okta, Keycloak, a generic OpenID Connect issuer; none
+by default) are in [`auth.md`](auth.md), with the settings, the rules, the risk of linking existing users and worked examples. What is not covered, and
+the known defects behind it, is at the end of this file.
+
+## Settings at a glance
+
+| Setting | What it does | Default |
+|---|---|---|
+| `AUTH_SECRET` / `NEXTAUTH_SECRET` | Signs every session; the whole authentication boundary. `AUTH_SECRET` wins when both are set. | A production server refuses to start without one of at least 32 characters that is not a known placeholder |
+| `AUTH_URL` / `NEXTAUTH_URL` | The public origin of the app. `AUTH_URL` also makes the `Host` header trusted; `NEXTAUTH_URL` alone does not. | Unset |
+| `AUTH_TRUST_HOST` | `true` or `1` trusts the `Host` header (behind a reverse proxy you control). | Production does not trust the header unless `AUTH_URL` is set; development and test always do |
+| `AUTH_TRUST_PROXY` | Exactly `1`: the client address is the left-most `X-Forwarded-For` entry (sign-in throttle and REST rate limit). | Off: every request is in one shared bucket |
+| `AUTH_REGISTRATION` | `open`, `invite` or `closed`. | `invite`; an unknown value is `invite` |
+| `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` | The administrator the seed creates. Set both or neither. | Unset: the seed creates `admin@admin.com` only when `NODE_ENV` is not `production` |
+| `API_KEY` | Enables `Authorization: Bearer <key>` on `/api/v1/*`. | Off |
+| `API_KEY_TENANT_ID` | The tenant the key acts in. | `tenant_default` |
+| `API_KEY_ROLE` | The role the key holds: `VIEWER`, `AUTHOR`, `STEWARD`, `COMPLIANCE_OFFICER` or `ADMIN`. A value that is not a role turns the key off. | `ADMIN` |
+| `AUTH_PROVIDERS`, `AUTH_PROVIDER_<KEY>_*` | Identity providers. See [`auth.md`](auth.md). | None |
+| `AUTH_SECRET_1` to `_3` | Auth.js's secret rotation names. Auth.js reads them only when no secret is set; the middleware never does, so rotation is not supported. | Not used |
 
 ## The secret
 
@@ -32,7 +49,8 @@ A secret is per deployment and per environment: a secret that is shared between 
 **Rotation is not supported.** Auth.js can rotate with `AUTH_SECRET_1`, `AUTH_SECRET_2`, `AUTH_SECRET_3`, but it reads those only when it has no
 secret of its own, and the middleware reads only `AUTH_SECRET` and `NEXTAUTH_SECRET`. With the rotation names alone the middleware has no
 secret and **fails closed**: every request bounces to `/login`, and a production server refuses to start. To change the secret, change
-`AUTH_SECRET` (or `NEXTAUTH_SECRET`) and restart: every session is signed out (users log in again).
+`AUTH_SECRET` (or `NEXTAUTH_SECRET`) and restart: every session is signed out (users log in again). The throttle counts restart too: the e-mail and
+address hashes in `auth_events` are keyed with the secret, so after the change no earlier failure is found.
 
 ## Trusting the host (`UntrustedHost`) and the proxy (`AUTH_TRUST_PROXY`)
 
@@ -47,7 +65,7 @@ no (Auth.js reads any set value as yes), `NEXTAUTH_URL` alone does not trust the
 or `AUTH_TRUST_HOST=true` there). The e2e release runner sets both for its own app.
 
 **The client address** (`AUTH_TRUST_PROXY`, used by the sign-in throttle, below, and by the REST API's rate limit: 100 requests a minute per address on `emit`, `validate` and
-`event-specs`). Set `AUTH_TRUST_PROXY=1` only when a reverse proxy in front of the app **sets
+`event-specs`). Set `AUTH_TRUST_PROXY=1` (exactly `1`; `true` is not read) only when a reverse proxy in front of the app **sets
 `X-Forwarded-For` itself and overwrites whatever the client sent** (nginx `proxy_set_header X-Forwarded-For $remote_addr;`, most cloud load balancers). The app then
 takes the **left-most** entry as the client address (a loopback address, 127.0.0.0/8 or `::1`, counts as no address: `next start` writes the socket's own address into the header when a request
 carries none, so with the setting on and no proxy in front everybody would otherwise be one client with a ceiling of five). If the proxy appends instead of overwriting, a client can write that header and choose its own bucket:
@@ -63,7 +81,7 @@ in memory, per process.
 | Value | What `/register` does |
 | --- | --- |
 | `invite` (**the default**) | An account is made by accepting an invitation, `/invite/<token>`; the new account receives the roles the invitation carries. `/register` shows the generic "this link is not valid or has expired" page unless it is given a live invitation token (`/register?token=...` continues at `/invite/<token>`), and the sign-in page offers no "Create one" link. |
-| `open` | Anyone may register. The account holds **no role**: the user lands on `/no-access` ("no access yet") until an administrator assigns one. The e2e run and a laptop use it; a deployment that is reachable by strangers should not. Registering an address that already has an account is answered **exactly** like a new one (the same words, the same redirect to the sign-in page, no second account), so the form cannot be used to find out who has an account; nobody is signed in by registering. |
+| `open` | Anyone may register. The account holds **no role**: the user lands on `/no-access` ("no access yet") until an administrator assigns one. The sign-in page shows "Create one". The e2e run uses this mode; a deployment that strangers can reach should not. Registering an address that already has an account is answered **exactly** like a new one (the same words, the same redirect to the sign-in page, no second account), so the form cannot be used to find out who has an account; nobody is signed in by registering. |
 | `closed` | `/register` says registration is closed and the action refuses. Accounts come from `npm run admin:create`, the seed, or an invitation made earlier and still live. |
 
 An unknown value (a typo) is the default (`invite`), never `open`, and the log says so once. The `.env.example` and `docker-compose.yml` leave it unset, so a
@@ -74,13 +92,40 @@ deployment starts invite-only.
 - **Nobody becomes the administrator by registering first.** No request creates an administrator: the first one is made by the seed or by a command
   (`src/lib/admin-bootstrap.ts`), and afterwards administrators grant roles.
 - **The seed's administrator.** `npm run db:seed` creates `admin@admin.com` with the password `admin` as the global ADMIN **only when `NODE_ENV` is not
-  `production`** (the e2e suite and a laptop rely on it). With `NODE_ENV=production` the seed creates no administrator unless **both**
+  `production`** (the e2e suite and a local seed rely on it). With `NODE_ENV=production` the seed creates no administrator unless **both**
   `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` are set, and then it creates that one instead (in any environment); setting only one of them stops
-  the seed with a message. The password follows the policy below. Running the seed again changes nothing for an administrator that exists, and never resets
+  the seed with a message. A configured password follows the policy below; the development default `admin` does not. Running the seed again changes nothing for an administrator that exists, and never resets
   a password; it gives the global role to an existing account only when the password you supply is that account's own.
 - **`npm run admin:create`** makes one global administrator without seeding anything: `npm run admin:create -- --email you@example.com` and type the
   password at the prompt (not shown), or pipe it on standard input, or set `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD`. It refuses a password
-  the policy refuses and an e-mail that already has an account (it never promotes an existing account), says why, and changes nothing.
+  the policy refuses and an e-mail that already has an account (it never promotes an existing account), says why, and changes nothing. The password is never
+  a command-line argument.
+- **Losing every administrator.** `npm run admin:create` with an address that has no account makes a new platform administrator. It cannot change an existing account.
+
+### Roles at a glance
+
+- Roles, lowest to highest: `VIEWER` reads; `AUTHOR` also writes, imports and generates; `STEWARD` also publishes, deploys, decides governance requests and
+  makes products and domains; `COMPLIANCE_OFFICER` also reads the compliance pages (query, gaps, audit trail, export); `ADMIN` also deletes domains and products,
+  manages the users and roles of its tenant, and holds the platform items (health, emitters, webhooks, git, classifications, the global type-mapping override)
+  at the platform scope.
+- Scopes, widest to narrowest: `GLOBAL` (the platform; ADMIN only) contains `TENANT`, which contains `DOMAIN`, which contains `PRODUCT`, which contains the
+  entities. A tenant-level (Enterprise) entity is covered by its tenant and by the platform scope only.
+- A person's role over a thing is the highest role they hold at a scope that covers it.
+- **`COMPLIANCE_OFFICER` is not read-only.** The ladder is linear, so a compliance officer also holds the author's and the steward's rights. A read-only audit
+  role would be a separate role outside the ladder: a policy change with its own tests, not a setting.
+
+### How the first roles are granted
+
+1. The first platform administrator comes from the seed or from `npm run admin:create` (above). Sign in as that account.
+2. **A new person:** Admin, Users, invite. Enter the e-mail address, the role or roles, and the scope (a tenant, a domain or a product). The platform scope is
+   offered only for ADMIN, and only to a platform administrator. The dialog shows one link, once, with its expiry (7 days by default; see "Invitation and reset
+   links"). Hand the link over. The person opens `/invite/<token>`, sets a password, and the account receives exactly those roles.
+3. **A person who already has an account:** Admin, Users, the user, roles: assign a role at a scope. The same rule applies: only an administrator who covers that
+   scope may assign it, and nobody grants above their own role.
+4. **A tenant administrator:** give ADMIN at the tenant scope with step 2 or step 3. A tenant administrator manages that tenant's users and roles. They cannot
+   grant at the platform scope, cannot grant above their own role, and cannot remove their own administrator assignment.
+5. No command grants a tenant role. Only an administrator in the application (or a direct edit of `user_roles`, which is not recommended) can.
+6. The platform keeps at least one enabled platform administrator: the last one cannot be disabled, and its role cannot be removed (see "Administering users").
 
 ### Passwords and e-mail addresses
 
@@ -90,6 +135,8 @@ deployment starts invite-only.
   dressed up, `P@ssw0rd!2024`, `MyPassword1234`; one character or one short unit repeated; a plain run such as `abcdefghijkl`; the user's e-mail address or the name in front of its `@`).
   The same rule applies to registration, accepting an invitation, a reset link, the seed and `admin:create`. Hashes are bcrypt at cost 12; hashes made earlier
   (any cost, `$2a$`, `$2b$`, `$2y$`) still verify, and are not re-made at sign-in.
+- **No signed-in screen changes a password.** A person who forgot theirs is given a reset link by an administrator (Admin, Users, the user: a one-hour link, shown
+  once; earlier reset links of that user stop working; not for a disabled account). Using it sets the new password and signs nobody in.
 - **No timing oracle.** A sign-in for an address that has no account, one with no password, a locked one and a disabled one all cost one bcrypt compare, like
   a known account (a precomputed dummy hash is compared for the ones that have no hash to try).
 - **One message.** The sign-in page answers `Invalid email or password` for an unknown e-mail, a wrong password, a disabled account and a locked e-mail or
@@ -99,24 +146,26 @@ deployment starts invite-only.
 
 Rows of the `auth_events` table drive it, so it holds across several instances and survives a restart. A row holds the kind of event, its outcome, the time and **HMAC-SHA-256
 hashes (keyed with the session secret) of the e-mail address and of the client address, never the values**; rows older than 24 hours are deleted a batch at a time by the
-inserts that follow (no scheduler).
+inserts that follow (no scheduler). No screen clears a lock: it lifts when its window of 15 minutes has passed.
 
 | Endpoint | What counts | Limit |
 | --- | --- | --- |
-| Sign-in | failures, per e-mail hash **and**, independently, per client-address hash | 5 in 15 minutes each; a success resets the e-mail's count (not the address's); an attempt refused because of the lock is recorded but does not count |
+| Sign-in | failures, per e-mail hash **and**, independently, per client-address hash | 5 in 15 minutes each; a success resets the e-mail's count (not the address's); an attempt refused because of the lock is recorded but does not count. An attempt takes its place BEFORE its password is compared (a `pending` row that counts as a failure until it is settled), so requests that arrive together cannot all be tried: at most 5 passwords per e-mail and window |
 | `/register` (open mode) | every attempt | 5 in 15 minutes per client address |
 | `/invite/<token>` and `/reset/<token>` | dead-link failures (a wrong, expired or used token), not a password the policy refused | 5 in 15 minutes per client address; a locked address gets the same "not valid or expired" answer |
 | Sign-in through an identity provider ([`auth.md`](auth.md)) | refusals by the provider policy (`provider_refused:<reason>` rows), whatever the reason | 5 in 15 minutes per client address (the shared ceiling without a trusted proxy); the password login is not locked by it; a locked address is refused with the same generic answer |
 
 Without `AUTH_TRUST_PROXY=1` every request is in **one shared address bucket**, so it has a higher ceiling (100 failures in 15 minutes: five typos by five people must not
 lock everybody out) and the per-e-mail limit (5) is the protection that matters. Set `AUTH_TRUST_PROXY=1` behind a proxy that overwrites `X-Forwarded-For` (above) to get a
-bucket per client. A throttle that cannot be read refuses the attempt (fail closed).
+bucket per client. A throttle that cannot be read, or in which a sign-in cannot take its place, refuses the attempt (fail closed). An attempt that never settles (the process died during the compare) stays counted as a failure for the rest of its window, which errs toward the lock.
+
+Only the password sign-in reserves its place. `/register`, `/invite/<token>`, `/reset/<token>` and the provider check read the count and write afterwards, so a burst of simultaneous requests can pass their limit by about the size of the burst. None of them lets a guess be tried against a secret that can be found by guessing: an invitation or reset token is 32 random bytes, and registration only makes an account with no role.
 
 ### Invitation and reset links
 
 There is no e-mail service: an administrator copies the link and hands it over. A link carries a token of 32 random bytes; **only its SHA-256 is stored**, so nothing in the database opens
-a link. A link works **once** (one atomic `UPDATE ... WHERE usedAt IS NULL AND expiresAt > now`, so two concurrent uses cannot both succeed) and lives **7 days (invitation)** or **1 hour (reset)**.
-A wrong, expired and used token get the same page and the same words. An invitation makes the account for **the invited e-mail only** (the form cannot change it), grants the roles
+a link. A link works **once** (one atomic `UPDATE ... WHERE usedAt IS NULL AND expiresAt > now`, so two concurrent uses cannot both succeed). It lives **7 days (invitation)** or **1 hour (reset)**.
+The Admin dialog always makes a 7-day invitation. The service accepts a lifetime from 1 hour to 30 days, which only a direct call sets. A wrong, expired and used token get the same page and the same words. An invitation makes the account for **the invited e-mail only** (the form cannot change it), grants the roles
 the invitation carries, and is audited; a reset link sets a new password, kills the user's other outstanding reset links, and signs nobody in. A session that is already signed in
 stays valid until it expires (the session is a signed token with no record on the server to revoke): disabling the user is what stops it, on the next request.
 
@@ -133,13 +182,13 @@ invite either way.
 change and its audit entry commit together.
 
 | Function | Who | What |
-| --- | --- | --- |
+|---|---|---|
 | `inviteUser({ email, roles, ttlHours? })` | an administrator allowed by `grantAllowed` for **every** role and scope asked | one-time link (`token`, `path`, `url`) and expiry; the address is normalized; an address that already has an account is refused; an earlier pending invitation for the same address that the inviter administers is replaced |
 | `revokeInvitation(id)` | an administrator who reaches it | a **pending** invitation only; its link then answers the generic "not valid" |
 | `listPendingInvitations()` | tenant administrator, platform administrator | the pending invitations in reach, roles by name |
 | `setUserDisabled(userId, disabled)` | platform administrator: anyone; tenant administrator: a user whose roles all lie in their tenants | disable or enable; **never yourself, never the last enabled platform administrator**; disabling ends the user's reset links; takes effect on the next request |
 | `createResetLink(userId)` | as `setUserDisabled` | a one-hour link; earlier links of that user stop working; not for a disabled account |
-| `assignRole` / `removeRole` (`revokeRole`) | an administrator who covers the scope | every grant and revoke is audited (`ROLE_ASSIGNED`, `ROLE_REMOVED`) |
+| `assignRole` / `removeRole` (`revokeRole`) | an administrator who covers the scope | every grant and revoke is audited (`ROLE_ASSIGNED`, `ROLE_REMOVED`); the last enabled platform administrator's role cannot be removed; nobody removes their own administrator assignment |
 | `listUsers({ tenantId? })` | tenant administrator, platform administrator | users (status, last sign-in, roles by the names of their scopes) and the pending invitations, as far as the caller reaches |
 | `getRoleMatrix(tenantId)` | an administrator of that tenant | users by scopes (the tenant, its domains, their products), the highest role per cell |
 
@@ -165,7 +214,7 @@ the OpenAPI and Avro targets (each file inlines the entities it refers to, and t
 only). An entity deleted since the version was made is judged as a tenant-level entity of the root's tenant. The surfaces: the Schemas tab (`getSchemaVersionsAction`),
 `GET /api/v1/schemas/:id` (`metadata`), the entity page (the stored versions are not sent at all), the retention table, the entity list and the change log (the audit states drop them). The git
 export writes the stored file sets whole: it is a platform administrator's act. `tests/unit/access/schema-versions-scan.test.ts` fails when a new reader of `schemaVersions` is neither redacted nor recorded
-with its reason.
+with its reason. Publishing a stored draft is judged on the entity (`entity.publish`) and publishes the stored version as it is: see "Access notes" in [`auth.md`](auth.md).
 
 ### Sessions
 
@@ -179,18 +228,19 @@ test fails for a new one that does not): the resource must lie in the tenant in 
 product; a viewer reads, an author edits, a steward publishes, deploys, makes a product or a domain and decides governance requests, a compliance officer reads the compliance pages, a tenant
 administrator deletes a domain or a product and manages the tenant's users and roles). Platform items (health, emitter configuration, webhooks, git configuration, the classification taxonomy and a
 *global* type-mapping override, which changes every tenant's mapping) are for a global administrator only, whatever a user holds in a tenant. Lists across the tenant (governance requests, the retention
-page, the deployment overview, external event references, "who uses", a concept's linked fields) show a user only what their roles cover. What does not ask the policy yet: the API routes (`/api/*`,
-`/api/v1`) and the page loaders that read the database directly (KD-034 in `docs/testing/known-defects.md`; the deny-by-default test lists each route by name).
+page, the deployment overview, external event references, "who uses", a concept's linked fields) show a user only what their roles cover. Every route handler is held to the same rule by the
+deny-by-default scan (`tests/unit/access/deny-by-default.test.ts`): it fails for a handler that is neither guarded nor on the public list, and its pending lists are empty. The scan does not read page
+files. The dashboard layout sends a role-less user to `/no-access`, and KD-034 in `docs/testing/known-defects.md` records how the pages ask the policy and what the tenant-in-view cookie still allows.
 
-What to do on any deployment that is not a laptop:
+## What to do on any deployment that is not a laptop
 
 1. Leave `AUTH_REGISTRATION` unset (invite-only) or `closed`. Run the seed with `NODE_ENV=production` (or do not seed) and make your administrator with `npm run admin:create` or the two `BOOTSTRAP_ADMIN_*` variables.
-   A database that was seeded earlier keeps `admin@admin.com` / `admin`: change that password straight away (there is no UI for it yet: update the
-   `User.password` bcrypt hash in the database, or delete the user once you have another administrator).
+   A database that was seeded earlier outside production keeps `admin@admin.com` / `admin`. Change that: make a second platform administrator with `npm run admin:create`, sign in as it,
+   and in Admin, Users make a reset link for `admin@admin.com` and set a new password from it; or disable that account once the second administrator exists (the last enabled platform administrator cannot be disabled).
 2. Leave `AUTH_PROVIDERS` unset unless you want identity providers (then read [`auth.md`](auth.md): a provider only signs in people who already have an account, `_LINK_EXISTING_USERS` is a
    risk you take for a provider whose verified e-mails you trust, and a mistake in the provider settings stops a production server from starting).
 3. Behind a reverse proxy: let it overwrite `X-Forwarded-For` and set `AUTH_TRUST_PROXY=1`; also keep a rate limit on `/api/auth/*` at the proxy (the throttle covers password attempts, not requests that never reach the check).
-4. Keep the app on a private network, or behind an authenticating proxy (SSO, a VPN), until the API routes and the page loaders ask the policy too (KD-034).
+4. Keep the app on a private network, or behind an authenticating proxy (SSO, a VPN), until you have accepted the open items in "What is NOT covered" below. The REST API's rate limit is per process (KD-028), and the tenant in view is a per-browser cookie (KD-034).
 
 ## Health endpoint
 
@@ -198,7 +248,7 @@ What to do on any deployment that is not a laptop:
 It checks the database (`SELECT 1`, the result is cached for five seconds, so a monitor that calls every second costs one query per five), the
 parser worker and the compiler and emitters that are installed. It answers `503 {"status":"unhealthy","error":"Health check unavailable"}` and
 logs the cause when the check itself cannot run: it never returns the cause to an unauthenticated caller. The same checks, in more detail, are in
-Admin, Health (administrators only).
+Admin, Health (platform administrators only).
 
 **The status code is readiness for serving requests**, so a probe can gate on it: `503` only when the database does not answer or the TypeSpec
 compiler (the core) is not installed. A missing emitter package makes the answer `degraded` (`200`, "N of M emitter packages installed"): the
@@ -250,12 +300,80 @@ not attribute** (a CREATE that was written with the placeholder id `pending`, a 
 compliance officers never see them, which is the point: they cannot be told apart from another tenant's. If you need an old row in a tenant's trail, set its `tenantId`
 by hand (the table is immutable: lift the `audit_log_immutable` trigger for that statement, as the migration does, and put it back).
 
+## Rolling back the access-control migration
+
+The procedure is also in [`database.md`](database.md). The rollback is `prisma/migrations/20261025230000_access_control/rollback.sql`. Neither runner reads it: the
+migration is applied forward only, and a rollback is a decision taken with the application stopped.
+
+**Before you deploy the migration** (it applies to a database that already has data):
+
+- It refuses, changing nothing, when two accounts have the same e-mail address once trimmed and lower-cased, or when one user holds two role rows for the same
+  role and scope. The error lists them. To find the first kind: `SELECT lower(btrim("email")), count(*) FROM "users" GROUP BY 1 HAVING count(*) > 1;`
+- Legacy global roles other than ADMIN (for example a system-level `COMPLIANCE_OFFICER`) become one tenant-scoped role per tenant that exists when the migration runs.
+  A tenant created later gets none. Read that conversion (the migration's header) before you deploy.
+
+**Rolling back**, newest migration first, and only what you applied:
+
+1. Stop the application.
+2. The webhook endpoint migration (`20261026000000_webhook_endpoint_creator_optional`), only if you need `webhook_endpoints.createdBy` NOT NULL again. Its
+   `rollback.sql` refuses, changing nothing, while any endpoint has no creator, and every endpoint the REST API key created has none. Delete those endpoints, or
+   give each a creator first: `UPDATE "webhook_endpoints" SET "createdBy" = '<a user id>' WHERE "createdBy" IS NULL;`. Then run the file (`psql` with `-v ON_ERROR_STOP=1 -f`, as in step 3) and delete its tracking row: `DELETE FROM "_prisma_migrations" WHERE migration_name = '20261026000000_webhook_endpoint_creator_optional';`.
+   On PGlite, run the file through a PGlite handle and delete its row: `DELETE FROM "_pglite_migrations" WHERE name = '20261026000000_webhook_endpoint_creator_optional';`.
+   The access-control rollback does not need this step.
+3. The access-control migration:
+   - PostgreSQL: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/migrations/20261025230000_access_control/rollback.sql`. The file is one transaction: it completes or
+     changes nothing. Then remove the record: `DELETE FROM "_prisma_migrations" WHERE migration_name = '20261025230000_access_control';`. Do not use
+     `prisma migrate resolve --rolled-back`: it refuses a migration that succeeded (P3012).
+   - PGlite: the same file runs through a PGlite handle on the data directory, then `DELETE FROM "_pglite_migrations" WHERE name = '20261025230000_access_control';`.
+     The repository has no command for that; `tests/integration/access-control-migration.test.ts` runs it that way.
+4. Start the older application version, the one that predates access control.
+
+**What the rollback does:**
+
+- Drops `invitations`, `invitation_roles`, `auth_tokens` and `auth_events` (pending invitations and reset links are lost, and so is the throttle history: every lock lifts),
+  the tenant column of the audit trail, the scope key and granting-user columns of `user_roles`, the case-insensitive e-mail index, `users.disabledAt` and `users.lastLoginAt`,
+  and restores the old unique key of `user_roles`.
+- Keeps every user, every global and domain-scoped role, and every audit row (their tenant is lost).
+- Moves tenant- and product-scoped role rows to `user_roles_access_control_backup` and removes them from `user_roles`. The older code would read them as wider, so they are not
+  left in place. Those people lose those roles in the older version until someone grants them again by hand. This includes the roles the migration itself made from legacy
+  global roles.
+- Clears `users.password` for disabled users, so the rollback does not silently re-enable them. They cannot sign in with a password until a new bcrypt hash is written to `users.password`.
+- Does not revert the lower-cased e-mail addresses.
+
+**Limits:**
+
+- Not reversible. The dropped rows are gone; export invitations, tokens and auth events first if you need them.
+- The backup table is created by the rollback. Keep it until you have granted again what it holds, then drop it. The migration can be applied again afterwards, once the tracking row is gone (the integration test does this after dropping the backup table).
+- The suite runs `rollback.sql` on PGlite only. The PostgreSQL run is not in the suite: rehearse it on a throwaway database before you do it on yours.
+
+## What is NOT covered
+
+These are the open items. Each is either a decision recorded in `docs/testing/known-defects.md` or a thing this repository does not do.
+
+- **Identity providers against a real provider.** None has been tried. The rules are tested against stubs; see [`auth.md`](auth.md). Provider settings are environment variables only: there is no in-app screen for provider secrets (KD-047).
+- **E-mail.** Nothing is sent. Invitation and reset links are shown once to the administrator, who hands them over.
+- **Inviting an address tells an administrator whether it has an account (accepted).** The hedged `INVITATION_REFUSED` hides it from a tenant administrator who cannot see that account, but the refusal itself shows that the address cannot be invited, so a person with the right to invite can still learn that an address has an account somewhere. Platform administrators are told plainly.
+- **Sessions cannot be revoked one by one, and they slide.** A session is a 12-hour window renewed at most once an hour, so a user who keeps working stays signed in. A disabled user is refused on the next request. A password reset does not end sessions that are already signed in.
+- **The tenant in view is a cookie** (KD-034). A user with roles in two tenants who opens a deep link into the other tenant gets a 404 until they switch, and a cookie that names a tenant whose role was revoked falls back silently.
+- **Page files are not in the deny-by-default scan.** The scan covers server actions and route handlers. KD-034 records how the pages ask the policy.
+- **The REST API's rate limit is per process** (KD-028): several instances each allow 100 a minute on `emit`, `validate` and `event-specs`. The sign-in throttle is in the database and holds across instances.
+- **The glossary is one list for every tenant** (KD-043). **An event document can name an entity its author may not read** (KD-044).
+- **A steward can publish a stored draft whose files they cannot see.** This is accepted; see [`auth.md`](auth.md), "Access notes".
+- **Closed registration has no browser test.** Its server behaviour is unit and PGlite tested (`docs/testing/access-control.md`).
+- **The rollback is proved on PGlite only** (see above).
+- **Changing the password of the development administrator** has no screen (see "What to do" above). Accounts are never deleted, so the development administrator stays until it is disabled or its password is changed.
+- **Lost administrators** are recovered from the command line only: `npm run admin:create` for a new address, or the seed with both `BOOTSTRAP_ADMIN_*` variables set to an existing account's own e-mail and password. There is no unlock screen for a throttled account (the lock lifts after 15 minutes).
+- **Audit rows with no tenant** are visible to platform administrators only, and the rows the migration could not attribute stay that way.
+- **Auth.js's `AUTH_REDIRECT_PROXY_URL`** is read by Auth.js. This application does not set it, and the e2e runner blanks it (`docs/testing/e2e.md`).
+
 ## See also
 
-- `docs/testing/e2e.md`: the browser suite, which runs with its own throwaway secret and database and never uses a `.env`. Access control, and what
-  the suite will need when it lands, is in its last section.
-- `docs/auth.md`: the identity providers (settings, redirect URIs, the rules of a provider sign-in, linking, worked examples for Google and a generic OpenID Connect issuer).
-- `docs/testing/known-defects.md`: KD-034 (a tenant is a cookie), KD-038 (the registration and bootstrap risks above), KD-047 (no in-app screen for provider secrets).
+- [`auth.md`](auth.md): the identity providers (settings, redirect URIs, the rules of a provider sign-in, linking, worked examples), and the access notes.
+- `docs/database.md`: the migrations, the rollback procedure, and the production notes.
+- `docs/testing/access-control.md`: what the browser suite proves about who may see and do what.
+- `docs/testing/e2e.md`, "Access control": how the browser suite sets the access-control scenarios up.
+- `docs/testing/known-defects.md`: KD-028 (the REST rate limit), KD-034 (the tenant in view), KD-038 (the registration and bootstrap risks above), KD-043 and KD-044 (glossary and event documents), KD-047 (no in-app screen for provider secrets).
+- `docs/testing/e2e.md`: the browser suite, which runs with its own throwaway secret and database and never uses a `.env`.
 - `src/lib/auth-secret.ts`, `src/instrumentation.ts`, `src/lib/session-cookie.ts`, `src/middleware.ts`, and for sign-in `src/lib/auth.ts` with `src/lib/auth/` (`credentials.ts`,
   `password-policy.ts`, `password-hash.ts`, `throttle.ts`, `tokens.ts`, `registration-mode.ts`, `trust-host.ts`, and for identity providers `providers.ts`, `provider-signin.ts`,
   `provider-callback.ts`, `adapter-guard.ts`).

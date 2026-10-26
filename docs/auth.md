@@ -43,7 +43,8 @@ Set these in the environment of the server (a `.env`, the compose file, your orc
 
 ### Also needed for any provider
 
-- **`AUTH_URL`** (or `NEXTAUTH_URL`): the public origin of the app, `https://schemas.example.com`. Auth.js builds the callback address from it.
+- **`AUTH_URL`** (or `NEXTAUTH_URL`): the public origin of the app, `https://schemas.example.com`. Auth.js builds the callback address from it, and it reads
+  `NEXTAUTH_URL` when `AUTH_URL` is unset. `NEXTAUTH_URL` alone does not trust the `Host` header (`auth-ops.md`, "Trusting the host").
 - **`AUTH_TRUST_HOST=true`** when the app is behind a reverse proxy you control and `AUTH_URL` is not set (`auth-ops.md`, "Trusting the host"). Without either, a production server rejects every request.
 - **The redirect URI** to register at the provider is **`{AUTH_URL}/api/auth/callback/<key>`**, where `<key>` is the key from the table: `https://schemas.example.com/api/auth/callback/google`,
   `.../callback/microsoft-entra-id`, `.../callback/oidc`. It must match exactly (scheme, host, path, no trailing slash).
@@ -178,6 +179,21 @@ Providers are configured in the environment of the server, and a change needs a 
 [`testing/known-defects.md`](testing/known-defects.md)): it would put provider secrets in the database, which needs encrypted secret storage (a key held outside the database, rotation,
 no secret ever shown again or logged, an audit entry for each change) that the app does not have. Until it does, secrets live where the deployment already keeps its other secrets
 (`AUTH_SECRET`, `DATABASE_URL`).
+
+## Access notes: decided behaviour, not defects
+
+These follow from the roles (`docs/auth-ops.md`, "Roles at a glance"). They are recorded so that nobody reads them as a bug. The tests that say what each rule is are named in the bullets; the first one is accepted and has none.
+
+- **A steward can publish a stored draft whose files they cannot see (accepted).** Publishing is judged on the entity (`entity.publish`: STEWARD or higher at a scope that covers the entity, so a compliance officer or a platform
+  administrator can publish too). A stored draft is published as it is stored: the copies that the readers receive (`src/lib/access/schema-version-redaction.ts`)
+  do not change the stored value, and publishing goes on from the whole list. A version that a wider role generated can therefore hold files of entities the steward may
+  not read. A generation the steward makes now is different: the closure refuses when it reaches an entity no role of the caller covers (`REFERENCE_NOT_READABLE`, KD-045).
+- **Domain- and product-scoped users never see tenant-level (Enterprise) entities, by design.** A DOMAIN or PRODUCT scope covers only the resources of that domain or
+  product. A tenant-level entity (no domain, no product) is covered by its tenant and by the platform scope only, so a domain author neither reads it nor inherits
+  anything from it (`src/lib/access/scope.ts`; `docs/testing/access-control.md`, design decision 2).
+- **`COMPLIANCE_OFFICER` is not read-only.** The role ladder is linear: `VIEWER < AUTHOR < STEWARD < COMPLIANCE_OFFICER < ADMIN`. A compliance officer also holds the
+  author's and the steward's rights, and an administrator holds everything. A read-only audit role would be a separate role outside the ladder, which is a policy
+  change with its own tests (`tests/unit/lib/access/policy.test.ts`; `docs/testing/access-control.md`).
 
 ## Where it is in the code
 
