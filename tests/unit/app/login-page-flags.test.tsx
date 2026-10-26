@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * What the login page offers depends on the server: the Google button only when GOOGLE_CLIENT_ID is set (it is absent by default), the "Create one"
+ * What the login page offers depends on the server: a button for each enabled identity provider (none by default), the "Create one"
  * link only when registration is open, and the notices of a redirect (`/login?notice=...`) are a fixed list that never shows what the address says.
  * The failure message is one text for every reason (the server-side half is tests/unit/lib/auth/credentials.test.ts).
  */
@@ -17,7 +17,7 @@ import { INVALID_CREDENTIALS_MESSAGE, LOGIN_NOTICES } from "@/lib/auth/messages"
 
 beforeEach(() => {
   vi.unstubAllEnvs();
-  vi.stubEnv("GOOGLE_CLIENT_ID", "");
+  vi.stubEnv("AUTH_PROVIDERS", "");
   vi.stubEnv("AUTH_REGISTRATION", "");
 });
 afterEach(() => {
@@ -27,30 +27,16 @@ afterEach(() => {
   window.history.pushState({}, "", "/");
 });
 
-const googleButton = () => screen.queryByRole("button", { name: /continue with google/i });
-
 describe("the login page (what the server tells the form)", () => {
   it("is rendered for each request, not baked into a build: it reads the environment", () => {
     expect(dynamic).toBe("force-dynamic");
   });
 
-  it("has NO Google button by default (GOOGLE_CLIENT_ID is not set), and no divider that would introduce it", () => {
+  it("has NO provider button by default (AUTH_PROVIDERS is empty), and no divider that would introduce one", () => {
     render(<LoginPage />);
-    expect(googleButton()).toBeNull();
     expect(screen.queryByText(/or continue with email/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /continue with/i })).toBeNull();
     expect(screen.getByTestId("login-form")).toBeTruthy();
-  });
-
-  it("has the Google button when GOOGLE_CLIENT_ID is set", () => {
-    vi.stubEnv("GOOGLE_CLIENT_ID", "1234.apps.googleusercontent.com");
-    render(<LoginPage />);
-    expect(googleButton()).not.toBeNull();
-  });
-
-  it("has no Google button when GOOGLE_CLIENT_ID is empty or blank", () => {
-    vi.stubEnv("GOOGLE_CLIENT_ID", "   ");
-    render(<LoginPage />);
-    expect(googleButton()).toBeNull();
   });
 
   it("offers 'Create one' only when registration is open (it is invite-only by default, so no link to a page that would say so)", () => {
@@ -64,13 +50,11 @@ describe("the login page (what the server tells the form)", () => {
 });
 
 describe("the login form's props are the whole story", () => {
-  it("shows the Google button for googleEnabled, and not without it", () => {
+  it("shows the registration link for registrationOpen, and not without it", () => {
     render(<LoginForm />);
-    expect(googleButton()).toBeNull();
     expect(screen.queryByTestId("login-register-link")).toBeNull();
     cleanup();
-    render(<LoginForm googleEnabled registrationOpen />);
-    expect(googleButton()).not.toBeNull();
+    render(<LoginForm registrationOpen />);
     expect(screen.getByTestId("login-register-link").getAttribute("href")).toBe("/register");
   });
 });

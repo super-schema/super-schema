@@ -21,7 +21,7 @@
 //      public/ and the NEXT_PUBLIC_ values, kept in .next/e2e-release-build.json);
 //   5. the app: `AUTH_TRUST_HOST=true next start -p <free port>` (the port is probed again just before it starts, up to three tries),
 //      its log in <output root>/server.log; waits until it is ready and `/api/v1/health` answers, then checks that its sign-in URL is
-//      under the run's own origin and that Google sign-in is off (a leaked AUTH_URL or GOOGLE_CLIENT_ID stops the run);
+//      under the run's own origin and that no identity provider is on (a leaked AUTH_URL or AUTH_PROVIDERS stops the run);
 //   6. `scripts/e2e-phases.mjs <tier>` with E2E_BASE_URL pointing at that app, E2E_DATABASE_URL at that database, and an output root and
 //      a login file of the run's own: the exit code of the run is that script's. The browser is decided before anything is provisioned
 //      (scripts/e2e-browser.cjs: an explicit E2E_BROWSER_CHANNEL=chrome|chromium; else Chromium on CI; else Google Chrome when the machine has
@@ -807,7 +807,7 @@ export async function runRelease(initialPlan, deps) {
 /**
  * Whether the app that answered is the one the run configured, judged from what Auth.js lists at `/api/auth/providers` (the sign-in and
  * callback URLs it builds from its own AUTH_URL / NEXTAUTH_URL, and the providers that are switched on). A URL under another origin means
- * an AUTH_URL of a `.env` or a shell got through; a Google provider means GOOGLE_CLIENT_ID did. Pure.
+ * an AUTH_URL of a `.env` or a shell got through; any provider but `credentials` means an AUTH_PROVIDERS did. Pure.
  *
  * @param {unknown} providers the parsed JSON
  * @param {string} baseUrl the run's origin, `http://localhost:<port>`
@@ -818,8 +818,9 @@ export function judgeProviders(providers, baseUrl) {
     return { ok: false, message: `the app's /api/auth/providers is not a list of providers (${JSON.stringify(providers)?.slice(0, 120)})` };
   }
   const entries = Object.entries(/** @type {Record<string, { signinUrl?: unknown, callbackUrl?: unknown }>} */ (providers));
-  if (entries.some(([id]) => id.toLowerCase() === "google")) {
-    return { ok: false, message: "the app offers Google sign-in: a GOOGLE_CLIENT_ID reached it, and the release run is checked with the seeded admin only" };
+  const identityProviders = entries.map(([id]) => id).filter((id) => id.toLowerCase() !== "credentials");
+  if (identityProviders.length > 0) {
+    return { ok: false, message: `the app offers an identity provider (${identityProviders.join(", ")}): an AUTH_PROVIDERS reached it, and the release run is checked with the seeded admin only` };
   }
   for (const [id, provider] of entries) {
     for (const key of ["signinUrl", "callbackUrl"]) {
@@ -1208,7 +1209,7 @@ export function createRealDeps({ log: write = console.log, error: writeError = c
       throw new SetupError(`the app did not become healthy within ${HEALTH_TIMEOUT_MS / 1000} s (${url}: ${last}). Last lines of ${serverLog}:\n${tail(serverLog)}`);
     },
 
-    /** Asks the app which sign-in URLs and providers it has (`judgeProviders`): a leaked AUTH_URL or GOOGLE_CLIENT_ID shows here. */
+    /** Asks the app which sign-in URLs and providers it has (`judgeProviders`): a leaked AUTH_URL or AUTH_PROVIDERS shows here. */
     async verifyApp(plan, _server, { signal }, which = "app") {
       const origin = which === "second" ? plan.secondBaseUrl : plan.baseUrl;
       const url = `${origin}/api/auth/providers`;

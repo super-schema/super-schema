@@ -26,10 +26,10 @@ export const env = createEnv({
     ),
     // `1`: take the client address of sign-in throttling from X-Forwarded-For (a proxy in front sets it). Anything else: one shared bucket. src/lib/auth/throttle.ts.
     AUTH_TRUST_PROXY: z.string().optional(),
-    GOOGLE_CLIENT_ID: z.string().optional(),
-    GOOGLE_CLIENT_SECRET: z.string().optional(),
-    // Comma-separated e-mail domains a Google sign-in is limited to (access-control Task 8 reads it; declared here so the setting has one home).
-    GOOGLE_ALLOWED_DOMAINS: z.string().optional(),
+    // The identity providers offered next to local accounts, a comma list of keys of the table in src/lib/auth/providers.ts (empty = none: local accounts only).
+    // Each provider's own settings are AUTH_PROVIDER_<KEY>_<CLIENT_ID|CLIENT_SECRET|ISSUER|LABEL|ALLOWED_DOMAINS|LINK_EXISTING_USERS>: their names come from that table
+    // (`providerEnvNames`), which also reads and checks them (they are not declared one by one here). docs/auth.md.
+    AUTH_PROVIDERS: z.string().optional(),
   },
   runtimeEnv: {
     DATABASE_URL: process.env.DATABASE_URL,
@@ -37,8 +37,6 @@ export const env = createEnv({
     NEXTAUTH_URL: process.env.NEXTAUTH_URL,
     AUTH_REGISTRATION: process.env.AUTH_REGISTRATION,
     AUTH_TRUST_PROXY: process.env.AUTH_TRUST_PROXY,
-    GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
-    GOOGLE_ALLOWED_DOMAINS: process.env.GOOGLE_ALLOWED_DOMAINS,
+    AUTH_PROVIDERS: process.env.AUTH_PROVIDERS,
   },
 });

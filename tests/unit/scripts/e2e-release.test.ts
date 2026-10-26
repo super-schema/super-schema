@@ -47,7 +47,7 @@ const DEVELOPER = {
   PORT: "3000",
   SCHEMA_IMPORT_GIT_MODE: "any",
   AI_PROVIDER: "ollama",
-  GOOGLE_CLIENT_ID: "dev-google-id",
+  AUTH_PROVIDER_OKTA_CLIENT_ID: "dev-okta-id",
   API_KEY: "dev-api-key",
   DIRECT_URL: "postgresql://dev:devpass@db.internal:5432/direct",
   TEST_EMAIL: "someone@example.com",
@@ -216,7 +216,7 @@ describe("planRun: the environment of every child", () => {
 
   it("never carries a developer's database, auth, AI or API-key settings, in any child (scripts/e2e-env.mjs has the groups)", () => {
     const text = JSON.stringify(everything);
-    for (const secret of ["devpass", "db.internal", "devdb", "dev-auth-secret", "dev-secret", "dev.example", "dev-google-id", "dev-api-key", "ollama", "someone@example.com"]) {
+    for (const secret of ["devpass", "db.internal", "devdb", "dev-auth-secret", "dev-secret", "dev.example", "dev-okta-id", "dev-api-key", "ollama", "someone@example.com"]) {
       expect(text, secret).not.toContain(secret);
     }
     for (const env of Object.values(everything) as Array<Record<string, string>>) {
@@ -246,11 +246,11 @@ describe("planRun: the environment of every child", () => {
 
   it("defines the developer's feature toggles and secrets as empty strings for the children that load a .env, and leaves them out of the browser run", () => {
     for (const env of [p.env.app, p.env.db]) {
-      for (const name of ["GOOGLE_CLIENT_ID", "AI_PROVIDER", "DIRECT_URL", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_IMPORT_GIT_SCOPES", "PGHOST", "PGPASSWORD"]) {
+      for (const name of ["AUTH_PROVIDERS", "AUTH_PROVIDER_OKTA_CLIENT_ID", "AI_PROVIDER", "DIRECT_URL", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_IMPORT_GIT_SCOPES", "PGHOST", "PGPASSWORD"]) {
         expect(env[name], name).toBe("");
       }
     }
-    for (const name of ["GOOGLE_CLIENT_ID", "AI_PROVIDER", "API_KEY", "DIRECT_URL", "PGHOST", "PGPASSWORD", "AUTH_URL", "AUTH_SECRET"]) {
+    for (const name of ["AUTH_PROVIDERS", "AUTH_PROVIDER_OKTA_CLIENT_ID", "AI_PROVIDER", "API_KEY", "DIRECT_URL", "PGHOST", "PGPASSWORD", "AUTH_URL", "AUTH_SECRET"]) {
       expect(p.env.phases[name], name).toBeUndefined();
     }
   });
@@ -429,7 +429,7 @@ describe("judgeProviders: is the app that answered the one that was configured",
     credentials: { id: "credentials", name: "credentials", type: "credentials", signinUrl: `${origin}/api/auth/signin/credentials`, callbackUrl: `${origin}/api/auth/callback/credentials` },
   });
 
-  it("accepts an app whose sign-in URLs are under the run's origin and that has no Google provider", () => {
+  it("accepts an app whose sign-in URLs are under the run's origin and that has no identity provider", () => {
     expect(judgeProviders(credentials(base), base)).toEqual({ ok: true });
   });
 
@@ -445,9 +445,10 @@ describe("judgeProviders: is the app that answered the one that was configured",
     expect(judgeProviders(credentials("http://localhost:240001"), base).ok).toBe(false);
   });
 
-  it("refuses an app that offers Google sign-in: a GOOGLE_CLIENT_ID that got through", () => {
-    const verdict = judgeProviders({ ...credentials(base), google: { id: "google", signinUrl: `${base}/api/auth/signin/google`, callbackUrl: `${base}/api/auth/callback/google` } }, base);
-    expect(verdict).toMatchObject({ ok: false, message: expect.stringMatching(/Google sign-in/) });
+  it.each(["google", "github", "okta", "oidc", "microsoft-entra-id"])("refuses an app that offers an identity provider (%s): an AUTH_PROVIDERS that got through", (id) => {
+    const verdict = judgeProviders({ ...credentials(base), [id]: { id, signinUrl: `${base}/api/auth/signin/${id}`, callbackUrl: `${base}/api/auth/callback/${id}` } }, base);
+    expect(verdict).toMatchObject({ ok: false, message: expect.stringContaining(`identity provider (${id})`) });
+    expect(verdict).toMatchObject({ message: expect.stringContaining("AUTH_PROVIDERS") });
   });
 
   it.each([[null], [[]], [{}], ["<html>"], [{ credentials: {} }]])("refuses an answer that is not a list of providers with URLs (%j)", (answer) => {
@@ -1118,7 +1119,8 @@ describe("the second app: git import in `any` mode, for the @external test that 
       expect(first.AUTH_URL).toBe(p.baseUrl);
       // and nothing of the developer's shell reaches it (the same hermetic rules as the first)
       expect(second.DATABASE_URL).not.toContain("db.internal");
-      expect(second.GOOGLE_CLIENT_ID).toBe("");
+      expect(second.AUTH_PROVIDER_OKTA_CLIENT_ID).toBe("");
+      expect(second.AUTH_PROVIDERS).toBe("");
     });
 
     it("hands the browser run the second app's origin as E2E_GIT_ANY_BASE_URL (a shell value of the name is dropped, the run's own is set)", () => {

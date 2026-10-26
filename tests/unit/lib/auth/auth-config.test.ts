@@ -1,8 +1,8 @@
 /**
  * The Auth.js options of src/lib/auth.ts that this task hardens, read from the configuration the module hands to NextAuth: the session lives 12
  * hours and is renewed at most hourly, `trustHost` is written out, the credentials provider decides through `authenticateWithPassword` with the
- * client address of the request, `signIn` refuses a disabled user and records `lastLoginAt` without ever blocking, and the Google provider exists
- * only when it is configured.
+ * client address of the request, `signIn` refuses a disabled user and records `lastLoginAt` without ever blocking, and the identity providers of the
+ * registry (`AUTH_PROVIDERS`: none by default) come after credentials.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,7 +14,7 @@ type Captured = {
     jwt?: { maxAge?: number };
     pages?: { signIn?: string };
     providers?: Array<{ id: string }>;
-    callbacks?: { signIn?: (args: { user?: { id?: string } }) => Promise<boolean>; jwt?: unknown; session?: unknown };
+    callbacks?: { signIn?: (args: { user?: { id?: string }; account?: { provider: string } | null }) => Promise<boolean>; jwt?: unknown; session?: unknown };
   };
   credentials?: { authorize?: (credentials: Record<string, unknown> | undefined, request: Request) => Promise<unknown> };
 };
@@ -33,12 +33,11 @@ vi.mock("next-auth/providers/credentials", () => ({
     return { id: "credentials" };
   },
 }));
-vi.mock("next-auth/providers/google", () => ({ default: () => ({ id: "google" }) }));
 vi.mock("@auth/prisma-adapter", () => ({ PrismaAdapter: () => ({}) }));
 vi.mock("@/lib/db", () => ({ prisma: { user: { findUnique: mocks.findUnique, updateMany: mocks.updateMany } } }));
 vi.mock("@/lib/auth/credentials", () => ({ authenticateWithPassword: mocks.authenticateWithPassword }));
 
-const NAMES = ["AUTH_SECRET", "NEXTAUTH_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "AUTH_URL", "AUTH_TRUST_HOST", "AUTH_TRUST_PROXY", "NODE_ENV"] as const;
+const NAMES = ["AUTH_SECRET", "NEXTAUTH_SECRET", "AUTH_PROVIDERS", "AUTH_PROVIDER_OKTA_CLIENT_ID", "AUTH_PROVIDER_OKTA_CLIENT_SECRET", "AUTH_PROVIDER_OKTA_ISSUER", "AUTH_URL", "AUTH_TRUST_HOST", "AUTH_TRUST_PROXY", "NODE_ENV"] as const;
 
 beforeEach(() => {
   vi.resetModules();
@@ -84,16 +83,32 @@ describe("trustHost is explicit", () => {
 });
 
 describe("the providers", () => {
-  it("is the credentials provider alone by default: no Google", async () => {
+  const configureOkta = () => {
+    vi.stubEnv("AUTH_PROVIDERS", "okta");
+    vi.stubEnv("AUTH_PROVIDER_OKTA_CLIENT_ID", "0oa1234");
+    vi.stubEnv("AUTH_PROVIDER_OKTA_CLIENT_SECRET", "s3cret");
+    vi.stubEnv("AUTH_PROVIDER_OKTA_ISSUER", "https://acme.okta.test");
+  };
+
+  it("is the credentials provider alone by default: no identity provider", async () => {
     const { config } = await load();
     expect(config?.providers?.map((p) => p.id)).toEqual(["credentials"]);
   });
 
-  it("adds Google only when GOOGLE_CLIENT_ID is set", async () => {
-    vi.stubEnv("GOOGLE_CLIENT_ID", "1234.apps.googleusercontent.com");
-    vi.stubEnv("GOOGLE_CLIENT_SECRET", "s3cret");
+  it("adds the providers that AUTH_PROVIDERS lists, after credentials, built from the registry", async () => {
+    configureOkta();
     const { config } = await load();
-    expect(config?.providers?.map((p) => p.id)).toEqual(["credentials", "google"]);
+    expect(config?.providers?.map((p) => p.id)).toEqual(["credentials", "okta"]);
+  });
+
+  it("leaves a provider out when its settings are wrong (and logs it): credentials alone, no crash", async () => {
+    configureOkta();
+    vi.stubEnv("AUTH_PROVIDER_OKTA_ISSUER", "");
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { config } = await load();
+    expect(config?.providers?.map((p) => p.id)).toEqual(["credentials"]);
+    expect(error.mock.calls.map((call) => String(call[0])).join("\n")).toContain("AUTH_PROVIDER_OKTA_ISSUER");
+    error.mockRestore();
   });
 });
 
@@ -128,7 +143,8 @@ describe("credentials authorize", () => {
 });
 
 describe("the signIn callback", () => {
-  const signIn = async (user: { id?: string } | undefined) => (await load()).config!.callbacks!.signIn!({ user });
+  const signIn = async (user: { id?: string } | undefined, account: { provider: string } | null = { provider: "credentials" }) =>
+    (await load()).config!.callbacks!.signIn!({ user, account });
 
   it("refuses a disabled user, for any provider, and records no sign-in", async () => {
     mocks.findUnique.mockResolvedValue({ disabledAt: new Date() });
@@ -143,9 +159,14 @@ describe("the signIn callback", () => {
     expect(mocks.updateMany).toHaveBeenCalledWith({ where: { id: "u1" }, data: { lastLoginAt: expect.any(Date) } });
   });
 
-  it("lets a user who is not in the database yet through (a first Google sign-in; the provider's rules are Task 8's) without writing anything", async () => {
+  it("refuses a sign-in through an identity provider until its rules are wired in: a provider's user id is no database id, so 'nobody found' must never mean 'let through'", async () => {
     mocks.findUnique.mockResolvedValue(null);
-    expect(await signIn({ id: "google-sub-123" })).toBe(true);
+    expect(await signIn({ id: "provider-sub-123" }, { provider: "okta" })).toBe(false);
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("lets a credentials sign-in with no usable user id through (nothing to check, nothing to write)", async () => {
+    mocks.findUnique.mockResolvedValue(null);
     expect(await signIn(undefined)).toBe(true);
     expect(await signIn({})).toBe(true);
   });

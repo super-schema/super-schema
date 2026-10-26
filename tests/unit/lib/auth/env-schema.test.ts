@@ -1,7 +1,7 @@
 /**
  * src/env.ts declares the sign-in settings of this task next to the others, with the values the readers accept: `AUTH_REGISTRATION` (open, invite,
- * closed; default invite; an empty value is unset), `AUTH_TRUST_PROXY` and `GOOGLE_ALLOWED_DOMAINS` (Task 8 reads it). The app reads them through
- * src/lib/auth/registration-mode.ts, src/lib/auth/throttle.ts and src/lib/auth/providers.ts, not through this module (which is not imported by the
+ * closed; default invite; an empty value is unset), `AUTH_TRUST_PROXY` and `AUTH_PROVIDERS` (the provider table reads it). The app reads them through
+ * src/lib/auth/registration-mode.ts, src/lib/auth/throttle.ts and src/lib/auth/providers.ts (the table of identity providers), not through this module (which is not imported by the
  * app: its required DATABASE_URL would break a zero-config PGlite start); this keeps the declaration and the readers from drifting apart.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +15,7 @@ beforeEach(() => {
   vi.stubEnv("NODE_ENV", "test");
   vi.stubEnv("AUTH_REGISTRATION", undefined as unknown as string);
   vi.stubEnv("AUTH_TRUST_PROXY", undefined as unknown as string);
-  vi.stubEnv("GOOGLE_ALLOWED_DOMAINS", undefined as unknown as string);
+  vi.stubEnv("AUTH_PROVIDERS", undefined as unknown as string);
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -49,14 +49,14 @@ describe("the other sign-in settings in src/env.ts", () => {
   it("are optional strings, unset by default", async () => {
     const env = await loadEnv();
     expect(env.AUTH_TRUST_PROXY).toBeUndefined();
-    expect(env.GOOGLE_ALLOWED_DOMAINS).toBeUndefined();
+    expect(env.AUTH_PROVIDERS).toBeUndefined();
   });
 
   it("carry the value they are given", async () => {
     vi.stubEnv("AUTH_TRUST_PROXY", "1");
-    vi.stubEnv("GOOGLE_ALLOWED_DOMAINS", "example.com,example.org");
+    vi.stubEnv("AUTH_PROVIDERS", "okta,keycloak");
     const env = await loadEnv();
     expect(env.AUTH_TRUST_PROXY).toBe("1");
-    expect(env.GOOGLE_ALLOWED_DOMAINS).toBe("example.com,example.org");
+    expect(env.AUTH_PROVIDERS).toBe("okta,keycloak");
   });
 });

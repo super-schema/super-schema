@@ -14,11 +14,10 @@ vi.mock("next-auth", () => ({
   },
 }));
 vi.mock("next-auth/providers/credentials", () => ({ default: () => ({ id: "credentials" }) }));
-vi.mock("next-auth/providers/google", () => ({ default: () => ({ id: "google" }) }));
 vi.mock("@auth/prisma-adapter", () => ({ PrismaAdapter: () => ({}) }));
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 
-const NAMES = ["AUTH_SECRET", "NEXTAUTH_SECRET", "GOOGLE_CLIENT_ID"] as const;
+const NAMES = ["AUTH_SECRET", "NEXTAUTH_SECRET", "AUTH_PROVIDERS"] as const;
 
 describe("src/lib/auth.ts: the secret it signs with", () => {
   const saved = Object.fromEntries(NAMES.map((name) => [name, process.env[name]]));

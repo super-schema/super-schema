@@ -7,13 +7,12 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Eye, EyeOff } from "lucide-react";
-import { GoogleSignIn } from "../_components/google-sign-in";
 import { safeCallbackUrl } from "@/lib/safe-callback-url";
 import { INVALID_CREDENTIALS_MESSAGE, LOGIN_NOTICES, isLoginNoticeKey } from "@/lib/auth/messages";
 
 /**
  * Where to go after signing in: the `callbackUrl` the middleware put on the address, when it is a path of this site (`safeCallbackUrl`),
- * else the dashboard. Read from the address when the form is sent or Google is chosen, not while rendering: `useSearchParams` would
+ * else the dashboard. Read from the address when the form is sent, not while rendering: `useSearchParams` would
  * make the page client-rendered behind a Suspense boundary, and the form would no longer be in the server's HTML.
  */
 function requestedDestination(): string {
@@ -41,10 +40,9 @@ function useNotice(): string | null {
 }
 
 /**
- * @param googleEnabled the server's answer to "is Google sign-in configured?" (`googleSignInEnabled`): the Google button is shown only when it is
  * @param registrationOpen the server's answer to "may anyone register?" (`AUTH_REGISTRATION=open`): the "Create one" link is shown only then
  */
-export function LoginForm({ googleEnabled = false, registrationOpen = false }: { googleEnabled?: boolean; registrationOpen?: boolean }) {
+export function LoginForm({ registrationOpen = false }: { registrationOpen?: boolean }) {
   const router = useRouter();
   const notice = useNotice();
   // The submit button stays disabled until React is running this form: a form submitted before that is submitted by the browser itself.
@@ -109,9 +107,6 @@ export function LoginForm({ googleEnabled = false, registrationOpen = false }: {
           Sign in to your account
         </p>
       </div>
-
-      {/* OAuth providers: only the ones the server has configured */}
-      {googleEnabled && <GoogleSignIn getCallbackUrl={requestedDestination} />}
 
       {/* Notice after a redirect (registered, password changed, invited): fixed texts only */}
       {notice && (

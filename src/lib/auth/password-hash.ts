@@ -1,7 +1,7 @@
 /**
  * Hashing and checking a password (bcrypt, the library every existing hash was made with).
  *
- * `verifyPassword` ALWAYS runs a bcrypt compare. For an account that does not exist, one without a password (made by Google) or a stored value
+ * `verifyPassword` ALWAYS runs a bcrypt compare. For an account that does not exist, one without a password (made by an identity provider) or a stored value
  * that is not a bcrypt hash, the compare runs against `DUMMY_PASSWORD_HASH`, a cost-12 hash of a random string that was thrown away, and the answer
  * is false. A sign-in for an unknown e-mail therefore costs what one for a known e-mail costs, and the time does not tell a visitor which
  * addresses have an account (access-control design, decision 8).

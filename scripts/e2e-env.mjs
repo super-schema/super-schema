@@ -5,7 +5,7 @@
 // Why a name the runner merely DROPS from the shell is not enough: the app reads a checkout's `.env` (Next's loadEnvConfig for
 // `next build` / `next start`, `dotenv/config` in `prisma/seed.ts` and `scripts/db.ts`, `prisma/load-env-file.ts` for `prisma.config.ts`),
 // and each of them fills in every name that the PROCESS environment does not define. So a developer's `.env` with `AUTH_URL=http://localhost:3000`
-// or `GOOGLE_CLIENT_ID=...` would come back through the loaders after the runner had dropped it from the shell. A name that is DEFINED in
+// or `AUTH_PROVIDERS=...` would come back through the loaders after the runner had dropped it from the shell. A name that is DEFINED in
 // the process environment wins in all three loaders, even as an empty string (tests/unit/scripts/e2e-env.test.ts runs that probe against
 // a real `.env`). Every name the app reads is therefore in exactly one of four groups:
 //
@@ -77,13 +77,35 @@ export function setValues(run) {
 const PLACEHOLDER = { databaseUrl: "", baseUrl: "", authSecret: "", pgliteDir: "", apiKey: "" };
 export const HERMETIC_SET_NAMES = Object.freeze(Object.keys(setValues(PLACEHOLDER)));
 
+/**
+ * The providers of the table in src/lib/auth/providers.ts as far as environment names go (this module has no dependencies, so it cannot import the table:
+ * tests/unit/scripts/e2e-env.test.ts pins this list to the table's own `providerEnvNames()`, so a provider added there fails the test until it is added here).
+ */
+const PROVIDER_ENV_SETTINGS = [
+  { key: "google", issuer: false },
+  { key: "github", issuer: false },
+  { key: "microsoft-entra-id", issuer: true },
+  { key: "okta", issuer: true },
+  { key: "keycloak", issuer: true },
+  { key: "oidc", issuer: true },
+];
+
+/** `AUTH_PROVIDER_<KEY>_<SETTING>` for every provider and setting: blanked below. */
+export const PROVIDER_SETTING_NAMES = Object.freeze(
+  PROVIDER_ENV_SETTINGS.flatMap(({ key, issuer }) =>
+    ["CLIENT_ID", "CLIENT_SECRET", ...(issuer ? ["ISSUER"] : []), "ALLOWED_DOMAINS", "LINK_EXISTING_USERS", "LABEL"].map((setting) => `AUTH_PROVIDER_${key.toUpperCase().replace(/-/g, "_")}_${setting}`),
+  ),
+);
+
 /** Defined as "" for the app, migrate, seed and build: every optional feature toggle, secret or connection setting a `.env` could supply. */
 export const HERMETIC_BLANKED_NAMES = Object.freeze([
-  // src/env.ts and src/lib/auth.ts: the Google sign-in (its presence adds the provider and the login button)
-  "GOOGLE_CLIENT_ID",
-  "GOOGLE_CLIENT_SECRET",
-  // src/env.ts (read by access-control Task 8): the e-mail domains a Google sign-in is limited to. Blank = no limit
-  "GOOGLE_ALLOWED_DOMAINS",
+  // src/env.ts, src/lib/auth.ts and src/lib/auth/providers.ts: the identity providers offered next to local accounts (a comma list of provider keys). Blank = none:
+  // the run is checked with the seeded administrator only, and a provider listed by a developer's `.env` would add a button and a callback (`judgeProviders` stops
+  // a run whose app offers any)
+  "AUTH_PROVIDERS",
+  // ... and each provider's own settings (client id and secret, issuer, button text, allowed domains, linking flag), AUTH_PROVIDER_<KEY>_<SETTING>: only read for a
+  // provider that AUTH_PROVIDERS lists, blanked as well so that a `.env` cannot leave half a provider behind
+  ...PROVIDER_SETTING_NAMES,
   // prisma/seed.ts (src/lib/admin-bootstrap.ts): the administrator the seed makes. Blank = not configured, so the seed makes the development
   // default admin@admin.com / admin, the contract of the browser suite; a developer's own bootstrap administrator must not replace it
   "BOOTSTRAP_ADMIN_EMAIL",

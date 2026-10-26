@@ -1,7 +1,7 @@
 // @vitest-environment node
 /**
  * /register under the three modes: `closed` says registration is closed (no form), `invite` shows the generic dead-link card unless it is given a
- * live invitation token (then it continues at /invite/<token>), `open` shows the form, with the Google button only when Google is configured.
+ * live invitation token (then it continues at /invite/<token>), `open` shows the form (no identity-provider button, whatever is configured: nobody signs up through a provider).
  */
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,7 +34,7 @@ async function render(search: { token?: string | string[] } = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
-  vi.stubEnv("GOOGLE_CLIENT_ID", "");
+  vi.stubEnv("AUTH_PROVIDERS", "");
   mocks.findValidInvitation.mockResolvedValue(null);
 });
 
@@ -85,17 +85,21 @@ describe("the register page", () => {
   describe("open", () => {
     beforeEach(() => vi.stubEnv("AUTH_REGISTRATION", "open"));
 
-    it("shows the form and no Google button by default", async () => {
+    it("shows the form and no provider button by default", async () => {
       const result = (await render()) as { html: string };
       expect(result.html).toContain('data-testid="register-form"');
-      expect(result.html).not.toMatch(/continue with google/i);
+      expect(result.html).not.toMatch(/continue with/i);
       expect(mocks.findValidInvitation).not.toHaveBeenCalled();
     });
 
-    it("shows the Google button when GOOGLE_CLIENT_ID is set", async () => {
-      vi.stubEnv("GOOGLE_CLIENT_ID", "1234.apps.googleusercontent.com");
+    it("shows no provider button when providers ARE configured: they sign in people who already have an account, they make none", async () => {
+      vi.stubEnv("AUTH_PROVIDERS", "okta");
+      vi.stubEnv("AUTH_PROVIDER_OKTA_CLIENT_ID", "client");
+      vi.stubEnv("AUTH_PROVIDER_OKTA_CLIENT_SECRET", "secret");
+      vi.stubEnv("AUTH_PROVIDER_OKTA_ISSUER", "https://acme.okta.test");
       const result = (await render()) as { html: string };
-      expect(result.html).toMatch(/continue with google/i);
+      expect(result.html).toContain('data-testid="register-form"');
+      expect(result.html).not.toMatch(/okta|continue with|provider-button/i);
     });
   });
 });

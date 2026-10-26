@@ -150,7 +150,7 @@ decides what a baseline looks like. Firefox and WebKit (`firefox-smoke`, `webkit
 6. `AUTH_TRUST_HOST=true next start -p <port> -H 127.0.0.1` with a random secret and `http://localhost:<port>` as its origin (both under
    the names `AUTH_*` and `NEXTAUTH_*`); waits until the app prints `Ready` and `/api/v1/health` answers (a port that was taken in
    the meantime is a new port and a second start, up to three), then asks `/api/auth/providers` and stops the run when the sign-in URLs
-   are not under the run's own origin (an `AUTH_URL` got through) or Google sign-in is on (a `GOOGLE_CLIENT_ID` got through). The
+   are not under the run's own origin (an `AUTH_URL` got through) or any identity provider is on (an `AUTH_PROVIDERS` got through: only the local credentials provider is offered in a run). The
    app's output goes to `<output root>/server.log`.
 7. **The second app**, for the tiers that include the `@external` tests (the nightly tier) and with `--second-app`: the git-host import has a
    mode read from the environment when the app starts (`SCHEMA_IMPORT_GIT_MODE`, `restricted` by default), and the test "A1: git mode any
@@ -186,7 +186,7 @@ app reads is in exactly one group (`scripts/e2e-env.mjs`):
 | Group | Names | What the child gets |
 | --- | --- | --- |
 | set | `API_KEY` (a random key of the run: the REST API's key authentication, `Authorization: Bearer <key>`; the browser run gets it as `E2E_API_KEY`), `DATABASE_URL`, `E2E_DATABASE_URL`, `DB_PROVIDER=postgresql`, `PGLITE_DATA_DIR` (inside the run's temp directory, in case something fell back to PGlite), `NEXTAUTH_URL` and `AUTH_URL` (the run's origin), `NEXTAUTH_SECRET` and `AUTH_SECRET` (the run's random secret), `AUTH_TRUST_HOST=true`, `SCHEMA_CLASSIFICATION_EXTENSION_KEY` / `_LEVEL_FIELD` / `_CATEGORY_FIELD` | the run's own value (the classification names: the importer's defaults, because an empty value is not its default) |
-| blanked | `GOOGLE_CLIENT_ID` / `_SECRET`, `AI_PROVIDER` / `AI_BASE_URL` / `AI_MODEL`, `DIRECT_URL`, `SHADOW_DATABASE_URL`, `SCHEMA_IMPORT_GIT_MODE` / `_SCOPES` (empty = restricted, the default), `SCHEMA_CLASSIFICATION_VALUE_MAP`, `HEALTH_DB_DEGRADED_MS` / `HEALTH_DB_TIMEOUT_MS` (the health probe's thresholds), every `ASYNCAPI_PARSER_*` the code reads (`ASYNCAPI_PARSER_IN_PROCESS=1` would move the parser into the server), `AUTH_REDIRECT_PROXY_URL`, `AUTH_SECRET_1`..`3`, the libpq names (`PGHOST`, `PGPASSWORD`, `PGSSLMODE` ...) | `""`, for the app, `prisma migrate`, the seed and the build: the app reads "" as "not configured" |
+| blanked | `AUTH_PROVIDERS` and every `AUTH_PROVIDER_<KEY>_<SETTING>` (the identity providers of `docs/auth.md`: none in a run), `AI_PROVIDER` / `AI_BASE_URL` / `AI_MODEL`, `DIRECT_URL`, `SHADOW_DATABASE_URL`, `SCHEMA_IMPORT_GIT_MODE` / `_SCOPES` (empty = restricted, the default), `SCHEMA_CLASSIFICATION_VALUE_MAP`, `HEALTH_DB_DEGRADED_MS` / `HEALTH_DB_TIMEOUT_MS` (the health probe's thresholds), every `ASYNCAPI_PARSER_*` the code reads (`ASYNCAPI_PARSER_IN_PROCESS=1` would move the parser into the server), `AUTH_REDIRECT_PROXY_URL`, `AUTH_SECRET_1`..`3`, the libpq names (`PGHOST`, `PGPASSWORD`, `PGSSLMODE` ...) | `""`, for the app, `prisma migrate`, the seed and the build: the app reads "" as "not configured" |
 | dropped | `NODE_ENV` (Next sets it), `PORT`, `HOSTNAME` (the app is started with `-p` and `-H`), `TEST_EMAIL`, `TEST_PASSWORD` (the browser run reads them and loads no `.env`; the seeded admin is the contract) | not defined |
 | allowed | `NEXT_PUBLIC_APP_URL` (baked into the build, so part of its hash), `NODE_OPTIONS` | passed through from your shell |
 | browser run | `E2E_BROWSER_CHANNEL` (`chrome` or `chromium`) | the runner's own decision (above), for the phases script and Playwright only; never the app, the migration, the seed or the build. Your shell's value is dropped like every `E2E_` name and read by the runner as rule 1 |
@@ -551,8 +551,8 @@ that. Until a week of nightly runs says that it never fails by itself, `e2e-visu
   boundary and React leaves the streamed segment's hidden copy (`div#S:0[hidden]`) in `<body>` for about 60 ms, so a bare
   `page.getByTestId(...)` can match the real element and the copy. Query page content inside `centerPanel(page)` and the explorer with
   `leftSidebar(page)` (both in `tests/e2e/helpers/event-builder.ts`); do not wait for a count.
-- **"the app's credentials signinUrl is ..., not under http://localhost:<port>"** or **"the app offers Google sign-in"** (exit 3, before
-  any test): a setting reached the app that the runner meant to override: an `AUTH_URL` / `NEXTAUTH_URL` or a `GOOGLE_CLIENT_ID` from
+- **"the app's credentials signinUrl is ..., not under http://localhost:<port>"** or **"the app offers an identity provider (...)"** (exit 3, before
+  any test): a setting reached the app that the runner meant to override: an `AUTH_URL` / `NEXTAUTH_URL` or an `AUTH_PROVIDERS` from
   somewhere the runner does not control (a name the app reads that is in no group of `scripts/e2e-env.mjs`, or a loader that is not
   one of the three above). The message names the setting; `server.log` has the app's side.
 - **A run is stuck after Ctrl-C**: the first Ctrl-C asks the step in progress to stop and runs the teardown; a second one kills the step

@@ -5,7 +5,6 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_REGISTRATION_MODE, REGISTRATION_MODES, registrationMode } from "@/lib/auth/registration-mode";
-import { googleSignInEnabled } from "@/lib/auth/providers";
 import { resolveTrustHost } from "@/lib/auth/trust-host";
 
 afterEach(() => vi.restoreAllMocks());
@@ -52,28 +51,6 @@ describe("registrationMode", () => {
     } finally {
       if (before === undefined) delete process.env.AUTH_REGISTRATION;
       else process.env.AUTH_REGISTRATION = before;
-    }
-  });
-});
-
-describe("googleSignInEnabled: the one flag for the Google provider and the login page's button", () => {
-  it.each([
-    [{}, false],
-    [{ GOOGLE_CLIENT_ID: "" }, false],
-    [{ GOOGLE_CLIENT_ID: "   " }, false],
-    [{ GOOGLE_CLIENT_ID: "1234.apps.googleusercontent.com" }, true],
-    [{ GOOGLE_CLIENT_ID: "1234.apps.googleusercontent.com", GOOGLE_CLIENT_SECRET: "x" }, true],
-  ])("%j -> %s", (env, expected) => {
-    expect(googleSignInEnabled(env)).toBe(expected);
-  });
-
-  it("is off by default (no GOOGLE_CLIENT_ID in this process)", () => {
-    const before = process.env.GOOGLE_CLIENT_ID;
-    try {
-      delete process.env.GOOGLE_CLIENT_ID;
-      expect(googleSignInEnabled()).toBe(false);
-    } finally {
-      if (before !== undefined) process.env.GOOGLE_CLIENT_ID = before;
     }
   });
 });

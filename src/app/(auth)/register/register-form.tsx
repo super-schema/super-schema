@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Eye, EyeOff, Check, X } from "lucide-react";
-import { GoogleSignIn } from "../_components/google-sign-in";
 import { PASSWORD_MIN_BYTES } from "@/lib/auth/password-limits";
 import { registerAction, type RegisterState } from "./actions";
 
@@ -32,10 +31,8 @@ function getPasswordStrength(password: string) {
 
 /**
  * The registration form of `AUTH_REGISTRATION=open` (the page, `page.tsx`, decides which modes get it).
- *
- * @param googleEnabled the server's answer to "is Google sign-in configured?": the Google button is shown only when it is
  */
-export function RegisterForm({ googleEnabled = false }: { googleEnabled?: boolean }) {
+export function RegisterForm() {
   const [state, formAction, isPending] = useActionState<
     RegisterState | undefined,
     FormData
@@ -75,9 +72,6 @@ export function RegisterForm({ googleEnabled = false }: { googleEnabled?: boolea
           Get started with Super Schema
         </p>
       </div>
-
-      {/* OAuth providers: only the ones the server has configured */}
-      {googleEnabled && <GoogleSignIn getCallbackUrl={() => "/schemas"} />}
 
       {/* General error */}
       {state?.error && (

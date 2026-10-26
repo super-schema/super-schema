@@ -1,12 +1,11 @@
 import { redirect } from "next/navigation";
-import { googleSignInEnabled } from "@/lib/auth/providers";
 import { registrationMode } from "@/lib/auth/registration-mode";
 import { findValidInvitation } from "@/lib/auth/tokens";
 import { InvalidLinkCard } from "../_components/invalid-link";
 import { RegistrationClosedCard } from "../_components/registration-closed";
 import { RegisterForm } from "./register-form";
 
-// The mode, the Google flag and whether a token is live are facts about the server right now: never rendered ahead of time.
+// The mode and whether a token is live are facts about the server right now: never rendered ahead of time.
 export const dynamic = "force-dynamic";
 
 /**
@@ -25,5 +24,5 @@ export default async function RegisterPage({ searchParams }: { searchParams: Pro
     if (asked !== "" && (await findValidInvitation(asked))) redirect(`/invite/${encodeURIComponent(asked)}`);
     return <InvalidLinkCard />;
   }
-  return <RegisterForm googleEnabled={googleSignInEnabled()} />;
+  return <RegisterForm />;
 }

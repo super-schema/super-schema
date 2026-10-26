@@ -10,6 +10,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { providerEnvNames } from "@/lib/auth/providers";
 import { DEFAULT_CLASSIFICATION_CATEGORY_FIELD, DEFAULT_CLASSIFICATION_EXTENSION_KEY, DEFAULT_CLASSIFICATION_LEVEL_FIELD } from "@/lib/importers/classification-config";
 import { loadEnvFile } from "../../../prisma/load-env-file";
 import {
@@ -36,7 +37,7 @@ const DEVELOPER = {
   AUTH_SECRET: "dev-auth-secret",
   AI_PROVIDER: "ollama",
   AI_BASE_URL: "http://dev-ai:11434",
-  GOOGLE_CLIENT_ID: "dev-google-id",
+  AUTH_PROVIDER_OKTA_CLIENT_ID: "dev-okta-id",
   API_KEY: "dev-api-key",
   DATABASE_URL: "postgresql://dev:devpass@db.internal:5432/devdb",
   NEXTAUTH_URL: "http://localhost:3000",
@@ -58,7 +59,7 @@ describe("the groups", () => {
         "AUTH_REDIRECT_PROXY_URL", "AUTH_SECRET_1", "AUTH_SECRET_2", "AUTH_SECRET_3",
         "BOOTSTRAP_ADMIN_EMAIL", "BOOTSTRAP_ADMIN_PASSWORD",
         "DIRECT_URL",
-        "GOOGLE_ALLOWED_DOMAINS", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
+        "AUTH_PROVIDERS", ...providerEnvNames(),
         "HEALTH_DB_DEGRADED_MS", "HEALTH_DB_TIMEOUT_MS",
         "PGAPPNAME", "PGCONNECT_TIMEOUT", "PGDATABASE", "PGHOST", "PGHOSTADDR", "PGOPTIONS", "PGPASSFILE", "PGPASSWORD", "PGPORT", "PGSERVICE",
         "PGSERVICEFILE", "PGSSLCERT", "PGSSLKEY", "PGSSLMODE", "PGSSLROOTCERT", "PGUSER",
@@ -66,6 +67,14 @@ describe("the groups", () => {
         "SHADOW_DATABASE_URL",
       ].sort(),
     );
+  });
+
+  it("account for every sign-in provider setting of the registry (src/lib/auth/providers.ts): blanked, so a developer's .env cannot leave half a provider behind", () => {
+    const blanked = new Set<string>(HERMETIC_BLANKED_NAMES);
+    expect(providerEnvNames().filter((name) => !blanked.has(name))).toEqual([]);
+    expect(blanked.has("AUTH_PROVIDERS")).toBe(true);
+    // ... and nothing else of that family is blanked (a name that no provider has is a stale entry)
+    expect([...blanked].filter((name) => name.startsWith("AUTH_PROVIDER_") && !providerEnvNames().includes(name))).toEqual([]);
   });
 
   it("pin the names the run sets", () => {
@@ -154,7 +163,8 @@ describe("the second app (git import in `any` mode) and the browser run's E2E_GI
     const second = secondAppEnvironment(hermeticEnv({ ...DEVELOPER, SCHEMA_IMPORT_GIT_MODE: "restricted" }), RUN, SECOND);
     expect(second.SCHEMA_IMPORT_GIT_MODE).toBe("any");
     expect(JSON.stringify(second)).not.toContain("devpass");
-    expect(second.GOOGLE_CLIENT_ID).toBe("");
+    expect(second.AUTH_PROVIDER_OKTA_CLIENT_ID).toBe("");
+    expect(second.AUTH_PROVIDERS).toBe("");
   });
 
   // M7: `any` mode makes the server call `gh api` for a git URL; with the developer's own HOME and token that is the developer's login, so the
@@ -214,7 +224,7 @@ describe("a fake developer environment never reaches a child", () => {
     expect(app.AUTH_TRUST_PROXY).toBe("1");
     expect(hermeticEnv({ AUTH_TRUST_PROXY: "0" }).AUTH_TRUST_PROXY).toBeUndefined();
     expect(appEnvironment(hermeticEnv({ ...DEVELOPER, AUTH_TRUST_PROXY: "0" }), RUN).AUTH_TRUST_PROXY).toBe("1");
-    expect(app.GOOGLE_ALLOWED_DOMAINS).toBe("");
+    expect(app.AUTH_PROVIDERS).toBe("");
   });
 
   it("the app gets the run's database, on PostgreSQL, with PGlite pointed at the run's temp directory", () => {
@@ -225,7 +235,7 @@ describe("a fake developer environment never reaches a child", () => {
   });
 
   it("the developer's feature toggles and secrets are empty strings, not missing (a missing name is filled in by a .env)", () => {
-    for (const name of ["AI_PROVIDER", "AI_BASE_URL", "GOOGLE_CLIENT_ID", "PGPASSWORD", "SCHEMA_IMPORT_GIT_MODE", "ASYNCAPI_PARSER_IN_PROCESS"]) {
+    for (const name of ["AI_PROVIDER", "AI_BASE_URL", "AUTH_PROVIDERS", "AUTH_PROVIDER_OKTA_CLIENT_ID", "PGPASSWORD", "SCHEMA_IMPORT_GIT_MODE", "ASYNCAPI_PARSER_IN_PROCESS"]) {
       expect(app[name], name).toBe("");
     }
     for (const name of HERMETIC_BLANKED_NAMES) expect(app[name], name).toBe("");
@@ -241,7 +251,7 @@ describe("a fake developer environment never reaches a child", () => {
 
   it("nothing of the developer's values is left in any child's environment", () => {
     const text = JSON.stringify({ app, phases });
-    for (const value of ["dev-auth-secret", "dev-google-id", "dev-api-key", "devpass", "db.internal", "dev-ai", "dev@example.com", "localhost:3000"]) {
+    for (const value of ["dev-auth-secret", "dev-okta-id", "dev-api-key", "devpass", "db.internal", "dev-ai", "dev@example.com", "localhost:3000"]) {
       expect(text, value).not.toContain(value);
     }
   });
@@ -302,7 +312,7 @@ describe("a name defined as an empty string beats a checkout's .env in the loade
     const dir = mkdtempSync(path.join(tmpdir(), "e2e-env-probe-"));
     writeFileSync(
       path.join(dir, ".env"),
-      ["AUTH_URL=http://leak", "AUTH_SECRET=leak-secret", "AI_PROVIDER=ollama", "GOOGLE_CLIENT_ID=leak-google", "API_KEY=leak-key", "DATABASE_URL=postgresql://leak@nowhere/leak", "ONLY_IN_THE_FILE=from-the-file", ""].join("\n"),
+      ["AUTH_URL=http://leak", "AUTH_SECRET=leak-secret", "AI_PROVIDER=ollama", "AUTH_PROVIDERS=leak-provider", "API_KEY=leak-key", "DATABASE_URL=postgresql://leak@nowhere/leak", "ONLY_IN_THE_FILE=from-the-file", ""].join("\n"),
     );
     return dir;
   }
@@ -310,13 +320,13 @@ describe("a name defined as an empty string beats a checkout's .env in the loade
     AUTH_URL: env.AUTH_URL,
     AUTH_SECRET: env.AUTH_SECRET,
     AI_PROVIDER: "",
-    GOOGLE_CLIENT_ID: "",
+    AUTH_PROVIDERS: "",
     API_KEY: env.API_KEY, // the run's own key, not the .env's
     DATABASE_URL: env.DATABASE_URL,
     ONLY_IN_THE_FILE: "from-the-file", // the loader did run: it filled in what the process environment does not define
   });
   const app = appEnvironment(hermeticEnv(DEVELOPER), RUN);
-  const names = ["AUTH_URL", "AUTH_SECRET", "AI_PROVIDER", "GOOGLE_CLIENT_ID", "API_KEY", "DATABASE_URL", "ONLY_IN_THE_FILE"];
+  const names = ["AUTH_URL", "AUTH_SECRET", "AI_PROVIDER", "AUTH_PROVIDERS", "API_KEY", "DATABASE_URL", "ONLY_IN_THE_FILE"];
 
   it("dotenv (seed, scripts/db.ts) and Next's loadEnvConfig (build, start) leave the run's values and the blanks alone", () => {
     const dir = checkoutWithLeakyEnv();
@@ -428,7 +438,7 @@ describe("the app does not read a name that no group accounts for", () => {
 
   it("finds the names it is meant to find (the scan itself is not empty)", () => {
     const all = new Set(files.flatMap((file) => namesRead(readFileSync(file, "utf8"))));
-    for (const name of ["DATABASE_URL", "GOOGLE_CLIENT_ID", "AI_PROVIDER", "API_KEY", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_CLASSIFICATION_VALUE_MAP", "ASYNCAPI_PARSER_WORKER", "ASYNCAPI_PARSER_PARSE_TIMEOUT_MS", "NEXT_PUBLIC_APP_URL"]) {
+    for (const name of ["DATABASE_URL", "AUTH_PROVIDERS", "AI_PROVIDER", "API_KEY", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_CLASSIFICATION_VALUE_MAP", "ASYNCAPI_PARSER_WORKER", "ASYNCAPI_PARSER_PARSE_TIMEOUT_MS", "NEXT_PUBLIC_APP_URL"]) {
       expect(all.has(name), name).toBe(true);
     }
   }, 60_000);

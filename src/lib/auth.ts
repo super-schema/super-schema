@@ -1,11 +1,10 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import Google from "next-auth/providers/google";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/db";
 import { resolveAuthSecret } from "@/lib/auth-secret";
 import { authenticateWithPassword } from "@/lib/auth/credentials";
-import { googleSignInEnabled } from "@/lib/auth/providers";
+import { enabledProviders } from "@/lib/auth/providers";
 import { clientIp } from "@/lib/auth/throttle";
 import { resolveTrustHost } from "@/lib/auth/trust-host";
 
@@ -27,15 +26,9 @@ const providers = [
       return authenticateWithPassword({ email: credentials?.email, password: credentials?.password, ip: clientIp(request.headers) });
     },
   }),
-  // The Google provider exists only when it is configured; its rules (verified e-mail, allowed domains, no automatic linking) are access-control Task 8.
-  ...(googleSignInEnabled()
-    ? [
-        Google({
-          clientId: process.env.GOOGLE_CLIENT_ID!,
-          clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-        }),
-      ]
-    : []),
+  // Credentials is always first and always there. The identity providers an administrator configured (`AUTH_PROVIDERS`: src/lib/auth/providers.ts, the
+  // one table) come after it; the default is none. A provider with a configuration problem is not in the list.
+  ...enabledProviders().map((enabled) => enabled.provider),
 ];
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -54,12 +47,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   providers,
   callbacks: {
     /**
-     * Runs for every provider after the credentials are accepted: a disabled user does not sign in, and a sign-in is recorded as `lastLoginAt`
-     * (best effort: a problem writing it never blocks a sign-in). A user who is not in the database yet (the first Google sign-in) has no row to
-     * be disabled or to update; the provider's own rules decide about them (Task 8). When the database cannot say whether the user is disabled,
-     * this throws and the sign-in fails.
+     * Runs after the credentials are accepted: a disabled user does not sign in, and a sign-in is recorded as `lastLoginAt` (best effort: a problem
+     * writing it never blocks a sign-in). When the database cannot say whether the user is disabled, this throws and the sign-in fails. A sign-in
+     * through an identity provider is refused here until its rules are wired in (the next change): a provider's user id is not a database id, so the
+     * lookup below would find nobody and let them through.
      */
-    async signIn({ user }) {
+    async signIn({ user, account }) {
+      if (account?.provider !== undefined && account.provider !== "credentials") return false;
       const id = user?.id;
       if (typeof id !== "string" || id === "") return true;
       const row = await prisma.user.findUnique({ where: { id }, select: { disabledAt: true } });

@@ -12,8 +12,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push, refres
 
 import { LoginForm } from "@/app/(auth)/login/login-form";
 
-// Google sign-in is configured for these tests (the server tells the form so: tests/unit/app/login-page-flags.test.tsx is the other side).
-const LoginPage = () => <LoginForm googleEnabled />;
+const LoginPage = () => <LoginForm />;
 
 afterEach(() => {
   cleanup();
@@ -64,18 +63,5 @@ describe("login page: where a signed-in user goes", () => {
   it("refreshes the router after it pushes (the server components see the new session)", async () => {
     await signInAt("?callbackUrl=%2Fadmin");
     expect(mocks.refresh).toHaveBeenCalledTimes(1);
-  });
-
-  it("gives Google sign-in the same safe destination", () => {
-    visit("?callbackUrl=%2F%2Fevil.com");
-    render(<LoginPage />);
-    fireEvent.click(screen.getByRole("button", { name: /continue with google/i }));
-    expect(mocks.signIn).toHaveBeenCalledWith("google", { callbackUrl: "/schemas" });
-    cleanup();
-    mocks.signIn.mockClear();
-    visit("?callbackUrl=%2Fadmin%2Fsettings");
-    render(<LoginPage />);
-    fireEvent.click(screen.getByRole("button", { name: /continue with google/i }));
-    expect(mocks.signIn).toHaveBeenCalledWith("google", { callbackUrl: "/admin/settings" });
   });
 });

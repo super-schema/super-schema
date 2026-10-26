@@ -41,7 +41,7 @@ Tiers (the tags on a test: `@smoke`, `@regression`, `@slow`, `@external`; `@visu
 | REST API v1 and webhooks | health, schemas, emit, validate, event specs, notifications, webhooks, who may call what, bad requests, the rate limit | `api-v1.spec.ts` (71), and the unit tests of the routes | smoke 1, rest regression | KD-027 (a webhook URL has no policy), KD-028 (the rate limit is per process) |
 | Accessibility | an axe scan (WCAG 2.1 A and AA) of every route and of the dialogs and palette states that matter (the Admin Users screen's dialogs, panel, role matrix and no-permission screen included), against a recorded baseline | `a11y.spec.ts` (35), project `a11y` | regression (inside the regression and nightly tiers) | only the dark theme is scanned (`docs/testing/a11y.md`); the baseline was measured with Chrome on macOS: KD-037 |
 | Visual regression | nine pages, compared to screenshots made in the Playwright image | `visual.spec.ts` (9), project `visual`, image only | `visual` tier, by hand and the `e2e-visual` job | the snapshots were made on arm64, CI is x86-64: KD-037 |
-| Not tested in a browser | Git export (no UI exists), `/dev/design-system` (development only), Google sign-in (external), real Spanner and BigQuery (only the emulators, in the corpus), Firefox and WebKit beyond the smoke tests | | | |
+| Not tested in a browser | Git export (no UI exists), `/dev/design-system` (development only), sign-in through an identity provider (external; the login page's provider buttons and the sign-in decision are unit tested, and a run shows none by default), real Spanner and BigQuery (only the emulators, in the corpus), Firefox and WebKit beyond the smoke tests | | | |
 
 ## Per-spec table
 
