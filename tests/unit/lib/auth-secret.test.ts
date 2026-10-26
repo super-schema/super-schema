@@ -3,7 +3,8 @@
  * production server refuses to start with a missing, short or known development secret. Development and test are never affected.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MIN_PRODUCTION_SECRET_LENGTH, assertProductionAuthSecret, productionSecretProblem, refuseToStartWithoutProductionSecret, resolveAuthSecret } from "@/lib/auth-secret";
+import { MIN_PRODUCTION_SECRET_LENGTH, assertProductionAuthSecret, productionSecretProblem, resolveAuthSecret } from "@/lib/auth-secret";
+import { refuseToStartWithoutProductionSecret } from "@/lib/auth-secret-startup";
 
 const STRONG = "k3Jx9aP0Qm7Vb2Lr5Tz8Wd1Yn4Hc6Gf0Se3Uo9Ai2Bm="; // 44 characters, what `openssl rand -base64 32` looks like
 

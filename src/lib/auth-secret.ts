@@ -9,8 +9,11 @@
  * Not supported: Auth.js's `AUTH_SECRET_1..3` rotation. Auth.js reads them only when it has no secret of its own; the middleware reads only
  * the two names above, so with rotation names alone it has no secret and FAILS CLOSED (every request bounces to /login). docs/auth-ops.md.
  *
- * In production the secret must be strong: `productionSecretProblem` says why a value is refused, and `assertProductionAuthSecret` (called
- * when the server starts: src/instrumentation.ts) throws it.
+ * In production the secret must be strong: `productionSecretProblem` says why a value is refused, and `assertProductionAuthSecret` throws it
+ * (`refuseToStartWithoutProductionSecret`, src/lib/auth-secret-startup.ts, ends the process with it when the server starts: src/instrumentation.ts).
+ *
+ * The middleware imports this module and runs in the Edge runtime: nothing here may use a Node-only API (`process.exit`, `process.stderr`, `node:*`).
+ * tests/unit/lib/middleware-edge-safe.test.ts fails for it.
  */
 
 type Env = Record<string, string | undefined>;
@@ -92,23 +95,4 @@ export function assertProductionAuthSecret(env: Env = process.env): void {
   if (env.NODE_ENV !== "production") return;
   const problem = productionSecretProblem(resolveAuthSecret(env));
   if (problem) throw new Error(`Refusing to start in production: ${problem}`);
-}
-
-/**
- * What a production server does with a missing or weak secret: write the reason and END THE PROCESS (exit code 1). Throwing from Next's
- * instrumentation hook is not enough: `next start` then stays up and answers 500 to every request (seen with a real build), so the process is alive
- * for an orchestrator that restarts on exit, and a health check that only opens the port passes. Nothing happens in development and test, or for a
- * strong secret. The exit waits for the message to be written (an exit right after an asynchronous write can lose it).
- */
-export function refuseToStartWithoutProductionSecret(
-  env: Env = process.env,
-  deps: { write?: (text: string, done: () => void) => void; exit?: (code: number) => void } = {},
-): void {
-  const write = deps.write ?? ((text, done) => void process.stderr.write(text, done));
-  const exit = deps.exit ?? ((code) => process.exit(code));
-  try {
-    assertProductionAuthSecret(env);
-  } catch (error) {
-    write(`${error instanceof Error ? error.message : String(error)}\n`, () => exit(1));
-  }
 }

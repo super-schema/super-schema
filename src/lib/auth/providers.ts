@@ -323,7 +323,7 @@ export function assertProviderConfiguration(env: Env = process.env): void {
 
 /**
  * What a production server does with a bad provider configuration: write the reasons and END THE PROCESS (exit code 1), exactly like the secret check
- * (`refuseToStartWithoutProductionSecret`, src/lib/auth-secret.ts: a throw from the instrumentation hook would leave `next start` answering 500).
+ * (`refuseToStartWithoutProductionSecret`, src/lib/auth-secret-startup.ts: a throw from the instrumentation hook would leave `next start` answering 500).
  * Nothing happens in development and test, or for a sound configuration (no provider at all is sound).
  */
 export function refuseToStartWithBadProviderConfiguration(

@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ secret: vi.fn(), providers: vi.fn() }));
-vi.mock("@/lib/auth-secret", () => ({ refuseToStartWithoutProductionSecret: mocks.secret }));
+vi.mock("@/lib/auth-secret-startup", () => ({ refuseToStartWithoutProductionSecret: mocks.secret }));
 vi.mock("@/lib/auth/providers", () => ({ refuseToStartWithBadProviderConfiguration: mocks.providers }));
 
 import { register } from "@/instrumentation";

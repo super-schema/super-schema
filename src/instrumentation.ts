@@ -11,7 +11,7 @@
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   if (process.env.NEXT_PHASE === "phase-production-build") return;
-  const { refuseToStartWithoutProductionSecret } = await import("@/lib/auth-secret");
+  const { refuseToStartWithoutProductionSecret } = await import("@/lib/auth-secret-startup");
   // Ends the process: a throw here leaves `next start` listening and answering 500 to every request.
   refuseToStartWithoutProductionSecret();
   // The same refusal for the sign-in providers (an administrator's AUTH_PROVIDERS): production only, nothing for a sound configuration or none at all.
