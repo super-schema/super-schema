@@ -12,6 +12,7 @@
 export const PUBLIC_ACTIONS: Readonly<Record<string, string>> = Object.freeze({
   "src/app/(auth)/register/actions.ts#registerAction": "pre-sign-in registration: honours the registration mode, throttled per address, uniform answers, creates a role-less account",
   "src/app/(auth)/invite/[token]/actions.ts#acceptInvitationAction": "pre-sign-in: a single-use invitation token IS the credential (hashed at rest, one atomic claim, throttled per address)",
+  "src/app/(auth)/login/provider-actions.ts#signInWithProvider": "pre-sign-in: starts Auth.js's sign-in for a provider the registry has enabled (any other id is refused), toward a path of this site; who may sign in is decided afterwards by the signIn callback (the user must already exist, not be disabled; throttled per address)",
   "src/app/(auth)/reset/[token]/actions.ts#consumeResetAction": "pre-sign-in: a single-use reset token IS the credential (hashed at rest, one atomic claim, throttled per address)",
 });
 

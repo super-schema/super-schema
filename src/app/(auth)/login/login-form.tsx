@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Eye, EyeOff } from "lucide-react";
 import { safeCallbackUrl } from "@/lib/safe-callback-url";
+import { ProviderButtons } from "../_components/provider-buttons";
 import { INVALID_CREDENTIALS_MESSAGE, LOGIN_NOTICES, isLoginNoticeKey } from "@/lib/auth/messages";
 
 /**
@@ -40,11 +41,37 @@ function useNotice(): string | null {
 }
 
 /**
- * @param registrationOpen the server's answer to "may anyone register?" (`AUTH_REGISTRATION=open`): the "Create one" link is shown only then
+ * Did an identity-provider sign-in come back refused (`/login?error=AccessDenied`: Auth.js's redirect for a refusal or a failure of the provider's flow)?
+ * Any `error` on the address says so, and the page answers with the same words as for a wrong password: the code in the address is never shown, so
+ * the address cannot be used to put words on this page and the page does not say which rule refused.
  */
-export function LoginForm({ registrationOpen = false }: { registrationOpen?: boolean }) {
+function failureFromAddress(): boolean {
+  return new URLSearchParams(window.location.search).getAll("error").some((value) => value !== "");
+}
+
+/** True when the address carries an `error`; false in the server's HTML and while the page hydrates. */
+function useFailureFromAddress(): boolean {
+  return useSyncExternalStore(subscribeNever, failureFromAddress, () => false);
+}
+
+/**
+ * @param registrationOpen the server's answer to "may anyone register?" (`AUTH_REGISTRATION=open`): the "Create one" link is shown only then
+ * @param providers the server's answer to "which identity providers are enabled?" (`AUTH_PROVIDERS`: none by default): one button each, with the label
+ * the administrator gave it. They sign in people who already have an account, so the registration page has none.
+ * @param signInWithProvider the server action a provider button starts (the server page gives it; without it there is no button to press, so none is drawn)
+ */
+export function LoginForm({
+  registrationOpen = false,
+  providers = [],
+  signInWithProvider,
+}: {
+  registrationOpen?: boolean;
+  providers?: ReadonlyArray<{ id: string; label: string }>;
+  signInWithProvider?: (providerId: string, callbackUrl: string) => Promise<void>;
+}) {
   const router = useRouter();
   const notice = useNotice();
+  const refusedByProvider = useFailureFromAddress();
   // The submit button stays disabled until React is running this form: a form submitted before that is submitted by the browser itself.
   const hydrated = useHydrated();
   // The e-mail is state of this component (above the re-keyed card below), so a refused login does not empty it: the user mistyped the
@@ -58,6 +85,8 @@ export function LoginForm({ registrationOpen = false }: { registrationOpen?: boo
   const passwordId = useId();
   const errorId = useId();
   const emailRef = useRef<HTMLInputElement>(null);
+  // The words of a refusal: the one message, whether the password form or an identity provider's sign-in was refused.
+  const failure = error ?? (refusedByProvider ? INVALID_CREDENTIALS_MESSAGE : null);
 
   // A refusal re-keys the card (that restarts the shake) and so drops the focused element: the focus goes to the e-mail field of the new card.
   useEffect(() => {
@@ -115,8 +144,11 @@ export function LoginForm({ registrationOpen = false }: { registrationOpen?: boo
         </div>
       )}
 
+      {/* Identity providers: only the ones the server has enabled (none by default) */}
+      {signInWithProvider && <ProviderButtons providers={providers} signInWithProvider={signInWithProvider} getCallbackUrl={requestedDestination} disabled={!hydrated} />}
+
       {/* Error */}
-      {error && (
+      {failure && (
         <div
           id={errorId}
           role="alert"
@@ -126,7 +158,7 @@ export function LoginForm({ registrationOpen = false }: { registrationOpen?: boo
           <svg className="w-4 h-4 shrink-0" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4a.75.75 0 011.5 0v3a.75.75 0 01-1.5 0V5zm.75 6.25a.75.75 0 100-1.5.75.75 0 000 1.5z" />
           </svg>
-          {error}
+          {failure}
         </div>
       )}
 
@@ -140,7 +172,7 @@ export function LoginForm({ registrationOpen = false }: { registrationOpen?: boo
           <Input
             id={emailId}
             ref={emailRef}
-            aria-describedby={error ? errorId : undefined}
+            aria-describedby={failure ? errorId : undefined}
             name="email"
             type="email"
             placeholder="you@example.com"
@@ -160,7 +192,7 @@ export function LoginForm({ registrationOpen = false }: { registrationOpen?: boo
           <div className="relative">
             <Input
               id={passwordId}
-              aria-describedby={error ? errorId : undefined}
+              aria-describedby={failure ? errorId : undefined}
               name="password"
               type={showPassword ? "text" : "password"}
               required

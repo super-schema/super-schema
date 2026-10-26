@@ -17,6 +17,8 @@
  *   - too many wrong passwords for one e-mail lock it, and the lock is answered with the same message as a wrong password;
  *   - an invitation link and a password-reset link work once, for a live token, and say one thing for every dead one (the rows are made through the database:
  *     there is no e-mail to read a link from);
+ *   - the login page offers NO identity-provider button and Auth.js lists the credentials provider only (AUTH_PROVIDERS is blank in a run), and a refusal that comes
+ *     back from a provider (`?error=...`) is worded like a wrong password;
  *   - a login form submitted before React hydrated it never puts the password in the address (its HTML says method="post" and its
  *     button is disabled until the page is interactive);
  *   - fields have labels (the specs find them with getByLabel), a refusal is announced and moves the focus to the field to fix.
@@ -69,6 +71,7 @@ const ID = {
   resetForm: "reset-form",
   resetSubmit: "reset-submit",
   invalidLink: "invalid-link",
+  providerButtons: "provider-buttons",
 } as const;
 
 const INVALID_CREDENTIALS = "Invalid email or password";
@@ -290,6 +293,25 @@ test.describe("login", () => {
     await page.getByTestId(ID.registerLoginLink).click();
     await expect(page).toHaveURL((url) => url.pathname === "/login");
     await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+  });
+
+  test("offers NO identity-provider button by default: the password form alone, and the app lists the credentials provider only", { tag: ["@regression"] }, async ({ page }) => {
+    await openLogin(page);
+    await expect(page.getByTestId(ID.providerButtons)).toHaveCount(0);
+    await expect(page.getByText(/or continue with email/i)).toHaveCount(0);
+    await expect(page.getByTestId(ID.loginForm)).toBeVisible();
+
+    // Auth.js lists what it is configured with (src/lib/auth/providers.ts: AUTH_PROVIDERS is blank in a run, scripts/e2e-env.mjs): nothing but the local accounts.
+    const response = await page.request.get("/api/auth/providers");
+    expect(response.ok()).toBe(true);
+    expect(Object.keys(await response.json())).toEqual(["credentials"]);
+  });
+
+  test("an identity provider's refusal (/login?error=AccessDenied) comes back as the words of a wrong password and nothing else", { tag: ["@regression"] }, async ({ page }) => {
+    await openLogin(page, "?error=AccessDenied");
+    await expect(page.getByTestId(ID.loginError)).toHaveText(INVALID_CREDENTIALS);
+    await expect(page.locator("body")).not.toContainText("AccessDenied");
+    expect(pathnameOf(page)).toBe("/login");
   });
 });
 

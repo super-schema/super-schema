@@ -17,6 +17,9 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+// The page hands the provider buttons their server action (Auth.js's sign-in, which needs Next's runtime): its own tests are tests/unit/app/provider-sign-in-action.test.ts.
+vi.mock("@/app/(auth)/login/provider-actions", () => ({ signInWithProvider: vi.fn() }));
+
 import LoginPage from "@/app/(auth)/login/page";
 
 afterEach(cleanup);
