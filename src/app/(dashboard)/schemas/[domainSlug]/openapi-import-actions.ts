@@ -14,7 +14,7 @@
  *     → TypeSpec source → compileTypeSpecDocument() → mapDocumentToImportResult()
  *
  * Like the TypeSpec import it runs a converter and the compiler on caller-supplied text, so it is
- * authenticated, size-capped and time-bounded (`@/lib/compiler/import-limits`) and never echoes raw
+ * authenticated, AUTHORIZED (`import.run` over the domain it is for, `domainId`; `null` is the tenant itself), size-capped and time-bounded (`@/lib/compiler/import-limits`) and never echoes raw
  * converter / compiler / host text: each stage reports a fixed sentence, the original error is logged
  * server-side, and anything unexpected becomes the generic message (`sanitizeActionError`).
  */
@@ -24,7 +24,7 @@ import { parseYamlBounded } from "@/lib/importers/safe-yaml";
 import { convertOpenAPI3Document } from "@typespec/openapi3";
 import type { Result } from "@/types/result";
 import { ok, err } from "@/types/result";
-import { getActionContext, sanitizeActionError } from "@/lib/action-context";
+import { authorizeActiveTenant, authorizeSubject, sanitizeActionError } from "@/lib/action-context";
 import { compileTypeSpecDocument } from "@/lib/compiler/typespec-compiler";
 import { checkImportSize, withCompileTimeout } from "@/lib/compiler/import-limits";
 import { TypeSpecImportGuardError } from "@/lib/typespec/import-guard";
@@ -37,9 +37,11 @@ import {
 const LABEL = "importOpenApiDocumentAction";
 
 export async function importOpenApiDocumentAction(
-  content: string
+  content: string,
+  /** The domain the document is imported for (judged `import.run` there); `null` for the tenant itself (an Enterprise entity). */
+  domainId: string | null = null
 ): Promise<Result<TypeSpecImportResult>> {
-  return sanitizeActionError(runOpenApiImport(content), LABEL);
+  return sanitizeActionError(runOpenApiImport(content, domainId), LABEL);
 }
 
 /** Only the position of a YAML syntax error is shown; the parser's message quotes the caller's own text. */
@@ -48,9 +50,14 @@ function describeYamlError(e: unknown): string {
   return pos ? `The OpenAPI document is not valid YAML or JSON (line ${pos.line}, column ${pos.col})` : "The OpenAPI document is not valid YAML or JSON";
 }
 
-async function runOpenApiImport(content: string): Promise<Result<TypeSpecImportResult>> {
-  const ctx = await getActionContext();
-  if (!ctx) return err({ code: "UNAUTHORIZED", message: "Not authenticated" });
+async function runOpenApiImport(content: string, domainId: string | null): Promise<Result<TypeSpecImportResult>> {
+  // Before the document is looked at, let alone converted and compiled: nobody, a user with no right to import into that domain, and a
+  // domain of another tenant are refused (the last two exactly like a missing domain).
+  const access =
+    domainId === null || domainId === undefined
+      ? await authorizeActiveTenant("import.run")
+      : await authorizeSubject("import.run", { kind: "domain", id: domainId }, { code: "NOT_FOUND", message: "Domain not found" });
+  if (!access.success) return err(access.error);
 
   if (typeof content !== "string" || !content.trim()) {
     return err({

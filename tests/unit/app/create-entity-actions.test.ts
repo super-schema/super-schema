@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { sessionPrincipalModule } from "../../helpers/access-mocks";
 
 const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockEnsureDefaultProductId } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
@@ -26,6 +27,7 @@ const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockEnsureDefault
   mockEnsureDefaultProductId: vi.fn(),
 }));
 
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({
   auth: mockAuth,
 }));
@@ -72,32 +74,19 @@ describe("createEntityWithFieldsAction session reconciliation", () => {
     mockEnsureDefaultProductId.mockResolvedValue("prd-default");
   });
 
-  it("refuses a stale session id even when its e-mail matches a real account (the user is found by id alone: no e-mail fallback)", async () => {
-    // The account exists under its e-mail (a fallback would find it and act as it); nothing has the stale id.
-    mockPrisma.user.findUnique.mockImplementation(async (args: { where: { id?: string; email?: string } }) =>
-      args.where.email === "owner@example.com" ? { id: "current-user-id", disabledAt: null } : null
-    );
+  it("refuses a user who is nobody (a stale session id, a disabled user: the principal loader finds no active user BY ID, and never by e-mail), creating and auditing nothing", async () => {
+    // The by-id, no-e-mail-fallback and disabled rules themselves are pinned in tests/unit/lib/access/principal.test.ts; here the action must
+    // stop at "nobody" before it writes.
+    sessionPrincipalModule.getPrincipal.mockResolvedValueOnce(null);
+    const stale = await createEntityWithFieldsAction("domain-1", { name: "Customer", description: "Customer entity", fields: [] });
+    sessionPrincipalModule.getPrincipal.mockResolvedValueOnce(null);
+    const disabled = await createEntityWithFieldsAction("domain-1", { name: "Customer", description: "Customer entity", fields: [] });
 
-    const result = await createEntityWithFieldsAction("domain-1", {
-      name: "Customer",
-      description: "Customer entity",
-      fields: [],
-    });
-
-    expect(result).toEqual({ error: "Your session is stale. Sign out and sign in again, then create the entity." });
-    expect(mockPrisma.user.findUnique).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({ where: { id: "stale-user-id" }, select: { id: true, disabledAt: true } });
+    expect(stale).toEqual({ error: "You must be logged in", code: "UNAUTHORIZED" });
+    expect(disabled).toEqual(stale);
+    expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
     expect(mockTx.entity.create).not.toHaveBeenCalled();
     expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
-  });
-
-  it("refuses a disabled user, with the same answer as a missing one", async () => {
-    mockPrisma.user.findUnique.mockResolvedValue({ id: "stale-user-id", disabledAt: new Date("2026-10-01T00:00:00Z") });
-
-    const result = await createEntityWithFieldsAction("domain-1", { name: "Customer", description: "Customer entity", fields: [] });
-
-    expect(result).toEqual({ error: "Your session is stale. Sign out and sign in again, then create the entity." });
-    expect(mockTx.entity.create).not.toHaveBeenCalled();
   });
 
   it("stores the entity-level vendor extensions of a single-entity import at metadata.custom.extensions", async () => {

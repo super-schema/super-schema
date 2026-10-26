@@ -19,6 +19,7 @@ const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockGetActiveTena
   mockAssertNameAvailable: vi.fn(),
 }));
 
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));

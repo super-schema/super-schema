@@ -484,6 +484,23 @@ export async function withOwnedTarget<T>(...args: [ActionId, unknown, Guarded<T>
   return run();
 }
 
+/**
+ * `guardSubject` for a create's `ScopeTarget` (a domain, product or tenant the client names): the target must lie in the ACTIVE tenant and the
+ * caller's roles must reach `action` over it. A target that does not exist, one of another tenant, one nothing of the caller's covers and a
+ * malformed one all answer the very `NOT_FOUND` `resolveScope` gives a missing target (`Domain "x" not found`), so a foreign id reveals nothing;
+ * too low a role is a generic FORBIDDEN. Call it BEFORE the target is used for anything (a read, a write, a fetch).
+ */
+export async function guardTarget(action: ActionId, target: unknown, wire: Omit<GuardWire, "label"> = {}): Promise<GuardOutcome> {
+  const parsed = parseScopeTarget(target);
+  if (!parsed.success) return { allowed: false, refusal: { error: MALFORMED_TARGET_ERROR.message, code: "NOT_FOUND" } };
+  const answer = await authorizeLoaded(action, () => resolveTargetRef(parsed.data), missingTargetError(parsed.data));
+  if (answer.success) return { allowed: true, ...answer.data };
+  const { code, message } = answer.error;
+  if (code === "UNAUTHORIZED") return { allowed: false, refusal: { error: wire.unauthenticated ?? "Not authenticated", code: "UNAUTHORIZED" } };
+  if (code === "NOT_FOUND") return { allowed: false, refusal: { error: message, code: "NOT_FOUND" } };
+  return { allowed: false, refusal: { error: message, code: "FORBIDDEN" } };
+}
+
 /** The wire shape of the older (non-Result) by-id actions' not-found answer; a foreign row and a missing one are both exactly this. */
 export const notFoundFailure = (kind: string) => ({ error: `${kind} not found`, code: "NOT_FOUND" as const });
 

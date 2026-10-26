@@ -7,6 +7,7 @@
  * compiler / host text (see the "guards" block at the end).
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
+import { sessionPrincipalModule } from "../../helpers/access-mocks";
 
 const h = vi.hoisted(() => ({ auth: vi.fn(), resolveCurrentUserId: vi.fn() }));
 
@@ -14,6 +15,8 @@ const h = vi.hoisted(() => ({ auth: vi.fn(), resolveCurrentUserId: vi.fn() }));
 // (transitively imported via typespec-compiler.ts).
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: async () => "tenant-1" }));
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -27,7 +30,6 @@ vi.mock("@/lib/compiler/typespec-compiler", async (importOriginal) => {
 import { compileTypeSpecDocument } from "@/lib/compiler/typespec-compiler";
 import { MAX_IMPORT_CONTENT_BYTES, IMPORT_COMPILE_TIMEOUT_MS } from "@/lib/compiler/import-limits";
 import { TypeSpecImportGuardError } from "@/lib/typespec/import-guard";
-import { AuditUserMissingError } from "@/lib/audit";
 
 let importOpenApiDocumentAction: typeof import("@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions").importOpenApiDocumentAction;
 
@@ -160,7 +162,8 @@ describe("OpenAPI import action guards (final-review D-I1)", () => {
     h.auth.mockResolvedValue(null);
     expect(await importOpenApiDocumentAction(PETSTORE_JSON)).toEqual({ success: false, error: { code: "UNAUTHORIZED", message: "Not authenticated" } });
     h.auth.mockResolvedValue({ user: { id: "ghost" } });
-    h.resolveCurrentUserId.mockRejectedValue(new AuditUserMissingError("ghost"));
+    // The principal loader finds nobody for it (no such user, or a disabled one: tests/unit/lib/access/principal.test.ts).
+    sessionPrincipalModule.getPrincipal.mockResolvedValueOnce(null);
     // a session pointing at a user that no longer exists is "not authenticated" too
     expect(await importOpenApiDocumentAction(PETSTORE_JSON)).toEqual({ success: false, error: { code: "UNAUTHORIZED", message: "Not authenticated" } });
     expect(compileTypeSpecDocument).not.toHaveBeenCalled();

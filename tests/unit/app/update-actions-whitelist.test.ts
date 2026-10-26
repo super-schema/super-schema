@@ -28,6 +28,7 @@ const { mockPrisma, mockAuth, mockGetActiveTenantId, mockRevalidate } = await vi
   };
 });
 
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 vi.mock("next/cache", () => ({ revalidatePath: mockRevalidate }));
@@ -174,7 +175,7 @@ describe.each(DATA_TYPE_CASES)("$label", ({ kind, model, update, legit, wrongTyp
 
   it("requires a session", async () => {
     mockAuth.mockResolvedValue(null);
-    expect(await update("row-1", legit)).toEqual({ error: "Not authenticated" });
+    expect(await update("row-1", legit)).toEqual({ error: "Not authenticated", code: "UNAUTHORIZED" });
     expect(mockPrisma[model].update).not.toHaveBeenCalled();
   });
 });

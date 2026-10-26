@@ -25,6 +25,7 @@ const GUARD_CALLS = new Set([
   "authorizeSubject",
   // the older actions' wire-shape wrappers of the two above (src/lib/action-context.ts)
   "guardSubject",
+  "guardTarget",
   "guardActiveTenant",
   "withApiAuth",
 ]);

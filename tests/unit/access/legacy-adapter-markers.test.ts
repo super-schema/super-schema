@@ -51,9 +51,9 @@ describe("legacy role-less guard adapters", () => {
     expect(unmarked.map((use) => `${use.file}:${use.line}  ${use.text.slice(0, 100)}`)).toEqual([]);
   });
 
-  it("the scan itself finds the uses (it is not vacuous)", () => {
-    expect(adapterUses().length).toBeGreaterThan(30);
-  });
+  it("the scan itself finds the uses (it is not vacuous: what Task 5b has not yet moved is still listed)", () => {
+    expect(adapterUses().length).toBeGreaterThan(5);
+  }, 30_000);
 
   it("a marker is only ever on a line that is an adapter use (no stale markers)", () => {
     const stale: string[] = [];

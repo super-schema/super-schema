@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { sessionPrincipalModule } from "../../helpers/access-mocks";
 
 const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
@@ -50,6 +51,7 @@ const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable } = vi.hoisted(() 
   mockAssertNameAvailable: vi.fn(),
 }));
 
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({
   auth: mockAuth,
 }));
@@ -106,8 +108,8 @@ describe("schema import actions", () => {
     }));
   });
 
-  it("rejects imports before opening a transaction when the session user no longer exists", async () => {
-    mockPrisma.user.findUnique.mockResolvedValue(null);
+  it("rejects imports before opening a transaction when the session user no longer exists (nobody: not authenticated)", async () => {
+    sessionPrincipalModule.getPrincipal.mockResolvedValueOnce(null);
 
     const result = await createDomainAssetsFromImportAction({
       domainId: "domain-1",
@@ -130,13 +132,7 @@ describe("schema import actions", () => {
     expect(result).toMatchObject({
       modelsCreated: 0,
       entitiesCreated: 0,
-      errors: [
-        "Your session is stale. Sign out and sign in again, then retry the import.",
-      ],
-    });
-    expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
-      where: { id: "missing-user" },
-      select: { id: true, disabledAt: true },
+      errors: ["Not authenticated"],
     });
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });

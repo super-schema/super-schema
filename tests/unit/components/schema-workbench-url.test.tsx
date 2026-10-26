@@ -92,8 +92,9 @@ describe("SchemaWorkbench - From URL mode", () => {
     type(`  ${GOOD}  `);
     fireEvent.click(button());
     await waitFor(() => expect(onImportResult).toHaveBeenCalledTimes(1));
-    expect(importAction).toHaveBeenCalledWith(GOOD);
-    expect(importAction.mock.calls[0]).toHaveLength(1);
+    // The URL and the domain the import is for (null here: no domain was given, the tenant itself); nothing else crosses to the server.
+    expect(importAction).toHaveBeenCalledWith(GOOD, null);
+    expect(importAction.mock.calls[0]).toHaveLength(2);
     expect(onImportResult.mock.calls[0][0]).toBe(data);
     expect(onImportResult.mock.calls[0][0].models[0].fields[0].danglingRef.reason).toMatch(/404/);
     await waitFor(() => expect(button().disabled).toBe(false));

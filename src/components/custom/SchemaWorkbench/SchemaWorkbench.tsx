@@ -67,6 +67,8 @@ export interface SchemaWorkbenchProps {
   onBack: () => void;
   /** Receives a URL import (several assets, dangling-reference markers); without it the From URL mode is hidden. */
   onImportResult?: (result: TypeSpecImportResult) => void;
+  /** The domain a URL import is for (the server judges `import.run` there); `null` for the tenant itself (an Enterprise entity). */
+  importDomainId?: string | null;
   referenceTargets?: { id?: string; name: string }[];
   error?: string | null;
   isLoading?: boolean;
@@ -78,6 +80,7 @@ export function SchemaWorkbench({
   onCommit,
   onBack,
   onImportResult,
+  importDomainId = null,
   referenceTargets = [],
   error,
   isLoading = false,
@@ -202,7 +205,7 @@ export function SchemaWorkbench({
       const { importJsonSchemaFromUrlAction } = await import(
         "@/app/(dashboard)/schemas/[domainSlug]/jsonschema-url-import-actions"
       );
-      const result = await importJsonSchemaFromUrlAction(url);
+      const result = await importJsonSchemaFromUrlAction(url, importDomainId);
       if (run !== urlRun.current) return;
       if (!result.success) {
         setUrlError(result.error.message);

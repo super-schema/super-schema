@@ -2,7 +2,6 @@
 
 import { prisma } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
-import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
@@ -10,13 +9,14 @@ import { entityNameMessage } from "@/lib/entity-name";
 import { builtInRenamedMessage, firstReservedFieldNameMessage, renameReservedFields, renameReservedNames, reservedFieldNameMessage, reservedFieldRenamedMessage, reservedNameRenamedMessage } from "@/lib/reserved-field-names";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
-import { inActiveTenant, isInActiveTenant, notFoundFailure, targetInActiveTenant, unexpectedFailure } from "@/lib/action-context";
+import type { ActionId } from "@/lib/access";
+import { authorizeSubject, guardSubject, guardTarget, unexpectedFailure } from "@/lib/action-context";
 import { FOREIGN_REFERENCE_MESSAGE, fieldsReferenceAllowed } from "@/lib/references/foreign-reference-guard";
 import {
   isBoolean, isInt, isPlainObject, isString, isStringArray, isStringOrNull, optional, pickEditable, readFields,
 } from "@/lib/editable-fields";
 import { parseScopeTarget, requireId } from "@/services/events/service-guards";
-import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
+import { STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
 import { deleteEntityGuarded, entityDeleteFailure } from "@/services/events/entity-pin-usage";
 import { firstInvalidDecimalFactMessage, mapFieldCreateInput } from "@/lib/entity-field-input";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
@@ -50,8 +50,10 @@ async function resolveEntityApiTarget(
   entityId: unknown
 ): Promise<{ target: ScopeTarget } | { error: string }> {
   if (typeof entityId !== "string" || !entityId) return { error: "Select an entity for an entity-scoped API" };
-  // An entity of another tenant reads exactly like a missing one (same answer, nothing derived from it).
-  if (!(await inActiveTenant("entity", entityId))) return { error: "Entity not found" }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+  // An API lives at its entity's own place: the entity must be in the active tenant and the caller's role must reach `asset.write` over it. An
+  // entity of another tenant, or one the caller's roles do not cover, reads exactly like a missing one (same answer, nothing derived from it).
+  const access = await guardSubject("asset.write", { kind: "entity", id: entityId }, { label: "Entity" });
+  if (!access.allowed) return { error: access.refusal.error };
   const entity = await prisma.entity.findUnique({
     where: { id: entityId },
     select: { id: true, productId: true },
@@ -88,13 +90,22 @@ async function dataTypeTarget(domainId: unknown, target: unknown): Promise<Resul
 }
 
 /**
- * A create's target (data type, API, bulk import) carries a domain / product id from the client: it must lie in the active tenant. Null when it does;
- * otherwise the very `{ error }` a missing target gets (`resolveScope`'s NOT_FOUND text), so a foreign one reveals nothing.
+ * A create's target (data type, API, bulk import) carries a domain / product id from the client: it must lie in the active tenant AND the
+ * caller's roles must reach `action` over it (a domain-scoped author only inside their domain). Null when it does; otherwise the very `{ error }`
+ * a missing target gets (`resolveScope`'s NOT_FOUND text; a generic refusal for too low a role), so a foreign one reveals nothing.
  */
-async function foreignTarget(target: ScopeTarget): Promise<{ error: string } | null> {
-  const owned = await targetInActiveTenant(target); // TODO(access-control task 5): tenant-only guard, asks no role: move to withOwnedTarget(action, target, run)
-  return owned.success ? null : { error: owned.error.message };
+async function guardedTarget(action: ActionId, target: ScopeTarget): Promise<{ error: string } | null> {
+  const access = await guardTarget(action, target);
+  return access.allowed ? null : { error: access.refusal.error };
 }
+
+/** May the caller READ the entity `id`? What an entity id written inside a field's decorators (a reference) must satisfy. */
+async function readableEntity(id: string): Promise<boolean> {
+  return (await authorizeSubject("entity.read", { kind: "entity", id })).success;
+}
+
+/** What the older asset actions answer: `{ success: true }`, or a failure `{ error }` with its code where there is one. */
+type AssetOutcome = { success: true; error?: undefined; code?: undefined } | { success?: undefined; error: string; code?: string };
 
 /** The wire shape of the older (non-Result) actions: `{ error }` plus the failure code where there is one. */
 const failure = (error: ServiceError) => ({ error: error.message, code: error.code });
@@ -192,10 +203,6 @@ export async function createEntityWithFieldsAction(
   data: { name: string; description: string; fields: CreateFieldInput[]; extensions?: Record<string, unknown> },
   productId?: string
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return { error: "You must be logged in" };
-  }
 
   // The details arrive from the browser untyped: a payload that is not an object, or whose name is not a string, is a
   // validation failure here instead of a TypeError further down.
@@ -219,15 +226,16 @@ export async function createEntityWithFieldsAction(
   if (badDecimalFact !== null) return { error: badDecimalFact, code: "VALIDATION_ERROR" };
 
   try {
-    // Ownership of the PARENT: the domain must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("domain", domainId))) return { ...notFoundFailure("Domain") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    // The entity is created in a product (the named one, else the domain's default): judged at that place (`entity.write`), in the ACTIVE tenant.
+    const access = await guardSubject("entity.write", productId ? { kind: "product", id: productId } : { kind: "domain", id: domainId }, { label: "Domain", unauthenticated: "You must be logged in" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
     // An entity id inside a field's decorators is what publish pins and the renderers load: it must be an entity of the active tenant.
-    if (!(await fieldsReferenceAllowed(fields, (id) => inActiveTenant("entity", id)))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    if (!(await fieldsReferenceAllowed(fields, readableEntity))) {
       return { error: FOREIGN_REFERENCE_MESSAGE, code: "VALIDATION_ERROR" as const };
     }
 
-    const currentUserId = await resolveCurrentUserId(session.user);
+    const currentUserId = access.principal.userId;
 
     const created = await createProductEntity({
       userId: currentUserId,
@@ -254,10 +262,6 @@ export async function createEntityWithFieldsAction(
 }
 
 export async function createEntityAction(domainId: string, formData: FormData) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return { error: "You must be logged in" };
-  }
 
   const name = formData instanceof FormData ? formData.get("name") : null;
   const rawDescription = formData instanceof FormData ? formData.get("description") : null;
@@ -272,10 +276,11 @@ export async function createEntityAction(domainId: string, formData: FormData) {
   }
 
   try {
-    // Ownership of the PARENT: the domain must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("domain", domainId))) return { ...notFoundFailure("Domain") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    // The entity is created in the domain's default product: judged at the domain (`entity.write`), in the ACTIVE tenant.
+    const access = await guardSubject("entity.write", { kind: "domain", id: domainId }, { label: "Domain", unauthenticated: "You must be logged in" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
-    const currentUserId = await resolveCurrentUserId(session.user);
+    const currentUserId = access.principal.userId;
 
     const created = await createProductEntity({
       userId: currentUserId,
@@ -305,9 +310,7 @@ export async function createEntityAction(domainId: string, formData: FormData) {
 export async function addModelFieldAction(
   modelId: string,
   data: { name: string; type: string; nullable?: boolean; isKey?: boolean; description?: string }
-) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<AssetOutcome> {
 
   const id = requireId(modelId, "Model id");
   if (!id.success) return failure(id.error);
@@ -324,12 +327,11 @@ export async function addModelFieldAction(
   if (reservedField !== null) return { error: reservedField, code: "VALIDATION_ERROR" };
 
   try {
-    // Ownership of the PARENT: the model's domain must belong to the active tenant; anything else reads as missing.
-    const model = await prisma.modelDefinition.findUnique({
-      where: { id: id.data },
-      select: { domain: { select: { tenantId: true } }, _count: { select: { fields: true } } },
-    });
-    if (!model || !(await isInActiveTenant(model.domain.tenantId))) return { ...notFoundFailure("Model") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    // The PARENT is a model of a domain: judged at that domain (`asset.write`), in the active tenant, before anything of it is read.
+    const access = await guardSubject("asset.write", { kind: "model", id: id.data }, { label: "Model" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const model = await prisma.modelDefinition.findUnique({ where: { id: id.data }, select: { _count: { select: { fields: true } } } });
+    if (!model) return { error: "Model not found", code: "NOT_FOUND" as const };
 
     await prisma.modelFieldDefinition.create({
       data: {
@@ -364,9 +366,7 @@ const MODEL_FIELD_EDITABLE = {
 export async function updateModelFieldAction(
   fieldId: string,
   data: { name?: string; type?: string; nullable?: boolean; isKey?: boolean; description?: string }
-) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<AssetOutcome> {
 
   const id = requireId(fieldId, "Field id");
   if (!id.success) return failure(id.error);
@@ -379,12 +379,11 @@ export async function updateModelFieldAction(
   }
 
   try {
-    // Ownership: the field's model's domain must belong to the caller's active tenant; anything else reads as missing.
-    const row = await prisma.modelFieldDefinition.findUnique({
-      where: { id: id.data },
-      select: { name: true, model: { select: { domain: { select: { tenantId: true } } } } },
-    });
-    if (!row || !(await isInActiveTenant(row.model.domain.tenantId))) return { ...notFoundFailure("Field") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    // The field's place (its model's domain) is judged BEFORE anything of it is read: the active tenant and `asset.write`.
+    const access = await guardSubject("asset.write", { kind: "modelField", id: id.data }, { label: "Field" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const row = await prisma.modelFieldDefinition.findUnique({ where: { id: id.data }, select: { name: true } });
+    if (!row) return { error: "Field not found", code: "NOT_FOUND" as const };
 
     // A RENAME to a name the AsyncAPI parser cannot read is refused; a name that does not change is not looked at (an old field stays editable).
     if (typeof picked.data.name === "string" && picked.data.name !== row.name) {
@@ -403,16 +402,14 @@ export async function updateModelFieldAction(
   }
 }
 
-export async function deleteModelFieldAction(fieldId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+export async function deleteModelFieldAction(fieldId: string): Promise<AssetOutcome> {
 
   const id = requireId(fieldId, "Field id");
   if (!id.success) return failure(id.error);
 
   try {
-    // Ownership: the field's model's domain must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("modelField", id.data))) return { ...notFoundFailure("Field") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("asset.write", { kind: "modelField", id: id.data }, { label: "Field" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     await prisma.modelFieldDefinition.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
@@ -429,20 +426,20 @@ export async function deleteModelFieldAction(fieldId: string) {
 const inUseText = (e: ServiceError) => actionErrorText({ error: e.message, suggestedFix: e.suggestedFix });
 
 export async function deleteEntityAction(entityId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
   // Declared outside the try: the catch explains a P2003 for this very entity.
   let entity: { id: string; name: string; tenantId: string } | null = null;
   try {
-    const currentUserId = await resolveCurrentUserId(session.user);
+    // Deleting an entity is an edit of it (`entity.write` over ITS place, in the active tenant): judged before anything is read or deleted.
+    const access = await guardSubject("entity.write", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error };
+    const currentUserId = access.principal.userId;
 
     // Verify the entity exists before attempting delete
     entity = await prisma.entity.findUnique({
       where: { id: entityId },
       select: { id: true, name: true, tenantId: true },
     });
-    // An entity of another tenant reads exactly like a missing one (same answer, nothing deleted).
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    if (!entity) return { error: "Entity not found" };
     const target = entity;
 
     // The guards (library traits that pin it, other entities whose published versions reference one of its versions, events —
@@ -485,9 +482,7 @@ export async function createSharedEnumAction(
   domainId: string | null,
   data: { name: string; values: string[]; description?: string },
   target?: ScopeTarget
-) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<AssetOutcome> {
   const input = readFields(data, { name: isString, values: isStringArray, description: optional(isString) }, "an enum");
   if (!input.success) return failure(input.error);
   const name = trimmedName(input.data.name, "Enum");
@@ -495,8 +490,9 @@ export async function createSharedEnumAction(
   try {
     const scopeTarget = await dataTypeTarget(domainId, target);
     if (!scopeTarget.success) return failure(scopeTarget.error);
-    // A DOMAIN / PRODUCT target is a client id: it must lie in the active tenant (a foreign one reads exactly like a missing one).
-    const notOwned = await foreignTarget(scopeTarget.data);
+    // A DOMAIN / PRODUCT target is a client id: it must lie in the active tenant and the caller's roles must reach `asset.write` over it
+    // (a foreign one, or one their roles do not cover, reads exactly like a missing one).
+    const notOwned = await guardedTarget("asset.write", scopeTarget.data);
     if (notOwned) return { ...notOwned };
     const result = await createInScope(prisma, {
       kind: "dataType",
@@ -515,14 +511,12 @@ export async function createSharedEnumAction(
   }
 }
 
-export async function deleteSharedEnumAction(enumId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+export async function deleteSharedEnumAction(enumId: string): Promise<AssetOutcome> {
   const id = requireId(enumId, "Enum id");
   if (!id.success) return failure(id.error);
   try {
-    // Ownership: the data type must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("sharedEnum", id.data))) return { ...notFoundFailure("Enum") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("asset.write", { kind: "sharedEnum", id: id.data }, { label: "Enum" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     await prisma.sharedEnum.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
@@ -543,9 +537,7 @@ const UNION_EDITABLE = { memberTypes: isStringArray, description: isString };
 export async function updateSharedEnumAction(
   enumId: string,
   data: { values?: string[]; description?: string }
-) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<AssetOutcome> {
 
   const id = requireId(enumId, "Enum id");
   if (!id.success) return failure(id.error);
@@ -553,8 +545,8 @@ export async function updateSharedEnumAction(
   if (!picked.success) return failure(picked.error);
 
   try {
-    const row = await prisma.sharedEnum.findUnique({ where: { id: id.data }, select: { tenantId: true } });
-    if (!row || !(await isInActiveTenant(row.tenantId))) return { ...notFoundFailure("Enum") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject("asset.write", { kind: "sharedEnum", id: id.data }, { label: "Enum" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     await prisma.sharedEnum.update({ where: { id: id.data }, data: picked.data as Prisma.SharedEnumUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
@@ -571,9 +563,7 @@ export async function createCustomScalarAction(
   domainId: string | null,
   data: { name: string; baseType: string; format?: string; pattern?: string; description?: string },
   target?: ScopeTarget
-) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<AssetOutcome> {
   const input = readFields(
     data,
     { name: isString, baseType: isString, format: optional(isStringOrNull), pattern: optional(isStringOrNull), description: optional(isString) },
@@ -585,8 +575,9 @@ export async function createCustomScalarAction(
   try {
     const scopeTarget = await dataTypeTarget(domainId, target);
     if (!scopeTarget.success) return failure(scopeTarget.error);
-    // A DOMAIN / PRODUCT target is a client id: it must lie in the active tenant (a foreign one reads exactly like a missing one).
-    const notOwned = await foreignTarget(scopeTarget.data);
+    // A DOMAIN / PRODUCT target is a client id: it must lie in the active tenant and the caller's roles must reach `asset.write` over it
+    // (a foreign one, or one their roles do not cover, reads exactly like a missing one).
+    const notOwned = await guardedTarget("asset.write", scopeTarget.data);
     if (notOwned) return { ...notOwned };
     const result = await createInScope(prisma, {
       kind: "dataType",
@@ -612,14 +603,12 @@ export async function createCustomScalarAction(
   }
 }
 
-export async function deleteCustomScalarAction(scalarId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+export async function deleteCustomScalarAction(scalarId: string): Promise<AssetOutcome> {
   const id = requireId(scalarId, "Scalar id");
   if (!id.success) return failure(id.error);
   try {
-    // Ownership: the data type must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("customScalar", id.data))) return { ...notFoundFailure("Scalar") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("asset.write", { kind: "customScalar", id: id.data }, { label: "Scalar" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     await prisma.customScalar.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
@@ -631,9 +620,7 @@ export async function deleteCustomScalarAction(scalarId: string) {
 export async function updateCustomScalarAction(
   scalarId: string,
   data: { baseType?: string; format?: string | null; pattern?: string | null; description?: string }
-) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<AssetOutcome> {
 
   const id = requireId(scalarId, "Scalar id");
   if (!id.success) return failure(id.error);
@@ -641,8 +628,8 @@ export async function updateCustomScalarAction(
   if (!picked.success) return failure(picked.error);
 
   try {
-    const row = await prisma.customScalar.findUnique({ where: { id: id.data }, select: { tenantId: true } });
-    if (!row || !(await isInActiveTenant(row.tenantId))) return { ...notFoundFailure("Scalar") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject("asset.write", { kind: "customScalar", id: id.data }, { label: "Scalar" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     await prisma.customScalar.update({ where: { id: id.data }, data: picked.data as Prisma.CustomScalarUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
@@ -659,9 +646,7 @@ export async function createUnionTypeAction(
   domainId: string | null,
   data: { name: string; memberTypes: string[]; description?: string },
   target?: ScopeTarget
-) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<AssetOutcome> {
   const input = readFields(data, { name: isString, memberTypes: isStringArray, description: optional(isString) }, "a union");
   if (!input.success) return failure(input.error);
   const name = trimmedName(input.data.name, "Union");
@@ -669,8 +654,9 @@ export async function createUnionTypeAction(
   try {
     const scopeTarget = await dataTypeTarget(domainId, target);
     if (!scopeTarget.success) return failure(scopeTarget.error);
-    // A DOMAIN / PRODUCT target is a client id: it must lie in the active tenant (a foreign one reads exactly like a missing one).
-    const notOwned = await foreignTarget(scopeTarget.data);
+    // A DOMAIN / PRODUCT target is a client id: it must lie in the active tenant and the caller's roles must reach `asset.write` over it
+    // (a foreign one, or one their roles do not cover, reads exactly like a missing one).
+    const notOwned = await guardedTarget("asset.write", scopeTarget.data);
     if (notOwned) return { ...notOwned };
     const result = await createInScope(prisma, {
       kind: "dataType",
@@ -689,14 +675,12 @@ export async function createUnionTypeAction(
   }
 }
 
-export async function deleteUnionTypeAction(unionId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+export async function deleteUnionTypeAction(unionId: string): Promise<AssetOutcome> {
   const id = requireId(unionId, "Union id");
   if (!id.success) return failure(id.error);
   try {
-    // Ownership: the data type must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("unionType", id.data))) return { ...notFoundFailure("Union") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("asset.write", { kind: "unionType", id: id.data }, { label: "Union" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     await prisma.unionType.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
@@ -708,9 +692,7 @@ export async function deleteUnionTypeAction(unionId: string) {
 export async function updateUnionTypeAction(
   unionId: string,
   data: { memberTypes?: string[]; description?: string }
-) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<AssetOutcome> {
 
   const id = requireId(unionId, "Union id");
   if (!id.success) return failure(id.error);
@@ -718,8 +700,8 @@ export async function updateUnionTypeAction(
   if (!picked.success) return failure(picked.error);
 
   try {
-    const row = await prisma.unionType.findUnique({ where: { id: id.data }, select: { tenantId: true } });
-    if (!row || !(await isInActiveTenant(row.tenantId))) return { ...notFoundFailure("Union") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject("asset.write", { kind: "unionType", id: id.data }, { label: "Union" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     await prisma.unionType.update({ where: { id: id.data }, data: picked.data as Prisma.UnionTypeUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
@@ -737,8 +719,6 @@ export async function createServiceAction(
   data: { name: string; description?: string; basePath?: string; scope: "DOMAIN" | "ENTITY"; entityId?: string },
   target: ScopeTarget = { level: "DOMAIN", domainId }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
   const input = readFields(
     data,
     {
@@ -770,7 +750,7 @@ export async function createServiceAction(
       // A TENANT target is never taken from the client (same rule as data types); an API cannot live there anyway.
       apiTarget = parsed.data.level === "TENANT" ? { level: "TENANT", tenantId: await getActiveTenantId() } : parsed.data;
     }
-    const notOwned = await foreignTarget(apiTarget);
+    const notOwned = await guardedTarget("asset.write", apiTarget);
     if (notOwned) return { ...notOwned };
 
     const result = await createInScope(prisma, {
@@ -802,8 +782,6 @@ export async function createServiceAction(
 // The service lives at its entity's own level: product-level entities get a
 // product-level API, and tenant-level (Enterprise) entities cannot own one.
 export async function getOrCreateEntityServiceAction(_domainId: string, entityId: string, entityName: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
   if (typeof entityName !== "string") return failure({ code: "VALIDATION_ERROR", message: "Entity name is required" });
   try {
     // The entity is resolved (and checked against the active tenant) BEFORE the existing-service lookup: the lookup
@@ -836,13 +814,11 @@ export async function getOrCreateEntityServiceAction(_domainId: string, entityId
 }
 
 export async function deleteServiceAction(serviceId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
   const id = requireId(serviceId, "Service id");
   if (!id.success) return failure(id.error);
   try {
-    // Ownership: the API must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("service", id.data))) return { ...notFoundFailure("API service") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("asset.write", { kind: "service", id: id.data }, { label: "API service" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     await prisma.serviceDefinition.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
@@ -929,8 +905,6 @@ export async function createOperationAction(
     responses?: OperationResponseInput[];
   }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   const id = requireId(serviceId, "Service id");
   if (!id.success) return failure(id.error);
@@ -938,8 +912,9 @@ export async function createOperationAction(
   if (!details.success) return failure(details.error);
 
   try {
-    // Ownership of the PARENT: the API must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("service", id.data))) return { ...notFoundFailure("API service") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    // The PARENT is an API of a domain or product: judged at its place (`asset.write`), in the active tenant, before anything is written.
+    const access = await guardSubject("asset.write", { kind: "service", id: id.data }, { label: "API service" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
     const created = await prisma.operation.create({
       data: {
@@ -969,8 +944,6 @@ export async function updateOperationAction(
   operationId: string,
   data: { name?: string; httpMethod?: string; httpPath?: string; description?: string }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   const id = requireId(operationId, "Operation id");
   if (!id.success) return failure(id.error);
@@ -983,9 +956,8 @@ export async function updateOperationAction(
   }
 
   try {
-    // Ownership: the operation's API must belong to the caller's active tenant; anything else reads as missing.
-    const row = await prisma.operation.findUnique({ where: { id: id.data }, select: { service: { select: { tenantId: true } } } });
-    if (!row || !(await isInActiveTenant(row.service.tenantId))) return { ...notFoundFailure("Operation") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject("asset.write", { kind: "operation", id: id.data }, { label: "Operation" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     await prisma.operation.update({ where: { id: id.data }, data: picked.data as Prisma.OperationUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
@@ -1008,8 +980,6 @@ export async function replaceOperationDetailsAction(
     responses: OperationResponseInput[];
   }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   const id = requireId(operationId, "Operation id");
   if (!id.success) return failure(id.error);
@@ -1020,7 +990,8 @@ export async function replaceOperationDetailsAction(
   try {
     // Ownership: the operation's API must belong to the active tenant; anything else reads as missing. Checked before the
     // batch: its first statements delete the operation's parameters and responses.
-    if (!(await inActiveTenant("operation", id.data))) return { ...notFoundFailure("Operation") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("asset.write", { kind: "operation", id: id.data }, { label: "Operation" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
     await prisma.$transaction([
       prisma.operationParameter.deleteMany({ where: { operationId: id.data } }),
@@ -1045,13 +1016,11 @@ export async function replaceOperationDetailsAction(
 }
 
 export async function deleteOperationAction(operationId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
   const id = requireId(operationId, "Operation id");
   if (!id.success) return failure(id.error);
   try {
-    // Ownership: the operation's API must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("operation", id.data))) return { ...notFoundFailure("Operation") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("asset.write", { kind: "operation", id: id.data }, { label: "Operation" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     await prisma.operation.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
@@ -1282,10 +1251,6 @@ function importConflictMessage(
 export async function createDomainAssetsFromImportAction(
   payload: BulkImportPayload
 ): Promise<BulkImportResult> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return emptyImportResult(["Not authenticated"]);
-  }
   // The payload arrives from the browser untyped: anything but an object is refused before a property is read (a null payload
   // would otherwise surface as "Cannot read properties of null").
   if (!isPlainObject(payload)) return emptyImportResult(["The import payload must be an object"]);
@@ -1295,17 +1260,17 @@ export async function createDomainAssetsFromImportAction(
   const skipped: string[] = [];
 
   try {
-    const currentUserId = await resolveCurrentUserId(session.user);
-
-    // The import writes into the payload's domain (and, through it, its products): that domain must belong to the active
-    // tenant. A foreign domain reads exactly like a missing one (same message), before anything is created.
-    const notOwned = await foreignTarget({ level: "DOMAIN", domainId: payload.domainId });
-    if (notOwned) return emptyImportResult([notOwned.error]);
+    // The import writes into the payload's domain (models, decorators, data types, APIs) and, through it, its products: it is judged AT THAT
+    // DOMAIN (`import.run`) in the active tenant, before anything is created. A foreign domain, or one the caller's roles do not cover, reads
+    // exactly like a missing one (same message); too low a role is refused generically.
+    const access = await guardTarget("import.run", { level: "DOMAIN", domainId: payload.domainId });
+    if (!access.allowed) return emptyImportResult([access.refusal.error]);
+    const currentUserId = access.principal.userId;
 
     // An entity id inside a field's decorators is what publish pins and the renderers load: it must be an entity of the active tenant.
     if (Array.isArray(payload.entities)) {
       for (const entity of payload.entities) {
-        if (!(await fieldsReferenceAllowed(isPlainObject(entity) ? entity.fields : undefined, (id) => inActiveTenant("entity", id)))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+        if (!(await fieldsReferenceAllowed(isPlainObject(entity) ? entity.fields : undefined, readableEntity))) {
           return emptyImportResult([FOREIGN_REFERENCE_MESSAGE]);
         }
       }

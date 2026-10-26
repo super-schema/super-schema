@@ -93,6 +93,8 @@ export function EntityCreationWizard({
   const router = useRouter();
   const product = target.level === "PRODUCT" ? target : null;
   const scopeName = product ? product.domainName : levelLabel("TENANT");
+  // What an import is for, so the server judges it there (`import.run`): the domain of the product, or the tenant itself (null).
+  const importDomainId = product ? product.domainId : null;
   const invalidateDomainsTree = useInvalidateDomainsTree();
   const [state, setState] = useState<WizardState>(INITIAL_STATE);
   const [isLoading, setIsLoading] = useState(false);
@@ -244,8 +246,8 @@ export function EntityCreationWizard({
           }
           const tsResult =
             resolvedFormat === "openapi"
-              ? await importOpenApiDocumentAction(content)
-              : await importTypeSpecDocumentAction(content);
+              ? await importOpenApiDocumentAction(content, importDomainId)
+              : await importTypeSpecDocumentAction(content, importDomainId);
           if (!tsResult.success) {
             setError(tsResult.error.message);
             return;
@@ -546,6 +548,7 @@ export function EntityCreationWizard({
             onCommit={(content, format, filename) => handleImportSubmit(content, filename, format)}
             onBack={goToSelectMethod}
             onImportResult={handleUrlImportResult}
+            importDomainId={importDomainId}
             referenceTargets={referenceTargets}
             error={error}
             isLoading={isLoading}

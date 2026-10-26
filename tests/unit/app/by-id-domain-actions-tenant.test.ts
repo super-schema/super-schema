@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { sessionPrincipalModule } from "../../helpers/access-mocks";
 
 // Tenant scoping + generic failures of the older by-id actions in schemas/[domainSlug]/actions.ts that F2 left unguarded:
 // model fields, entity / data-type / API / operation deletes, operation creates and the live operation save, entity and API
@@ -32,6 +33,7 @@ const { mockPrisma, mockAuth, mockGetActiveTenantId, mockRevalidate } = await vi
   };
 });
 
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 vi.mock("next/cache", () => ({ revalidatePath: mockRevalidate }));
@@ -225,7 +227,7 @@ describe.each(CASES)("$label", (c) => {
 
   it("requires a session before any query", async () => {
     mockAuth.mockResolvedValue(null);
-    expect(await c.call()).toEqual({ error: "Not authenticated" });
+    expect(await c.call()).toEqual({ error: "Not authenticated", code: "UNAUTHORIZED" });
     expect(c.lookup()).not.toHaveBeenCalled();
     for (const write of c.writes()) expect(write).not.toHaveBeenCalled();
   });
@@ -632,7 +634,7 @@ describe("createDomainAssetsFromImportAction error hygiene", () => {
     for (const domainId of [5, {}, [], null, undefined, "", "  "]) {
       const result = await run(payload({ domainId }));
       expect(result).toMatchObject({ entitiesCreated: 0, modelsCreated: 0 });
-      expect(errorsOf(result)).toMatch(/^Domain ".*" not found$/);
+      expect(errorsOf(result)).toMatch(/not found$/);
       expect(errorsOf(result)).not.toMatch(LEAKS);
     }
     expect(mockPrisma.domain.findUnique).not.toHaveBeenCalled();
@@ -680,9 +682,10 @@ describe("createDomainAssetsFromImportAction error hygiene", () => {
     expect(errorsOf(await run(payload()))).toBe('Domain "d-own" not found');
   });
 
-  it("a stale session still gets its sign-in line", async () => {
-    mockPrisma.user.findUnique.mockResolvedValue(null);
-    expect(errorsOf(await run(payload()))).toMatch(/session is stale/);
+  it("a stale session (the user no longer exists, or is disabled: nobody) is not authenticated, and nothing is read or written", async () => {
+    sessionPrincipalModule.getPrincipal.mockResolvedValueOnce(null);
+    expect(errorsOf(await run(payload()))).toBe("Not authenticated");
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
 
   it("a Next control-flow error thrown inside the import is re-thrown, not swallowed into the result", async () => {

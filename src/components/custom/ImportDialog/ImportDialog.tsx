@@ -91,6 +91,9 @@ export function ImportDialog({
   onImported,
 }: ImportDialogProps) {
   const invalidateDomainsTree = useInvalidateDomainsTree();
+  // The text is read before a domain is chosen, so the server judges the import (`import.run`) at the first domain offered; the write itself
+  // is judged again at the domain the user picks (`createDomainAssetsFromImportAction`, `createEntityWithFieldsAction`).
+  const importDomainId = domains[0]?.id ?? null;
   const [activeTab, setActiveTab] = useState<ImportTab>("paste");
   const [phase, setPhase] = useState<ImportPhase>("input");
   const [pasteContent, setPasteContent] = useState("");
@@ -291,8 +294,8 @@ export function ImportDialog({
     if (format === "typespec" || format === "openapi") {
       const tsResult =
         format === "openapi"
-          ? await importOpenApiDocumentAction(content)
-          : await importTypeSpecDocumentAction(content);
+          ? await importOpenApiDocumentAction(content, importDomainId)
+          : await importTypeSpecDocumentAction(content, importDomainId);
       if (!tsResult.success) {
         setError(tsResult.error.message);
         return;
