@@ -1,20 +1,22 @@
-import { prisma } from "@/lib/db";
 import { NextResponse } from "next/server";
-import { getActiveTenantId } from "@/lib/active-tenant";
-import { requireSession } from "@/lib/require-session";
+import { accessibleTenants, getActiveTenantId, isNoTenantAccess } from "@/lib/active-tenant";
+import { requirePrincipal } from "@/lib/require-session";
 
+/**
+ * The tenants the signed-in user may access (a role at any depth in them; a global administrator: every active tenant) and the active one.
+ * A user with no role at all gets an empty list and no active tenant (200, not an error: the shell shows its "no access yet" state).
+ */
 export async function GET() {
-  const denied = await requireSession();
+  const { principal, denied } = await requirePrincipal();
   if (denied) return denied;
 
-  const [tenants, activeTenantId] = await Promise.all([
-    prisma.tenant.findMany({
-      where: { isActive: true },
-      orderBy: [{ isSystem: "desc" }, { name: "asc" }],
-      include: { _count: { select: { domains: true } } },
-    }),
-    getActiveTenantId(),
-  ]);
+  const tenants = await accessibleTenants(principal);
+  let activeTenantId: string | null = null;
+  try {
+    activeTenantId = await getActiveTenantId(principal);
+  } catch (e: unknown) {
+    if (!isNoTenantAccess(e)) throw e;
+  }
 
   return NextResponse.json({
     activeTenantId,

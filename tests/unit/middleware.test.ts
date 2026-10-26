@@ -94,6 +94,17 @@ describe("a page with a valid session", () => {
   });
 });
 
+describe("/no-access (a signed-in user with no role: a session is needed, a role is not)", () => {
+  it("is for a visitor with no valid session what any page is: sent to /login, remembering the page", async () => {
+    expect(await redirectOf("/no-access")).toBe("/login?callbackUrl=%2Fno-access");
+    expect(await redirectOf("/no-access", `${PLAIN}=forged.not-a-valid-jwt.value`)).toBe("/login?callbackUrl=%2Fno-access");
+  });
+
+  it("is let through for a valid session, never bounced to the dashboard (the dashboard sends a roleless user here: that would loop)", async () => {
+    expect(await redirectOf("/no-access", `${PLAIN}=${await token()}`)).toBeNull();
+  });
+});
+
 describe("the JSON endpoints under /api", () => {
   it.each(["/api/domains-tree", "/api/tenants", "/api/compliance/gaps", "/api/command-palette-fields", "/api/ai/generate-entity"])(
     "%s answers 401 to a request without a valid session",

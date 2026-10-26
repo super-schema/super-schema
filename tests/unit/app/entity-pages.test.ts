@@ -15,7 +15,7 @@ vi.mock("@/lib/db", () => ({
     entity: { findFirst: mocks.entityFindFirst },
   },
 }));
-vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId, requireActiveTenantId: mocks.getActiveTenantId }));
 vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => {
     throw new Error("not found");

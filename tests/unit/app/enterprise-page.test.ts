@@ -17,7 +17,7 @@ vi.mock("@/lib/db", () => ({
     unionType: { findMany: mocks.empty },
   },
 }));
-vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId, requireActiveTenantId: mocks.getActiveTenantId }));
 vi.mock("@/features/events/workspace/load-events-tab-data", () => ({
   loadLevelTraits: mocks.loadLevelTraits,
 }));

@@ -25,6 +25,7 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/active-tenant", () => ({
   getActiveTenantId: mockGetActiveTenantId,
+  requireActiveTenantId: mockGetActiveTenantId,
 }));
 
 vi.mock("@/services/ai.service", () => ({

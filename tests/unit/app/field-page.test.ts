@@ -40,7 +40,7 @@ vi.mock("@/lib/db", () => ({
     product: { findFirst: mocks.productFindFirst },
   },
 }));
-vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: async () => db.activeTenantId }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: async () => db.activeTenantId, requireActiveTenantId: async () => db.activeTenantId }));
 vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => {
     throw new Error("not found");

@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { notFound } from "next/navigation";
-import { getActiveTenantId } from "@/lib/active-tenant";
+import { requireActiveTenantId } from "@/lib/active-tenant";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { loadLevelTraits } from "@/features/events/workspace/load-events-tab-data";
 import { EVENTS_ASSET_COUNT_SELECT, productDataTypeCount } from "@/lib/product-deletion";
@@ -28,7 +28,7 @@ interface Props {
 
 export default async function DomainProductsPage({ params }: Props) {
   const { domainSlug } = await params;
-  const tenantId = await getActiveTenantId();
+  const tenantId = await requireActiveTenantId();
 
   const domain = await prisma.domain.findFirst({
     where: { slug: domainSlug, tenantId },

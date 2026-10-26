@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
-import { getActiveTenantId } from "@/lib/active-tenant";
+import { requireActiveTenantId } from "@/lib/active-tenant";
 import { DomainWorkspace } from "../domain-workspace";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { loadEventsList } from "@/features/events/event-page/load-events-list";
@@ -35,7 +35,7 @@ export default async function ProductWorkspacePage({
   searchParams,
 }: Props) {
   const { domainSlug, productSlug } = await params;
-  const tenantId = await getActiveTenantId();
+  const tenantId = await requireActiveTenantId();
 
   // Domain and product resolve in a single query. The tenant-scoped lookup
   // wins; the unscoped one is only a fallback for a slug outside the active tenant.

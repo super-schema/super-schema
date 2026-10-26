@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { getActiveTenantId } from "@/lib/active-tenant";
+import { requireActiveTenantId } from "@/lib/active-tenant";
 import type { EntityMetadata } from "@/types/schemas/entity-metadata.schema";
 import { LineagePageClient } from "./lineage-client";
 import { domainLabel } from "@/lib/entity-placement";
@@ -8,7 +8,7 @@ import { entityRelationships } from "@/lib/lineage/entity-relationships";
 export default async function LineagePage() {
   // The graph of the tenant being viewed (the explorer, the retention page and the other lists scope the same way).
   const entities = await prisma.entity.findMany({
-    where: { tenantId: await getActiveTenantId() },
+    where: { tenantId: await requireActiveTenantId() },
     include: {
       domain: true,
       product: true,

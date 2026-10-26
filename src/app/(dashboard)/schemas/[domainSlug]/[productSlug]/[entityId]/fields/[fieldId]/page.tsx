@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
 import { FieldStudio } from "./field-studio";
 import { domainLabel } from "@/lib/entity-placement";
-import { getActiveTenantId } from "@/lib/active-tenant";
+import { requireActiveTenantId } from "@/lib/active-tenant";
 import { ENTERPRISE_ENTITIES_SEGMENT, ENTERPRISE_ROUTE_SEGMENT, assetHref, type QueryParams } from "@/lib/navigation/asset-href";
 import { findEntityInScope } from "../../load-entity-workspace";
 import { loadPickableEntities } from "@/lib/references/pickable-entities";
@@ -15,7 +15,7 @@ interface Props {
 
 export default async function FieldDetailPage({ params, searchParams }: Props) {
   const { domainSlug, productSlug, entityId, fieldId } = await params;
-  const activeTenantId = await getActiveTenantId();
+  const activeTenantId = await requireActiveTenantId();
 
   // Resolve the entity within its placement (slug first, then cuid). Slugs repeat
   // across products and tenants, so the lookup is never unscoped.

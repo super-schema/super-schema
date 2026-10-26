@@ -13,6 +13,9 @@ import { PUBLIC_ASSET_PATHS } from "@/lib/public-assets";
  * - Public: the login and register pages (a visitor with a bad cookie must be able to open them: no redirect loop), Auth.js's own
  *   `/api/auth/*`, the REST API under `/api/v1/*` (each handler checks an API key or the session itself, and the health probe is
  *   unauthenticated on purpose), and the preview iframe's static assets (a sandboxed iframe sends no cookie).
+ * - `/no-access` ("no role assigned yet", where the dashboard sends a signed-in user who may access no tenant) needs a session and no role: it is
+ *   not public (a visitor without a session goes to `/login`) and not an auth page (a signed-in user is let through, never bounced to the
+ *   dashboard, which would send them straight back: no redirect loop).
  * - A signed-in user on `/`, `/login` or `/register` goes to the dashboard.
  * - A server action (a request with a `Next-Action` header) from a page whose session has gone gets a 401 JSON, not a redirect: the
  *   browser would POST the redirect's target again.

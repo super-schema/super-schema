@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { EntityCreationWizard } from "@/components/custom/EntityCreationWizard";
 import { isAiConfigured } from "@/services/ai.service";
-import { getActiveTenantId } from "@/lib/active-tenant";
+import { requireActiveTenantId } from "@/lib/active-tenant";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { HideEmptyRightPanel } from "@/components/layout/HideEmptyRightPanel";
 
@@ -14,7 +14,7 @@ interface Props {
 
 export default async function NewEntityPage({ params }: Props) {
   const { domainSlug, productSlug } = await params;
-  const tenantId = await getActiveTenantId();
+  const tenantId = await requireActiveTenantId();
 
   const domain =
     (await prisma.domain.findFirst({ where: { slug: domainSlug, tenantId } })) ??

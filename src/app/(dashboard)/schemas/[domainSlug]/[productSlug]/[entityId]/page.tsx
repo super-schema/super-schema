@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { notFound } from "next/navigation";
-import { getActiveTenantId } from "@/lib/active-tenant";
+import { requireActiveTenantId } from "@/lib/active-tenant";
 import { EntityWorkspace } from "./entity-workspace";
 import { loadEntityWorkspace } from "./load-entity-workspace";
 
@@ -10,7 +10,7 @@ interface Props {
 
 export default async function EntityDetailPage({ params }: Props) {
   const { domainSlug, productSlug, entityId } = await params;
-  const activeTenantId = await getActiveTenantId();
+  const activeTenantId = await requireActiveTenantId();
 
   // Resolve the URL's domain and product (tenant-scoped, then tenant-agnostic to
   // tolerate a stale tenant cookie), then load the entity within that product.

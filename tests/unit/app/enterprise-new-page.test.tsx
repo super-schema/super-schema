@@ -7,7 +7,7 @@ const { mockEntityFindMany, mockGetActiveTenantId } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: { entity: { findMany: mockEntityFindMany } } }));
-vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mockGetActiveTenantId }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mockGetActiveTenantId, requireActiveTenantId: mockGetActiveTenantId }));
 vi.mock("next/link", () => ({
   default: ({ href, children, className }: { href: string; children: React.ReactNode; className?: string }) =>
     React.createElement("a", { href, className }, children),

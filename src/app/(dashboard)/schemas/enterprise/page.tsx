@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { getActiveTenantId } from "@/lib/active-tenant";
+import { requireActiveTenantId } from "@/lib/active-tenant";
 import {
   mapCustomScalarRows,
   mapSharedEnumRows,
@@ -13,7 +13,7 @@ import { loadLevelTraits } from "@/features/events/workspace/load-events-tab-dat
 import { EnterpriseWorkspace } from "./enterprise-workspace";
 
 export default async function EnterprisePage() {
-  const tenantId = await getActiveTenantId();
+  const tenantId = await requireActiveTenantId();
 
   // Tenant-level entities carry neither a domain nor a product.
   const tenantEntities = { tenantId, domainId: null, productId: null };

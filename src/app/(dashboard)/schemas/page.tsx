@@ -1,12 +1,12 @@
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { resolveGlobalAdminAccess } from "@/lib/access-control";
-import { getActiveTenantId } from "@/lib/active-tenant";
+import { requireActiveTenantId } from "@/lib/active-tenant";
 import { EVENTS_ASSET_COUNT_SELECT } from "@/lib/product-deletion";
 import { DomainGrid } from "./domain-grid";
 
 export default async function SchemasPage() {
-  const tenantId = await getActiveTenantId();
+  const tenantId = await requireActiveTenantId();
   const domainsPromise = prisma.domain.findMany({
     where: { tenantId },
     orderBy: [{ isSystem: "desc" }, { name: "asc" }],

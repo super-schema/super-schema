@@ -2,13 +2,13 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { EntityCreationWizard } from "@/components/custom/EntityCreationWizard";
-import { getActiveTenantId } from "@/lib/active-tenant";
+import { requireActiveTenantId } from "@/lib/active-tenant";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { HideEmptyRightPanel } from "@/components/layout/HideEmptyRightPanel";
 import { levelLabel } from "@/lib/levels";
 
 export default async function NewEnterpriseEntityPage() {
-  const tenantId = await getActiveTenantId();
+  const tenantId = await requireActiveTenantId();
 
   // Existing Enterprise entities — offered as $ref targets in the visual builder.
   const referenceTargets = await prisma.entity.findMany({
