@@ -72,5 +72,5 @@ describe("the resource-relative role label is retired", () => {
     expect(() => statSync("src/server")).toThrow();
     const importers = sourceFiles("src").filter((file) => /from\s+["'](@\/server\/|(\.\.?\/)+server\/api)/.test(readFileSync(file, "utf8")));
     expect(importers).toEqual([]);
-  });
+  }, 30_000); // reads every file under src: over the default 5 s under the load of the whole suite
 });
