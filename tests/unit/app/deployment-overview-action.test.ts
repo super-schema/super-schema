@@ -6,27 +6,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
-  getEffectiveRole: vi.fn(),
+  activeTenant: vi.fn(),
   getEntities: vi.fn(),
-  getDomains: vi.fn(),
   getDeploymentOverview: vi.fn(),
   productFindMany: vi.fn(),
+  domainFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
-vi.mock("@/lib/db", () => ({ prisma: { product: { findMany: mocks.productFindMany } } }));
-vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: mocks.getEffectiveRole }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.activeTenant }));
+vi.mock("@/lib/db", () => ({ prisma: { product: { findMany: mocks.productFindMany }, domain: { findMany: mocks.domainFindMany } } }));
 vi.mock("@/services/entity.service", () => ({ getEntities: mocks.getEntities }));
-vi.mock("@/services/domain.service", () => ({ getDomains: mocks.getDomains }));
 vi.mock("@/services/deployment.service", () => ({ getDeploymentOverview: mocks.getDeploymentOverview }));
 
+import { resetSessionPrincipal } from "../../helpers/access-mocks";
 import { getDeploymentOverviewAction } from "@/app/(dashboard)/deployments/actions";
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.auth.mockResolvedValue({ user: { id: "user-1" } });
-  mocks.getEffectiveRole.mockResolvedValue({ success: true, data: "ADMIN" });
-  mocks.getDomains.mockResolvedValue({ success: true, data: [{ id: "dom-1", name: "Payments", slug: "payments" }] });
+  resetSessionPrincipal();
+  mocks.activeTenant.mockResolvedValue("tenant-1");
+  mocks.domainFindMany.mockResolvedValue([{ id: "dom-1", name: "Payments", slug: "payments" }]);
   mocks.getEntities.mockResolvedValue({
     success: true,
     data: [

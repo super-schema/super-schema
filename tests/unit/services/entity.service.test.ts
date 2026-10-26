@@ -216,6 +216,48 @@ describe("Entity Service", () => {
         expect(result.data).toHaveLength(1);
       }
     });
+
+    describe("with a tenant in the context (the page and action callers)", () => {
+      const where = () => vi.mocked(prisma.entity.findMany).mock.calls[0][0]?.where;
+      const inTenant = (assignments: ServiceContext["assignments"]): ServiceContext => ({ ...mockCtx, tenantId: "tenant-1", assignments });
+
+      beforeEach(() => {
+        vi.mocked(prisma.entity.findMany).mockResolvedValue([] as never);
+      });
+
+      it("reads only the tenant in view, all of its entities for a tenant-wide role", async () => {
+        await getEntities({ domainId: "dom-1" }, inTenant([{ role: "VIEWER", scope: { kind: "TENANT", tenantId: "tenant-1" } }]));
+        expect(where()).toEqual({ tenantId: "tenant-1", domainId: "dom-1" });
+      });
+
+      it("a platform administrator reads the tenant in view and no other", async () => {
+        await getEntities({}, inTenant([{ role: "ADMIN", scope: { kind: "GLOBAL" } }]));
+        expect(where()).toEqual({ tenantId: "tenant-1" });
+      });
+
+      it("a domain- or product-scoped role reads only the entities under its domains and products, in the query", async () => {
+        await getEntities(
+          {},
+          inTenant([
+            { role: "VIEWER", scope: { kind: "DOMAIN", tenantId: "tenant-1", domainId: "dom-a" } },
+            { role: "AUTHOR", scope: { kind: "PRODUCT", tenantId: "tenant-1", domainId: "dom-b", productId: "prod-x" } },
+            { role: "ADMIN", scope: { kind: "TENANT", tenantId: "tenant-2" } },
+          ])
+        );
+        expect(where()).toEqual({ tenantId: "tenant-1", OR: [{ domainId: { in: ["dom-a"] } }, { productId: { in: ["prod-x"] } }] });
+      });
+
+      it("a caller with no assignment (or none in this tenant) reads nothing: an empty scope matches no entity", async () => {
+        await getEntities({}, inTenant(undefined));
+        expect(where()).toEqual({ tenantId: "tenant-1", OR: [{ domainId: { in: [] } }, { productId: { in: [] } }] });
+      });
+    });
+
+    it("with no tenant in the context (a caller that is not a page) nothing is restricted, as before", async () => {
+      vi.mocked(prisma.entity.findMany).mockResolvedValue([] as never);
+      await getEntities({}, mockCtx);
+      expect(vi.mocked(prisma.entity.findMany).mock.calls.at(-1)?.[0]?.where).toEqual({});
+    });
   });
 
   describe("getEntityById", () => {

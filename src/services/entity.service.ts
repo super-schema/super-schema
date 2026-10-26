@@ -13,6 +13,7 @@ import {
   type EntityFilters,
 } from "@/types/schemas/entity.schema";
 import type { Prisma } from "@/generated/prisma/client";
+import { readableScopes } from "@/lib/access";
 import { canTransition } from "@/lib/entity-lifecycle";
 import { entityUpdateTouchesDraft, withSourceStale } from "@/lib/entity-versioning/draft-state";
 import { generateSlug } from "@/lib/slug";
@@ -108,11 +109,22 @@ export async function createEntity(
   }
 }
 
+/**
+ * The entities matching `filters`. With a tenant in the context (`ctx.tenantId`: the page and action callers), only the entities of THAT tenant that the
+ * caller's assignments let them read (`entity.read`): a tenant-wide role lists them all, a domain- or product-scoped role only the entities under its
+ * domains and products, in the query. With no tenant in the context (a caller that is not a page) nothing is restricted.
+ */
 export async function getEntities(
   filters: EntityFilters,
-  _ctx: ServiceContext
+  ctx: ServiceContext
 ): Promise<Result<Entity[]>> {
   const where: Prisma.EntityWhereInput = {};
+
+  if (ctx.tenantId !== undefined) {
+    where.tenantId = ctx.tenantId;
+    const scopes = readableScopes([...(ctx.assignments ?? [])], "entity.read", ctx.tenantId);
+    if (!scopes.all) where.OR = [{ domainId: { in: scopes.domainIds } }, { productId: { in: scopes.productIds } }];
+  }
 
   if (filters.domainId) {
     where.domainId = filters.domainId;

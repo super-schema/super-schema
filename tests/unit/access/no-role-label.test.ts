@@ -26,7 +26,6 @@ const DEFINITIONS = [
  */
 const PENDING_TASK_5B: Record<string, string> = {
   "src/app/(dashboard)/admin/actions.ts": "admin (user/role/domain/emitter/health actions): tenant ADMIN within the tenant, platform items global ADMIN",
-  "src/app/(dashboard)/deployments/actions.ts": "deployments",
   "src/services/annotation.service.ts": "annotations (service only; router unmounted)",
   "src/services/classification-taxonomy.service.ts": "admin (classification.manage, global)",
   "src/services/domain-admin.service.ts": "admin domains (domain.create / delete / update)",

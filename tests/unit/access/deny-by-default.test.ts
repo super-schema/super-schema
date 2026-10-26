@@ -27,7 +27,6 @@ const PENDING_TASK_5B: Record<string, string> = {
   "src/app/(dashboard)/admin/actions.ts#updateEmitterConfigAction": "5b admin",
   "src/app/(dashboard)/admin/actions.ts#getDomainsAdminAction": "5b admin",
   "src/app/(dashboard)/admin/actions.ts#createDomainAdminAction": "5b admin",
-  "src/app/(dashboard)/deployments/actions.ts#getDeploymentOverviewAction": "5b deployments",
 };
 
 /** TEMPORARY. Route handlers still unguarded, keyed `<route path>#<METHOD>` -> owning surface. */
