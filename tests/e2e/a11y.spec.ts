@@ -25,7 +25,10 @@ import { AXE_VERSION, WCAG_TAGS, scanPage, trackInflightRequests } from "./helpe
 import {
   BASELINE_PATH, assertUpdateAllowed, compareToBaseline, describeComparison, entriesOfState, readBaseline, toEntries, writeBaselineState,
 } from "./helpers/a11y-baseline";
-import { createFieldRow, createIsolatedWorkspaceRows, deleteIsolatedWorkspaceRows } from "./helpers/db";
+import {
+  createFieldRow, createIsolatedWorkspaceRows, createUserRow, createUserWithPassword, deleteIsolatedWorkspaceRows, deleteInvitationsByEmail, deleteUsersByEmail,
+  grantScopedRoleRow,
+} from "./helpers/db";
 import { createEventFromMenu, centerPanel } from "./helpers/event-builder";
 import { openEntityPage } from "./helpers/entity-page";
 import { waitForHydration } from "./helpers/hydration";
@@ -101,8 +104,18 @@ const WORKSPACE_STATES = [
   "page:event",
   "page:not-found-in-shell",
 ] as const;
+/** The Admin Users screen's own states (a person to open, the dialogs and the panel), in a tenant of the test's own. */
+const ADMIN_STATES = [
+  "dialog:admin-invite",
+  "dialog:admin-invite-link",
+  "panel:admin-user",
+  "dialog:admin-user-status",
+  "dialog:admin-reset-link",
+  "page:admin-role-matrix",
+  "page:admin-no-permission",
+] as const;
 const SIGNED_OUT_STATES = ["page:login", "page:register"] as const;
-const ALL_STATES: readonly string[] = [...ROUTE_STATES, ...WORKSPACE_STATES, ...SIGNED_OUT_STATES];
+const ALL_STATES: readonly string[] = [...ROUTE_STATES, ...WORKSPACE_STATES, ...ADMIN_STATES, ...SIGNED_OUT_STATES];
 
 /** Scan the page now and compare (or, when updating, record) the result for `state`. */
 async function checkState(page: Page, state: string, names: Readonly<Record<string, string>> = {}): Promise<void> {
@@ -221,6 +234,111 @@ test.describe("a workspace", () => {
     await page.goto(`/schemas/${home.domainSlug}/${unique("no-such-product-")}`);
     await expect(page.getByTestId("topbar")).toBeVisible();
     await checkState(page, "page:not-found-in-shell", namesOf(home));
+  });
+});
+
+test.describe("the Admin Users screen", () => {
+  /** Accounts and invitations the tests made; removed afterwards (nothing here acts as them, so nothing pins them). */
+  const people: string[] = [];
+  const invitations: string[] = [];
+
+  test.afterAll(async () => {
+    try {
+      await deleteInvitationsByEmail(invitations);
+      await deleteUsersByEmail(people);
+    } catch (error) {
+      console.warn(`a11y.spec admin cleanup failed: ${String(error)}`);
+    }
+  });
+
+  /** A person with a role in the test's tenant (so the list has a row to open), and the Users screen open and interactive. */
+  async function openUsersWithPerson(page: Page, home: Home): Promise<string> {
+    const email = `${unique("e2e-a11y-person-")}@example.com`.toLowerCase();
+    people.push(email);
+    const { id } = await createUserRow({ email, name: "A11y Person" });
+    await grantScopedRoleRow(id, "AUTHOR", { tenantId: home.tenantId });
+    await page.goto("/admin");
+    await expect(centerPanel(page).getByRole("heading", { name: "Users", level: 2 })).toBeVisible();
+    await expect(centerPanel(page).getByText("Loading users…")).toHaveCount(0);
+    await waitForHydration(centerPanel(page).getByTestId("invite-user-open"));
+    await centerPanel(page).getByTestId("user-filter").fill(email);
+    await expect(centerPanel(page).locator(`[data-testid="user-row"][data-email="${email}"]`)).toBeVisible();
+    return email;
+  }
+
+  test("the invitation dialog", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    await openUsersWithPerson(page, home);
+    await centerPanel(page).getByTestId("invite-user-open").click();
+    const dialog = page.getByTestId("invite-user-dialog");
+    await expect(dialog.getByTestId("scope-tenant")).toBeVisible();
+    await checkState(page, "dialog:admin-invite");
+  });
+
+  test("the invitation dialog showing the one-time link", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    await openUsersWithPerson(page, home);
+    const email = `${unique("e2e-a11y-invitee-")}@example.com`.toLowerCase();
+    invitations.push(email);
+    await centerPanel(page).getByTestId("invite-user-open").click();
+    const dialog = page.getByTestId("invite-user-dialog");
+    await dialog.getByLabel("Email address").fill(email);
+    await dialog.getByTestId("scope-tenant").selectOption(home.tenantId);
+    await dialog.getByTestId("invite-submit").click();
+    await expect(dialog.getByTestId("invite-link")).toBeVisible({ timeout: 30_000 });
+    await checkState(page, "dialog:admin-invite-link");
+  });
+
+  test("a person's panel", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    const email = await openUsersWithPerson(page, home);
+    await centerPanel(page).locator(`[data-testid="user-row"][data-email="${email}"]`).click();
+    await expect(centerPanel(page).getByTestId("user-detail-panel")).toHaveAttribute("data-email", email);
+    await checkState(page, "panel:admin-user");
+  });
+
+  test("the disable confirmation", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    const email = await openUsersWithPerson(page, home);
+    await centerPanel(page).locator(`[data-testid="user-row"][data-email="${email}"]`).click();
+    await centerPanel(page).getByTestId("user-status-toggle").click();
+    await expect(page.getByTestId("user-status-dialog")).toBeVisible();
+    await checkState(page, "dialog:admin-user-status");
+  });
+
+  test("the reset link dialog", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    const email = await openUsersWithPerson(page, home);
+    await centerPanel(page).locator(`[data-testid="user-row"][data-email="${email}"]`).click();
+    await centerPanel(page).getByTestId("user-reset-link").click();
+    await expect(page.getByTestId("reset-create")).toBeVisible();
+    await checkState(page, "dialog:admin-reset-link");
+  });
+
+  test("the role matrix", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    await openUsersWithPerson(page, home);
+    await centerPanel(page).getByTestId("admin-view-matrix").click();
+    await expect(centerPanel(page).getByTestId("role-matrix-table")).toBeVisible();
+    await checkState(page, "page:admin-role-matrix");
+  });
+
+  test("the no-permission screen (an AUTHOR on /admin)", { tag: ["@regression"] }, async ({ browser, baseURL, home }) => {
+    if (!baseURL) throw new Error("the a11y spec needs a baseURL");
+    const email = `${unique("e2e-a11y-author-")}@example.com`.toLowerCase();
+    people.push(email);
+    const { id } = await createUserWithPassword({ email, password: "tangerine-lantern-orbit-42" });
+    await grantScopedRoleRow(id, "AUTHOR", { tenantId: home.tenantId });
+    const context = await browser.newContext({ baseURL, storageState: { cookies: [], origins: [] }, colorScheme: "light", reducedMotion: "reduce" });
+    try {
+      const page = await context.newPage();
+      await trackInflightRequests(page);
+      await page.goto("/login");
+      await waitForHydration(page.getByTestId("login-form"));
+      await page.getByLabel("Email", { exact: true }).fill(email);
+      await page.getByLabel("Password", { exact: true }).fill("tangerine-lantern-orbit-42");
+      await page.getByTestId("login-submit").click();
+      await expect(page).toHaveURL((url) => url.pathname === "/schemas", { timeout: 60_000 });
+      await page.goto("/admin");
+      await expect(page.getByTestId("admin-no-permission")).toBeVisible();
+      await checkState(page, "page:admin-no-permission");
+    } finally {
+      await context.close();
+    }
   });
 });
 

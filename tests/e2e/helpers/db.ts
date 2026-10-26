@@ -803,6 +803,66 @@ export async function createEntityInProduct(domainId: string, productId: string,
   return row;
 }
 
+export interface SiblingDomainRows {
+  domain: { id: string; name: string; slug: string };
+  product: { id: string; name: string; slug: string };
+  entity: { id: string; name: string; slug: string; url: string };
+}
+
+/**
+ * A second domain in a given tenant (the sibling of an isolated workspace's domain), with a product and one entity, "Invoice", with a key field `id`;
+ * uniquely named. It goes with the tenant (`deleteIsolatedWorkspaceRows` deletes the tenant, which cascades): the spec that needs a domain a
+ * domain-scoped user must NOT see makes it here.
+ */
+export async function createSiblingDomainRows(tenantId: string): Promise<SiblingDomainRows> {
+  const ownerId = await seededOwnerId();
+  const s = suffix();
+  const domain = { id: newId(), name: `e2e-sib-dom-${s}`, slug: `e2e-sib-dom-${s}` };
+  const product = { id: newId(), name: `e2e-sib-prod-${s}`, slug: `e2e-sib-prod-${s}` };
+  const entity = { id: newId(), name: "Invoice", slug: "invoice", url: `/schemas/${domain.slug}/${product.slug}/invoice` };
+  await pg().query(`INSERT INTO domains (id, name, slug, "tenantId", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [domain.id, domain.name, domain.slug, tenantId]);
+  await pg().query(`INSERT INTO products (id, name, slug, "domainId", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [product.id, product.name, product.slug, domain.id]);
+  await pg().query(
+    `INSERT INTO entities (id, name, slug, "tenantId", "domainId", "productId", "ownerId", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+    [entity.id, entity.name, entity.slug, tenantId, domain.id, product.id, ownerId],
+  );
+  await pg().query(`INSERT INTO fields (id, "entityId", name, slug, type, nullable, "isKey", "sortOrder", "updatedAt") VALUES ($1, $2, 'id', 'id', 'string', false, true, 0, now())`, [newId(), entity.id]);
+  return { domain, product, entity };
+}
+
+/** The name of a tenant (what a scope picker lists it as). */
+export async function tenantName(tenantId: string): Promise<string> {
+  const { rows } = await pg().query(`SELECT name FROM tenants WHERE id = $1`, [tenantId]);
+  const name = rows[0]?.name as string | undefined;
+  if (!name) throw new Error(`no tenant ${tenantId}`);
+  return name;
+}
+
+/**
+ * A role for a user at ANY scope, as the app stores it (`scopeKey` and the id columns agree): `{ tenantId }` is the tenant's, `+ domainId` a domain's,
+ * `+ productId` a product's. `grantRoleRow` is the tenant or domain case of this.
+ */
+export async function grantScopedRoleRow(userId: string, role: string, scope: { tenantId: string; domainId?: string; productId?: string }): Promise<void> {
+  const scopeKey = scope.productId ? `P:${scope.productId}` : scope.domainId ? `D:${scope.domainId}` : `T:${scope.tenantId}`;
+  await pg().query(
+    `INSERT INTO user_roles (id, "userId", role, "scopeKey", "tenantId", "domainId", "productId") VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [newId(), userId, role, scopeKey, scope.tenantId, scope.domainId ?? null, scope.productId ?? null],
+  );
+}
+
+/** The role rows of a user as `{ role, scopeKey }`, ordered by scope key then role. */
+export async function roleRowsOfUser(userId: string): Promise<Array<{ role: string; scopeKey: string }>> {
+  const { rows } = await pg().query(`SELECT role, "scopeKey" FROM user_roles WHERE "userId" = $1 ORDER BY "scopeKey", role`, [userId]);
+  return rows.map((row) => ({ role: row.role as string, scopeKey: row.scopeKey as string }));
+}
+
+/** The account state of a user: `{ disabled, lastLoginAt }` (null when there is no such user). */
+export async function accountOf(email: string): Promise<{ id: string; disabled: boolean; lastLoginAt: Date | null; name: string | null } | null> {
+  const { rows } = await pg().query(`SELECT id, "disabledAt", "lastLoginAt", name FROM users WHERE email = $1`, [email]);
+  const row = rows[0];
+  return row ? { id: row.id as string, disabled: row.disabledAt !== null, lastLoginAt: (row.lastLoginAt as Date | null) ?? null, name: (row.name as string | null) ?? null } : null;
+}
+
 /** Replace the decorators of a field (a reference field: `{ referencedEntityName }`, or the qualified form with `referencedEntityId`). */
 export async function setFieldDecorators(fieldId: string, decorators: Record<string, unknown>): Promise<void> {
   await pg().query(`UPDATE fields SET decorators = $2::jsonb WHERE id = $1`, [fieldId, JSON.stringify(decorators)]);

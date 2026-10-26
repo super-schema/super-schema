@@ -2,10 +2,12 @@
  * The Administration pages (`/admin`): Users, Domains, Emitters, Health, Classifications and Settings, each a tab of the page.
  *
  * What each tab does (each line is a test):
- *   - Users     lists the users of the database with their roles (the seeded admin, a user who registers, a user the test inserts); a
- *               name is edited; a system-level role (COMPLIANCE_OFFICER) or a role scoped to a domain (VIEWER) is assigned and removed
- *               with a confirmation; a domain role needs a domain; a duplicate is refused; the admin cannot remove their own ADMIN
- *               role; a visitor without the ADMIN role is told so on every tab that is gated;
+ *   - Users     lists the users of the database with their status, roles (by the names of their scopes) and last sign-in (the seeded
+ *               admin, a user who registers, a user the test inserts); a name is edited; a tenant-level role (COMPLIANCE_OFFICER) or a
+ *               role scoped to a domain (VIEWER) is assigned from the scope pickers (no id is typed) and removed with a confirmation; a
+ *               role needs a place; a duplicate is refused; the admin cannot remove their own ADMIN role (the control is disabled with
+ *               the reason); a visitor without a role is turned away (invitations, disabling, reset links, the tenant administrator's
+ *               and an AUTHOR's views of the screen: user-management.spec.ts);
  *   - Domains   lists the domains of the tenant being viewed (the seeded Public and Playground, the domains of the other specs), with
  *               their entity count and template status; a domain made here is a real domain: the explorer lists it (also without a
  *               reload), it is still there after one; blank, duplicate, over-long and reserved names are refused;
@@ -17,15 +19,15 @@
  *
  * NOT AVAILABLE IN THE UI (nothing was invented for it): editing or deleting a domain from the Domains tab (the service has update and
  * delete, with the system-domain protections: tests/unit/services/domain-admin.service.test.ts; the UI has neither button), editing an
- * emitter's version / format / description or its configuration, testing an emitter, deleting or inviting a user, changing a user's
- * e-mail, a Roles column in the Domains tab, editing or deleting a classification level (KD-014).
+ * emitter's version / format / description or its configuration, testing an emitter, deleting a user (accounts are disabled, never
+ * deleted), changing a user's e-mail, a Roles column in the Domains tab, editing or deleting a classification level (KD-014).
  *
  * Page content is queried inside the center panel (`centerPanel`) and the explorer through `leftSidebar`: a hard load streams the page
  * behind its loading.tsx and Next leaves a hidden copy of the streamed segment in <body>.
  */
 import type { Locator, Page } from "@playwright/test";
 import { TEST_EMAIL } from "./helpers/auth-state";
-import { createUserRow, deleteDomainsByName, deleteUsersByEmail, disconnectDb, pg, rolesOfUser, userIdByEmail } from "./helpers/db";
+import { activeTenantId, createUserRow, deleteDomainsByName, deleteUsersByEmail, disconnectDb, pg, rolesOfUser, roleRowsOfUser, tenantName, userIdByEmail } from "./helpers/db";
 import { afterServerAction } from "./helpers/entity-page";
 import { centerPanel, leftSidebar } from "./helpers/event-builder";
 import { test, expect, unique } from "./helpers/fixtures";
@@ -45,7 +47,8 @@ const ID = {
   roleItem: "role-item",
   roleAddOpen: "role-add-open",
   roleAddSelect: "role-add-select",
-  roleAddDomain: "role-add-domain",
+  scopeTenant: "scope-tenant",
+  scopeDomain: "scope-domain",
   roleAddSubmit: "role-add-submit",
   roleRemove: "role-remove",
   roleRemoveConfirm: "role-remove-confirm",
@@ -116,24 +119,32 @@ async function openUser(page: Page, email: string): Promise<Locator> {
   return panel(page);
 }
 
-/** Assign a role from the open detail panel; resolves when the panel lists it. */
-async function assignRole(page: Page, role: string, domainId?: string): Promise<void> {
+/**
+ * Assign a role from the open detail panel, at a scope chosen from the pickers (a tenant by its name, optionally one of its domains by name); resolves when
+ * the form has been submitted (the panel then lists the role, or says why not). With no scope the pickers are left as they are.
+ */
+async function assignRole(page: Page, role: string, scope?: { tenantLabel: string; domainLabel?: string }): Promise<void> {
   const detail = panel(page);
   await detail.getByTestId(ID.roleAddOpen).click();
   await detail.getByTestId(ID.roleAddSelect).selectOption(role);
-  if (domainId !== undefined) await detail.getByTestId(ID.roleAddDomain).fill(domainId);
+  if (scope) {
+    await detail.getByTestId(ID.scopeTenant).selectOption({ label: scope.tenantLabel });
+    if (scope.domainLabel) await detail.getByTestId(ID.scopeDomain).selectOption({ label: scope.domainLabel });
+  }
   await detail.getByTestId(ID.roleAddSubmit).click();
 }
 
 test.describe("users", () => {
-  test("the seeded admin is listed with its name and its system-level ADMIN role", { tag: ["@regression"] }, async ({ authedPage: page }) => {
+  test("the seeded admin is listed with its name, its status, its sign-in and its platform-level ADMIN role", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     await openUsers(page);
     const row = await userRow(page, TEST_EMAIL);
 
     await expect(row.getByRole("cell").nth(1)).toHaveText("Admin");
-    await expect(row.getByTestId(ID.roleBadge)).toHaveText(["ADMIN"]);
-    // Email, Name, Roles: no "Status" column (nothing in the database says whether a user is active).
-    await expect(centerPanel(page).getByTestId(ID.userTable).getByRole("columnheader")).toHaveText(["Email", "Name", "Roles"]);
+    await expect(row.getByTestId(ID.roleBadge)).toHaveText(["ADMIN(Platform)"]);
+    // Email, Name, Status, Roles, Last sign-in: the status is the account's real one (the admin is active, and has signed in: the run's login set it).
+    await expect(centerPanel(page).getByTestId(ID.userTable).getByRole("columnheader")).toHaveText(["Email", "Name", "Status", "Roles", "Last sign-in"]);
+    await expect(row.getByTestId("user-status")).toHaveAttribute("data-status", "active");
+    await expect(row.getByTestId("user-last-sign-in-cell")).not.toHaveText("Never");
   });
 
   test("a user who registers is listed, with no roles and no name", { tag: ["@regression"] }, async ({ authedPage: page, browser, baseURL }) => {
@@ -173,25 +184,27 @@ test.describe("users", () => {
     expect(audit.rows).toEqual([{ userId: await userIdByEmail(TEST_EMAIL), before: "Before Rename" }]);
   });
 
-  test("a system-level role is assigned, shown on the row, kept after a reload, and removed after a confirmation", { tag: ["@regression"] }, async ({
+  test("a tenant-level role is assigned from the pickers, shown on the row, kept after a reload, and removed after a confirmation", { tag: ["@regression"] }, async ({
     authedPage: page,
   }) => {
     const email = `${unique("e2e-role-")}@example.com`;
     createdUsers.push(email);
     const { id } = await createUserRow({ email, name: "Role Test" });
+    const tenantId = await activeTenantId();
+    const tenantLabel = await tenantName(tenantId);
 
     await openUsers(page);
     const detail = await openUser(page, email);
     await expect(detail.getByText("No roles assigned")).toBeVisible();
 
-    await assignRole(page, "COMPLIANCE_OFFICER");
+    await assignRole(page, "COMPLIANCE_OFFICER", { tenantLabel });
     await expect(detail.getByTestId(ID.roleItem)).toHaveAttribute("data-role", "COMPLIANCE_OFFICER");
-    await expect(detail.getByTestId(ID.roleItem)).toContainText("System");
-    await expect((await userRow(page, email)).getByTestId(ID.roleBadge)).toHaveText(["COMPLIANCE_OFFICER"]);
-    expect(await rolesOfUser(id)).toEqual([{ role: "COMPLIANCE_OFFICER", domainId: null }]);
+    await expect(detail.getByTestId(ID.roleItem)).toContainText(tenantLabel);
+    await expect((await userRow(page, email)).getByTestId(ID.roleBadge)).toHaveText([`COMPLIANCE_OFFICER(${tenantLabel})`]);
+    expect(await roleRowsOfUser(id)).toEqual([{ role: "COMPLIANCE_OFFICER", scopeKey: `T:${tenantId}` }]);
 
     await openUsers(page);
-    await expect((await userRow(page, email)).getByTestId(ID.roleBadge)).toHaveText(["COMPLIANCE_OFFICER"]);
+    await expect((await userRow(page, email)).getByTestId(ID.roleBadge)).toHaveText([`COMPLIANCE_OFFICER(${tenantLabel})`]);
 
     // Removing asks first: Cancel-ing is not offered, but nothing is removed until Confirm.
     const reopened = await openUser(page, email);
@@ -206,64 +219,78 @@ test.describe("users", () => {
     await expect((await userRow(page, email)).getByTestId(ID.roleBadge)).toHaveCount(0);
   });
 
-  test("a domain role needs a domain, names it on the row once given one, and is kept after a reload", { tag: ["@regression"] }, async ({
+  test("a role needs a place, names its domain on the row once given one, and is kept after a reload; the platform is offered for ADMIN only", { tag: ["@regression"] }, async ({
     authedPage: page,
     workspace,
   }) => {
     const email = `${unique("e2e-domrole-")}@example.com`;
     createdUsers.push(email);
     const { id } = await createUserRow({ email });
+    const tenantId = await activeTenantId();
+    const tenantLabel = await tenantName(tenantId);
 
     await openUsers(page);
     const detail = await openUser(page, email);
 
-    await assignRole(page, "VIEWER");
-    await expect(detail.getByTestId(ID.roleError)).toHaveText("A domain is required for this role.");
+    // No place chosen: the form says so and asks the server for nothing.
+    await detail.getByTestId(ID.roleAddOpen).click();
+    await detail.getByTestId(ID.roleAddSelect).selectOption("VIEWER");
+    await expect(detail.getByTestId(ID.scopeTenant).getByRole("option", { name: "Platform (every tenant)" })).toHaveCount(0);
+    // (when only one tenant exists it is preselected for the person: take it away, so the test does not depend on how many tenants the run has made)
+    await detail.getByTestId(ID.scopeTenant).selectOption("");
+    await detail.getByTestId(ID.roleAddSubmit).click();
+    await expect(detail.getByTestId(ID.roleError)).toHaveText("Choose where the role applies.");
     expect(await rolesOfUser(id)).toEqual([]);
+    // The platform scope is offered for the platform role (ADMIN) and not for the others.
+    await detail.getByTestId(ID.roleAddSelect).selectOption("ADMIN");
+    await expect(detail.getByTestId(ID.scopeTenant).getByRole("option", { name: "Platform (every tenant)" })).toHaveCount(1);
+    await detail.getByTestId(ID.roleAddSelect).selectOption("VIEWER");
 
-    await detail.getByTestId(ID.roleAddDomain).fill(workspace.domainId);
+    // A domain of the tenant, chosen by its name from the list (no id is typed any more).
+    await detail.getByTestId(ID.scopeTenant).selectOption({ label: tenantLabel });
+    await detail.getByTestId(ID.scopeDomain).selectOption({ label: workspace.domainName });
     await detail.getByTestId(ID.roleAddSubmit).click();
     await expect(detail.getByTestId(ID.roleItem)).toHaveAttribute("data-role", "VIEWER");
     await expect(detail.getByTestId(ID.roleItem)).toContainText(workspace.domainName);
-    await expect((await userRow(page, email)).getByTestId(ID.roleBadge)).toContainText(`VIEWER(${workspace.domainName})`);
+    await expect((await userRow(page, email)).getByTestId(ID.roleBadge)).toContainText(`VIEWER(${tenantLabel} / ${workspace.domainName})`);
     expect(await rolesOfUser(id)).toEqual([{ role: "VIEWER", domainId: workspace.domainId }]);
 
     await openUsers(page);
-    await expect((await userRow(page, email)).getByTestId(ID.roleBadge)).toContainText(`VIEWER(${workspace.domainName})`);
+    await expect((await userRow(page, email)).getByTestId(ID.roleBadge)).toContainText(`VIEWER(${tenantLabel} / ${workspace.domainName})`);
   });
 
-  test("a domain that does not exist is refused with a message, and the same role twice is refused", { tag: ["@regression"] }, async ({ authedPage: page }) => {
+  test("the same role at the same place twice is refused with the service's message", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     const email = `${unique("e2e-dup-")}@example.com`;
     createdUsers.push(email);
     const { id } = await createUserRow({ email });
+    const tenantId = await activeTenantId();
+    const tenantLabel = await tenantName(tenantId);
 
     await openUsers(page);
     const detail = await openUser(page, email);
 
-    await assignRole(page, "AUTHOR", "no-such-domain-id");
-    await expect(detail.getByTestId(ID.roleError)).toBeVisible();
+    await assignRole(page, "COMPLIANCE_OFFICER", { tenantLabel });
+    await expect(detail.getByTestId(ID.roleItem)).toHaveCount(1);
+
+    await assignRole(page, "COMPLIANCE_OFFICER", { tenantLabel });
+    await expect(detail.getByTestId(ID.roleError)).toHaveText(`User already has COMPLIANCE_OFFICER role for tenant ${tenantId}`);
     await expect(detail.getByTestId(ID.roleError)).not.toContainText(/prisma|foreign key|violates|P20\d\d/i);
-    expect(await rolesOfUser(id)).toEqual([]);
-
-    await detail.getByTestId(ID.roleAddSelect).selectOption("COMPLIANCE_OFFICER");
-    await detail.getByTestId(ID.roleAddSubmit).click();
     await expect(detail.getByTestId(ID.roleItem)).toHaveCount(1);
-
-    await assignRole(page, "COMPLIANCE_OFFICER");
-    await expect(detail.getByTestId(ID.roleError)).toHaveText("User already has COMPLIANCE_OFFICER role at system level");
-    await expect(detail.getByTestId(ID.roleItem)).toHaveCount(1);
-    expect(await rolesOfUser(id)).toEqual([{ role: "COMPLIANCE_OFFICER", domainId: null }]);
+    expect(await roleRowsOfUser(id)).toEqual([{ role: "COMPLIANCE_OFFICER", scopeKey: `T:${tenantId}` }]);
   });
 
-  test("the admin cannot remove their own ADMIN role", { tag: ["@regression"] }, async ({ authedPage: page }) => {
+  test("the admin cannot remove their own ADMIN role: the control is disabled with the reason, and nothing happens", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     const adminId = await userIdByEmail(TEST_EMAIL);
     await openUsers(page);
     const detail = await openUser(page, TEST_EMAIL);
 
-    await detail.getByTestId(ID.roleRemove).click();
-    await detail.getByTestId(ID.roleRemoveConfirm).click();
+    const remove = detail.getByTestId(ID.roleRemove);
+    await expect(remove).toHaveAttribute("aria-disabled", "true");
+    await expect(remove).toHaveAttribute("title", /your own admin role|last admin role/);
+    await remove.click({ force: true });
 
-    await expect(detail.getByTestId(ID.roleError)).toHaveText("Cannot remove your own admin role");
+    // No confirmation is offered, no request is made, and the role stands (the server refuses it as well: user-management.spec.ts posts it anyway).
+    await expect(detail.getByTestId(ID.roleRemoveConfirm)).toHaveCount(0);
     await expect(detail.getByTestId(ID.roleItem)).toHaveAttribute("data-role", "ADMIN");
     expect(await rolesOfUser(adminId)).toContainEqual({ role: "ADMIN", domainId: null });
   });
