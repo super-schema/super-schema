@@ -10,7 +10,10 @@ const mocks = vi.hoisted(() => ({ signIn: vi.fn(), push: vi.fn(), refresh: vi.fn
 vi.mock("next-auth/react", () => ({ signIn: (...args: unknown[]) => mocks.signIn(...args) }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push, refresh: mocks.refresh }) }));
 
-import LoginPage from "@/app/(auth)/login/page";
+import { LoginForm } from "@/app/(auth)/login/login-form";
+
+// Google sign-in is configured for these tests (the server tells the form so: tests/unit/app/login-page-flags.test.tsx is the other side).
+const LoginPage = () => <LoginForm googleEnabled />;
 
 afterEach(() => {
   cleanup();

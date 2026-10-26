@@ -594,3 +594,10 @@ The operational side of authentication (the session secret, trusting the host, o
 The seeded user `admin@admin.com` is an `ADMIN`; the suite logs in as that user and sees everything. Role rules (viewer, author, per tenant,
 domain and product) are a later change; when they land, the suite needs a second login with a lower role and specs that check what that
 role cannot do.
+
+**Sign-in in the run.** The app under test runs with `AUTH_REGISTRATION=open` (`scripts/e2e-env.mjs`; the default is `invite`): a user who registers through the
+page holds **no role**, is **not signed in by registering** (the answer is the same for an address that exists, so it redirects to `/login` either way), and lands on
+`/no-access` after signing in. A spec that needs a second user who sees the dashboard must give that user a role first (a helper for that comes with the role work).
+The `invite` and `closed` modes are covered by unit tests (`tests/unit/app/register-actions.test.ts`), not by a second server. Sign-in is throttled in the run like anywhere
+(5 failures per e-mail, a shared per-address bucket of 100 because the run has no trusted proxy): a spec that fails a login on purpose does it for an e-mail of its own.
+Users that accepted an invitation or used a reset link cannot be deleted (their audit entries are immutable and point at them); the run's database is thrown away.

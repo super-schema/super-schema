@@ -398,6 +398,57 @@ export async function createUserWithPassword(input: { email: string; password: s
   return { id, email: input.email, password: input.password };
 }
 
+/**
+ * A token as the app issues one: 32 random bytes as base64url, and only their SHA-256 stored (src/lib/auth/tokens.ts). There is no e-mail to read a link
+ * from, so a spec makes the row itself and opens `/invite/<token>` or `/reset/<token>`.
+ */
+function newLinkToken(): { token: string; tokenHash: string } {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- same reason as `createUserWithPassword`: loaded on demand
+  const { createHash } = require("node:crypto") as typeof import("node:crypto");
+  const token = randomBytes(32).toString("base64url");
+  return { token, tokenHash: createHash("sha256").update(token).digest("hex") };
+}
+
+/**
+ * A live invitation (7 days, or `expiresInHours`) for an address, made by `createdById`, carrying `roles` (`scopeKey` is `T:<tenantId>`, `D:<domainId>`,
+ * `P:<productId>` or `G`). Returns the token to put in the link. Remove with `deleteInvitationsByEmail` (and the user it made with `deleteUsersByEmail`).
+ */
+export async function createInvitationRow(input: {
+  email: string;
+  createdById: string;
+  roles?: ReadonlyArray<{ role: string; scopeKey: string }>;
+  expiresInHours?: number;
+}): Promise<{ id: string; token: string }> {
+  const { token, tokenHash } = newLinkToken();
+  const id = newId();
+  await pg().query(
+    `INSERT INTO invitations (id, "emailLower", "tokenHash", "expiresAt", "createdById") VALUES ($1, $2, $3, now() + ($4 || ' hours')::interval, $5)`,
+    [id, input.email.toLowerCase(), tokenHash, String(input.expiresInHours ?? 168), input.createdById],
+  );
+  for (const role of input.roles ?? []) {
+    await pg().query(`INSERT INTO invitation_roles ("invitationId", role, "scopeKey") VALUES ($1, $2, $3)`, [id, role.role, role.scopeKey]);
+  }
+  return { id, token };
+}
+
+/** Delete invitations by the address they are for (their role rows cascade). */
+export async function deleteInvitationsByEmail(emails: readonly string[]): Promise<number> {
+  if (emails.length === 0) return 0;
+  const res = await pg().query(`DELETE FROM invitations WHERE "emailLower" = ANY($1::text[]) RETURNING id`, [emails.map((email) => email.toLowerCase())]);
+  return res.rows.length;
+}
+
+/** A live password-reset token (1 hour, or `expiresInHours`) for a user. Returns the token to put in the link; it goes with the user (cascade). */
+export async function createResetTokenRow(userId: string, options: { expiresInHours?: number } = {}): Promise<{ id: string; token: string }> {
+  const { token, tokenHash } = newLinkToken();
+  const id = newId();
+  await pg().query(
+    `INSERT INTO auth_tokens (id, "userId", kind, "tokenHash", "expiresAt") VALUES ($1, $2, 'RESET'::"AuthTokenKind", $3, now() + ($4 || ' hours')::interval)`,
+    [id, userId, tokenHash, String(options.expiresInHours ?? 1)],
+  );
+  return { id, token };
+}
+
 /** The role rows (`user_roles`) of a user: [{ role, domainId }]. */
 export async function rolesOfUser(userId: string): Promise<Array<{ role: string; domainId: string | null }>> {
   const { rows } = await pg().query(`SELECT role, "domainId" FROM user_roles WHERE "userId" = $1 ORDER BY role`, [userId]);

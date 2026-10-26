@@ -61,6 +61,9 @@ export function setValues(run) {
     AUTH_SECRET: run.authSecret,
     AUTH_URL: run.baseUrl,
     AUTH_TRUST_HOST: "true",
+    // Registration is OPEN for the app under test (src/lib/auth/registration-mode.ts; the default is `invite`): the browser suite registers its own users through the
+    // register page, and they hold no role. `invite` and `closed` are covered at the unit and action level (tests/unit/app/register-actions.test.ts).
+    AUTH_REGISTRATION: "open",
     ...CLASSIFICATION_DEFAULTS, // "" is not their default (it warns and falls back), so the defaults themselves
   };
 }
@@ -73,6 +76,8 @@ export const HERMETIC_BLANKED_NAMES = Object.freeze([
   // src/env.ts and src/lib/auth.ts: the Google sign-in (its presence adds the provider and the login button)
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
+  // src/env.ts (read by access-control Task 8): the e-mail domains a Google sign-in is limited to. Blank = no limit
+  "GOOGLE_ALLOWED_DOMAINS",
   // prisma/seed.ts (src/lib/admin-bootstrap.ts): the administrator the seed makes. Blank = not configured, so the seed makes the development
   // default admin@admin.com / admin, the contract of the browser suite; a developer's own bootstrap administrator must not replace it
   "BOOTSTRAP_ADMIN_EMAIL",

@@ -367,18 +367,20 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   commit the x86-64 set (one set per architecture) or widen the threshold with the measurement written in the config comment; run the a11y tier once on `ubuntu-latest` and compare its
   violations with the baseline.
 
-## KD-038: registration is open and a non-production seed ships admin@admin.com / admin
+## KD-038: a non-production seed ships admin@admin.com / admin, and `AUTH_REGISTRATION=open` lets anyone make an account
 
-- status: no-test (the access-control project is replacing what is left; `docs/auth-ops.md` says what to do until then, and nothing in the suite should pin an insecure default)
-- symptom: `/register` creates an account for anyone who can reach the app (no invitation, no throttling; bcrypt cost 12 is about 340 ms of CPU per attempt, so it is also a way to load the
-  server); the account holds no role. `npm run db:seed` creates `admin@admin.com` with the password `admin` as the global ADMIN unless `NODE_ENV` is `production` or
-  `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` are set (the e2e suite relies on the default). The session secret is still the whole boundary of a session (a production
-  server now refuses a weak one: `docs/auth-ops.md`).
-  Fixed already: the first registrant no longer becomes the ADMIN (no request creates an administrator: `src/lib/admin-bootstrap.ts` is called by the seed and `npm run admin:create` only),
+- status: no-test (the access-control project is replacing what is left; `docs/auth-ops.md` says what to do, and nothing in the suite should pin an insecure default)
+- symptom: `npm run db:seed` creates `admin@admin.com` with the password `admin` as the global ADMIN unless `NODE_ENV` is `production` or
+  `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` are set (the e2e suite relies on the default; a database seeded earlier keeps it). With `AUTH_REGISTRATION=open` (the e2e
+  run and a laptop; the default is `invite`) `/register` creates a role-less account for anyone who can reach the app, throttled per client address. The session secret is still the whole
+  boundary of a session (a production server refuses a weak one: `docs/auth-ops.md`).
+  Fixed already: registration is invitation-only by default (`AUTH_REGISTRATION=invite|open|closed`, access-control Task 4), registering an address that has an account is answered
+  like a new one, sign-in and registration are throttled by hashed e-mail and client address, the password policy (12 to 72 bytes, a deny-list) applies to every way an account gets a
+  password, the first registrant no longer becomes the ADMIN (no request creates an administrator: `src/lib/admin-bootstrap.ts` is called by the seed and `npm run admin:create` only),
   production has no default password, and the user is found by the session's user id ALONE (access-control Task 3: `resolveCurrentUserId`, `resolveGlobalAdminAccess` and the principal
   loader have no look-up by e-mail, so a forged or stale token that carries an administrator's address is nobody; a disabled user is nobody too).
-- where: `src/app/(auth)/register/actions.ts`, `prisma/seed.ts`.
-- cost to fix: the rest of the access-control work: closed or invitation-only registration (`AUTH_REGISTRATION`) and throttling (Task 4).
+- where: `prisma/seed.ts`, `src/lib/auth/registration-mode.ts`.
+- cost to fix: nothing more for the seed in production; a non-production seed will keep its development administrator, because the browser suite signs in as it.
 
 ## KD-039: the lineage graph's first view is fitted once, 50 ms after it starts, and not again when a node changes size
 

@@ -1,7 +1,7 @@
 # Authentication: what to configure and what to know before you run it
 
-Short and operational. The access-control work (roles per tenant, domain and product, closed registration) will change several things below;
-the sections that will change say so. Until then, read the warnings.
+Short and operational. The access-control work (roles per tenant, domain and product) is still landing: the sections below say what is true now and what is
+not yet. Sign-in itself (registration modes, passwords, throttling, invitation and reset links, sessions) is described in full here.
 
 ## The secret
 
@@ -32,42 +32,103 @@ secret of its own, and the middleware reads only `AUTH_SECRET` and `NEXTAUTH_SEC
 secret and **fails closed**: every request bounces to `/login`, and a production server refuses to start. To change the secret, change
 `AUTH_SECRET` (or `NEXTAUTH_SECRET`) and restart: every session is signed out (users log in again).
 
-## Trusting the host (`UntrustedHost`)
+## Trusting the host (`UntrustedHost`) and the proxy (`AUTH_TRUST_PROXY`)
 
-With `NODE_ENV=production` Auth.js rejects every request whose `Host` it does not trust (`UntrustedHost`) unless `AUTH_URL` is set or the host is
-trusted. The compose file sets `AUTH_TRUST_HOST: "true"`, which is right **behind a reverse proxy you control** that sets the `Host` header, or when
-the app is reached at one address only. Directly on the internet, set `AUTH_URL` to the public origin (`https://schemas.example.com`) and drop
-`AUTH_TRUST_HOST`. Without either, nothing can log in. The e2e release runner sets both for its own app.
+Two different questions, two different settings.
+
+**The `Host` header** (`trustHost`, written out in `src/lib/auth.ts` by `src/lib/auth/trust-host.ts`). With `NODE_ENV=production` Auth.js rejects every request
+whose `Host` it does not trust (`UntrustedHost`). The host is trusted when **`AUTH_URL`** names the public origin (`https://schemas.example.com`: Auth.js then builds
+its URLs from it and not from the header) **or `AUTH_TRUST_HOST` is `true` (or `1`)**, which is right **behind a reverse proxy you control** that sets the `Host` header,
+or when the app is reached at one address only. The compose file sets `AUTH_TRUST_HOST: "true"`. Directly on the internet, set `AUTH_URL` and drop `AUTH_TRUST_HOST`.
+Without either, nothing can log in. Development and test always trust it. Differences from Auth.js's own default, on purpose: `AUTH_TRUST_HOST=false` (or `0`) means
+no (Auth.js reads any set value as yes), `NEXTAUTH_URL` alone does not trust the host, and the `VERCEL` / `CF_PAGES` platform defaults are not applied (set `AUTH_URL`
+or `AUTH_TRUST_HOST=true` there). The e2e release runner sets both for its own app.
+
+**The client address** (`AUTH_TRUST_PROXY`, used only by throttling: below). Set `AUTH_TRUST_PROXY=1` only when a reverse proxy in front of the app **sets
+`X-Forwarded-For` itself and overwrites whatever the client sent** (nginx `proxy_set_header X-Forwarded-For $remote_addr;`, most cloud load balancers). The app then
+takes the **left-most** entry as the client address. If the proxy appends instead of overwriting, a client can write that header and choose its own throttle bucket:
+leave the setting off. Without it every request is in one shared bucket (see "Throttling").
 
 ## Registration and the first administrator: read this before you expose it
 
-**This will change with the access-control work. Until it does:**
+### Who may make an account: `AUTH_REGISTRATION`
 
-- `/register` is **open**: anyone who can reach the app can create an account. There is no invitation, no email check, no throttling on
-  registration or login (a bcrypt hash at cost 12 is about 340 ms of CPU, so many attempts are also a way to load the server).
-- **Nobody becomes the administrator by registering first any more.** A registered account holds no role. The first administrator is made by the seed
-  or by a command, never by a request (`src/lib/admin-bootstrap.ts`).
+| Value | What `/register` does |
+| --- | --- |
+| `invite` (**the default**) | An account is made by accepting an invitation, `/invite/<token>`; the new account receives the roles the invitation carries. `/register` shows the generic "this link is not valid or has expired" page unless it is given a live invitation token (`/register?token=...` continues at `/invite/<token>`), and the sign-in page offers no "Create one" link. |
+| `open` | Anyone may register. The account holds **no role**: the user lands on `/no-access` ("no access yet") until an administrator assigns one. The e2e run and a laptop use it; a deployment that is reachable by strangers should not. Registering an address that already has an account is answered **exactly** like a new one (the same words, the same redirect to the sign-in page, no second account), so the form cannot be used to find out who has an account; nobody is signed in by registering. |
+| `closed` | `/register` says registration is closed and the action refuses. Accounts come from `npm run admin:create`, the seed, or an invitation made earlier and still live. |
+
+An unknown value (a typo) is the default (`invite`), never `open`, and the log says so once. The `.env.example` and `docker-compose.yml` leave it unset, so a
+deployment starts invite-only.
+
+### The first administrator
+
+- **Nobody becomes the administrator by registering first.** No request creates an administrator: the first one is made by the seed or by a command
+  (`src/lib/admin-bootstrap.ts`), and afterwards administrators grant roles.
 - **The seed's administrator.** `npm run db:seed` creates `admin@admin.com` with the password `admin` as the global ADMIN **only when `NODE_ENV` is not
   `production`** (the e2e suite and a laptop rely on it). With `NODE_ENV=production` the seed creates no administrator unless **both**
   `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` are set, and then it creates that one instead (in any environment); setting only one of them stops
-  the seed with a message. The password must be 12 to 72 bytes. Running the seed again changes nothing for an administrator that exists, and never resets
+  the seed with a message. The password follows the policy below. Running the seed again changes nothing for an administrator that exists, and never resets
   a password; it gives the global role to an existing account only when the password you supply is that account's own.
 - **`npm run admin:create`** makes one global administrator without seeding anything: `npm run admin:create -- --email you@example.com` and type the
   password at the prompt (not shown), or pipe it on standard input, or set `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD`. It refuses a password
-  outside 12 to 72 bytes and an e-mail that already has an account (it never promotes an existing account), says why, and changes nothing.
-- **A signed-in user is known by the id in the session, and only by it.** There is no look-up by e-mail: after a database reset and reseed an old session
-  names a user that no longer exists and is refused (the user signs in again), and a disabled account is refused on every request. A signed-in user who
-  holds no role in any tenant lands on `/no-access` instead of the app, and the tenant they work in (the `active_tenant` cookie) is only ever one they hold a role in.
-- A role limits what a user may change, and it also decides which tenants the user may open, but the older actions and routes still check the tenant only
-  until the access-control work has moved each of them to the role check (KD-034 in `docs/testing/known-defects.md`).
+  the policy refuses and an e-mail that already has an account (it never promotes an existing account), says why, and changes nothing.
 
-What to do meanwhile, on any deployment that is not a laptop:
+### Passwords and e-mail addresses
 
-1. Run the seed with `NODE_ENV=production` (or do not seed) and make your administrator with `npm run admin:create` or the two `BOOTSTRAP_ADMIN_*` variables.
+- An e-mail address is trimmed and lower-cased everywhere it is stored or compared, and unique case-insensitively.
+- **A password is 12 to 72 BYTES** (bcrypt reads at most 72 bytes of the UTF-8 form and ignores the rest, so the limit counts bytes: `ü` is two, an emoji four) and
+  must not be on the deny-list (`src/lib/auth/common-passwords.ts`: common passwords such as `password1234`, `123456789012`, `qwertyuiop12`; the same words
+  dressed up, `P@ssw0rd!2024`, `MyPassword1234`; one character or one short unit repeated; a plain run such as `abcdefghijkl`; the user's e-mail address or the name in front of its `@`).
+  The same rule applies to registration, accepting an invitation, a reset link, the seed and `admin:create`. Hashes are bcrypt at cost 12; hashes made earlier
+  (any cost, `$2a$`, `$2b$`, `$2y$`) still verify, and are not re-made at sign-in.
+- **No timing oracle.** A sign-in for an address that has no account, one with no password, a locked one and a disabled one all cost one bcrypt compare, like
+  a known account (a precomputed dummy hash is compared for the ones that have no hash to try).
+- **One message.** The sign-in page answers `Invalid email or password` for an unknown e-mail, a wrong password, a disabled account and a locked e-mail or
+  address alike. Nothing in the answer says "locked" and no `Retry-After` is sent.
+
+### Throttling and lockout
+
+Rows of the `auth_events` table drive it, so it holds across several instances and survives a restart. A row holds the kind of event, its outcome, the time and **HMAC-SHA-256
+hashes (keyed with the session secret) of the e-mail address and of the client address, never the values**; rows older than 24 hours are deleted a batch at a time by the
+inserts that follow (no scheduler).
+
+| Endpoint | What counts | Limit |
+| --- | --- | --- |
+| Sign-in | failures, per e-mail hash **and**, independently, per client-address hash | 5 in 15 minutes each; a success resets the e-mail's count (not the address's); an attempt refused because of the lock is recorded but does not count |
+| `/register` (open mode) | every attempt | 5 in 15 minutes per client address |
+| `/invite/<token>` and `/reset/<token>` | dead-link failures (a wrong, expired or used token), not a password the policy refused | 5 in 15 minutes per client address; a locked address gets the same "not valid or expired" answer |
+
+Without `AUTH_TRUST_PROXY=1` every request is in **one shared address bucket**, so it has a higher ceiling (100 failures in 15 minutes: five typos by five people must not
+lock everybody out) and the per-e-mail limit (5) is the protection that matters. Set `AUTH_TRUST_PROXY=1` behind a proxy that overwrites `X-Forwarded-For` (above) to get a
+bucket per client. A throttle that cannot be read refuses the attempt (fail closed).
+
+### Invitation and reset links
+
+There is no e-mail service: an administrator copies the link and hands it over. A link carries a token of 32 random bytes; **only its SHA-256 is stored**, so nothing in the database opens
+a link. A link works **once** (one atomic `UPDATE ... WHERE usedAt IS NULL AND expiresAt > now`, so two concurrent uses cannot both succeed) and lives **7 days (invitation)** or **1 hour (reset)**.
+A wrong, expired and used token get the same page and the same words. An invitation makes the account for **the invited e-mail only** (the form cannot change it), grants the roles
+the invitation carries, and is audited; a reset link sets a new password, kills the user's other outstanding reset links, and signs nobody in. A session that is already signed in
+stays valid until it expires (the session is a signed token with no record on the server to revoke): disabling the user is what stops it, on the next request.
+
+### Sessions
+
+A session lasts **12 hours** and is renewed at most once an hour (`maxAge` and `updateAge` in `src/lib/auth.ts`). **A signed-in user is known by the id in the session, and only by it.** There is no
+look-up by e-mail: after a database reset and reseed an old session names a user that no longer exists and is refused (the user signs in again), and a disabled account is refused on every request, not at
+the end of the session. A signed-in user who holds no role in any tenant lands on `/no-access` (which shows who is signed in, says to ask an administrator, and offers to sign out), and the tenant they
+work in (the `active_tenant` cookie) is only ever one they hold a role in.
+
+A role limits what a user may change, and it also decides which tenants the user may open, but the older actions and routes still check the tenant only
+until the access-control work has moved each of them to the role check (KD-034 in `docs/testing/known-defects.md`).
+
+What to do on any deployment that is not a laptop:
+
+1. Leave `AUTH_REGISTRATION` unset (invite-only) or `closed`. Run the seed with `NODE_ENV=production` (or do not seed) and make your administrator with `npm run admin:create` or the two `BOOTSTRAP_ADMIN_*` variables.
    A database that was seeded earlier keeps `admin@admin.com` / `admin`: change that password straight away (there is no UI for it yet: update the
    `User.password` bcrypt hash in the database, or delete the user once you have another administrator).
-2. Keep the app on a private network, or behind an authenticating proxy (SSO, a VPN), until registration can be closed.
-3. Put a rate limit on `/register` and `/api/auth/*` at the proxy.
+2. Behind a reverse proxy: let it overwrite `X-Forwarded-For` and set `AUTH_TRUST_PROXY=1`; also keep a rate limit on `/api/auth/*` at the proxy (the throttle covers password attempts, not requests that never reach the check).
+3. Keep the app on a private network, or behind an authenticating proxy (SSO, a VPN), until the roles are enforced everywhere (KD-034).
 
 ## Health endpoint
 
@@ -99,4 +160,5 @@ root middleware lets only `/api/v1/*`, `/api/auth/*` and the asyncapi preview as
 - `docs/testing/e2e.md`: the browser suite, which runs with its own throwaway secret and database and never uses a `.env`. Access control, and what
   the suite will need when it lands, is in its last section.
 - `docs/testing/known-defects.md`: KD-034 (a tenant is a cookie), KD-035 (granting and revoking a role is not audited), KD-038 (the registration and bootstrap risks above).
-- `src/lib/auth-secret.ts`, `src/instrumentation.ts`, `src/lib/session-cookie.ts`, `src/middleware.ts`.
+- `src/lib/auth-secret.ts`, `src/instrumentation.ts`, `src/lib/session-cookie.ts`, `src/middleware.ts`, and for sign-in `src/lib/auth.ts` with `src/lib/auth/` (`credentials.ts`,
+  `password-policy.ts`, `password-hash.ts`, `throttle.ts`, `tokens.ts`, `registration-mode.ts`, `trust-host.ts`).

@@ -57,7 +57,7 @@ describe("the groups", () => {
         "AUTH_REDIRECT_PROXY_URL", "AUTH_SECRET_1", "AUTH_SECRET_2", "AUTH_SECRET_3", "AUTH_TRUST_PROXY",
         "BOOTSTRAP_ADMIN_EMAIL", "BOOTSTRAP_ADMIN_PASSWORD",
         "DIRECT_URL",
-        "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_ALLOWED_DOMAINS", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
         "HEALTH_DB_DEGRADED_MS", "HEALTH_DB_TIMEOUT_MS",
         "PGAPPNAME", "PGCONNECT_TIMEOUT", "PGDATABASE", "PGHOST", "PGHOSTADDR", "PGOPTIONS", "PGPASSFILE", "PGPASSWORD", "PGPORT", "PGSERVICE",
         "PGSERVICEFILE", "PGSSLCERT", "PGSSLKEY", "PGSSLMODE", "PGSSLROOTCERT", "PGUSER",
@@ -70,7 +70,7 @@ describe("the groups", () => {
   it("pin the names the run sets", () => {
     expect([...HERMETIC_SET_NAMES].sort()).toEqual(
       [
-        "API_KEY", "AUTH_SECRET", "AUTH_TRUST_HOST", "AUTH_URL", "DATABASE_URL", "DB_PROVIDER", "E2E_DATABASE_URL", "NEXTAUTH_SECRET", "NEXTAUTH_URL", "PGLITE_DATA_DIR",
+        "API_KEY", "AUTH_REGISTRATION", "AUTH_SECRET", "AUTH_TRUST_HOST", "AUTH_URL", "DATABASE_URL", "DB_PROVIDER", "E2E_DATABASE_URL", "NEXTAUTH_SECRET", "NEXTAUTH_URL", "PGLITE_DATA_DIR",
         "SCHEMA_CLASSIFICATION_CATEGORY_FIELD", "SCHEMA_CLASSIFICATION_EXTENSION_KEY", "SCHEMA_CLASSIFICATION_LEVEL_FIELD",
       ].sort(),
     );
@@ -200,6 +200,19 @@ describe("a fake developer environment never reaches a child", () => {
     expect(app.AUTH_SECRET).toBe("run-secret");
     expect(app.NEXTAUTH_SECRET).toBe("run-secret");
     expect(app.AUTH_TRUST_HOST).toBe("true");
+  });
+
+  it("registration is OPEN for the app under test whatever the developer's shell says (the default is invite), and the second app has it too", () => {
+    expect(app.AUTH_REGISTRATION).toBe("open");
+    expect(hermeticEnv({ AUTH_REGISTRATION: "closed" }).AUTH_REGISTRATION).toBeUndefined(); // the shell's value is dropped (the AUTH_ prefix is the runner's)
+    expect(appEnvironment(hermeticEnv({ ...DEVELOPER, AUTH_REGISTRATION: "closed" }), RUN).AUTH_REGISTRATION).toBe("open");
+    expect(secondAppEnvironment(base, RUN, "http://localhost:4000").AUTH_REGISTRATION).toBe("open");
+  });
+
+  it("the client address of throttling is not trusted in the run, and a developer's own proxy setting does not change that", () => {
+    expect(app.AUTH_TRUST_PROXY).toBe("");
+    expect(appEnvironment(hermeticEnv({ ...DEVELOPER, AUTH_TRUST_PROXY: "1" }), RUN).AUTH_TRUST_PROXY).toBe("");
+    expect(app.GOOGLE_ALLOWED_DOMAINS).toBe("");
   });
 
   it("the app gets the run's database, on PostgreSQL, with PGlite pointed at the run's temp directory", () => {

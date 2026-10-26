@@ -10,7 +10,13 @@
  *     there after signing in, only when that is a path of this site (`//evil.com`, `https://evil.com` go to `/schemas`);
  *   - a cookie with a session's NAME is not a session (forged `authjs.session-token` / `next-auth.session-token`): no dashboard, no
  *     data, no redirect loop; the app's own JSON endpoints answer 401;
- *   - a signed-in visitor on /login or /register is sent to `/schemas`; registering signs the new user in and lands on `/schemas`;
+ *   - a signed-in visitor on /login or /register is sent to `/schemas`;
+ *   - registration is OPEN for the app under test (`AUTH_REGISTRATION=open`, scripts/e2e-env.mjs; the default is `invite`, which the unit tests of the
+ *     register action cover). Registering makes a ROLELESS account and answers the same for an address that exists as for a new one, with the same
+ *     redirect to /login: nobody is signed in by registering, and a roleless user who signs in lands on /no-access, not the dashboard;
+ *   - too many wrong passwords for one e-mail lock it, and the lock is answered with the same message as a wrong password;
+ *   - an invitation link and a password-reset link work once, for a live token, and say one thing for every dead one (the rows are made through the database:
+ *     there is no e-mail to read a link from);
  *   - a login form submitted before React hydrated it never puts the password in the address (its HTML says method="post" and its
  *     button is disabled until the page is interactive);
  *   - fields have labels (the specs find them with getByLabel), a refusal is announced and moves the focus to the field to fix.
@@ -19,7 +25,17 @@
  */
 import type { Page } from "@playwright/test";
 import { AUTH_STATE_PATH, TEST_EMAIL, TEST_PASSWORD } from "./helpers/auth-state";
-import { deleteUsersByEmail, disconnectDb } from "./helpers/db";
+import {
+  activeTenantId,
+  createInvitationRow,
+  createResetTokenRow,
+  createUserWithPassword,
+  deleteInvitationsByEmail,
+  deleteUsersByEmail,
+  disconnectDb,
+  pg,
+  seededOwnerId,
+} from "./helpers/db";
 import { test, expect, unique } from "./helpers/fixtures";
 import { waitForHydration } from "./helpers/hydration";
 
@@ -37,24 +53,39 @@ const ID = {
   registerSubmit: "register-submit",
   registerToggle: "register-password-toggle",
   registerConfirmToggle: "register-confirm-password-toggle",
-  registerEmailError: "register-email-error",
   registerConfirmError: "register-confirm-password-error",
   registerLoginLink: "register-login-link",
   userMenu: "user-menu",
   userEmail: "user-email",
   signOut: "sign-out",
   topbar: "topbar",
+  loginNotice: "login-notice",
+  noAccess: "no-access",
+  noAccessEmail: "no-access-email",
+  noAccessSignOut: "no-access-sign-out",
+  inviteForm: "invite-form",
+  inviteEmail: "invite-email",
+  inviteSubmit: "invite-submit",
+  resetForm: "reset-form",
+  resetSubmit: "reset-submit",
+  invalidLink: "invalid-link",
 } as const;
 
 const INVALID_CREDENTIALS = "Invalid email or password";
+const INVALID_LINK = "This link is not valid or has expired.";
 const REGISTER_PASSWORD = "Str0ng!Passw0rd";
+/** What the sign-in page says after /register, for a new address and for one that already has an account alike (src/lib/auth/messages.ts). */
+const REGISTERED_NOTICE = /If this address was not registered before, your account is ready/;
 
-/** Registered by a test through the UI; removed afterwards so the admin's user list does not grow with every run. */
+/** Registered by a test through the UI (or made by its fixtures); removed afterwards so the admin's user list does not grow with every run. */
 const registeredEmails: string[] = [];
+/** Addresses a test made an invitation for (an accepted invitation stays in its table; removed afterwards like the users). */
+const invitedEmails: string[] = [];
 
 test.afterAll(async () => {
   try {
     await deleteUsersByEmail(registeredEmails);
+    await deleteInvitationsByEmail(invitedEmails);
   } catch (error) {
     console.warn(`auth.spec cleanup failed for ${registeredEmails.join(", ")}: ${String(error)}`);
   } finally {
@@ -510,7 +541,7 @@ test.describe("a signed-in visitor", () => {
 });
 
 test.describe("register", () => {
-  test("creates the account, signs the new user in and lands on /schemas", { tag: ["@smoke", "@regression"] }, async ({ page }) => {
+  test("makes a ROLELESS account: registering signs nobody in, the user is sent to /login, and signing in lands on /no-access, not the dashboard", { tag: ["@smoke", "@regression"] }, async ({ page }) => {
     const email = `${unique("e2e-register-")}@example.com`.toLowerCase();
     registeredEmails.push(email);
 
@@ -519,9 +550,30 @@ test.describe("register", () => {
     await expect(page.getByText("Passwords match")).toBeVisible();
     await page.getByTestId(ID.registerSubmit).click();
 
-    await expectLandedOnSchemas(page, 60_000);
-    await expect(page.getByRole("heading", { name: "Domains", level: 1 })).toBeVisible();
-    await expectSignedInAs(page, email);
+    // Nobody is signed in by registering (that could only be done for a NEW address, which would tell a visitor which addresses have accounts):
+    // the visitor is sent to the login page, with a notice that is the same for a new and an existing address.
+    await expectLandedAt(page, "/login", 60_000);
+    await expect(page.getByTestId(ID.loginNotice)).toContainText(REGISTERED_NOTICE);
+    expect(await hasSessionCookie(page), "registering must not sign the user in").toBe(false);
+    await expect(page.getByTestId(ID.topbar)).toHaveCount(0);
+
+    // Signing in with the password just chosen works, and the account holds no role: the "no access yet" screen, not the dashboard.
+    await waitForHydration(page.getByTestId(ID.loginForm));
+    await submitLogin(page, email, REGISTER_PASSWORD);
+    await expectLandedAt(page, "/no-access");
+    await expect(page.getByRole("heading", { name: "No access yet" })).toBeVisible();
+    await expect(page.getByTestId(ID.noAccessEmail)).toContainText(email);
+    await expect(page.getByTestId(ID.topbar), "a roleless user must not get the dashboard").toHaveCount(0);
+
+    // The dashboard sends the roleless user straight back, and nothing of it renders.
+    await page.goto("/schemas");
+    await expectLandedAt(page, "/no-access");
+    await expect(page.getByText("Playground")).toHaveCount(0);
+
+    // The way out works.
+    await page.getByTestId(ID.noAccessSignOut).click();
+    await expectLandedAt(page, "/login");
+    await expect.poll(() => hasSessionCookie(page), { message: "the session cookie is still there after signing out from /no-access" }).toBe(false);
   });
 
   test("every field has a label it is tied to: getByLabel finds the e-mail, the password and its confirmation", { tag: ["@regression"] }, async ({ page }) => {
@@ -531,22 +583,22 @@ test.describe("register", () => {
     await expect(confirmField(page)).toHaveAttribute("name", "confirmPassword");
   });
 
-  test("an account that exists already is refused at the e-mail field (focus there, address kept), and its password is not changed", { tag: ["@regression"] }, async ({
+  test("an address that has an account is answered EXACTLY like a new one (no way to find out who has an account), and its password is not changed", { tag: ["@regression"] }, async ({
     page,
   }) => {
     await openRegister(page);
-    // The seeded admin has an account: registering its address must not create a second one, nor change its password.
+    // The seeded admin has an account: registering its address answers like a new address (the same redirect, the same notice), makes no second
+    // account, and does not change the password.
     await fillRegister(page, TEST_EMAIL, REGISTER_PASSWORD);
     await page.getByTestId(ID.registerSubmit).click();
 
-    await expect(page.getByTestId(ID.registerEmailError)).toHaveText("An account with this email already exists");
-    await expect(emailField(page)).toBeFocused();
-    await expect(emailField(page)).toHaveValue(TEST_EMAIL);
-    expect(pathnameOf(page)).toBe("/register");
+    await expectLandedAt(page, "/login", 60_000);
+    await expect(page.getByTestId(ID.loginNotice)).toContainText(REGISTERED_NOTICE);
+    expect(await hasSessionCookie(page)).toBe(false);
     await expect(page.getByTestId(ID.topbar)).toHaveCount(0);
 
     // The account is as it was: its own password still signs in (and the one that was tried does not).
-    await openLogin(page);
+    await waitForHydration(page.getByTestId(ID.loginForm));
     await submitLogin(page, TEST_EMAIL, REGISTER_PASSWORD);
     await expect(page.getByTestId(ID.loginError)).toHaveText(INVALID_CREDENTIALS);
     await passwordField(page).fill(TEST_PASSWORD);
@@ -554,27 +606,45 @@ test.describe("register", () => {
     await expectLandedOnSchemas(page);
   });
 
-  test("a second registration with the same e-mail is refused after the first one worked", { tag: ["@regression"] }, async ({ page }) => {
+  test("a second registration with the same e-mail is answered like the first, and does not replace the account (nor its password)", { tag: ["@regression"] }, async ({ page }) => {
     const email = `${unique("e2e-twice-")}@example.com`.toLowerCase();
+    const second = "Another!Passw0rd-2";
     registeredEmails.push(email);
 
     await openRegister(page);
     await fillRegister(page, email, REGISTER_PASSWORD);
     await page.getByTestId(ID.registerSubmit).click();
-    await expectLandedOnSchemas(page, 60_000);
-    await expect(page.getByTestId(ID.topbar)).toBeVisible();
+    await expectLandedAt(page, "/login", 60_000);
+    const firstNotice = await page.getByTestId(ID.loginNotice).innerText();
 
-    // Back to a visitor, then the same address again.
-    await page.getByTestId(ID.userMenu).click();
-    await page.getByTestId(ID.signOut).click();
-    await expect(page).toHaveURL((url) => url.pathname === "/login");
+    // The same address again, with another password.
+    await openRegister(page);
+    await fillRegister(page, email, second);
+    await page.getByTestId(ID.registerSubmit).click();
+    await expectLandedAt(page, "/login", 60_000);
+    expect(await page.getByTestId(ID.loginNotice).innerText(), "the answer must not tell a new address from an existing one").toBe(firstNotice);
+
+    // One account, with the FIRST password: the second one did not replace it.
+    await waitForHydration(page.getByTestId(ID.loginForm));
+    await submitLogin(page, email, second);
+    await expect(page.getByTestId(ID.loginError)).toHaveText(INVALID_CREDENTIALS);
+    await passwordField(page).fill(REGISTER_PASSWORD);
+    await page.getByTestId(ID.loginSubmit).click();
+    await expectLandedAt(page, "/no-access");
+  });
+
+  test("a password the policy refuses is refused at the password field with its reason, and no account is made", { tag: ["@regression"] }, async ({ page }) => {
+    const email = `${unique("e2e-weak-")}@example.com`.toLowerCase();
+    registeredEmails.push(email);
 
     await openRegister(page);
-    await fillRegister(page, email, REGISTER_PASSWORD);
+    await fillRegister(page, email, "password1234");
     await page.getByTestId(ID.registerSubmit).click();
 
-    await expect(page.getByTestId(ID.registerEmailError)).toHaveText("An account with this email already exists");
+    await expect(page.getByTestId("register-password-error")).toContainText("too easy to guess");
+    await expect(passwordField(page)).toBeFocused();
     expect(pathnameOf(page)).toBe("/register");
+    await expect(emailField(page)).toHaveValue(email);
   });
 
   test("a confirmation that differs is refused at the confirmation field (focus there, typed values kept), and no account is made", { tag: ["@regression"] }, async ({
@@ -598,10 +668,11 @@ test.describe("register", () => {
     await expect(emailField(page)).toHaveValue(email);
     await expect(passwordField(page)).toHaveValue(REGISTER_PASSWORD);
 
-    // Only the confirmation is typed again, and the account is made.
+    // Only the confirmation is typed again, and the account is made (the visitor goes to the login page: nobody is signed in by registering).
     await confirmField(page).fill(REGISTER_PASSWORD);
     await page.getByTestId(ID.registerSubmit).click();
-    await expectLandedOnSchemas(page, 60_000);
+    await expectLandedAt(page, "/login", 60_000);
+    await expect(page.getByTestId(ID.loginNotice)).toContainText(REGISTERED_NOTICE);
   });
 
   test("both password fields can be shown and hidden", { tag: ["@regression"] }, async ({ page }) => {
@@ -625,5 +696,137 @@ test.describe("register", () => {
     await page.getByTestId(ID.registerConfirmToggle).click();
     await expect(password).toHaveAttribute("type", "password");
     await expect(confirmation).toHaveAttribute("type", "password");
+  });
+});
+
+test.describe("lockout", () => {
+  test("five wrong passwords lock the e-mail, and even the RIGHT password is then refused with the same message (no way to tell a lock from a wrong password)", { tag: ["@regression"] }, async ({
+    page,
+  }) => {
+    const email = `${unique("e2e-lock-")}@example.com`.toLowerCase();
+    const password = "marble-window-harvest-77";
+    await createUserWithPassword({ email, password });
+    registeredEmails.push(email);
+
+    await openLogin(page);
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      await submitLogin(page, email, `${password}-wrong-${attempt}`);
+      await expect(page.getByTestId(ID.loginError), `wrong attempt ${attempt}`).toHaveText(INVALID_CREDENTIALS);
+      await expect(page.getByTestId(ID.loginSubmit)).toBeEnabled();
+    }
+
+    // The sixth attempt carries the right password: it is refused, in the same words, and nothing says "locked" or "try again in N minutes".
+    await submitLogin(page, email, password);
+    await expect(page.getByTestId(ID.loginError)).toHaveText(INVALID_CREDENTIALS);
+    expect(pathnameOf(page)).toBe("/login");
+    expect(await hasSessionCookie(page), "a locked e-mail must not get a session").toBe(false);
+    await expect(page.getByText(/locked|too many|try again in|minutes/i)).toHaveCount(0);
+
+    // The lock is that e-mail's: the seeded admin signs in from the same browser.
+    await submitLogin(page, TEST_EMAIL, TEST_PASSWORD);
+    await expectLandedOnSchemas(page);
+  });
+});
+
+test.describe("invitation and reset links", () => {
+  test("a link that is not a live token says ONE thing, in the open (no session needed), with no form", { tag: ["@regression"] }, async ({ page }) => {
+    const unknown = "A".repeat(43);
+    const texts: string[] = [];
+    for (const path of ["/invite/garbage", `/invite/${unknown}`, "/reset/garbage", `/reset/${unknown}`]) {
+      await page.goto(path);
+      expect(pathnameOf(page), `${path} must be reachable without a session, not redirected to /login`).toBe(path);
+      await expect(page.getByTestId(ID.invalidLink), path).toBeVisible();
+      await expect(page.getByText(INVALID_LINK), path).toBeVisible();
+      await expect(page.locator("form"), `${path} must not offer a form`).toHaveCount(0);
+      texts.push(await page.getByTestId(ID.invalidLink).innerText());
+    }
+    expect(new Set(texts).size, "every dead link must read the same").toBe(1);
+  });
+
+  test("an invitation makes the account for the invited e-mail with the roles it carries, works once, and then says the same as any dead link", { tag: ["@regression"] }, async ({
+    page,
+  }) => {
+    const email = `${unique("e2e-invitee-")}@example.com`.toLowerCase();
+    const password = "tangerine-lantern-orbit-42";
+    // Not in `registeredEmails`: accepting an invitation writes an audit entry for the new user, audit rows are immutable and point at their user, so
+    // the account cannot be deleted (a DELETE of it fails and takes the others in its statement with it). The release run's database is thrown away.
+    invitedEmails.push(email);
+    const { token } = await createInvitationRow({ email, createdById: await seededOwnerId(), roles: [{ role: "VIEWER", scopeKey: `T:${await activeTenantId()}` }] });
+
+    await page.goto(`/invite/${token}`);
+    await waitForHydration(page.getByTestId(ID.inviteForm));
+    // The invited address is shown and cannot be changed.
+    await expect(page.getByTestId(ID.inviteEmail)).toHaveValue(email);
+    await expect(page.getByTestId(ID.inviteEmail)).not.toBeEditable();
+    // A weak password is refused with its reason and the link stays usable.
+    await page.getByLabel("New password", { exact: true }).fill("password1234");
+    await page.getByLabel("Confirm password", { exact: true }).fill("password1234");
+    await page.getByTestId(ID.inviteSubmit).click();
+    await expect(page.getByTestId("invite-password-error")).toContainText("too easy to guess");
+
+    await page.getByLabel("New password", { exact: true }).fill(password);
+    await page.getByLabel("Confirm password", { exact: true }).fill(password);
+    await page.getByTestId(ID.inviteSubmit).click();
+
+    // The account is signed in and, because the invitation carried a role, has the dashboard (not /no-access).
+    await expectLandedOnSchemas(page, 60_000);
+    await expectSignedInAs(page, email);
+    const { rows } = await pg().query(`SELECT r.role, r."scopeKey" FROM user_roles r JOIN users u ON u.id = r."userId" WHERE u.email = $1`, [email]);
+    expect(rows).toEqual([{ role: "VIEWER", scopeKey: `T:${await activeTenantId()}` }]);
+
+    // Signed out, the same link is dead: the same card as for a token that never existed.
+    await page.getByTestId(ID.userMenu).click();
+    await page.getByTestId(ID.signOut).click();
+    await expectLandedAt(page, "/login");
+    await page.goto(`/invite/${token}`);
+    await expect(page.getByTestId(ID.invalidLink)).toBeVisible();
+    await expect(page.getByText(INVALID_LINK)).toBeVisible();
+    await expect(page.locator("form")).toHaveCount(0);
+  });
+
+  test("a reset link sets the new password, signs nobody in, works once, and kills the user's other reset links", { tag: ["@regression"] }, async ({ page }) => {
+    const email = `${unique("e2e-reset-")}@example.com`.toLowerCase();
+    const oldPassword = "the old passphrase 9";
+    const newPassword = "marble-window-harvest-77";
+    // Not in `registeredEmails`, for the reason given in the invitation test: the reset writes an immutable audit entry that points at this user.
+    const user = await createUserWithPassword({ email, password: oldPassword });
+    const { token } = await createResetTokenRow(user.id);
+    const other = await createResetTokenRow(user.id);
+
+    await page.goto(`/reset/${token}`);
+    await waitForHydration(page.getByTestId(ID.resetForm));
+    // No account is named on the page.
+    await expect(page.getByText(email)).toHaveCount(0);
+    await page.getByLabel("New password", { exact: true }).fill(newPassword);
+    await page.getByLabel("Confirm password", { exact: true }).fill(`${newPassword}x`);
+    await page.getByTestId(ID.resetSubmit).click();
+    await expect(page.getByTestId("reset-confirm-password-error")).toHaveText("Passwords do not match");
+    // React empties an uncontrolled form once its action has answered: both passwords are typed again (a password is never put back in a field).
+    await page.getByLabel("New password", { exact: true }).fill(newPassword);
+    await page.getByLabel("Confirm password", { exact: true }).fill(newPassword);
+    await page.getByTestId(ID.resetSubmit).click();
+
+    // To the login page, with a notice, and nobody signed in.
+    await expectLandedAt(page, "/login", 60_000);
+    await expect(page.getByTestId(ID.loginNotice)).toContainText("Your password was changed");
+    expect(await hasSessionCookie(page)).toBe(false);
+
+    // The old password no longer works; the new one does (the account holds no role: /no-access).
+    await waitForHydration(page.getByTestId(ID.loginForm));
+    await submitLogin(page, email, oldPassword);
+    await expect(page.getByTestId(ID.loginError)).toHaveText(INVALID_CREDENTIALS);
+    await passwordField(page).fill(newPassword);
+    await page.getByTestId(ID.loginSubmit).click();
+    await expectLandedAt(page, "/no-access");
+    await page.getByTestId(ID.noAccessSignOut).click();
+    await expectLandedAt(page, "/login");
+
+    // The used link and the user's other outstanding link are dead, with the one message.
+    for (const dead of [token, other.token]) {
+      await page.goto(`/reset/${dead}`);
+      await expect(page.getByTestId(ID.invalidLink)).toBeVisible();
+      await expect(page.getByText(INVALID_LINK)).toBeVisible();
+      await expect(page.locator("form")).toHaveCount(0);
+    }
   });
 });

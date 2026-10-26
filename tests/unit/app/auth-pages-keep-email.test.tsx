@@ -14,8 +14,8 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: 
 const registerAction = vi.fn();
 vi.mock("@/app/(auth)/register/actions", () => ({ registerAction: (...args: unknown[]) => registerAction(...args) }));
 
-import LoginPage from "@/app/(auth)/login/page";
-import RegisterPage from "@/app/(auth)/register/page";
+import { LoginForm as LoginPage } from "@/app/(auth)/login/login-form";
+import { RegisterForm as RegisterPage } from "@/app/(auth)/register/register-form";
 
 afterEach(() => {
   cleanup();
