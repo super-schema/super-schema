@@ -17,9 +17,17 @@ let roleStore: Array<{
 let idCounter = 0;
 /** Users the mock database knows as disabled (`disabledAt` set). */
 const disabledUsers = new Set<string>();
+/** The audit rows written (through the transaction's own client: the entry commits or rolls back with the change it describes). */
+let auditStore: Array<Record<string, unknown>> = [];
 
 vi.mock("@/lib/db", () => ({
   prisma: {
+    auditLog: {
+      create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        auditStore.push(args.data);
+        return { id: `audit-${auditStore.length}`, ...args.data };
+      }),
+    },
     userRole: {
       findMany: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
         if (args?.where?.userId) {
@@ -165,6 +173,7 @@ describe("RBAC Service", () => {
     vi.clearAllMocks();
     await _resetRoleStore();
     disabledUsers.clear();
+    auditStore = [];
     // `admin-1` is a stored global ADMIN: the caller of most tests below. (Before, the context's label said so; now only stored rows count.)
     seedGlobalAdmin("admin-1");
   });
@@ -731,5 +740,155 @@ describe("RBAC Service", () => {
         expect(result.data).toHaveLength(0);
       }
     });
+  });
+
+  describe("every grant and revoke is audited (KD-035)", () => {
+    it("a grant writes ONE entry: who granted, whom, which role at which scope, the roles of the user before and after", async () => {
+      seedRole("user-1", "VIEWER", { key: "T:tenant-a", tenantId: "tenant-a" });
+      const result = await assignRole({ userId: "user-1", role: "AUTHOR", domainId: "dom-1" }, adminCtx);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(auditStore).toHaveLength(1);
+      expect(auditStore[0]).toMatchObject({
+        action: "ROLE_ASSIGNED",
+        entityType: "User",
+        entityId: "user-1",
+        userId: "admin-1",
+        tenantId: "tenant-a",
+        beforeState: { roles: [{ role: "VIEWER", scopeKey: "T:tenant-a" }] },
+        afterState: {
+          roleId: result.data.id,
+          role: "AUTHOR",
+          scopeKey: "D:dom-1",
+          roles: [
+            { role: "VIEWER", scopeKey: "T:tenant-a" },
+            { role: "AUTHOR", scopeKey: "D:dom-1" },
+          ],
+        },
+      });
+    });
+
+    it("a platform grant is a platform-level entry (no tenant); a tenant and a product grant carry their tenant", async () => {
+      await assignRole({ userId: "user-1", role: "ADMIN" }, adminCtx);
+      await assignRole({ userId: "user-1", role: "VIEWER", tenantId: "tenant-a" }, adminCtx);
+      await assignRole({ userId: "user-1", role: "AUTHOR", productId: "prod-1" }, adminCtx);
+      expect(auditStore.map((e) => [e.action, e.tenantId])).toEqual([
+        ["ROLE_ASSIGNED", null],
+        ["ROLE_ASSIGNED", "tenant-a"],
+        ["ROLE_ASSIGNED", "tenant-a"],
+      ]);
+    });
+
+    it("a revoke writes ONE entry about the user who lost the role: the role as it was, the roles before and after", async () => {
+      seedRole("user-1", "VIEWER", { key: "T:tenant-a", tenantId: "tenant-a" });
+      const row = seedRole("user-1", "AUTHOR", { key: "D:dom-1", tenantId: "tenant-a", domainId: "dom-1" });
+      const result = await removeRole(row.id, adminCtx);
+      expect(result.success).toBe(true);
+      expect(auditStore).toHaveLength(1);
+      expect(auditStore[0]).toMatchObject({
+        action: "ROLE_REMOVED",
+        entityType: "User",
+        entityId: "user-1",
+        userId: "admin-1",
+        tenantId: "tenant-a",
+        beforeState: {
+          roleId: row.id,
+          role: "AUTHOR",
+          scopeKey: "D:dom-1",
+          roles: [
+            { role: "VIEWER", scopeKey: "T:tenant-a" },
+            { role: "AUTHOR", scopeKey: "D:dom-1" },
+          ],
+        },
+        afterState: { roles: [{ role: "VIEWER", scopeKey: "T:tenant-a" }] },
+      });
+    });
+
+    it("writes nothing for a refusal: no authority, an invalid assignment, a duplicate, an unknown target, a last administrator, your own role", async () => {
+      await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, authorCtx); // no authority
+      await assignRole({ userId: "user-1", role: "AUTHOR" }, adminCtx); // GLOBAL is for ADMIN only
+      await assignRole({ userId: "ghost-user", role: "VIEWER", domainId: "dom-1" }, adminCtx); // no such user
+      await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-missing" }, adminCtx); // no such domain
+      await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, adminCtx);
+      auditStore = [];
+      await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, adminCtx); // duplicate
+      const own = seedTenantAdmin("tadmin-a");
+      await removeRole(own.id, ctxOf("tadmin-a")); // own administrator role
+      vi.mocked(prisma.userRole.count).mockResolvedValueOnce(0);
+      await removeRole(seedGlobalAdmin("other-admin").id, adminCtx); // the last global administrator
+      await removeRole("no-such-row", adminCtx);
+      expect(auditStore).toEqual([]);
+    });
+
+    it("the entry is written through the transaction's client, after the change it describes, so both commit or neither does", async () => {
+      const order: string[] = [];
+      vi.mocked(prisma.userRole.create).mockImplementationOnce((async (args: { data: object }) => {
+        order.push("role");
+        return { id: "role-x", ...args.data, createdAt: new Date() };
+      }) as never);
+      vi.mocked(prisma.auditLog.create).mockImplementationOnce((async () => {
+        order.push("audit");
+        return { id: "audit-x" };
+      }) as never);
+      await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, adminCtx);
+      expect(order).toEqual(["role", "audit"]);
+    });
+
+    it("a failed audit write fails the whole change (answered, not thrown): no grant without its entry", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.mocked(prisma.auditLog.create).mockRejectedValueOnce(new Error("disk full") as never);
+      const result = await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, adminCtx);
+      expect(result).toMatchObject({ success: false, error: { code: "INTERNAL_ERROR" } });
+    });
+  });
+
+  describe("failures of the database are answers, never exceptions out of a service", () => {
+    it("a grant that loses the race for the unique key is a DUPLICATE answer (P2002), not a crash", async () => {
+      vi.mocked(prisma.userRole.create).mockRejectedValueOnce(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }) as never);
+      const result = await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, adminCtx);
+      expect(result).toMatchObject({ success: false, error: { code: "DUPLICATE" } });
+      expect(auditStore).toEqual([]);
+    });
+
+    it("a user or scope deleted between the look-up and the insert is a NOT_FOUND answer (P2003), not a crash", async () => {
+      vi.mocked(prisma.userRole.create).mockRejectedValueOnce(Object.assign(new Error("Foreign key constraint failed"), { code: "P2003" }) as never);
+      const result = await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, adminCtx);
+      expect(result).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+    });
+
+    it("anything else is a generic INTERNAL_ERROR (logged), for a grant and for a revoke", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.mocked(prisma.userRole.create).mockRejectedValueOnce(new Error("connection reset") as never);
+      expect(await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, adminCtx)).toMatchObject({ success: false, error: { code: "INTERNAL_ERROR", message: "Something went wrong. Please try again." } });
+      const row = seedRole("user-1", "VIEWER", { key: "D:dom-1", tenantId: "tenant-a", domainId: "dom-1" });
+      vi.mocked(prisma.userRole.delete).mockRejectedValueOnce(new Error("connection reset") as never);
+      expect(await removeRole(row.id, adminCtx)).toMatchObject({ success: false, error: { code: "INTERNAL_ERROR" } });
+    });
+
+    it("a transaction that keeps losing the race to the end is a CONFLICT answer", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.mocked(prisma.$transaction).mockRejectedValue(Object.assign(new Error("write conflict"), { code: "P2034" }));
+      const result = await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, adminCtx);
+      expect(result).toMatchObject({ success: false, error: { code: "CONFLICT" } });
+      vi.mocked(prisma.$transaction).mockImplementation((async (fn: (tx: unknown) => unknown) => fn((await import("@/lib/db")).prisma)) as never);
+    });
+
+    it("a transaction that loses the race once is run again and the change is made (the faked P2034 retry)", async () => {
+      let round = 0;
+      const real = vi.mocked(prisma.$transaction).getMockImplementation()!;
+      vi.mocked(prisma.$transaction).mockImplementation((async (fn: (tx: unknown) => unknown, options?: unknown) => {
+        if (++round === 1) throw Object.assign(new Error("write conflict"), { code: "P2034" });
+        return real(fn as never, options as never);
+      }) as never);
+      const result = await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, adminCtx);
+      expect(result.success).toBe(true);
+      expect(round).toBe(2);
+      expect(auditStore).toHaveLength(1); // the entry of the aborted round was never written
+    });
+  });
+
+  it("revokeRole is the name the plan gives removeRole: the same function", async () => {
+    const { revokeRole } = await import("@/services/rbac.service");
+    expect(revokeRole).toBe(removeRole);
   });
 });

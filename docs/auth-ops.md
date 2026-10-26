@@ -202,6 +202,6 @@ by hand (the table is immutable: lift the `audit_log_immutable` trigger for that
 
 - `docs/testing/e2e.md`: the browser suite, which runs with its own throwaway secret and database and never uses a `.env`. Access control, and what
   the suite will need when it lands, is in its last section.
-- `docs/testing/known-defects.md`: KD-034 (a tenant is a cookie), KD-035 (granting and revoking a role is not audited), KD-038 (the registration and bootstrap risks above).
+- `docs/testing/known-defects.md`: KD-034 (a tenant is a cookie), KD-038 (the registration and bootstrap risks above).
 - `src/lib/auth-secret.ts`, `src/instrumentation.ts`, `src/lib/session-cookie.ts`, `src/middleware.ts`, and for sign-in `src/lib/auth.ts` with `src/lib/auth/` (`credentials.ts`,
   `password-policy.ts`, `password-hash.ts`, `throttle.ts`, `tokens.ts`, `registration-mode.ts`, `trust-host.ts`).

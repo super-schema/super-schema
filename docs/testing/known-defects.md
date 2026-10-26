@@ -280,17 +280,6 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - where: `src/lib/active-tenant.ts`, `setActiveTenantAction`, `src/lib/access/api.ts`, `src/lib/access/page-access.ts`, `src/app/api/tenants/route.ts`.
 - cost to fix: keep the choice per user on the server (a column on `users`, read by `getActiveTenantId`) and say so on the page that falls back; or show the user the tenant they were sent to.
 
-## KD-035: granting and revoking a role is not audited
-
-- status: no-test (nothing in the suite reads the audit log of an administrator's role change; a gap, not a malfunction)
-- symptom: Admin, Users, "assign role" and "remove role" write no `audit_log` row, so the Audit Trail and the Change Log cannot say who made someone an administrator, a steward or a
-  viewer, or took the role away. (The same screens are the only way to change who may approve governance requests and publish.)
-- where: `assignRole` and `removeRole` (`src/services/rbac.service.ts`); the other services write their audit row through `withAudit`.
-- note: `assignRole` with a user id that is nobody's used to throw the database's foreign-key error (P2003) out of `assignRoleAction`, which has no try/catch; it now answers
-  `NOT_FOUND: User "<id>" not found`, like an unknown domain (`tests/unit/services/rbac.service.test.ts`).
-- cost to fix: wrap both in `withAudit` with an action name of their own (`ROLE_ASSIGNED` / `ROLE_REMOVED`, the user and the role in the details), and show them in the Change Log
-  (KD-007 is about how that tab names actions).
-
 ## KD-036: two specs pass today because they assert the defects they characterize: a green run does not prove those defects are gone
 
 - status: no-test (by construction: this is a statement about how to read a green run, not a defect of the product)

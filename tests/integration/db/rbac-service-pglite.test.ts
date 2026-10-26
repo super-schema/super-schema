@@ -28,9 +28,15 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await clean();
+});
+
+/** Audit rows are immutable (a trigger refuses UPDATE and DELETE) and point at their user: a test starts from an empty log by TRUNCATE, which the trigger does not see. */
+async function clean() {
+  await db().$executeRawUnsafe('TRUNCATE TABLE "audit_log"');
   await db().userRole.deleteMany();
   await db().user.deleteMany();
-});
+}
 
 async function makeUser(label = "user", disabled = false) {
   return db().user.create({ data: { email: `${fresh(label)}@example.test`, disabledAt: disabled ? new Date() : null } });
@@ -162,8 +168,7 @@ describe("removeRole on a real database", () => {
 
   it("two administrators removing each other at the same moment leave exactly one", async () => {
     for (let round = 0; round < 5; round++) {
-      await db().userRole.deleteMany();
-      await db().user.deleteMany();
+      await clean();
       const a = await makeUser("admin-a");
       const b = await makeUser("admin-b");
       const rowA = await grantGlobalAdmin(a.id);
@@ -184,5 +189,93 @@ describe("removeRole on a real database", () => {
     const results = await Promise.all(users.map((u, i) => removeRole(rows[(i + 1) % 3].id, ctxOf(u.id))));
     expect(results.filter((r) => r.success).length).toBeGreaterThanOrEqual(1);
     expect(await db().userRole.count({ where: { role: "ADMIN", scopeKey: "G" } })).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("the audit trail of grants and revokes, on a real database (KD-035)", () => {
+  const entries = () => db().auditLog.findMany({ orderBy: { timestamp: "asc" } });
+
+  it("a grant and a revoke each write one entry in the tenant they act in: actor, target, role, scope key, the roles before and after", async () => {
+    const w = await makeWorld();
+    const admin = await makeUser("admin");
+    const target = await makeUser("target");
+    await grantTenantAdmin(admin.id, w.tenantA.id);
+
+    const granted = await assignRole({ userId: target.id, role: "AUTHOR", domainId: w.domainA.id }, ctxOf(admin.id));
+    expect(granted.success).toBe(true);
+    if (!granted.success) return;
+    expect((await removeRole(granted.data.id, ctxOf(admin.id))).success).toBe(true);
+
+    const log = await entries();
+    expect(log).toHaveLength(2);
+    expect(log[0]).toMatchObject({
+      action: "ROLE_ASSIGNED", entityType: "User", entityId: target.id, userId: admin.id, tenantId: w.tenantA.id,
+      beforeState: { roles: [] },
+      afterState: { roleId: granted.data.id, role: "AUTHOR", scopeKey: `D:${w.domainA.id}`, roles: [{ role: "AUTHOR", scopeKey: `D:${w.domainA.id}` }] },
+    });
+    expect(log[1]).toMatchObject({
+      action: "ROLE_REMOVED", entityType: "User", entityId: target.id, userId: admin.id, tenantId: w.tenantA.id,
+      beforeState: { roleId: granted.data.id, role: "AUTHOR", scopeKey: `D:${w.domainA.id}`, roles: [{ role: "AUTHOR", scopeKey: `D:${w.domainA.id}` }] },
+      afterState: { roles: [] },
+    });
+  });
+
+  it("a platform grant is a platform-level entry (no tenant)", async () => {
+    const admin = await makeUser("admin");
+    const target = await makeUser("target");
+    await grantGlobalAdmin(admin.id);
+    expect((await assignRole({ userId: target.id, role: "ADMIN" }, ctxOf(admin.id))).success).toBe(true);
+    expect((await entries())[0]).toMatchObject({ action: "ROLE_ASSIGNED", tenantId: null });
+  });
+
+  it("a refusal writes nothing: no authority, an unknown scope, a duplicate, your own role", async () => {
+    const w = await makeWorld();
+    const tenantAdmin = await makeUser("tadmin");
+    const target = await makeUser("target");
+    await grantTenantAdmin(tenantAdmin.id, w.tenantA.id);
+    const as = ctxOf(tenantAdmin.id);
+    expect((await assignRole({ userId: target.id, role: "AUTHOR", tenantId: w.tenantB.id }, as)).success).toBe(false);
+    expect((await assignRole({ userId: target.id, role: "AUTHOR", domainId: "no-such-domain" }, as)).success).toBe(false);
+    expect((await assignRole({ userId: "no-such-user", role: "AUTHOR", domainId: w.domainA.id }, as)).success).toBe(false);
+    expect((await assignRole({ userId: target.id, role: "AUTHOR", domainId: w.domainA.id }, as)).success).toBe(true);
+    const afterFirst = await entries();
+    expect((await assignRole({ userId: target.id, role: "AUTHOR", domainId: w.domainA.id }, as)).success).toBe(false); // duplicate
+    const own = await db().userRole.findFirst({ where: { userId: tenantAdmin.id } });
+    expect((await removeRole(own!.id, as)).success).toBe(false);
+    expect(await entries()).toHaveLength(afterFirst.length);
+    expect(afterFirst).toHaveLength(1);
+  });
+
+  it("the change and its entry commit together: when the entry cannot be written, no role is stored", async () => {
+    const w = await makeWorld();
+    const admin = await makeUser("admin");
+    const target = await makeUser("target");
+    await grantGlobalAdmin(admin.id);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // A trigger that refuses the audit row of a grant, as a full disk or a bad column would.
+    await db().$executeRawUnsafe(`CREATE OR REPLACE FUNCTION refuse_role_audit() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'audit refused'; END; $$ LANGUAGE plpgsql`);
+    await db().$executeRawUnsafe(`CREATE TRIGGER refuse_role_audit_trigger BEFORE INSERT ON audit_log FOR EACH ROW WHEN (NEW.action = 'ROLE_ASSIGNED') EXECUTE FUNCTION refuse_role_audit()`);
+    try {
+      const result = await assignRole({ userId: target.id, role: "AUTHOR", domainId: w.domainA.id }, ctxOf(admin.id));
+      expect(result).toMatchObject({ success: false, error: { code: "INTERNAL_ERROR" } });
+      expect(await rolesOf(target.id)).toEqual([]);
+    } finally {
+      await db().$executeRawUnsafe("DROP TRIGGER refuse_role_audit_trigger ON audit_log");
+    }
+  });
+
+  it("two grants of the same role at the same moment: one wins and one is answered DUPLICATE (never a thrown unique-key error)", async () => {
+    const w = await makeWorld();
+    const adminA = await makeUser("admin-a");
+    const adminB = await makeUser("admin-b");
+    const target = await makeUser("target");
+    await grantTenantAdmin(adminA.id, w.tenantA.id);
+    await grantTenantAdmin(adminB.id, w.tenantA.id);
+    const input = { userId: target.id, role: "AUTHOR" as const, domainId: w.domainA.id };
+    const results = await Promise.all([assignRole(input, ctxOf(adminA.id)), assignRole(input, ctxOf(adminB.id))]);
+    expect(results.filter((r) => r.success)).toHaveLength(1);
+    expect(results.find((r) => !r.success)).toMatchObject({ success: false, error: { code: "DUPLICATE" } });
+    expect(await rolesOf(target.id)).toHaveLength(1);
+    expect((await entries()).filter((e) => e.action === "ROLE_ASSIGNED")).toHaveLength(1);
   });
 });
