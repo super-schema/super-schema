@@ -24,6 +24,7 @@ vi.mock("@/lib/db", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn() }));
 vi.mock("@/lib/access/principal", async () => (await import("../../../helpers/access-mocks")).principalModule);
 
+import { getActiveTenantId } from "@/lib/active-tenant";
 import {
   NOT_AUTHENTICATED,
   authorize,
@@ -44,6 +45,8 @@ const FOREIGN = { tenantId: T2, domainId: "dom-x", productId: null };
 beforeEach(() => {
   vi.clearAllMocks();
   signInAs(globalAdmin());
+  // `authorizeSubject` also needs the resource in the ACTIVE tenant (tests/unit/lib/action-context-access.test.ts pins that); here it is T1.
+  vi.mocked(getActiveTenantId).mockResolvedValue(T1);
 });
 
 describe("no principal (signed out, a stale session, a disabled user)", () => {

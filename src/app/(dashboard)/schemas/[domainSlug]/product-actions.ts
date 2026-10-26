@@ -54,7 +54,7 @@ async function runProductAction<T>(
   try {
     const ctx = await getActionContext();
     if (!ctx) return { error: NOT_LOGGED_IN };
-    if (!(await inActiveTenant(owned.kind, owned.id))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
+    if (!(await inActiveTenant(owned.kind, owned.id))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
       return { error: `${owned.kind === "domain" ? "Domain" : "Product"} "${String(owned.id)}" not found` };
     }
     const result = await run(ctx);

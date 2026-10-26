@@ -1,7 +1,7 @@
 "use server";
 
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
+import { authorizeActiveTenant, authorizeSubject, contextOf, type AccessSubject } from "@/lib/action-context";
+import type { ActionId } from "@/lib/access";
 import {
   createConcept,
   updateConcept,
@@ -20,19 +20,22 @@ import type {
 } from "@/types/schemas/business-concept";
 import { revalidatePath } from "next/cache";
 
-async function getServiceContext(): Promise<ServiceContext | null> {
-  const session = await auth();
-  if (!session?.user?.id) return null;
-  return {
-    userId: session.user.id,
-    userRole: "AUTHOR",
-    prisma,
-  };
+/**
+ * The guard of every glossary action, BEFORE any read or write: the caller must be allowed `action` in the ACTIVE tenant (`glossary.read`,
+ * `glossary.write`: the table's "anywhere in the tenant" level) or, for linking a field, over the field's own place (`glossary.link`).
+ * Nobody signed in, a user with no role, a disabled user and a tenant that is not the one in view are all refused; the context handed to the
+ * service carries the principal's assignments, not a role label the service could trust.
+ */
+async function getServiceContext(action: ActionId, subject?: AccessSubject): Promise<{ ctx: ServiceContext } | { error: string }> {
+  const allowed = subject ? await authorizeSubject(action, subject) : await authorizeActiveTenant(action);
+  if (!allowed.success) return { error: allowed.error.code === "UNAUTHORIZED" ? "Not authenticated" : allowed.error.message };
+  return { ctx: contextOf("principal" in allowed.data ? allowed.data.principal : allowed.data) };
 }
 
 export async function createConceptAction(input: CreateBusinessConceptInput) {
-  const ctx = await getServiceContext();
-  if (!ctx) return { error: "Not authenticated" };
+  const access = await getServiceContext("glossary.write");
+  if ("error" in access) return { error: access.error };
+  const ctx = access.ctx;
 
   const result = await createConcept(input, ctx);
   if (!result.success) return { error: result.error.message };
@@ -42,8 +45,9 @@ export async function createConceptAction(input: CreateBusinessConceptInput) {
 }
 
 export async function updateConceptAction(id: string, input: UpdateBusinessConceptInput) {
-  const ctx = await getServiceContext();
-  if (!ctx) return { error: "Not authenticated" };
+  const access = await getServiceContext("glossary.write");
+  if ("error" in access) return { error: access.error };
+  const ctx = access.ctx;
 
   const result = await updateConcept(id, input, ctx);
   if (!result.success) return { error: result.error.message };
@@ -53,8 +57,9 @@ export async function updateConceptAction(id: string, input: UpdateBusinessConce
 }
 
 export async function deleteConceptAction(id: string) {
-  const ctx = await getServiceContext();
-  if (!ctx) return { error: "Not authenticated" };
+  const access = await getServiceContext("glossary.write");
+  if ("error" in access) return { error: access.error };
+  const ctx = access.ctx;
 
   const result = await deleteConcept(id, ctx);
   if (!result.success) return { error: result.error.message };
@@ -64,8 +69,9 @@ export async function deleteConceptAction(id: string) {
 }
 
 export async function getConceptsAction(filters?: BusinessConceptFilter) {
-  const ctx = await getServiceContext();
-  if (!ctx) return { error: "Not authenticated" };
+  const access = await getServiceContext("glossary.read");
+  if ("error" in access) return { error: access.error };
+  const ctx = access.ctx;
 
   const result = await getConcepts(filters, ctx);
   if (!result.success) return { error: result.error.message };
@@ -73,8 +79,9 @@ export async function getConceptsAction(filters?: BusinessConceptFilter) {
 }
 
 export async function searchConceptsAction(query: string) {
-  const ctx = await getServiceContext();
-  if (!ctx) return { error: "Not authenticated" };
+  const access = await getServiceContext("glossary.read");
+  if ("error" in access) return { error: access.error };
+  const ctx = access.ctx;
 
   const result = await searchConcepts(query, ctx);
   if (!result.success) return { error: result.error.message };
@@ -86,8 +93,9 @@ export async function linkFieldToConceptAction(
   conceptId: string,
   confidence: number = 1.0
 ) {
-  const ctx = await getServiceContext();
-  if (!ctx) return { error: "Not authenticated" };
+  const access = await getServiceContext("glossary.link", { kind: "field", id: fieldId });
+  if ("error" in access) return { error: access.error };
+  const ctx = access.ctx;
 
   const result = await linkFieldToConcept(fieldId, conceptId, ctx, confidence);
   if (!result.success) return { error: result.error.message };
@@ -100,8 +108,9 @@ export async function unlinkFieldFromConceptAction(
   fieldId: string,
   conceptId: string
 ) {
-  const ctx = await getServiceContext();
-  if (!ctx) return { error: "Not authenticated" };
+  const access = await getServiceContext("glossary.link", { kind: "field", id: fieldId });
+  if ("error" in access) return { error: access.error };
+  const ctx = access.ctx;
 
   const result = await unlinkFieldFromConcept(fieldId, conceptId, ctx);
   if (!result.success) return { error: result.error.message };
@@ -114,8 +123,9 @@ export async function suggestConceptsForFieldAction(
   fieldName: string,
   fieldType: string
 ) {
-  const ctx = await getServiceContext();
-  if (!ctx) return { error: "Not authenticated" };
+  const access = await getServiceContext("glossary.read");
+  if ("error" in access) return { error: access.error };
+  const ctx = access.ctx;
 
   const result = await suggestConceptsForField(fieldName, fieldType, ctx);
   if (!result.success) return { error: result.error.message };

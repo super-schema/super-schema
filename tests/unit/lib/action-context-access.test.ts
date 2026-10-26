@@ -28,6 +28,10 @@ import { NoTenantAccess } from "@/lib/access/no-tenant-access";
 import {
   GENERIC_ACTION_ERROR,
   NOT_AUTHENTICATED,
+  authorizeActiveTenant,
+  authorizeInActiveTenant,
+  authorizeSubject,
+  contextOf,
   inActiveTenant,
   isInActiveTenant,
   notFoundError,
@@ -74,11 +78,30 @@ describe("runMutation with an access spec", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("runs for a user with the role, with a service context whose userRole is the role they hold OVER THAT RESOURCE, and revalidates", async () => {
-    signInAs(principalOf([assign.tenant("VIEWER", T1), assign.domain("STEWARD", T1, "dom-a")], { userId: "u-9" }));
+  it("runs for a user with the role, with a service context that carries the assignments and NO resource-relative role label, and revalidates", async () => {
+    const principal = principalOf([assign.tenant("VIEWER", T1), assign.domain("STEWARD", T1, "dom-a")], { userId: "u-9" });
+    signInAs(principal);
     expect(await runMutation(ACCESS, run, "writeEntity")).toEqual({ success: true, data: "done" });
-    expect(run).toHaveBeenCalledWith({ userId: "u-9", userRole: "STEWARD", prisma: mocks.prisma });
+    // The label is the platform role only (here none: the lowest rung): a domain STEWARD must NOT look like a STEWARD to a service that compares it.
+    expect(run).toHaveBeenCalledWith({ userId: "u-9", userRole: "VIEWER", assignments: principal.assignments, prisma: mocks.prisma });
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/schemas", "layout");
+  });
+
+  it("refuses a resource of another tenant than the ACTIVE one as a missing resource, even for a user who holds a covering role there", async () => {
+    signInAs(principalOf([assign.tenant("ADMIN", T1), assign.tenant("ADMIN", T2)]));
+    mocks.activeTenant.mockResolvedValue(T1);
+    const inB = { action: "entity.write", resource: { tenantId: T2, domainId: null, productId: null } } as const;
+    expect(await runMutation(inB, run)).toEqual(NOT_FOUND_ACTION);
+    expect(run).not.toHaveBeenCalled();
+    mocks.activeTenant.mockResolvedValue(T2);
+    expect(await runMutation(inB, run)).toEqual({ success: true, data: "done" });
+  });
+
+  it("refuses even a global administrator outside the active tenant (the tenant in view is part of the decision)", async () => {
+    signInAs(globalAdmin());
+    mocks.activeTenant.mockResolvedValue(T2);
+    expect(await runMutation(ACCESS, run)).toEqual(NOT_FOUND_ACTION);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("refuses an AUTHOR of a sibling domain as a missing resource (domain roles take effect)", async () => {
@@ -177,9 +200,31 @@ describe("withOwnedTarget with an action", () => {
     expect(await withOwnedTarget("event.write", { level: "PRODUCT", productId: "p1" }, run)).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
   });
 
-  it("leaves a malformed target to the service, which answers its own validation error (as the adapter always did)", async () => {
-    signInAs(roleless());
-    expect(await withOwnedTarget("event.write", { level: "DOMAIN", domainId: 5 }, run)).toEqual({ success: true, data: "ran" });
+  it("FAILS CLOSED on a malformed target: the NOT_FOUND whole error, no lookup, and the service never runs (not even for a role-less or an administrator principal)", async () => {
+    const reference = JSON.stringify(await withOwnedTarget("event.write", null, run));
+    for (const principal of [roleless(), globalAdmin(), tenantMember("ADMIN", T1)]) {
+      signInAs(principal);
+      for (const target of [{ level: "DOMAIN", domainId: 5 }, { level: "NOPE" }, { level: "DOMAIN" }, null, undefined, "dom-a", 7, [], {}]) {
+        const answer = await withOwnedTarget("event.write", target, run);
+        expect(answer).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+        expect(JSON.stringify(answer)).toBe(reference);
+      }
+    }
+    expect(run).not.toHaveBeenCalled();
+    expect(mocks.prisma.domain.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("refuses a target of another tenant than the active one even when the user holds a role there", async () => {
+    signInAs(principalOf([assign.tenant("ADMIN", T1), assign.tenant("ADMIN", T2)]));
+    mocks.prisma.domain.findUnique.mockResolvedValue({ id: "dom-a", tenantId: T2 });
+    mocks.activeTenant.mockResolvedValue(T1);
+    expect(await withOwnedTarget("event.write", domainTarget, run)).toEqual({ success: false, error: { code: "NOT_FOUND", message: missingMessage } });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("answers nobody signed in before it looks the target up", async () => {
+    signedOut();
+    expect(await withOwnedTarget("event.write", domainTarget, run)).toMatchObject({ success: false, error: { code: "UNAUTHORIZED" } });
     expect(mocks.prisma.domain.findUnique).not.toHaveBeenCalled();
   });
 
@@ -216,5 +261,92 @@ describe("the adapters of the active-tenant guards", () => {
   it("unexpectedFailure answers NoTenantAccess as a not-found, like every other refusal to see", () => {
     expect(unexpectedFailure("someAction", new NoTenantAccess())).toEqual({ error: "Not found", code: "NOT_FOUND" });
     expect(notFoundError()).toEqual({ code: "NOT_FOUND", message: "Not found" });
+  });
+});
+
+describe("authorizeInActiveTenant: the one helper behind runMutation, withOwnedTarget and authorizeSubject", () => {
+  const inA = { tenantId: T1, domainId: "dom-a", productId: null };
+
+  it("needs BOTH: the resource in the active tenant AND a covering role", async () => {
+    signInAs(tenantMember("AUTHOR", T1, "u-1"));
+    expect(await authorizeInActiveTenant("entity.write", inA)).toMatchObject({ success: true, data: { userId: "u-1" } });
+    expect(await authorizeInActiveTenant("entity.publish", inA)).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+
+    mocks.activeTenant.mockResolvedValue(T2);
+    signInAs(principalOf([assign.tenant("ADMIN", T1), assign.tenant("ADMIN", T2)]));
+    expect(await authorizeInActiveTenant("entity.write", inA)).toEqual({ success: false, error: { code: "NOT_FOUND", message: "Not found" } });
+  });
+
+  it("answers nobody with UNAUTHORIZED, and a role-less user, a wrong tenant and a sibling with the one NOT_FOUND whole error", async () => {
+    signedOut();
+    expect(await authorizeInActiveTenant("entity.read", inA)).toMatchObject({ success: false, error: { code: "UNAUTHORIZED" } });
+    signInAs(roleless());
+    mocks.activeTenant.mockRejectedValue(new NoTenantAccess());
+    const roleLess = await authorizeInActiveTenant("entity.read", inA);
+    signInAs(tenantMember("VIEWER", T1));
+    mocks.activeTenant.mockResolvedValue(T2);
+    const wrongTenant = await authorizeInActiveTenant("entity.read", inA);
+    mocks.activeTenant.mockResolvedValue(T1);
+    const sibling = await authorizeInActiveTenant("entity.read", { tenantId: T2 });
+    expect(roleLess).toEqual({ success: false, error: { code: "NOT_FOUND", message: "Not found" } });
+    expect(JSON.stringify(wrongTenant)).toBe(JSON.stringify(roleLess));
+    expect(JSON.stringify(sibling)).toBe(JSON.stringify(roleLess));
+  });
+
+  it("does not tie platform (global) and own (self) actions to a tenant: they have no resource to hide", async () => {
+    signInAs(globalAdmin());
+    mocks.activeTenant.mockResolvedValue(T2);
+    expect(await authorizeInActiveTenant("platform.admin", inA)).toMatchObject({ success: true });
+    signInAs(roleless());
+    mocks.activeTenant.mockRejectedValue(new NoTenantAccess());
+    expect(await authorizeInActiveTenant("notification.own", inA)).toMatchObject({ success: true });
+    expect(await authorizeInActiveTenant("platform.admin", inA)).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+  });
+
+  it("answers an unknown action id FORBIDDEN, even to a global administrator", async () => {
+    signInAs(globalAdmin());
+    expect(await authorizeInActiveTenant("nope.nope" as never, inA)).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+  });
+
+  it("uses the caller's own not-found answer", async () => {
+    signInAs(roleless());
+    mocks.activeTenant.mockRejectedValue(new NoTenantAccess());
+    const own = { code: "NOT_FOUND", message: "Entity not found" } as const;
+    expect(await authorizeInActiveTenant("entity.read", inA, own)).toEqual({ success: false, error: own });
+  });
+
+  it("authorizeActiveTenant judges a tenant-wide action against the ACTIVE tenant itself", async () => {
+    signInAs(tenantMember("STEWARD", T1));
+    expect(await authorizeActiveTenant("domain.create")).toMatchObject({ success: true });
+    expect(await authorizeActiveTenant("domain.delete")).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+    mocks.activeTenant.mockResolvedValue(T2);
+    expect(await authorizeActiveTenant("domain.create")).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+    mocks.activeTenant.mockRejectedValue(new NoTenantAccess());
+    expect(await authorizeActiveTenant("domain.create")).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+  });
+
+  it("authorizeSubject applies the active tenant and does the same look-ups for a foreign row and a missing one", async () => {
+    signInAs(principalOf([assign.tenant("ADMIN", T1), assign.tenant("ADMIN", T2)]));
+    mocks.activeTenant.mockResolvedValue(T1);
+    mocks.activeTenant.mockClear();
+    mocks.prisma.entity.findUnique.mockClear();
+    mocks.prisma.entity.findUnique.mockResolvedValueOnce({ tenantId: T2, domainId: null, productId: null, product: null });
+    const foreign = await authorizeSubject("entity.read", { kind: "entity", id: "e1" });
+    const foreignReads = [mocks.activeTenant.mock.calls.length, mocks.prisma.entity.findUnique.mock.calls.length];
+    mocks.activeTenant.mockClear();
+    mocks.prisma.entity.findUnique.mockClear();
+    mocks.prisma.entity.findUnique.mockResolvedValueOnce(null);
+    const missing = await authorizeSubject("entity.read", { kind: "entity", id: "e1" });
+    expect([mocks.activeTenant.mock.calls.length, mocks.prisma.entity.findUnique.mock.calls.length]).toEqual(foreignReads);
+    expect(foreign).toEqual({ success: false, error: { code: "NOT_FOUND", message: "Not found" } });
+    expect(JSON.stringify(foreign)).toBe(JSON.stringify(missing));
+  });
+});
+
+describe("contextOf: the resource-relative role label is retired", () => {
+  it("carries the platform role only (never a role over a resource) and the assignments the policy judged", () => {
+    const principal = principalOf([assign.tenant("ADMIN", T1), assign.domain("STEWARD", T1, "dom-a")], { userId: "u-1" });
+    expect(contextOf(principal)).toEqual({ userId: "u-1", userRole: "VIEWER", assignments: principal.assignments, prisma: mocks.prisma });
+    expect(contextOf(globalAdmin("a-1"))).toMatchObject({ userId: "a-1", userRole: "ADMIN" });
   });
 });

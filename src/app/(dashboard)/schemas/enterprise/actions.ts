@@ -64,7 +64,7 @@ export async function createTenantEntityAction(data: {
 
   try {
     // An entity id inside a field's decorators is what publish pins and the renderers load: it must be an entity of the active tenant.
-    if (!(await fieldsReferenceAllowed(data.fields, (id) => inActiveTenant("entity", id)))) return { error: FOREIGN_REFERENCE_MESSAGE }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
+    if (!(await fieldsReferenceAllowed(data.fields, (id) => inActiveTenant("entity", id)))) return { error: FOREIGN_REFERENCE_MESSAGE }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
 
     const [tenantId, userId] = await Promise.all([
       getActiveTenantId(),

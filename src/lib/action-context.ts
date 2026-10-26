@@ -87,7 +87,13 @@ export function authorizePrincipal(
   return can(principal.assignments, action, resource) ? ok(principal) : { success: false, error: forbiddenError() };
 }
 
-/** May the current principal perform `action` on `resource`? The principal comes back on success, so the caller can build its context from it. */
+/**
+ * May the current principal perform `action` on `resource`? The principal comes back on success, so the caller can build its context from it.
+ *
+ * This is the decision ALONE: it does not look at which tenant is in view. It is for what is not about the content of the active tenant
+ * (switching to a tenant, listing the tenants the user may reach). A guard in front of content, reading or writing, is
+ * `authorizeInActiveTenant`: the resource must lie in the active tenant too.
+ */
 export async function authorize(action: ActionId, resource: ResourceRef): Promise<Result<Principal, ServiceError>> {
   return authorizePrincipal(await getPrincipal(), action, resource);
 }
@@ -95,6 +101,87 @@ export async function authorize(action: ActionId, resource: ResourceRef): Promis
 /** `authorize` for a decision about a tenant as a whole (create a domain, manage users, switch to it). */
 export async function authorizeTenant(action: ActionId, tenantId: string): Promise<Result<Principal, ServiceError>> {
   return authorize(action, { tenantId });
+}
+
+/** The levels whose decision is not about a place: platform items and the user's own things have no resource (and so no tenant) to hide. */
+const isPlaceless = (action: ActionId): boolean => ACTIONS[action].level === "self" || ACTIONS[action].level === "global";
+
+/**
+ * The tenant the principal is looking at, or null when they may reach none (`NoTenantAccess`: no role anywhere, a stale session). Any other
+ * failure (the database) propagates: it is never turned into an answer about the resource.
+ */
+async function activeTenantOf(principal: Principal): Promise<string | null> {
+  try {
+    return await getActiveTenantId(principal);
+  } catch (e: unknown) {
+    if (isNoTenantAccess(e)) return null;
+    throw e;
+  }
+}
+
+/**
+ * THE decision for content, pure once the active tenant is known: `authorizePrincipal` PLUS "the resource lies in the ACTIVE tenant". A
+ * resource of another tenant is answered `notFound`, exactly as a missing one, even for a user who holds a covering role there (a user with
+ * roles in tenants A and B and A in view cannot read or write B's rows by id; the tenant switch is how they get there) and even for a
+ * global administrator. Platform and own-things actions are not about a place and skip the tenant test.
+ */
+function decideInActiveTenant(
+  principal: Principal,
+  activeTenantId: string | null,
+  action: ActionId,
+  resource: ResourceRef,
+  notFound: ServiceError
+): Result<Principal, ServiceError> {
+  if (!isActionId(action)) return { success: false, error: forbiddenError() };
+  if (!isPlaceless(action) && (activeTenantId === null || resource?.tenantId !== activeTenantId)) return { success: false, error: { ...notFound } };
+  return authorizePrincipal(principal, action, resource, notFound);
+}
+
+/**
+ * The shared body of every guard of content: who (nobody: UNAUTHORIZED), which tenant is in view, WHERE the resource is (`load`), then the
+ * decision. The reads happen in this order whatever the outcome, so a foreign row and a missing one cost the same (no timing oracle on top of
+ * the identical answer): the principal once, the active tenant once (unless the action has no place), the resource once. A `load` that
+ * fails with NOT_FOUND answers `notFound`; any other failure of it is carried.
+ */
+async function authorizeLoaded(
+  action: ActionId,
+  load: () => Promise<Result<ResourceRef, ServiceError>>,
+  notFound: ServiceError
+): Promise<Result<{ principal: Principal; resource: ResourceRef }, ServiceError>> {
+  const principal = await getPrincipal();
+  if (!principal) return { success: false, error: unauthorizedError() };
+  const activeTenantId = isActionId(action) && !isPlaceless(action) ? await activeTenantOf(principal) : null;
+  const loaded = await load();
+  if (!loaded.success) return { success: false, error: loaded.error.code === "NOT_FOUND" ? { ...notFound } : loaded.error };
+  const decided = decideInActiveTenant(principal, activeTenantId, action, loaded.data, notFound);
+  return decided.success ? ok({ principal, resource: loaded.data }) : decided;
+}
+
+/**
+ * THE guard in front of content (access-control design, goal 3), for a resource whose place the caller already holds (a `ResourceRef` built
+ * from a row it has read, or the target of a create): an action needs BOTH the resource in the ACTIVE tenant (else the same NOT_FOUND as a
+ * missing resource) AND a role that covers it and reaches the action's minimum (else FORBIDDEN, generic). `notFound` is the caller's wire
+ * shape for the refusal to see (default `notFoundError()`); it is the answer for the missing row and the unseen one alike.
+ *
+ * Never build the reference from client input (a `domainId` argument): take it from `resolveResourceRef` / `authorizeSubject`, which read
+ * it from the row. Call it before any read of or write to the resource.
+ */
+export async function authorizeInActiveTenant(
+  action: ActionId,
+  resource: ResourceRef,
+  notFound: ServiceError = notFoundError()
+): Promise<Result<Principal, ServiceError>> {
+  const decided = await authorizeLoaded(action, async () => ok(resource), notFound);
+  return decided.success ? ok(decided.data.principal) : decided;
+}
+
+/** `authorizeInActiveTenant` for a decision about the ACTIVE tenant as a whole (list its domains, create a domain, the glossary). */
+export async function authorizeActiveTenant(action: ActionId, notFound: ServiceError = notFoundError()): Promise<Result<Principal, ServiceError>> {
+  const principal = await getPrincipal();
+  if (!principal) return { success: false, error: unauthorizedError() };
+  if (isActionId(action) && isPlaceless(action)) return authorizePrincipal(principal, action, { tenantId: "-" }, notFound);
+  const activeTenantId = await activeTenantOf(principal);
+  return decideInActiveTenant(principal, activeTenantId, action, { tenantId: activeTenantId ?? "-" }, notFound);
 }
 
 /**
@@ -187,29 +274,34 @@ const isRowSubject = (subject: AccessSubject): subject is { kind: ResourceKind; 
   typeof subject === "object" && subject !== null && "kind" in subject;
 
 /**
- * `authorize` for a subject that may still have to be looked up. A row that does not exist and a row the principal cannot see answer with
- * the same `notFound` (default: `notFoundError()`), so the caller's wire shape stays one thing. On success the principal and the resolved
- * resource come back (the resource is what a service context is judged over: `contextOf`).
+ * `authorizeInActiveTenant` for a subject that may still have to be looked up (a stored row by kind and id). A row that does not exist, a row
+ * of another tenant than the active one and a row the principal cannot see all answer with the same `notFound` (default: `notFoundError()`),
+ * so the caller's wire shape stays one thing. On success the principal and the resolved resource come back (the resource is what
+ * `contextOf` and the caller's later checks are judged over).
  */
 export async function authorizeSubject(
   action: ActionId,
   subject: AccessSubject,
   notFound: ServiceError = notFoundError()
 ): Promise<Result<{ principal: Principal; resource: ResourceRef }, ServiceError>> {
-  const principal = await getPrincipal();
-  if (!principal) return { success: false, error: unauthorizedError() };
-  const resource = isRowSubject(subject) ? await resolveResourceRef(subject.kind, subject.id) : subject;
-  if (!resource) return { success: false, error: { ...notFound } };
-  const decided = authorizePrincipal(principal, action, resource, notFound);
-  return decided.success ? ok({ principal, resource }) : decided;
+  return authorizeLoaded(
+    action,
+    async () => {
+      const resource = isRowSubject(subject) ? await resolveResourceRef(subject.kind, subject.id) : subject;
+      return resource ? ok(resource) : err(notFoundError());
+    },
+    notFound
+  );
 }
 
 /**
- * The service context of a decision: `userRole` is the role the principal holds OVER THE RESOURCE (the lowest rung when none applies), so
- * a service that still reads `ctx.userRole` sees what the policy saw. A label for legacy checks, never the decision.
+ * The service context of an authorized call: the user, the assignments the policy judged (a service that must decide for itself asks `can` /
+ * `grantAllowed` over them) and `userRole`, which is the role held at PLATFORM scope only (the lowest rung when none): the resource-relative
+ * label that used to be here let a tenant administrator look like "the" ADMIN to a service that compares it, and a migrated steward look like a
+ * viewer. The label never decides a permission over a resource; only the policy does.
  */
-export function contextOf(principal: Principal, resource?: ResourceRef): ServiceContext {
-  return { userId: principal.userId, userRole: contextRole(principal.assignments, resource), prisma };
+export function contextOf(principal: Principal): ServiceContext {
+  return { userId: principal.userId, userRole: contextRole(principal.assignments), assignments: principal.assignments, prisma };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -287,6 +379,16 @@ async function ownedTargetRef(target: ScopeTarget): Promise<Result<ResourceRef>>
   return ok({ tenantId: scope.data.tenantId, domainId: scope.data.domainId, productId: scope.data.productId });
 }
 
+/** Where a create's target lives, whatever tenant that is (the tenant in view is decided by `authorizeInActiveTenant`'s caller, `authorizeLoaded`). */
+async function resolveTargetRef(target: ScopeTarget): Promise<Result<ResourceRef, ServiceError>> {
+  const scope = await resolveScope(prisma, target);
+  if (!scope.success) return scope;
+  return ok({ tenantId: scope.data.tenantId, domainId: scope.data.domainId, productId: scope.data.productId });
+}
+
+/** What a malformed target (not a well-formed `ScopeTarget`) is answered when an action asks for it: a NOT_FOUND, the same for every malformed value. */
+const MALFORMED_TARGET_ERROR: ServiceError = { code: "NOT_FOUND", message: "Target not found" };
+
 /**
  * `inActiveTenant` for a create's `ScopeTarget`: succeeds when the target lies in the active tenant, else the NOT_FOUND `resolveScope`
  * gives a missing one. Success carries nothing: the write that follows re-resolves the target itself. Asks for no role (see `inActiveTenant`).
@@ -306,22 +408,29 @@ type Guarded<T> = () => Promise<Result<T>>;
  * check on purpose: the service parses it with the same `parseScopeTarget` and answers its own VALIDATION_ERROR, so no write is
  * reachable and that answer stays unchanged. The service-level `assertOwnedBy` stays behind this check.
  *
- * With an `action` (`withOwnedTarget(action, target, run)`) the target must also be one the principal may perform `action` on: a target
- * they cannot see is answered with the missing-target NOT_FOUND above (identical, whole), one they can see but hold too low a role over
- * is FORBIDDEN, generic. Without an action it is the older role-less check (Task 5 gives each caller its action).
+ * With an `action` (`withOwnedTarget(action, target, run)`) the guard is `authorizeInActiveTenant`: the target must lie in the ACTIVE tenant
+ * AND the principal must be allowed `action` over it. A target they cannot see (missing, another tenant, nothing of theirs covers it) is
+ * answered with the missing-target NOT_FOUND above (identical, whole), one they can see but hold too low a role over is FORBIDDEN,
+ * generic. A MALFORMED target FAILS CLOSED: the same NOT_FOUND for every malformed value, no look-up, and `run` never starts (a `run` that
+ * does not re-parse the very value would otherwise be reached with no authorization at all).
+ *
+ * Without an action it is the older role-less check (the leniency for a malformed target belongs to that adapter only: the service parses
+ * it with the same `parseScopeTarget` and answers its own VALIDATION_ERROR). Task 5 gives each remaining caller its action and removes it.
  */
 export async function withOwnedTarget<T>(action: ActionId, target: unknown, run: Guarded<T>): Promise<Result<T>>;
 export async function withOwnedTarget<T>(target: unknown, run: Guarded<T>): Promise<Result<T>>;
 export async function withOwnedTarget<T>(...args: [ActionId, unknown, Guarded<T>] | [unknown, Guarded<T>]): Promise<Result<T>> {
   const [action, target, run] = args.length === 3 ? args : [null, args[0], args[1]];
   const parsed = parseScopeTarget(target);
+  if (action !== null) {
+    if (!parsed.success) return err({ ...MALFORMED_TARGET_ERROR });
+    const allowed = await authorizeLoaded(action, () => resolveTargetRef(parsed.data), missingTargetError(parsed.data));
+    if (!allowed.success) return err(allowed.error);
+    return run();
+  }
   if (parsed.success) {
     const owned = await ownedTargetRef(parsed.data);
     if (!owned.success) return owned;
-    if (action !== null) {
-      const allowed = await authorizeSubject(action, owned.data, missingTargetError(parsed.data));
-      if (!allowed.success) return err(allowed.error);
-    }
   }
   return run();
 }
@@ -410,10 +519,10 @@ type Mutation<T> = (ctx: ServiceContext) => Promise<Result<T>>;
  * `toActionResult`, so a `DB_ERROR` / `INTERNAL_ERROR` never reaches the browser with its raw text (`label` names the action
  * in the server-side log of that failure).
  *
- * `runMutation({ action, resource }, run, label)`: `authorizeSubject` decides first (nobody: NOT_AUTHENTICATED; a resource the principal
- * cannot see: NOT_FOUND, the answer a missing one gets; too low a role: FORBIDDEN) and `run` gets a context whose `userRole` is the role
- * the principal holds over the resource. `runMutation(run, label)` is the older call shape, kept as an adapter until Task 5 gives each
- * caller its action: it authenticates through the legacy `getActionContext` and asks for no role.
+ * `runMutation({ action, resource }, run, label)`: `authorizeSubject` decides first (nobody: NOT_AUTHENTICATED; a resource outside the active
+ * tenant or one the principal cannot see: NOT_FOUND, the answer a missing one gets; too low a role: FORBIDDEN) and `run` gets `contextOf`
+ * the principal (the assignments the policy judged; no role label over the resource). `runMutation(run, label)` is the older call shape,
+ * kept as an adapter until Task 5 gives each caller its action: it authenticates through the legacy `getActionContext` and asks for no role.
  *
  * An unexpected REJECTION from the session lookup or from `run` (a driver / Prisma validation error from a service that
  * lets malformed client input reach a query, a lost connection) is caught here as well: it is logged server-side and
@@ -438,7 +547,7 @@ export async function runMutation<T>(first: MutationAccess | Mutation<T>, second
     if (access) {
       const allowed = await authorizeSubject(access.action, access.resource, access.notFound);
       if (!allowed.success) return toActionResult({ success: false, error: allowed.error }, label);
-      ctx = contextOf(allowed.data.principal, allowed.data.resource);
+      ctx = contextOf(allowed.data.principal);
     } else {
       ctx = await getActionContext();
     }

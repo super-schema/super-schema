@@ -10,10 +10,13 @@ let roleStore: Array<{
   scopeKey: string;
   tenantId: string | null;
   domainId: string | null;
+  productId?: string | null;
   grantedById: string | null;
   createdAt: Date;
 }> = [];
 let idCounter = 0;
+/** Users the mock database knows as disabled (`disabledAt` set). */
+const disabledUsers = new Set<string>();
 
 vi.mock("@/lib/db", () => ({
   prisma: {
@@ -41,7 +44,7 @@ vi.mock("@/lib/db", () => ({
       }),
       create: vi.fn(
         async (args: {
-          data: { userId: string; role: string; scopeKey: string; tenantId: string | null; domainId: string | null; grantedById: string | null };
+          data: { userId: string; role: string; scopeKey: string; tenantId: string | null; domainId: string | null; productId?: string | null; grantedById: string | null };
         }) => {
           const row = {
             id: `role-${++idCounter}`,
@@ -50,6 +53,7 @@ vi.mock("@/lib/db", () => ({
             scopeKey: args.data.scopeKey,
             tenantId: args.data.tenantId,
             domainId: args.data.domainId,
+            productId: args.data.productId ?? null,
             grantedById: args.data.grantedById,
             createdAt: new Date(),
           };
@@ -66,20 +70,44 @@ vi.mock("@/lib/db", () => ({
         idCounter = 0;
       }),
       count: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
-        const where = args?.where ?? {};
+        const where = (args?.where ?? {}) as { role?: string; scopeKey?: string; id?: { not?: string }; user?: { disabledAt?: null } };
         return roleStore.filter(
-          (r) => (where.role === undefined || r.role === where.role) && (where.scopeKey === undefined || r.scopeKey === where.scopeKey)
+          (r) =>
+            (where.role === undefined || r.role === where.role) &&
+            (where.scopeKey === undefined || r.scopeKey === where.scopeKey) &&
+            (where.id?.not === undefined || r.id !== where.id.not) &&
+            (where.user?.disabledAt === undefined || !disabledUsers.has(r.userId))
         ).length;
       }),
     },
     // The users that exist: every id but "ghost-user" (a role row has a foreign key to its user: an id that is nobody's used to throw P2003).
+    // Read with its roles (the granter's assignments) and `disabledAt`, as the service selects them.
     user: {
-      findUnique: vi.fn(async (args: { where: { id: string } }) => (args.where.id === "ghost-user" ? null : { id: args.where.id })),
+      findUnique: vi.fn(async (args: { where: { id: string } }) =>
+        args.where.id === "ghost-user"
+          ? null
+          : { id: args.where.id, disabledAt: disabledUsers.has(args.where.id) ? new Date() : null, roles: roleStore.filter((r) => r.userId === args.where.id) }
+      ),
     },
-    // The domains that exist: the ones whose id starts with "dom-" (a role row has a foreign key to its domain), all in tenant "tenant-a".
+    // The tenants that exist: the ones whose id starts with "tenant-".
+    tenant: {
+      findUnique: vi.fn(async (args: { where: { id: string } }) => (args.where.id.startsWith("tenant-") ? { id: args.where.id } : null)),
+    },
+    // The domains that exist: the ones whose id starts with "dom-" (a role row has a foreign key to its domain), all in tenant "tenant-a"
+    // except the ones named "dom-b-*", which are tenant "tenant-b"'s.
     domain: {
-      findUnique: vi.fn(async (args: { where: { id: string } }) => (args.where.id.startsWith("dom-") ? { id: args.where.id, tenantId: "tenant-a" } : null)),
+      findUnique: vi.fn(async (args: { where: { id: string } }) =>
+        args.where.id.startsWith("dom-") ? { id: args.where.id, tenantId: args.where.id.startsWith("dom-b-") ? "tenant-b" : "tenant-a" } : null
+      ),
     },
+    // The products that exist: the ones whose id starts with "prod-", all in domain "dom-1" of tenant "tenant-a".
+    product: {
+      findUnique: vi.fn(async (args: { where: { id: string } }) =>
+        args.where.id.startsWith("prod-") ? { id: args.where.id, domainId: "dom-1", domain: { tenantId: "tenant-a" } } : null
+      ),
+    },
+    // A transaction runs the callback against the same in-memory database (serializable isolation is the database's job; see the PGlite test).
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn((await import("@/lib/db")).prisma)),
   },
 }));
 
@@ -107,15 +135,38 @@ const authorCtx: ServiceContext = {
   prisma: null as unknown as ServiceContext["prisma"],
 };
 
-const viewerCtx: ServiceContext = {
-  userId: "viewer-1",
-  userRole: "VIEWER",
-  prisma: null as unknown as ServiceContext["prisma"],
-};
+/** A stored role row for a user: the granter's authority is what is in this table, never the label of the context. */
+function seedRole(userId: string, role: string, scope: { key: string; tenantId?: string | null; domainId?: string | null; productId?: string | null }) {
+  const row = {
+    id: `seed-${userId}-${role}-${scope.key}`,
+    userId,
+    role,
+    scopeKey: scope.key,
+    tenantId: scope.tenantId ?? null,
+    domainId: scope.domainId ?? null,
+    productId: scope.productId ?? null,
+    grantedById: null,
+    createdAt: new Date(),
+  };
+  roleStore.push(row);
+  return row;
+}
+const seedGlobalAdmin = (userId: string) => seedRole(userId, "ADMIN", { key: "G" });
+const seedTenantAdmin = (userId: string, tenantId = "tenant-a") => seedRole(userId, "ADMIN", { key: `T:${tenantId}`, tenantId });
+
+const ctxOf = (userId: string, userRole = "VIEWER"): ServiceContext => ({ userId, userRole, prisma: null as unknown as ServiceContext["prisma"] });
+/** The roles in the store other than the seeded caller's own. */
+const grantedRows = async () => (await _getRoleStore()).filter((r) => r.userId !== "admin-1");
+/** The same, as the raw stored rows (scope key, tenant, product, granter). */
+const storedRows = async () => ((await prisma.userRole.findMany()) as unknown as Array<Record<string, unknown>>).filter((r) => r.userId !== "admin-1");
 
 describe("RBAC Service", () => {
   beforeEach(async () => {
+    vi.clearAllMocks();
     await _resetRoleStore();
+    disabledUsers.clear();
+    // `admin-1` is a stored global ADMIN: the caller of most tests below. (Before, the context's label said so; now only stored rows count.)
+    seedGlobalAdmin("admin-1");
   });
 
   describe("assignRole", () => {
@@ -141,7 +192,7 @@ describe("RBAC Service", () => {
         expect(result.error.code).toBe("NOT_FOUND");
         expect(result.error.message).toBe('Domain "no-such-domain" not found');
       }
-      expect(await _getRoleStore()).toEqual([]);
+      expect(await grantedRows()).toEqual([]);
     });
 
     it("refuses a user that does not exist, with a message, and writes nothing (the foreign key used to throw P2003 out of the action)", async () => {
@@ -157,7 +208,7 @@ describe("RBAC Service", () => {
           expect(result.error.suggestedFix).toMatch(/existing user/i);
         }
       }
-      expect(await _getRoleStore()).toEqual([]);
+      expect(await grantedRows()).toEqual([]);
     });
 
     it("assigns a domain-scoped AUTHOR role", async () => {
@@ -191,51 +242,53 @@ describe("RBAC Service", () => {
       }
     });
 
-    it("assigns system-level COMPLIANCE_OFFICER role", async () => {
-      const result = await assignRole(
-        { userId: "user-3", role: "COMPLIANCE_OFFICER" },
-        adminCtx
-      );
-      expect(result.success).toBe(true);
-    });
-
-    it("rejects ADMIN role with domainId (must be system-level)", async () => {
-      const result = await assignRole(
-        { userId: "user-1", role: "ADMIN", domainId: "dom-1" },
-        adminCtx
-      );
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe("VALIDATION_ERROR");
-        expect(result.error.message).toContain("system-level");
+    it("refuses a platform-wide COMPLIANCE_OFFICER, STEWARD, AUTHOR or VIEWER (GLOBAL is valid for ADMIN only), says why, and writes nothing", async () => {
+      for (const role of ["COMPLIANCE_OFFICER", "STEWARD", "AUTHOR", "VIEWER"] as const) {
+        const result = await assignRole({ userId: "user-3", role }, adminCtx);
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.code).toBe("VALIDATION_ERROR");
+          expect(result.error.message).toContain("only ADMIN can");
+          expect(result.error.suggestedFix).toMatch(/tenant, a domain or a product/);
+        }
       }
+      expect(await grantedRows()).toEqual([]);
     });
 
-    it("rejects COMPLIANCE_OFFICER role with domainId", async () => {
-      const result = await assignRole(
-        { userId: "user-1", role: "COMPLIANCE_OFFICER", domainId: "dom-1" },
-        adminCtx
-      );
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects VIEWER role without domainId (requires domain)", async () => {
-      const result = await assignRole(
-        { userId: "user-1", role: "VIEWER" },
-        adminCtx
-      );
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.message).toContain("requires a domainId");
+    it("assigns COMPLIANCE_OFFICER and ADMIN at TENANT scope (any role at any scope except GLOBAL), the tenant being checked to exist", async () => {
+      for (const role of ["COMPLIANCE_OFFICER", "ADMIN"] as const) {
+        const result = await assignRole({ userId: "user-1", role, tenantId: "tenant-a" }, adminCtx);
+        expect(result.success).toBe(true);
       }
+      expect((await storedRows()).map((row) => [row.role, row.scopeKey, row.tenantId, row.domainId])).toEqual([
+        ["COMPLIANCE_OFFICER", "T:tenant-a", "tenant-a", null],
+        ["ADMIN", "T:tenant-a", "tenant-a", null],
+      ]);
+      const missing = await assignRole({ userId: "user-1", role: "AUTHOR", tenantId: "nope" }, adminCtx);
+      expect(missing).toMatchObject({ success: false, error: { code: "NOT_FOUND", message: 'Tenant "nope" not found' } });
     });
 
-    it("rejects AUTHOR role without domainId", async () => {
-      const result = await assignRole(
-        { userId: "user-1", role: "AUTHOR" },
-        adminCtx
-      );
-      expect(result.success).toBe(false);
+    it("assigns ADMIN and COMPLIANCE_OFFICER at DOMAIN scope too, and any role at PRODUCT scope with the product's own domain and tenant", async () => {
+      expect((await assignRole({ userId: "user-1", role: "ADMIN", domainId: "dom-1" }, adminCtx)).success).toBe(true);
+      expect((await assignRole({ userId: "user-1", role: "COMPLIANCE_OFFICER", domainId: "dom-1" }, adminCtx)).success).toBe(true);
+      expect((await assignRole({ userId: "user-1", role: "AUTHOR", productId: "prod-1" }, adminCtx)).success).toBe(true);
+      expect((await storedRows()).map((row) => [row.role, row.scopeKey, row.tenantId, row.domainId, row.productId])).toEqual([
+        ["ADMIN", "D:dom-1", "tenant-a", "dom-1", null],
+        ["COMPLIANCE_OFFICER", "D:dom-1", "tenant-a", "dom-1", null],
+        ["AUTHOR", "P:prod-1", "tenant-a", "dom-1", "prod-1"],
+      ]);
+    });
+
+    it("takes the tenant and domain of a role from the stored rows, never the caller's word: ids that disagree name nothing", async () => {
+      for (const input of [
+        { userId: "user-1", role: "AUTHOR" as const, domainId: "dom-1", tenantId: "tenant-b" },
+        { userId: "user-1", role: "AUTHOR" as const, productId: "prod-1", domainId: "dom-2" },
+        { userId: "user-1", role: "AUTHOR" as const, productId: "prod-1", tenantId: "tenant-b" },
+      ]) {
+        const result = await assignRole(input, adminCtx);
+        expect(result.success).toBe(false);
+      }
+      expect(await grantedRows()).toEqual([]);
     });
 
     it("rejects duplicate role assignment", async () => {
@@ -253,16 +306,82 @@ describe("RBAC Service", () => {
       }
     });
 
-    it("rejects non-Admin users", async () => {
-      const result = await assignRole(
-        { userId: "user-1", role: "VIEWER", domainId: "dom-1" },
-        authorCtx
-      );
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe("FORBIDDEN");
-        expect(result.error.message).toContain("ADMIN");
+    it("rejects a caller who holds no role, with one generic message and no look-up of the target", async () => {
+      const result = await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, authorCtx);
+      expect(result).toEqual({
+        success: false,
+        error: { code: "FORBIDDEN", message: "You do not have permission to do this", suggestedFix: "Contact your administrator" },
+      });
+      expect(prisma.domain.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("ignores the label of the context: an ADMIN label over stored roles that grant nothing (or no stored roles) is refused", async () => {
+      seedRole("liar-1", "AUTHOR", { key: "D:dom-1", tenantId: "tenant-a", domainId: "dom-1" });
+      for (const userId of ["liar-1", "never-heard-of-1"]) {
+        const result = await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, ctxOf(userId, "ADMIN"));
+        expect(result).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
       }
+      expect(await grantedRows()).toHaveLength(1);
+    });
+
+    it("refuses a disabled granter and a granter who does not exist", async () => {
+      seedGlobalAdmin("ex-admin");
+      disabledUsers.add("ex-admin");
+      for (const userId of ["ex-admin", "ghost-user"]) {
+        expect(await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, ctxOf(userId))).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+      }
+    });
+
+    describe("who may grant where (grantAllowed)", () => {
+      it("a tenant ADMIN grants inside their tenant (its domains and products too) and nowhere else, and never GLOBAL", async () => {
+        seedTenantAdmin("tadmin-a", "tenant-a");
+        const as = ctxOf("tadmin-a");
+        expect((await assignRole({ userId: "user-1", role: "ADMIN", tenantId: "tenant-a" }, as)).success).toBe(true);
+        expect((await assignRole({ userId: "user-1", role: "STEWARD", domainId: "dom-1" }, as)).success).toBe(true);
+        expect((await assignRole({ userId: "user-1", role: "VIEWER", productId: "prod-1" }, as)).success).toBe(true);
+
+        const foreign = await assignRole({ userId: "user-1", role: "VIEWER", tenantId: "tenant-b" }, as);
+        const foreignDomain = await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-b-1" }, as);
+        const missingDomain = await assignRole({ userId: "user-1", role: "VIEWER", domainId: "no-such-domain" }, as);
+        const global = await assignRole({ userId: "user-1", role: "ADMIN" }, as);
+        for (const refused of [foreign, foreignDomain, global]) expect(refused).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+        // An id of another tenant and an id that is nobody's are the same answer to someone who is not a platform administrator.
+        expect(JSON.stringify(missingDomain)).toBe(JSON.stringify(foreignDomain));
+      });
+
+      it("a domain ADMIN grants in their domain and its products, not in a sibling domain and not at tenant scope", async () => {
+        seedRole("dadmin", "ADMIN", { key: "D:dom-1", tenantId: "tenant-a", domainId: "dom-1" });
+        const as = ctxOf("dadmin");
+        expect((await assignRole({ userId: "user-1", role: "AUTHOR", domainId: "dom-1" }, as)).success).toBe(true);
+        expect((await assignRole({ userId: "user-1", role: "AUTHOR", productId: "prod-1" }, as)).success).toBe(true);
+        expect(await assignRole({ userId: "user-1", role: "AUTHOR", domainId: "dom-2" }, as)).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+        expect(await assignRole({ userId: "user-1", role: "AUTHOR", tenantId: "tenant-a" }, as)).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+      });
+
+      it("a STEWARD, a COMPLIANCE_OFFICER and an AUTHOR grant nothing anywhere (only an ADMIN grants), their tenant included", async () => {
+        for (const role of ["STEWARD", "COMPLIANCE_OFFICER", "AUTHOR", "VIEWER"]) {
+          const userId = `holder-${role}`;
+          seedRole(userId, role, { key: "T:tenant-a", tenantId: "tenant-a" });
+          for (const input of [{ domainId: "dom-1" }, { tenantId: "tenant-a" }, { productId: "prod-1" }]) {
+            const result = await assignRole({ userId: "user-1", role: "VIEWER", ...input }, ctxOf(userId));
+            expect(result).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+          }
+        }
+        expect(await grantedRows()).toHaveLength(4);
+      });
+
+      it("a global ADMIN grants everywhere, and is told when the target does not exist", async () => {
+        expect((await assignRole({ userId: "user-1", role: "ADMIN", tenantId: "tenant-b" }, adminCtx)).success).toBe(true);
+        expect(await assignRole({ userId: "user-1", role: "VIEWER", productId: "no-such-product" }, adminCtx)).toMatchObject({
+          success: false,
+          error: { code: "NOT_FOUND", message: 'Product "no-such-product" not found' },
+        });
+      });
+    });
+
+    it("runs in a SERIALIZABLE transaction", async () => {
+      await assignRole({ userId: "user-1", role: "VIEWER", domainId: "dom-1" }, adminCtx);
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable" });
     });
   });
 
@@ -277,61 +396,94 @@ describe("RBAC Service", () => {
 
       const result = await removeRole(assigned.data.id, adminCtx);
       expect(result.success).toBe(true);
-      const store = await _getRoleStore();
-      expect(store).toHaveLength(0);
+      expect(await grantedRows()).toHaveLength(0);
     });
 
-    it("admin cannot remove their own Admin role", async () => {
-      const assigned = await assignRole(
-        { userId: "admin-1", role: "ADMIN" },
-        adminCtx
-      );
-      expect(assigned.success).toBe(true);
-      if (!assigned.success) return;
+    it("an administrator cannot remove their own administrator assignment, at platform scope or at any other", async () => {
+      const tenantAdmin = seedTenantAdmin("tadmin-a");
+      const own = await removeRole(tenantAdmin.id, ctxOf("tadmin-a"));
+      expect(own).toMatchObject({ success: false, error: { code: "FORBIDDEN", message: "Cannot remove your own admin role" } });
 
-      const result = await removeRole(assigned.data.id, adminCtx);
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.message).toContain("Cannot remove your own admin role");
-      }
+      const domainAdmin = seedRole("dadmin", "ADMIN", { key: "D:dom-1", tenantId: "tenant-a", domainId: "dom-1" });
+      expect(await removeRole(domainAdmin.id, ctxOf("dadmin"))).toMatchObject({ success: false, error: { message: "Cannot remove your own admin role" } });
+
+      const globalAdmin = seedGlobalAdmin("admin-2");
+      const second = await removeRole(globalAdmin.id, ctxOf("admin-2"));
+      expect(second).toMatchObject({ success: false, error: { message: "Cannot remove your own admin role" } });
+      expect(await grantedRows()).toHaveLength(3);
     });
 
-    it("cannot remove the last admin", async () => {
-      // Assign ADMIN to a different user
-      const assigned = await assignRole(
-        { userId: "user-other", role: "ADMIN" },
-        adminCtx
-      );
-      expect(assigned.success).toBe(true);
-      if (!assigned.success) return;
-
-      // Only one admin exists, try to remove
-      const result = await removeRole(assigned.data.id, adminCtx);
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.message).toContain("at least one admin");
-      }
+    it("an administrator may remove their own non-administrator assignments (the rule is about the administrator role)", async () => {
+      const own = seedRole("admin-1", "AUTHOR", { key: "D:dom-1", tenantId: "tenant-a", domainId: "dom-1" });
+      expect((await removeRole(own.id, adminCtx)).success).toBe(true);
     });
 
-    it("can remove admin when another admin exists", async () => {
-      // First admin
-      await assignRole({ userId: "admin-1", role: "ADMIN" }, adminCtx);
-      // Second admin
-      const second = await assignRole({ userId: "admin-2", role: "ADMIN" }, adminCtx);
-      expect(second.success).toBe(true);
-      if (!second.success) return;
-
-      // Remove second admin (not self)
-      const result = await removeRole(second.data.id, adminCtx);
-      expect(result.success).toBe(true);
+    it("never removes the last ENABLED global administrator: the guard asks the database whether another one remains (belt and braces behind the self-removal rule)", async () => {
+      const other = seedGlobalAdmin("user-other");
+      vi.mocked(prisma.userRole.count).mockResolvedValueOnce(0);
+      const result = await removeRole(other.id, adminCtx);
+      expect(result).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+      if (!result.success) expect(result.error.message).toContain("at least one admin");
+      expect(await grantedRows()).toHaveLength(1);
+      // The question names the enabled global administrators other than this row.
+      expect(prisma.userRole.count).toHaveBeenLastCalledWith({ where: { role: "ADMIN", scopeKey: "G", id: { not: other.id }, user: { disabledAt: null } } });
     });
 
-    it("rejects non-Admin users", async () => {
+    it("can remove a global administrator when another one remains", async () => {
+      const second = seedGlobalAdmin("admin-2");
+      expect((await removeRole(second.id, adminCtx)).success).toBe(true);
+    });
+
+    it("a DISABLED administrator does not count as one that remains", async () => {
+      seedGlobalAdmin("admin-2");
+      disabledUsers.add("admin-2");
+      const third = seedGlobalAdmin("admin-3");
+      disabledUsers.add("admin-1"); // the caller is disabled: nobody grants anything
+      expect(await removeRole(third.id, adminCtx)).toMatchObject({ success: false, error: { code: "FORBIDDEN", message: "You do not have permission to do this" } });
+    });
+
+    it("rejects a caller who holds no role", async () => {
       const result = await removeRole("some-id", authorCtx);
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe("FORBIDDEN");
-      }
+      expect(result).toMatchObject({ success: false, error: { code: "FORBIDDEN", message: "You do not have permission to do this" } });
+    });
+
+    it("ignores the label of the context", async () => {
+      const row = seedRole("someone", "VIEWER", { key: "D:dom-1", tenantId: "tenant-a", domainId: "dom-1" });
+      expect(await removeRole(row.id, ctxOf("liar-1", "ADMIN"))).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+      expect(await grantedRows()).toHaveLength(1);
+    });
+
+    it("a tenant ADMIN removes roles inside their tenant; a role of another tenant, a platform role and a missing one are the SAME not-found", async () => {
+      seedTenantAdmin("tadmin-a", "tenant-a");
+      const as = ctxOf("tadmin-a");
+      const mine = seedRole("user-1", "AUTHOR", { key: "D:dom-1", tenantId: "tenant-a", domainId: "dom-1" });
+      const theirs = seedRole("user-1", "AUTHOR", { key: "D:dom-b-1", tenantId: "tenant-b", domainId: "dom-b-1" });
+      const platform = seedGlobalAdmin("admin-2");
+
+      const outside = await removeRole(theirs.id, as);
+      const above = await removeRole(platform.id, as);
+      const missing = await removeRole("no-such-role", as);
+      expect(outside).toEqual({ success: false, error: { code: "NOT_FOUND", message: "Role assignment not found", suggestedFix: "Verify the role assignment ID." } });
+      expect(JSON.stringify(above)).toBe(JSON.stringify(outside));
+      expect(JSON.stringify(missing)).toBe(JSON.stringify(outside));
+      expect((await removeRole(mine.id, as)).success).toBe(true);
+      const left = (await grantedRows()).map((row) => row.id);
+      expect(left).toContain(theirs.id);
+      expect(left).toContain(platform.id);
+      expect(left).not.toContain(mine.id);
+    });
+
+    it("a platform administrator can clear a row that is not a valid assignment (a legacy row), nobody else can", async () => {
+      const junk = seedRole("user-1", "COMPLIANCE_OFFICER", { key: "G" });
+      seedTenantAdmin("tadmin-a", "tenant-a");
+      expect(await removeRole(junk.id, ctxOf("tadmin-a"))).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+      expect((await removeRole(junk.id, adminCtx)).success).toBe(true);
+    });
+
+    it("runs in a SERIALIZABLE transaction", async () => {
+      const row = seedRole("user-1", "VIEWER", { key: "D:dom-1", tenantId: "tenant-a", domainId: "dom-1" });
+      await removeRole(row.id, adminCtx);
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable" });
     });
   });
 
@@ -493,18 +645,17 @@ describe("RBAC Service", () => {
       await assignRole({ userId: "user-1", role: "ADMIN" }, adminCtx);
       await assignRole({ userId: "user-1", role: "AUTHOR", domainId: "dom-1" }, adminCtx);
 
-      const rows = (await prisma.userRole.findMany()) as unknown as Array<Record<string, unknown>>;
       const pick = (row: Record<string, unknown>) =>
-        Object.fromEntries(["userId", "role", "scopeKey", "tenantId", "domainId", "grantedById"].map((key) => [key, row[key]]));
-      expect(rows.map(pick)).toEqual([
-        { userId: "user-1", role: "ADMIN", scopeKey: "G", tenantId: null, domainId: null, grantedById: "admin-1" },
-        { userId: "user-1", role: "AUTHOR", scopeKey: "D:dom-1", tenantId: "tenant-a", domainId: "dom-1", grantedById: "admin-1" },
+        Object.fromEntries(["userId", "role", "scopeKey", "tenantId", "domainId", "productId", "grantedById"].map((key) => [key, row[key]]));
+      expect((await storedRows()).map(pick)).toEqual([
+        { userId: "user-1", role: "ADMIN", scopeKey: "G", tenantId: null, domainId: null, productId: null, grantedById: "admin-1" },
+        { userId: "user-1", role: "AUTHOR", scopeKey: "D:dom-1", tenantId: "tenant-a", domainId: "dom-1", productId: null, grantedById: "admin-1" },
       ]);
     });
 
     it("no longer has a way to make a user the administrator because none exists (the first administrator is the seed's or admin:create's)", async () => {
       expect(await import("@/services/rbac.service")).not.toHaveProperty("bootstrapFirstAdmin");
-      expect(await _getRoleStore()).toEqual([]);
+      expect(await grantedRows()).toEqual([]);
     });
 
     it("is the policy engine's reading: a tenant-scoped row applies to a domain of that tenant, a product-scoped row does not reach the domain above it", async () => {
@@ -545,15 +696,13 @@ describe("RBAC Service", () => {
       expect(await hasPermission("user-1", "STEWARD", "dom-1", adminCtx)).toEqual({ success: true, data: false });
     });
 
-    it("removing a tenant-scoped ADMIN row is not stopped by the last-global-admin rule, removing the last global one is", async () => {
+    it("removing a tenant-scoped ADMIN row does not consult the last-global-admin rule (only a platform row does)", async () => {
       roleStore.push(
-        { id: "t", userId: "someone", role: "ADMIN", scopeKey: "T:tenant-a", tenantId: "tenant-a", domainId: null, grantedById: null, createdAt: new Date() },
-        { id: "g", userId: "the-only-global", role: "ADMIN", scopeKey: "G", tenantId: null, domainId: null, grantedById: null, createdAt: new Date() }
+        { id: "t", userId: "someone", role: "ADMIN", scopeKey: "T:tenant-a", tenantId: "tenant-a", domainId: null, grantedById: null, createdAt: new Date() }
       );
+      vi.mocked(prisma.userRole.count).mockResolvedValueOnce(0);
       expect((await removeRole("t", adminCtx)).success).toBe(true);
-      const last = await removeRole("g", adminCtx);
-      expect(last.success).toBe(false);
-      if (!last.success) expect(last.error.message).toContain("at least one admin");
+      expect(prisma.userRole.count).not.toHaveBeenCalled();
     });
   });
 

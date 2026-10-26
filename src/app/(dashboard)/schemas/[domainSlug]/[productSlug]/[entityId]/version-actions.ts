@@ -28,7 +28,7 @@ export async function getPublishPreviewAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
     const res = await previewPublish(entityId, await serviceContext(session.user.id));
     if (!res.success) return { ...failureOf(res.error, "getPublishPreviewAction") };
     return { success: true, preview: res.data };
@@ -55,7 +55,7 @@ export async function publishEntityAction(
   }
 
   try {
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
     const res = await publishEntity(
       entityId,
       { bump: raw.bump, changeSummary: raw.changeSummary },
@@ -81,7 +81,7 @@ export async function listEntityVersionsAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
     const res = await listEntityVersions(entityId, await serviceContext(session.user.id));
     if (!res.success) return { ...failureOf(res.error, "listEntityVersionsAction") };
     return { success: true, versions: res.data };

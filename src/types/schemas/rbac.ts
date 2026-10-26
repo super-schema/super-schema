@@ -94,10 +94,17 @@ export const SYSTEM_ONLY_ROLES: Role[] = ["COMPLIANCE_OFFICER", "ADMIN"];
  */
 export const DOMAIN_SCOPED_ROLES: Role[] = ["VIEWER", "AUTHOR", "STEWARD"];
 
+/**
+ * Where a role is assigned, by the ids the caller names: `productId` (a product), else `domainId` (a domain), else `tenantId` (a whole
+ * tenant), else nothing (platform scope, ADMIN only). The service completes the full scope from the stored rows and refuses ids that
+ * disagree (`rbac.service.assignRole`), so the tenant of a domain role is never taken from the caller.
+ */
 export const AssignRoleInputSchema = z.object({
   userId: z.string().min(1, "userId is required"),
   role: RoleEnum,
+  tenantId: z.string().optional(),
   domainId: z.string().optional(),
+  productId: z.string().optional(),
 });
 
 export type AssignRoleInput = z.infer<typeof AssignRoleInputSchema>;
