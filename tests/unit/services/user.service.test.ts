@@ -55,7 +55,13 @@ const fakePrisma = {
       return rows;
     }),
     findUnique: vi.fn(async (args: { where: { id: string } }) => users.find((u) => u.id === args.where.id) ?? null),
-    findFirst: vi.fn(async (args: { where?: UserWhere }) => users.find((u) => userMatches(u, args.where)) ?? null),
+    findFirst: vi.fn(async (args: { where?: UserWhere }) => {
+      const found = users.find((u) => userMatches(u, args.where));
+      // `select: { roles: { select: { scopeKey, tenantId } } }`: the scope key of a platform row is "G", of a tenant row "T:<id>"
+      return found
+        ? { ...found, roles: roles.filter((r) => r.userId === found.id).map((r) => ({ scopeKey: r.tenantId ? `T:${r.tenantId}` : "G", tenantId: r.tenantId ?? null })) }
+        : null;
+    }),
     update: vi.fn(async (args: { where: { id: string }; data: { name?: string } }) => {
       const row = users.find((u) => u.id === args.where.id);
       if (!row) throw Object.assign(new Error("Record to update not found."), { code: "P2025" });
@@ -225,11 +231,21 @@ describe("User Service", () => {
       expect((await getUserById("user-1", tenantAdminCtx)).success).toBe(true);
     });
 
-    it("a tenant administrator renames a user of the tenant and cannot rename one outside it (it reads as missing, nothing is written)", async () => {
-      expect((await updateUser({ id: "user-1", name: "Alice B" }, tenantAdminCtx)).success).toBe(true);
+    it("a tenant administrator renames a user whose every role is in the tenant, and cannot rename one outside it, or one with a role elsewhere (it reads as missing, nothing is written)", async () => {
+      users.push(row("user-4", "Dave", "dave@example.com", "2026-01-07"));
+      roles.push({ id: "role-d", userId: "user-4", role: "AUTHOR", domainId: "dom-1", tenantId: "tenant-1", createdAt: new Date("2026-01-07") });
+      expect((await updateUser({ id: "user-4", name: "Dave B" }, tenantAdminCtx)).success).toBe(true);
+      expect(users.find((u) => u.id === "user-4")!.name).toBe("Dave B");
+      // outside the tenant
       const outside = await updateUser({ id: "user-2", name: "Nope" }, tenantAdminCtx);
       expect(!outside.success && outside.error.code).toBe("NOT_FOUND");
       expect(users.find((u) => u.id === "user-2")!.name).toBe("Bob");
+      // user-1 holds a role in the tenant, but also a platform ADMIN row and a role in tenant-2: out of a tenant administrator's reach, like for disabling
+      const reachedOut = await updateUser({ id: "user-1", name: "Alice B" }, tenantAdminCtx);
+      expect(!reachedOut.success && reachedOut.error.code).toBe("NOT_FOUND");
+      expect(users.find((u) => u.id === "user-1")!.name).toBe("Alice");
+      // a platform administrator renames anyone
+      expect((await updateUser({ id: "user-1", name: "Alice C" }, adminCtx)).success).toBe(true);
     });
 
     it("an administrator of another tenant, a domain-scoped administrator and a context with no tenant in view are refused", async () => {

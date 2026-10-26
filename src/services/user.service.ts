@@ -157,9 +157,12 @@ export async function updateUser(
 
   const existing = await ctx.prisma.user.findFirst({
     where: scope.tenantId === null ? { id: parsed.data.id } : { id: parsed.data.id, roles: { some: { tenantId: scope.tenantId } } },
-    select: { id: true, name: true },
+    select: { id: true, name: true, roles: { select: { scopeKey: true, tenantId: true } } },
   });
   if (!existing) return userNotFound(parsed.data.id);
+  // The same reach as disabling and resetting: a tenant administrator renames only a user whose EVERY role lies in tenants they administer
+  // (not a platform administrator, nor a user who also holds a role in another tenant). Out of reach reads as missing.
+  if (!isSelf && !reaches(administeredBy(ctx.assignments ?? []), existing.roles)) return userNotFound(parsed.data.id);
 
   try {
     // A change of a user's name is audited like the other admin changes: the entry carries the name as it was.
