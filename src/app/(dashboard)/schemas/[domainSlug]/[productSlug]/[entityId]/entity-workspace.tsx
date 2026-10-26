@@ -43,6 +43,7 @@ import { RightPanelRouter } from "./components/RightPanelRouter";
 import { InlineEntityMeta } from "./components/InlineEntityMeta";
 import { RetentionPolicyEditor } from "@/features/governance/RetentionPolicyEditor/RetentionPolicyEditor";
 import { updateEntityMetadataAction } from "./actions";
+import { NO_ENTITY_CAPABILITIES, type EntityCapabilities } from "@/lib/access/capabilities";
 import type { RetentionPolicy } from "@/types/schemas/retention-policy.schema";
 import {
   migrateSimpleRetention,
@@ -142,9 +143,14 @@ export interface EntityWorkspaceProps {
    * Optional so loaders and tests that predate it still compile; absent leaves `reference` a plain type change.
    */
   referenceTargets?: PickableEntity[];
+  /**
+   * What the signed-in user may do with this entity, decided by the server's policy (`entityCapabilities`), never from a role name. A hint
+   * for the controls only: every action re-checks on the server. Absent reads as nothing allowed (fail closed).
+   */
+  capabilities?: EntityCapabilities;
 }
 
-export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiOperations, replacementEntity, referenceStaleness, referenceTargets }: EntityWorkspaceProps) {
+export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiOperations, replacementEntity, referenceStaleness, referenceTargets, capabilities = NO_ENTITY_CAPABILITIES }: EntityWorkspaceProps) {
   const readOnly_ = isReadOnly(entity.status as EntityStatus);
 
   // Track recent entity access for command palette
@@ -990,7 +996,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         onClose={() => setOverrideDialogOpen(false)}
         mappingContext={null}
         entityId={entity.id}
-        userRole="STEWARD"
+        capabilities={capabilities}
         onCreateOverride={handleCreateOverride}
         onAcknowledge={handleAcknowledge}
       />

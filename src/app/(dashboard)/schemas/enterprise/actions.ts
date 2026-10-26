@@ -1,16 +1,14 @@
 "use server";
 
 import { prisma } from "@/lib/db";
-import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
-import { getActiveTenantId } from "@/lib/active-tenant";
-import { inActiveTenant, unexpectedFailure } from "@/lib/action-context";
+import { authorizeSubject, guardActiveTenant, unexpectedFailure } from "@/lib/action-context";
 import { FOREIGN_REFERENCE_MESSAGE, fieldsReferenceAllowed } from "@/lib/references/foreign-reference-guard";
 import { generateSlug } from "@/lib/slug";
 import { entityNameMessage } from "@/lib/entity-name";
 import { firstReservedFieldNameMessage } from "@/lib/reserved-field-names";
-import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
+import { STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
 import { firstInvalidDecimalFactMessage, mapFieldCreateInput } from "@/lib/entity-field-input";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
 import { entityExtensionsMetadata } from "@/services/imported-entities";
@@ -32,11 +30,6 @@ export async function createTenantEntityAction(data: {
   /** Entity-level vendor extensions of an import (`metadata.custom.extensions`). */
   extensions?: Record<string, unknown>;
 }): Promise<{ success: true; entity: { id: string; slug: string } } | { error: string }> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return { error: "You must be logged in" };
-  }
-
   // `data` and its name arrive from the browser untyped: neither may throw before the `try`.
   const name = typeof data?.name === "string" ? data.name.trim() : "";
   if (name.length === 0) {
@@ -63,13 +56,16 @@ export async function createTenantEntityAction(data: {
   const slug = generateSlug(name);
 
   try {
-    // An entity id inside a field's decorators is what publish pins and the renderers load: it must be an entity of the active tenant.
-    if (!(await fieldsReferenceAllowed(data.fields, (id) => inActiveTenant("entity", id)))) return { error: FOREIGN_REFERENCE_MESSAGE }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    // A tenant-level entity belongs to the tenant as a whole: it takes an author (or more) over the ACTIVE tenant itself, a TENANT or
+    // GLOBAL assignment (a domain- or product-scoped role does not cover it). Judged before anything is read or created.
+    const access = await guardActiveTenant("entity.write", { label: "Tenant", unauthenticated: "You must be logged in" });
+    if (!access.allowed) return { error: access.refusal.error };
 
-    const [tenantId, userId] = await Promise.all([
-      getActiveTenantId(),
-      resolveCurrentUserId(session.user),
-    ]);
+    // An entity id inside a field's decorators is what publish pins and the renderers load: it must be an entity of the active tenant the caller can read.
+    if (!(await fieldsReferenceAllowed(data.fields, async (id) => (await authorizeSubject("entity.read", { kind: "entity", id })).success))) return { error: FOREIGN_REFERENCE_MESSAGE };
+
+    const tenantId = access.resource.tenantId;
+    const userId = access.principal.userId;
 
     const entity = await withAudit({
       action: "CREATE",

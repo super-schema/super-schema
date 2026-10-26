@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
@@ -67,7 +68,7 @@ beforeEach(() => {
 describe("setEntityPrimaryKeyAction", () => {
   it("rejects an unauthenticated caller before touching anything", async () => {
     h.auth.mockResolvedValue(null);
-    expect(await actions.setEntityPrimaryKeyAction("ent-1", ["tenant"])).toEqual({ error: "Not authenticated" });
+    expect(await actions.setEntityPrimaryKeyAction("ent-1", ["tenant"])).toEqual({ error: "Not authenticated", code: "UNAUTHORIZED" });
     expect(p.field.updateMany).not.toHaveBeenCalled();
   });
 
@@ -180,7 +181,7 @@ describe("generateSchemaAction: needs input", () => {
 describe("getSchemaGenerationRequirementsAction", () => {
   it("is not available to an unauthenticated caller or another tenant", async () => {
     h.auth.mockResolvedValue(null);
-    expect(await actions.getSchemaGenerationRequirementsAction("ent-1", "bigquery")).toEqual({ error: "Not authenticated" });
+    expect(await actions.getSchemaGenerationRequirementsAction("ent-1", "bigquery")).toEqual({ error: "Not authenticated", code: "UNAUTHORIZED" });
     h.auth.mockResolvedValue({ user: { id: "user-1" } });
     p.entity.findUnique.mockResolvedValue({ tenantId: "tenant-2" });
     expect(await actions.getSchemaGenerationRequirementsAction("ent-1", "bigquery")).toMatchObject({ code: "NOT_FOUND" });

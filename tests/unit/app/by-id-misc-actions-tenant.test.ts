@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assign, resetSessionPrincipal, setSessionPrincipal } from "../../helpers/access-mocks";
 
 // Tenant scoping + generic failures of the remaining by-id actions outside the entity workspace file: the entity publish /
 // version actions, the retention policy action and the domain delete. (Product actions: product-action-tenant-guard.test.ts.)
@@ -26,6 +27,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
@@ -67,6 +69,7 @@ const domainRow = (tenantId: string) => ({ id: "dom-1", tenantId, name: "Orders"
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetSessionPrincipal();
   h.auth.mockResolvedValue({ user: { id: "user-1", email: "u@example.test" } });
   h.getActiveTenantId.mockResolvedValue(T);
   h.getEffectiveRole.mockResolvedValue({ success: true, data: "AUTHOR" });
@@ -124,7 +127,7 @@ describe.each([
 
   it("requires a session before any query", async () => {
     h.auth.mockResolvedValue(null);
-    expect(await call()).toEqual({ error: "Not authenticated" });
+    expect(await call()).toEqual({ error: "Not authenticated", code: "UNAUTHORIZED" });
     expect(p.entity.findUnique).not.toHaveBeenCalled();
   });
 });
@@ -228,10 +231,12 @@ describe("deleteDomainAction tenant guard", () => {
     expect(h.revalidatePath).not.toHaveBeenCalled();
   });
 
-  it("still requires global admin access before anything else", async () => {
-    h.resolveGlobalAdminAccess.mockResolvedValue({ userId: "user-1", isAdmin: false });
-    expect(await deleteDomainAction("dom-1")).toEqual({ error: "Administrator access is required to delete domains" });
-    expect(p.domain.findUnique).not.toHaveBeenCalled();
+  it("asks the policy before anything is deleted: a user below tenant administrator is refused, generic, and nothing is audited", async () => {
+    setSessionPrincipal([assign.tenant("STEWARD", T)]);
+    expect(await deleteDomainAction("dom-1")).toEqual({ error: "You do not have permission to do this" });
+    setSessionPrincipal([assign.tenant("ADMIN", T)]);
+    expect(await deleteDomainAction("dom-1")).toEqual({ success: true });
+    expect(p.domain.delete).toHaveBeenCalledTimes(1);
   });
 
   it("returns the generic message (not the driver text) when the delete throws", async () => {

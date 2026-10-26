@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assign, resetSessionPrincipal, setSessionPrincipal } from "../../helpers/access-mocks";
 
-const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockGetActiveTenantId } = vi.hoisted(() => ({
+const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockGetActiveTenantId, mockEntityFindUnique } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
+  mockEntityFindUnique: vi.fn(),
   mockPrisma: {
     tenant: { findUnique: vi.fn() },
     user: { findUnique: vi.fn() },
     auditLog: { create: vi.fn() },
+    entity: { findUnique: (...args: unknown[]) => mockEntityFindUnique(...args) },
   },
   mockTx: {
     entity: { create: vi.fn(), findFirst: vi.fn() },
@@ -14,6 +17,7 @@ const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockGetActiveTena
   mockGetActiveTenantId: vi.fn(),
 }));
 
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -195,5 +199,67 @@ describe("createTenantEntityAction", () => {
     expect(result.error).not.toMatch(/prisma|Users\/dev|actions\.ts/i);
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe("createTenantEntityAction: who may create a tenant-level entity (entity.write over the ACTIVE tenant itself)", () => {
+  const create = () => createTenantEntityAction({ name: "Customer", description: "", fields: [] });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetSessionPrincipal();
+    mockAuth.mockResolvedValue({ user: { id: "user-1", email: "owner@example.com" } });
+    mockGetActiveTenantId.mockResolvedValue("tenant-1");
+    mockPrisma.user.findUnique.mockResolvedValue({ id: "user-1" });
+    mockPrisma.tenant.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({ id: where.id }));
+    mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
+    mockAssertNameAvailable.mockResolvedValue({ success: true, data: undefined });
+    mockTx.entity.findFirst.mockResolvedValue(null);
+    mockTx.entity.create.mockResolvedValue({ id: "entity-1", slug: "customer" });
+  });
+
+  it("answers nobody signed in 'You must be logged in' and creates nothing", async () => {
+    mockAuth.mockResolvedValue(null);
+    expect(await create()).toEqual({ error: "You must be logged in" });
+    expect(mockTx.entity.create).not.toHaveBeenCalled();
+  });
+
+  it("a user with no role and a viewer cannot create one (not found / generic refusal), and nothing is created or audited", async () => {
+    setSessionPrincipal([]);
+    expect(await create()).toEqual({ error: "Tenant not found" });
+    setSessionPrincipal([assign.tenant("VIEWER", "tenant-1")]);
+    expect(await create()).toEqual({ error: "You do not have permission to do this" });
+    expect(mockTx.entity.create).not.toHaveBeenCalled();
+    expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("an author, steward and administrator of the TENANT can, and so can a platform administrator", async () => {
+    for (const assignments of [[assign.tenant("AUTHOR", "tenant-1")], [assign.tenant("STEWARD", "tenant-1")], [assign.tenant("ADMIN", "tenant-1")], [assign.global()]]) {
+      setSessionPrincipal(assignments);
+      expect(await create(), JSON.stringify(assignments)).toEqual({ success: true, entity: { id: "entity-1", slug: "customer" } });
+    }
+  });
+
+  it("a domain- or product-scoped author does NOT reach the tenant level: refused as a missing tenant, nothing created", async () => {
+    for (const assignments of [[assign.domain("ADMIN", "tenant-1", "dom-a")], [assign.product("ADMIN", "tenant-1", "dom-a", "prod-a")]]) {
+      setSessionPrincipal(assignments);
+      expect(await create(), JSON.stringify(assignments)).toEqual({ error: "Tenant not found" });
+    }
+    expect(mockTx.entity.create).not.toHaveBeenCalled();
+  });
+
+  it("an author of ANOTHER tenant than the one in view cannot create one here", async () => {
+    setSessionPrincipal([assign.tenant("ADMIN", "tenant-2")]);
+    expect(await create()).toEqual({ error: "Tenant not found" });
+    expect(mockTx.entity.create).not.toHaveBeenCalled();
+  });
+
+  it("the entity ids a field refers to must be entities the caller can READ in the active tenant", async () => {
+    setSessionPrincipal([assign.tenant("AUTHOR", "tenant-1")]);
+    mockEntityFindUnique.mockResolvedValue(null);
+    const field = { name: "customer", type: "reference", nullable: true, isKey: false, description: "", classification: null, precision: null, scale: null, decorators: { referencedEntityId: "ent-elsewhere" } };
+    const answer = await createTenantEntityAction({ name: "Order", description: "", fields: [field] as never });
+    expect(answer).toMatchObject({ error: expect.any(String) });
+    expect(mockTx.entity.create).not.toHaveBeenCalled();
   });
 });

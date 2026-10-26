@@ -24,8 +24,6 @@ export interface EmissionPreviewPanelProps {
   onClose: () => void;
   /** Entity ID for per-entity overrides */
   entityId?: string;
-  /** Current user role for RBAC */
-  userRole?: string;
   /** Callback when a lossy warning is clicked to open override dialog */
   onWarningClick?: (info: OverrideMappingInfo) => void;
   /** Override mappings applied to this emission (for badge display) */

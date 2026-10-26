@@ -72,6 +72,7 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({
   auth: vi.fn().mockResolvedValue({
     user: { id: "user-1", email: "test@example.com", name: "Test User" },
@@ -121,7 +122,7 @@ describe("getEntityDeploymentStatusAction", () => {
   it("returns an error when the entity is missing", async () => {
     h.entity.findUnique.mockResolvedValue(null);
     const res = await getEntityDeploymentStatusAction(ENTITY_ID);
-    expect(res).toEqual({ error: "Entity not found" });
+    expect(res).toEqual({ error: "Entity not found", code: "NOT_FOUND" });
   });
 });
 

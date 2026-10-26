@@ -26,6 +26,7 @@ const { mockAuth, mockPrisma, mockRevalidatePath } = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({
   auth: mockAuth,
 }));
@@ -40,6 +41,7 @@ vi.mock("next/cache", () => ({
 
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
 
+import { assign, resetSessionPrincipal, setSessionPrincipal } from "../../helpers/access-mocks";
 import { deleteDomainAction } from "@/app/(dashboard)/schemas/actions";
 
 const EMPTY_COUNTS = {
@@ -60,6 +62,7 @@ const EMPTY_COUNTS = {
 describe("deleteDomainAction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetSessionPrincipal();
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", email: "admin@example.com" },
     });
@@ -92,46 +95,52 @@ describe("deleteDomainAction", () => {
     mockPrisma.eventSpec.findMany.mockResolvedValue([]);
   });
 
-  it("rejects authenticated users without a global Admin role", async () => {
-    mockPrisma.user.findUnique.mockResolvedValue({ id: "viewer-1", roles: [] });
-    mockAuth.mockResolvedValue({
-      user: { id: "viewer-1", email: "viewer@example.com" },
-    });
+  it("refuses a user with no role at all (not a viewer, not a steward): the domain is not even loaded", async () => {
+    setSessionPrincipal([]);
 
     const result = await deleteDomainAction("domain-1");
 
-    expect(result).toEqual({
-      error: "Administrator access is required to delete domains",
-    });
-    expect(mockPrisma.domain.findUnique).not.toHaveBeenCalled();
+    expect(result).toEqual({ error: "Domain not found" });
+    expect(mockPrisma.domain.delete).not.toHaveBeenCalled();
+    expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("deleting a domain is a TENANT administrator's act: a steward or an author of the tenant is refused (generic), and so is an administrator of one domain only", async () => {
+    for (const assignments of [[assign.tenant("STEWARD", "tenant-1")], [assign.tenant("AUTHOR", "tenant-1")], [assign.tenant("COMPLIANCE_OFFICER", "tenant-1")]]) {
+      setSessionPrincipal(assignments);
+      expect(await deleteDomainAction("domain-1")).toEqual({ error: "You do not have permission to do this" });
+    }
+    // An ADMIN of this one domain holds no authority over "the tenant": the same refusal.
+    setSessionPrincipal([assign.domain("ADMIN", "tenant-1", "domain-1")]);
+    expect(await deleteDomainAction("domain-1")).toEqual({ error: "You do not have permission to do this" });
+    expect(mockPrisma.domain.delete).not.toHaveBeenCalled();
+  });
+
+  it("lets an ADMIN of the tenant (not only a platform administrator) delete a domain of that tenant, and a platform administrator too", async () => {
+    setSessionPrincipal([assign.tenant("ADMIN", "tenant-1")]);
+    expect(await deleteDomainAction("domain-1")).toEqual({ success: true });
+    resetSessionPrincipal();
+    expect(await deleteDomainAction("domain-1")).toEqual({ success: true });
+    expect(mockPrisma.domain.delete).toHaveBeenCalledTimes(2);
+  });
+
+  it("an administrator of ANOTHER tenant gets the answer of a missing domain, and nothing is read beyond the row's place", async () => {
+    setSessionPrincipal([assign.tenant("ADMIN", "tenant-other")]);
+    expect(await deleteDomainAction("domain-1")).toEqual({ error: "Domain not found" });
     expect(mockPrisma.domain.delete).not.toHaveBeenCalled();
   });
 
   it("does not make the first registered user an Admin when none exists: the check is a read, the user is refused and no role is written", async () => {
-    mockPrisma.user.findUnique.mockImplementation(async (args) =>
-      args.select?.roles
-        ? { id: "admin-1", roles: [] }
-        : { id: "admin-1" }
-    );
+    setSessionPrincipal([]);
     mockPrisma.userRole.findFirst.mockResolvedValue(null);
 
     const result = await deleteDomainAction("domain-1");
 
-    expect(result).toEqual({ error: "Administrator access is required to delete domains" });
+    expect(result).toEqual({ error: "Domain not found" });
     expect(mockPrisma.userRole.create).not.toHaveBeenCalled();
     expect(mockPrisma.userRole.findFirst).not.toHaveBeenCalled();
     expect(mockPrisma.user.findFirst).not.toHaveBeenCalled();
-    expect(mockPrisma.domain.findUnique).not.toHaveBeenCalled();
     expect(mockPrisma.domain.delete).not.toHaveBeenCalled();
-  });
-
-  it("asks for the administrator by the global scope key (a tenant-scoped ADMIN row is not a platform administrator)", async () => {
-    await deleteDomainAction("domain-1");
-
-    expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
-      where: { id: "admin-1" },
-      select: { id: true, disabledAt: true, roles: { where: { role: "ADMIN", scopeKey: "G" }, select: { id: true }, take: 1 } },
-    });
   });
 
   it("loads every cascaded asset count before an Admin deletes the domain", async () => {

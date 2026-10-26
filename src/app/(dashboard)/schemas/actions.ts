@@ -1,44 +1,48 @@
 "use server";
 
 import { prisma } from "@/lib/db";
-import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { createDomainRow } from "@/services/domain-row.service";
-import { resolveGlobalAdminAccess } from "@/lib/access-control";
 import { revalidatePath } from "next/cache";
-import { isInActiveTenant, unexpectedFailure } from "@/lib/action-context";
+import { can } from "@/lib/access";
+import { guardActiveTenant, guardSubject, unexpectedFailure } from "@/lib/action-context";
 import { domainDeleteBlocker } from "@/lib/domain-deletion";
 import { combineBlockers, EVENTS_ASSET_COUNT_SELECT } from "@/lib/product-deletion";
 import { eventsInUseError, findCrossProductEventRefs } from "@/services/events/event-guards";
 
+/**
+ * The domains of the ACTIVE tenant (never another tenant's) that the caller may read: the caller must hold a role in the tenant
+ * (`tenant.access`), and each domain is listed only when their roles cover it (`domain.read` over the domain, so a domain-scoped role lists its
+ * own domain and not its siblings).
+ */
 export async function getDomainsAction() {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return { error: "Not authenticated" };
-  }
+  try {
+    const access = await guardActiveTenant("tenant.access", { label: "Domains" });
+    if (!access.allowed) return { error: access.refusal.error };
 
-  const domains = await prisma.domain.findMany({
-    orderBy: [{ isSystem: "desc" }, { name: "asc" }],
-    include: {
-      _count: { select: { entities: true } },
-    },
-  });
-  return domains;
+    const domains = await prisma.domain.findMany({
+      where: { tenantId: access.resource.tenantId },
+      orderBy: [{ isSystem: "desc" }, { name: "asc" }],
+      include: {
+        _count: { select: { entities: true } },
+      },
+    });
+    return domains.filter((domain) => can(access.principal.assignments, "domain.read", { tenantId: domain.tenantId, domainId: domain.id }));
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("getDomainsAction", e) };
+  }
 }
 
 export async function createDomainAction(formData: FormData) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return { error: "You must be logged in" };
-  }
-
   const name = (formData.get("name") as string | null) ?? "";
   const description = (formData.get("description") as string) || "";
 
   try {
-    // Any signed-in user may make a domain; what a domain row must be (the name, its slug, the duplicate check, the tenant, the audit
-    // row) is `createDomainRow`'s, the same function the Admin tab uses.
-    const created = await createDomainRow({ name, description, userId: session.user.id }, prisma);
+    // Making a domain is a tenant-level decision (`domain.create`: a steward or above over the whole tenant, the active one); what a domain
+    // row must be (the name, its slug, the duplicate check, the tenant, the audit row) is `createDomainRow`'s, the same function the Admin tab uses.
+    const access = await guardActiveTenant("domain.create", { label: "Tenant", unauthenticated: "You must be logged in" });
+    if (!access.allowed) return { error: access.refusal.error };
+    const created = await createDomainRow({ name, description, userId: access.principal.userId }, prisma);
     if (!created.success) return { error: created.error.message };
     revalidatePath("/schemas");
     return { success: true };
@@ -54,23 +58,11 @@ export async function createDomainAction(formData: FormData) {
 }
 
 export async function deleteDomainAction(domainId: string) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return { error: "You must be logged in" };
-  }
-
   try {
-    const access = await resolveGlobalAdminAccess(session.user);
-    if (!access) {
-      return {
-        error:
-          "Your session is stale. Sign out and sign in again, then delete the domain.",
-      };
-    }
-
-    if (!access.isAdmin) {
-      return { error: "Administrator access is required to delete domains" };
-    }
+    // Deleting a domain is a tenant administrator's decision (`domain.delete`, over the whole tenant: a domain-scoped administrator does not
+    // reach it), judged before the domain is read. A missing domain, one of another tenant and one the caller cannot see are the same answer.
+    const access = await guardSubject("domain.delete", { kind: "domain", id: domainId }, { label: "Domain", unauthenticated: "You must be logged in" });
+    if (!access.allowed) return { error: access.refusal.error };
 
     const domain = await prisma.domain.findUnique({
       where: { id: domainId },
@@ -93,8 +85,7 @@ export async function deleteDomainAction(domainId: string) {
       },
     });
 
-    // Ownership: the domain must belong to the active tenant; anything else reads as missing (same answer, nothing deleted).
-    if (!domain || !(await isInActiveTenant(domain.tenantId))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    if (!domain) {
       return { error: "Domain not found" };
     }
 
@@ -121,7 +112,7 @@ export async function deleteDomainAction(domainId: string) {
       action: "DELETE",
       entityType: "Domain",
       entityId: domainId,
-      userId: access.userId,
+      userId: access.principal.userId,
       beforeState: domain as unknown as object,
       fn: async () => {
         await prisma.domain.delete({ where: { id: domainId } });

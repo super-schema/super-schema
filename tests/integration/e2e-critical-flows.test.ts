@@ -69,6 +69,7 @@ vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 // Mock: NextAuth session
 // ---------------------------------------------------------------------------
 
+vi.mock("@/lib/access/principal", async () => (await import("../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({
   auth: vi.fn().mockResolvedValue({
     user: { id: "user-1", email: "test@example.com", name: "Test User" },

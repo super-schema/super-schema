@@ -1,7 +1,6 @@
 "use server";
 
-import { getActiveTenantId } from "@/lib/active-tenant";
-import { getActionContext, NOT_AUTHENTICATED } from "@/lib/action-context";
+import { NOT_AUTHENTICATED, guardSubject } from "@/lib/action-context";
 import type { ActionResult } from "@/types/action-result";
 import { loadPinnableVersions } from "./load-options";
 import type { VersionOption } from "./shared/EntityPinPicker";
@@ -10,15 +9,20 @@ const NOT_FOUND = { success: false, error: "Entity not found", code: "NOT_FOUND"
 
 /**
  * Published versions of an entity for the pin picker. Read-only (never revalidates). Unlike
- * `listEntityVersionsAction` — the entity workspace's own loader, which takes the entity id as given —
- * this one is scoped to the server-resolved active tenant: the client-supplied id must belong to it,
- * otherwise NOT_FOUND. Failures return a generic message; database error text never reaches the client.
+ * `listEntityVersionsAction` — the entity workspace's own loader — this one is judged as what it is for: pinning a schema into an event
+ * (`event.pin`, an author or more) over the ENTITY'S place, so the client-supplied id must be an entity of the ACTIVE tenant that the caller's
+ * roles cover; a missing entity, one of another tenant and one the caller cannot see are all the same NOT_FOUND, and a viewer is refused.
+ * Failures return a generic message; database error text never reaches the client.
  */
 export async function listPinnableVersionsAction(entityId: string): Promise<ActionResult<VersionOption[]>> {
   try {
-    const ctx = await getActionContext();
-    if (!ctx) return NOT_AUTHENTICATED;
-    const versions = await loadPinnableVersions(await getActiveTenantId(), entityId);
+    const access = await guardSubject("event.pin", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) {
+      if (access.refusal.code === "NOT_FOUND") return NOT_FOUND;
+      if (access.refusal.code === "FORBIDDEN") return { success: false, error: access.refusal.error, code: "FORBIDDEN" };
+      return NOT_AUTHENTICATED;
+    }
+    const versions = await loadPinnableVersions(access.resource.tenantId, entityId);
     return versions ? { success: true, data: versions } : NOT_FOUND;
   } catch (e) {
     console.error("listPinnableVersionsAction failed", e);

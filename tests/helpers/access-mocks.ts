@@ -90,3 +90,39 @@ export function signInAs(principal: Principal | null): void {
 
 /** `signInAs(null)`. */
 export const signedOut = () => signInAs(null);
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// For the many action tests that already mock the SESSION (`vi.mock("@/lib/auth", () => ({ auth }))`) and steer who is signed in through it.
+// ---------------------------------------------------------------------------------------------------------------------------------
+
+let sessionRoles: ((userId: string) => Principal) | null = null;
+
+/**
+ * A stand-in for `@/lib/access/principal` that follows the mocked session: no session user is nobody (null), otherwise the principal that
+ * `setSessionPrincipal` chose for that user id, by default a GLOBAL ADMIN (who may do anything, in the active tenant: what the tests of the
+ * guarded actions assumed before the policy existed). A test that is about a role calls `setSessionPrincipal(...)`, and
+ * `resetSessionPrincipal()` in its `beforeEach`.
+ *
+ *   vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
+ */
+export const sessionPrincipalModule = {
+  getPrincipal: vi.fn(async (): Promise<Principal | null> => {
+    const { auth } = (await import("@/lib/auth")) as unknown as { auth: () => Promise<{ user?: { id?: string } } | null> };
+    const session = await auth();
+    const userId = session?.user?.id;
+    return typeof userId === "string" && userId !== "" ? (sessionRoles ? sessionRoles(userId) : globalAdmin(userId)) : null;
+  }),
+  loadPrincipalById: vi.fn(async (userId: unknown): Promise<Principal | null> =>
+    typeof userId === "string" && userId !== "" ? (sessionRoles ? sessionRoles(userId) : globalAdmin(userId)) : null
+  ),
+};
+
+/** Whoever is signed in through the mocked session holds `assignments` (their user id stays the session's). */
+export function setSessionPrincipal(assignments: Assignment[]): void {
+  sessionRoles = (userId) => principalOf(assignments, { userId, email: `${userId}@example.test` });
+}
+
+/** Back to the default: a global administrator. */
+export function resetSessionPrincipal(): void {
+  sessionRoles = null;
+}

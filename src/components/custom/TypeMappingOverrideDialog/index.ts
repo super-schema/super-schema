@@ -5,6 +5,7 @@
 export { TypeMappingOverrideDialog } from "./TypeMappingOverrideDialog";
 export type {
   TypeMappingOverrideDialogProps,
+  OverrideCapabilities,
   OverrideDialogMappingContext,
   CreateOverrideData,
 } from "./TypeMappingOverrideDialog.types";

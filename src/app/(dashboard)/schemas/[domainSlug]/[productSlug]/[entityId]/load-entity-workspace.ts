@@ -1,4 +1,7 @@
 import { prisma } from "@/lib/db";
+import { can } from "@/lib/access";
+import { entityCapabilities } from "@/lib/access/capabilities";
+import { getPrincipal } from "@/lib/access/principal";
 import type { Prisma } from "@/generated/prisma/client";
 import { domainLabel } from "@/lib/entity-placement";
 import { toDraftVersionState } from "@/lib/entity-versioning/draft-label";
@@ -10,7 +13,7 @@ import type { EntityWorkspaceProps } from "./entity-workspace";
 
 const ENTITY_INCLUDE = {
   domain: true,
-  product: { select: { slug: true, name: true } },
+  product: { select: { slug: true, name: true, domainId: true } },
   latestVersion: { select: { major: true, minor: true } },
   fields: { orderBy: { sortOrder: "asc" as const } },
   services: {
@@ -111,6 +114,12 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
 
   if (!entity) return null;
 
+  // The caller must be able to READ this entity (a role covering its tenant, domain and product): an entity they cannot see is a missing one
+  // (the page answers 404), and the same decision gives the workspace what its controls may offer. Decided before anything else is loaded.
+  const principal = await getPrincipal();
+  const place = { tenantId: entity.tenantId, domainId: entity.domainId ?? entity.product?.domainId ?? null, productId: entity.productId };
+  if (!principal || !can(principal.assignments, "entity.read", place)) return null;
+
   // Tenant-level entities have no domain and therefore no domain policy.
   const domainPolicy =
     (entity.domain as { policyTemplate?: Record<string, unknown> } | null)
@@ -125,6 +134,7 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
     props: {
       referenceStaleness,
       referenceTargets,
+      capabilities: entityCapabilities(principal.assignments, place),
       level: productId === null ? "TENANT" : "PRODUCT",
       entity: {
         id: entity.id,

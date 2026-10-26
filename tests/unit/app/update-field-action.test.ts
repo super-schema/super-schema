@@ -14,6 +14,7 @@ const { mockPrisma, mockGetActiveTenantId } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: vi.fn().mockResolvedValue({ user: { id: "user-1" } }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mockGetActiveTenantId }));
@@ -36,7 +37,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetActiveTenantId.mockResolvedValue("tenant-1");
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
-  mockPrisma.field.findUnique.mockResolvedValue(OWN_FIELD);
+  // The guard looks the field up with its entity (to place it); the action then reads the plain row.
+  const OWN_FIELD_ROW = Object.fromEntries(Object.entries(OWN_FIELD).filter(([key]) => key !== "entity"));
+  mockPrisma.field.findUnique.mockImplementation(async (args: { select?: { entity?: unknown } }) => (args.select?.entity ? OWN_FIELD : OWN_FIELD_ROW));
   mockPrisma.field.findFirst.mockResolvedValue(null);
   mockPrisma.field.update.mockResolvedValue({ id: "fld-1" });
   mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));

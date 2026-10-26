@@ -46,6 +46,7 @@ vi.mock("@/lib/schema-targets/catalog", async (importOriginal) => {
     },
   };
 });
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
@@ -222,12 +223,12 @@ const CASES: Case[] = [
   },
   {
     label: "getSchemaTargetFieldMappingsAction", call: () => actions.getSchemaTargetFieldMappingsAction("ent-1", "bigquery"),
-    lookup: entityLookup, row: (t) => entityRow(t), notFound: { error: "Entity not found" },
+    lookup: entityLookup, row: (t) => entityRow(t), notFound: { error: "Entity not found", code: "NOT_FOUND" },
     mustNotRun: () => [mk(p.field.findMany), ...ALL_EFFECTS()], main: () => mk(p.field.findMany), failing: () => [mk(p.field.findMany)], revalidates: false,
   },
   {
     label: "saveSchemaFieldTypeOverrideAction", call: () => actions.saveSchemaFieldTypeOverrideAction({ entityId: "ent-1", target: "bigquery", fieldId: "fld-1", mappedType: "" }),
-    lookup: entityLookup, row: (t) => entityRow(t), notFound: { error: "Entity not found" },
+    lookup: entityLookup, row: (t) => entityRow(t), notFound: { error: "Entity not found", code: "NOT_FOUND" },
     mustNotRun: () => [mk(p.field.findMany), ...ALL_EFFECTS()], main: () => mk(p.entity.update), failing: () => [mk(p.entity.update)],
   },
   {
@@ -252,17 +253,17 @@ const CASES: Case[] = [
   },
   {
     label: "getEntityDeploymentStatusAction", call: () => actions.getEntityDeploymentStatusAction("ent-1"),
-    lookup: entityLookup, row: (t) => entityRow(t), notFound: { error: "Entity not found" },
+    lookup: entityLookup, row: (t) => entityRow(t), notFound: { error: "Entity not found", code: "NOT_FOUND" },
     mustNotRun: ALL_EFFECTS, main: () => mk(h.getDeploymentStatus), failing: () => [mk(h.getDeploymentStatus)], revalidates: false,
   },
   {
     label: "markEntityDeployedAction", call: () => actions.markEntityDeployedAction("ent-1", "ent-1:bigquery", "production"),
-    lookup: entityLookup, row: (t) => entityRow(t), notFound: { error: "Entity not found" },
+    lookup: entityLookup, row: (t) => entityRow(t), notFound: { error: "Entity not found", code: "NOT_FOUND" },
     mustNotRun: ALL_EFFECTS, main: () => mk(h.markAsDeployed), failing: () => [mk(h.markAsDeployed)],
   },
   {
     label: "checkTargetDriftAction", call: () => actions.checkTargetDriftAction("ent-1", "ent-1:bigquery"),
-    lookup: entityLookup, row: (t) => entityRow(t, "deployed"), notFound: { error: "Entity not found" },
+    lookup: entityLookup, row: (t) => entityRow(t, "deployed"), notFound: { error: "Entity not found", code: "NOT_FOUND" },
     mustNotRun: ALL_EFFECTS, main: () => mk(h.updateDriftStatus), failing: () => [mk(h.updateDriftStatus)],
   },
   {

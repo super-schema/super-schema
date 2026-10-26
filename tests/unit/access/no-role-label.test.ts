@@ -28,10 +28,6 @@ const PENDING_TASK_5B: Record<string, string> = {
   "src/app/(dashboard)/admin/actions.ts": "admin (user/role/domain/emitter/health actions): tenant ADMIN within the tenant, platform items global ADMIN",
   "src/app/(dashboard)/deployments/actions.ts": "deployments",
   "src/app/(dashboard)/governance/actions.ts": "governance + retention (governance.decide)",
-  "src/components/custom/TypeMappingOverrideDialog/TypeMappingOverrideDialog.tsx": "type-mapping (UI: take capabilities from a server `can` result)",
-  "src/components/custom/TypeMappingOverrideDialog/TypeMappingOverrideDialog.types.ts": "type-mapping (UI)",
-  "src/components/custom/TypeMappingOverrideDialog/useOverrideDialog.ts": "type-mapping (UI)",
-  "src/components/custom/EmissionPreviewPanel/EmissionPreviewPanel.types.ts": "type-mapping (UI prop of the emission preview panel)",
   "src/services/annotation.service.ts": "annotations (service only; router unmounted)",
   "src/services/classification-taxonomy.service.ts": "admin (classification.manage, global)",
   "src/services/compliance.service.ts": "compliance (Task 6)",
@@ -57,10 +53,6 @@ const PENDING_TASK_5B: Record<string, string> = {
   "src/server/api/routers/domain.ts": "dead oRPC routers: deleted in Task 7",
   "src/server/api/routers/entity.ts": "dead oRPC routers: deleted in Task 7",
   "src/server/api/routers/field.ts": "dead oRPC routers: deleted in Task 7",
-  // Task 5a areas, removed as each area is enforced (this entry list must be empty of them when 5a is done):
-  "src/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions.ts": "5a entities (removed with that commit)",
-  "src/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/entity-workspace.tsx": "5a entities (removed with that commit)",
-  "src/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/version-actions.ts": "5a entities (removed with that commit)",
 };
 
 const READER = /\buserRole\b/;

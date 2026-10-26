@@ -175,13 +175,62 @@ export async function authorizeInActiveTenant(
   return decided.success ? ok(decided.data.principal) : decided;
 }
 
-/** `authorizeInActiveTenant` for a decision about the ACTIVE tenant as a whole (list its domains, create a domain, the glossary). */
-export async function authorizeActiveTenant(action: ActionId, notFound: ServiceError = notFoundError()): Promise<Result<Principal, ServiceError>> {
+/**
+ * `authorizeInActiveTenant` for a decision about the ACTIVE tenant as a whole (list its domains, create a domain, the glossary, a tenant-level
+ * entity). The resource is the active tenant itself, so a user is judged against what they hold over the tenant: a tenant-wide action needs a
+ * TENANT or GLOBAL assignment, a resource-level one judged at tenant level likewise (a domain-scoped role does not cover "the tenant").
+ * On success the principal and that resource come back.
+ */
+export async function authorizeActiveTenant(
+  action: ActionId,
+  notFound: ServiceError = notFoundError()
+): Promise<Result<{ principal: Principal; resource: ResourceRef }, ServiceError>> {
   const principal = await getPrincipal();
   if (!principal) return { success: false, error: unauthorizedError() };
-  if (isActionId(action) && isPlaceless(action)) return authorizePrincipal(principal, action, { tenantId: "-" }, notFound);
-  const activeTenantId = await activeTenantOf(principal);
-  return decideInActiveTenant(principal, activeTenantId, action, { tenantId: activeTenantId ?? "-" }, notFound);
+  const activeTenantId = isActionId(action) && isPlaceless(action) ? null : await activeTenantOf(principal);
+  const resource: ResourceRef = { tenantId: activeTenantId ?? "-" };
+  const decided = decideInActiveTenant(principal, activeTenantId, action, resource, notFound);
+  return decided.success ? ok({ principal, resource }) : decided;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// The same guards, answering in the wire shape of the older (non-Result) actions: `{ error, code? }`
+// ---------------------------------------------------------------------------------------------------------------------------------
+
+/** What an older action returns when the guard refuses: `{ error, code }`, the code saying which of the three refusals it was. */
+export type Refusal = { error: string; code: "NOT_FOUND" | "FORBIDDEN" | "UNAUTHORIZED" };
+
+/** The outcome of `guardSubject` / `guardActiveTenant`: the principal and the place of the resource, or the refusal to return as it is. */
+export type GuardOutcome = { allowed: true; principal: Principal; resource: ResourceRef } | { allowed: false; refusal: Refusal };
+
+type GuardWire = {
+  /** Names the thing in the not-found answer: `Entity` gives `{ error: "Entity not found", code: "NOT_FOUND" }` (the answer for a missing row too). */
+  label: string;
+  /** What nobody signed in is told (default `Not authenticated`). */
+  unauthenticated?: string;
+};
+
+function refusalOf(error: ServiceError, wire: GuardWire): Refusal {
+  if (error.code === "UNAUTHORIZED") return { error: wire.unauthenticated ?? "Not authenticated", code: "UNAUTHORIZED" };
+  if (error.code === "NOT_FOUND") return { ...notFoundFailure(wire.label) };
+  return { error: error.message, code: "FORBIDDEN" };
+}
+
+/**
+ * `authorizeSubject` for the older actions: a stored row addressed by kind and id (or a place the caller holds), refused in their wire
+ * shape. The missing row, the row of another tenant than the active one and the row nothing of the caller's covers all get the identical
+ * `{ error: "<label> not found", code: "NOT_FOUND" }`; too low a role gets a generic FORBIDDEN. Call it inside the action's `try`, before any
+ * read or write: a database failure while resolving the row is the action's unexpected failure, never a "not found".
+ */
+export async function guardSubject(action: ActionId, subject: AccessSubject, wire: GuardWire): Promise<GuardOutcome> {
+  const answer = await authorizeSubject(action, subject, { code: "NOT_FOUND", message: `${wire.label} not found` });
+  return answer.success ? { allowed: true, ...answer.data } : { allowed: false, refusal: refusalOf(answer.error, wire) };
+}
+
+/** `authorizeActiveTenant` for the older actions (see `guardSubject`). */
+export async function guardActiveTenant(action: ActionId, wire: GuardWire): Promise<GuardOutcome> {
+  const answer = await authorizeActiveTenant(action, { code: "NOT_FOUND", message: `${wire.label} not found` });
+  return answer.success ? { allowed: true, ...answer.data } : { allowed: false, refusal: refusalOf(answer.error, wire) };
 }
 
 /**

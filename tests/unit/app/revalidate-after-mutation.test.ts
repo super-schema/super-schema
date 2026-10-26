@@ -5,6 +5,7 @@
  * (and only on success).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assign, principalOf } from "../../helpers/access-mocks";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -20,18 +21,22 @@ const mocks = vi.hoisted(() => ({
   createGlobalOverride: vi.fn(),
   createEntityOverride: vi.fn(),
   acknowledgeLossyMapping: vi.fn(),
-  inActiveTenant: vi.fn(),
+  guardSubject: vi.fn(),
+  guardActiveTenant: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 // The governance actions read the tenant being viewed (a cookie): here there is none.
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn(async () => "tenant-a") }));
-// The by-id ownership guard (the real one is tested in tests/unit/app/by-id-entity-actions-tenant.test.ts): here every entity is the active tenant's.
+// The guards in front of the entity actions (the real ones are tested in tests/unit/app/by-id-entity-actions-tenant.test.ts and
+// entity-area-access.test.ts): here they let a global administrator through.
 vi.mock("@/lib/action-context", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/action-context")>()),
-  inActiveTenant: mocks.inActiveTenant,
+  guardSubject: mocks.guardSubject,
+  guardActiveTenant: mocks.guardActiveTenant,
 }));
 vi.mock("@/services/rbac.service", () => ({
   getEffectiveRole: mocks.getEffectiveRole,
@@ -143,7 +148,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.auth.mockResolvedValue({ user: { id: "user-1" } });
   mocks.getEffectiveRole.mockResolvedValue({ success: true, data: "ADMIN" });
-  mocks.inActiveTenant.mockResolvedValue(true);
+  const allowed = { allowed: true as const, principal: principalOf([assign.global()], { userId: "user-1" }), resource: { tenantId: "tenant-a" } };
+  mocks.guardSubject.mockResolvedValue(allowed);
+  mocks.guardActiveTenant.mockResolvedValue(allowed);
   for (const { service } of ACTIONS) mocks[service].mockResolvedValue(OK);
 });
 
@@ -163,6 +170,10 @@ describe.each(ACTIONS)("$name", ({ service, call, paths }) => {
 
   it("does not revalidate (or mutate) when unauthenticated", async () => {
     mocks.auth.mockResolvedValue(null);
+    // The entity actions' guards are replaced here (they answer this themselves: tests/unit/app/entity-area-access.test.ts): nobody is refused.
+    const nobody = { allowed: false as const, refusal: { error: "Not authenticated", code: "UNAUTHORIZED" as const } };
+    mocks.guardSubject.mockResolvedValue(nobody);
+    mocks.guardActiveTenant.mockResolvedValue(nobody);
     const result = (await call()) as { error?: string };
     expect(result.error).toBe("Not authenticated");
     expect(mocks[service]).not.toHaveBeenCalled();

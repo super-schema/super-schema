@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { globalAdmin, signInAs } from "../../helpers/access-mocks";
 
 type Row = Record<string, unknown>;
 
@@ -40,6 +41,7 @@ vi.mock("@/lib/db", () => ({
     product: { findFirst: mocks.productFindFirst },
   },
 }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).principalModule);
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: async () => db.activeTenantId, requireActiveTenantId: async () => db.activeTenantId }));
 vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => {
@@ -82,6 +84,7 @@ function params(domainSlug: string, productSlug: string, entityId: string, field
 
 beforeEach(() => {
   vi.clearAllMocks();
+  signInAs(globalAdmin());
   db.activeTenantId = "tenant-1";
   db.entities = [];
   db.fields = [];

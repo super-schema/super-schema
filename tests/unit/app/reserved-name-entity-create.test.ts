@@ -20,6 +20,7 @@ const { mockAuth, mockPrisma, mockTx } = await vi.hoisted(async () => {
   };
 });
 
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));

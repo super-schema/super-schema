@@ -17,10 +17,23 @@ import ts from "typescript";
  * `getServiceContext(action)`), and fails when the helper it calls reads or writes before guarding.
  */
 
-const GUARD_CALLS = new Set(["authorize", "authorizeTenant", "authorizeInActiveTenant", "authorizeActiveTenant", "authorizeSubject", "withApiAuth"]);
+const GUARD_CALLS = new Set([
+  "authorize",
+  "authorizeTenant",
+  "authorizeInActiveTenant",
+  "authorizeActiveTenant",
+  "authorizeSubject",
+  // the older actions' wire-shape wrappers of the two above (src/lib/action-context.ts)
+  "guardSubject",
+  "guardActiveTenant",
+  "withApiAuth",
+]);
 
-/** Imports whose calls read or write: services, the database, the audit log, the *-core modules (importers that fetch and compile). */
-const EFFECT_MODULES = /(^@\/services\/|(^|\/)[a-z-]*service(\.ts)?$|^@\/lib\/db$|^@\/lib\/audit$|-core$|^@\/lib\/(importers|emission|typespec-official|compiler)\/)/;
+/**
+ * Imports whose calls read or write: services, the database, the audit log, the *-core modules (importers that fetch and compile). The pure
+ * validators of `services/events/service-guards` (`requireId`, `parseScopeTarget`) read nothing.
+ */
+const EFFECT_MODULES = /(^@\/services\/(?!events\/service-guards$)|(^|\/)[a-z-]*service(\.ts)?$|^@\/lib\/db$|^@\/lib\/audit$|-core$|^@\/lib\/(importers|emission|typespec-official|compiler)\/)/;
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 

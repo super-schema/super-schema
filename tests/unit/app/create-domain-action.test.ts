@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   },
 }));
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn(async () => "tenant-a") }));

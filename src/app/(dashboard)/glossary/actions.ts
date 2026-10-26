@@ -29,7 +29,7 @@ import { revalidatePath } from "next/cache";
 async function getServiceContext(action: ActionId, subject?: AccessSubject): Promise<{ ctx: ServiceContext } | { error: string }> {
   const allowed = subject ? await authorizeSubject(action, subject) : await authorizeActiveTenant(action);
   if (!allowed.success) return { error: allowed.error.code === "UNAUTHORIZED" ? "Not authenticated" : allowed.error.message };
-  return { ctx: contextOf("principal" in allowed.data ? allowed.data.principal : allowed.data) };
+  return { ctx: contextOf(allowed.data.principal) };
 }
 
 export async function createConceptAction(input: CreateBusinessConceptInput) {

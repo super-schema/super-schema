@@ -79,7 +79,7 @@ export function TypeMappingOverrideDialog({
   onClose,
   mappingContext,
   entityId,
-  userRole,
+  capabilities,
   onCreateOverride,
   onAcknowledge,
 }: TypeMappingOverrideDialogProps) {
@@ -100,7 +100,7 @@ export function TypeMappingOverrideDialog({
     filteredTypes,
     isValid,
     reset,
-  } = useOverrideDialog(mappingContext, userRole);
+  } = useOverrideDialog(mappingContext, capabilities);
 
   // Reset form when dialog opens/closes or context changes
   useEffect(() => {

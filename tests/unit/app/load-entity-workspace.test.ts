@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assign, globalAdmin, principalOf, roleless, signInAs, tenantMember } from "../../helpers/access-mocks";
 
 const { mockEntityFindFirst, mockEntityFindUnique, mockEntityFindMany } = vi.hoisted(() => ({
   mockEntityFindFirst: vi.fn(),
@@ -6,6 +7,7 @@ const { mockEntityFindFirst, mockEntityFindUnique, mockEntityFindMany } = vi.hoi
   mockEntityFindMany: vi.fn(),
 }));
 
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).principalModule);
 vi.mock("@/lib/db", () => ({
   prisma: { entity: { findFirst: mockEntityFindFirst, findUnique: mockEntityFindUnique, findMany: mockEntityFindMany } },
 }));
@@ -15,6 +17,7 @@ import { loadEntityWorkspace } from "@/app/(dashboard)/schemas/[domainSlug]/[pro
 function entityRow(over: Record<string, unknown> = {}) {
   return {
     id: "ent-1",
+    tenantId: "tenant-1",
     name: "Order",
     slug: "order",
     description: "An order",
@@ -66,6 +69,7 @@ function entityRow(over: Record<string, unknown> = {}) {
 describe("loadEntityWorkspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    signInAs(globalAdmin());
     // The reference picker's entity list (and, where a test queues its own value first, the staleness lookup) read `entity.findMany`.
     mockEntityFindMany.mockResolvedValue([]);
   });
@@ -294,7 +298,7 @@ describe("loadEntityWorkspace", () => {
       expect(data?.props.replacementEntity).toBeNull();
     });
 
-    it("does not look anything up when no replacement is named or the entity is not deprecated", async () => {
+    it("does not look anything up when no replacement is named or the entity is not deprecated (replacement lookups)", async () => {
       mockEntityFindFirst.mockResolvedValueOnce(deprecated(null));
       const none = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
       expect(none?.props.replacementEntity).toBeNull();
@@ -306,6 +310,65 @@ describe("loadEntityWorkspace", () => {
       const active = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
       expect(active?.props.replacementEntity).toBeNull();
       expect(mockEntityFindFirst).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("who may open the entity, and what its controls may offer (capabilities come from the policy)", () => {
+    const load = () => loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+    const inDomain = () => mockEntityFindFirst.mockResolvedValueOnce(entityRow());
+
+    it("answers nobody signed in, a user with no role, and a role in ANOTHER tenant with null (the page answers 404), loading nothing else", async () => {
+      for (const principal of [null, roleless(), tenantMember("ADMIN", "tenant-2")]) {
+        signInAs(principal);
+        inDomain();
+        expect(await load()).toBeNull();
+      }
+      expect(mockEntityFindMany).not.toHaveBeenCalled();
+    });
+
+    it("a viewer opens it and is offered nothing that changes it", async () => {
+      signInAs(tenantMember("VIEWER", "tenant-1"));
+      inDomain();
+      const data = await load();
+      expect(data?.props.capabilities).toEqual({ write: false, publish: false, deploy: false, overrideEntity: false, overrideGlobal: false });
+    });
+
+    it.each([
+      ["AUTHOR", { write: true, publish: false, deploy: false, overrideEntity: true, overrideGlobal: false }],
+      ["STEWARD", { write: true, publish: true, deploy: true, overrideEntity: true, overrideGlobal: true }],
+      ["COMPLIANCE_OFFICER", { write: true, publish: true, deploy: true, overrideEntity: true, overrideGlobal: true }],
+      ["ADMIN", { write: true, publish: true, deploy: true, overrideEntity: true, overrideGlobal: true }],
+    ] as const)("a tenant %s is offered what the action table gives that role", async (role, expected) => {
+      signInAs(tenantMember(role, "tenant-1"));
+      inDomain();
+      expect((await load())?.props.capabilities).toEqual(expected);
+    });
+
+    it("a platform administrator is offered everything", async () => {
+      signInAs(globalAdmin());
+      inDomain();
+      expect((await load())?.props.capabilities).toEqual({ write: true, publish: true, deploy: true, overrideEntity: true, overrideGlobal: true });
+    });
+
+    it("a domain-scoped author may open and edit an entity of THEIR domain, may not open one of a sibling domain, and is offered no global override", async () => {
+      signInAs(principalOf([assign.domain("AUTHOR", "tenant-1", "dom-1")]));
+      inDomain();
+      expect((await load())?.props.capabilities).toMatchObject({ write: true, publish: false, overrideGlobal: false });
+      signInAs(principalOf([assign.domain("AUTHOR", "tenant-1", "dom-2")]));
+      inDomain();
+      expect(await load()).toBeNull();
+    });
+
+    it("a domain-scoped role does not reach a tenant-level (Enterprise) entity", async () => {
+      signInAs(principalOf([assign.domain("ADMIN", "tenant-1", "dom-1")]));
+      mockEntityFindFirst.mockResolvedValueOnce(entityRow({ domainId: null, productId: null, domain: null, product: null }));
+      expect(await loadEntityWorkspace({ slugOrId: "order", productId: null, tenantId: "tenant-1" })).toBeNull();
+    });
+
+    it("an entity whose own domain column is empty takes the domain of its product, so a domain role still reaches it", async () => {
+      signInAs(principalOf([assign.domain("AUTHOR", "tenant-1", "dom-1")]));
+      mockEntityFindFirst.mockResolvedValueOnce(entityRow({ domainId: null, product: { slug: "checkout", name: "Checkout", domainId: "dom-1" } }));
+      expect(await load()).not.toBeNull();
     });
   });
 });

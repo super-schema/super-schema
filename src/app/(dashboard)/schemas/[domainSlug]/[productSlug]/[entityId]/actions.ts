@@ -3,7 +3,6 @@
 import { activeDanglingRef, decoratorsAfterFieldEdit } from "@/lib/field-dangling";
 import { prisma } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
-import { auth } from "@/lib/auth";
 import { withAudit, recordAuditFailure } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
@@ -12,14 +11,16 @@ import { TypeSpecDecoratorSchema } from "@/types/schemas/typespec-decorator.sche
 import { updateEntity } from "@/services/entity.service";
 import type { UpdateEntityInput } from "@/types/schemas/entity.schema";
 import type { Relationship } from "@/types/schemas/entity-metadata.schema";
-import { getEffectiveRole } from "@/services/rbac.service";
-import { failureOf, inActiveTenant, isInActiveTenant, notFoundFailure, unexpectedFailure } from "@/lib/action-context";
+import type { DiffResult } from "@/services/version-history/version.types";
+import { can, type ActionId, type ResourceRef } from "@/lib/access";
+import type { Principal } from "@/lib/access/principal";
+import { authorizeSubject, contextOf, failureOf, guardActiveTenant, guardSubject, notFoundFailure, unexpectedFailure } from "@/lib/action-context";
 import {
   isBoolean, isInt, isIntOrNull, isPlainObject, isString, isStringArray, isStringOrNull, pickEditable,
 } from "@/lib/editable-fields";
 import { requireId } from "@/services/events/service-guards";
 import { err, ok, type Result, type ServiceError } from "@/types/result";
-import { ROLE_HIERARCHY, type Role } from "@/types/schemas/rbac";
+import type { ServiceContext } from "@/types/service-context";
 import { TENANT_PLACEHOLDER, holdsEntityReference, readFieldReference, upgradeLegacyReference, writeFieldReference } from "@/lib/references/entity-reference";
 import { loadReferenceClosure, loadTenantEntityRefs, type LegacyUpgrade, type ResolveMode } from "@/lib/references/closure";
 import {
@@ -87,23 +88,31 @@ import {
 } from "@/lib/entity-versioning/draft-state";
 
 /**
- * Look up the effective role for the current user.
- * Roles are persisted via rbac.service (Prisma-backed). Users with no role
- * assignment default to the least-privileged VIEWER (fail-closed), matching
- * the governance path's resolveRole.
+ * May the caller READ the entity `id`? What an entity id written inside a field's decorators (a reference) must satisfy: it is what publish
+ * pins and the renderers load, so it must be an entity of the ACTIVE tenant the caller can see (a domain-scoped role does not reach another
+ * domain's entity), judged by the policy like every other read.
  */
-async function resolveUserRole(userId: string): Promise<string> {
-  const result = await getEffectiveRole(userId, null, {
-    userId,
-    userRole: "VIEWER",
-    prisma,
-  });
-  if (result.success && result.data) {
-    return result.data;
-  }
-  // No role assigned — fail closed to least privilege.
-  return "VIEWER";
+async function readableEntity(id: string): Promise<boolean> {
+  return (await authorizeSubject("entity.read", { kind: "entity", id })).success;
 }
+
+/**
+ * What a call to `updateEntityMetadataAction` must be allowed for each key it names (the metadata is a JSON document and the action merges
+ * a patch into it): the entity's own bookkeeping (tags, owner, custom properties) is an edit; what carries the STATE of a release or of the
+ * lifecycle is not, and needs the very action that changes that state (`entity.publish` and `deploy.run` for the stored schema versions, which
+ * hold draft / published / deployed; `entity.lifecycle` for the deprecation notice; `retention.write` for the retention policy). A key that is
+ * not listed (server-owned bookkeeping such as `sourceStale`, `importedFrom`, `sourceFormat`, `hasUnpublishedChanges`) cannot be set from here at
+ * all: the server writes those itself.
+ */
+const METADATA_KEY_ACTIONS: Readonly<Record<string, readonly ActionId[]>> = Object.freeze({
+  tags: ["entity.write"],
+  owner: ["entity.write"],
+  custom: ["entity.write"],
+  retentionPolicy: ["retention.write"],
+  deprecation: ["entity.lifecycle"],
+  schemaVersions: ["entity.publish", "deploy.run"],
+  schemaTargetTypeOverrides: ["typemapping.entity"],
+});
 
 /**
  * A field name must be a non-blank string and is stored trimmed: the slug and the name the editor shows both come from the
@@ -138,8 +147,6 @@ export async function addFieldAction(
     decorators?: Record<string, unknown>;
   }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   const fieldName = newFieldName(name);
   if ("error" in fieldName) return fieldName;
@@ -148,7 +155,8 @@ export async function addFieldAction(
   try {
     // Ownership of the PARENT: the entity must belong to the active tenant; anything else reads as missing. Checked before
     // every other read: the lookups below would otherwise answer a foreign entity's field numbers.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("entity.write", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
     const maxField = await prisma.field.findFirst({
       where: { entityId },
@@ -165,7 +173,7 @@ export async function addFieldAction(
     }
 
     // The entity id inside the decorators is what publish pins and the renderers load: it must be an entity of the active tenant.
-    if (!(await referencedEntityAllowed(opts?.decorators, undefined, (id) => inActiveTenant("entity", id)))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    if (!(await referencedEntityAllowed(opts?.decorators, undefined, readableEntity))) {
       return { error: FOREIGN_REFERENCE_MESSAGE, code: "VALIDATION_ERROR" as const };
     }
 
@@ -200,7 +208,7 @@ export async function addFieldAction(
       action: "CREATE",
       entityType: "Field",
       entityId: "pending",
-      userId: session.user.id,
+      userId: access.principal.userId,
       fn: async () => {
         // The field write and the draft + stale-source mark are ONE atomic batch: a failure between them can never
         // leave a changed field with `hasUnpublishedChanges` still false (publish would answer NO_CHANGES).
@@ -275,8 +283,6 @@ export async function updateFieldAction(
     decorators?: Record<string, unknown>;
   }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   const fieldIdCheck = requireId(fieldId, "Field id");
   if (!fieldIdCheck.success) return { error: fieldIdCheck.error.message, code: fieldIdCheck.error.code };
@@ -291,11 +297,11 @@ export async function updateFieldAction(
   }
 
   try {
-    // Ownership: the field's entity must belong to the active tenant; anything else reads as missing.
-    const loaded = await prisma.field.findUnique({ where: { id: fieldId }, include: { entity: { select: { tenantId: true } } } });
-    if (!loaded) return { ...notFoundFailure("Field") };
-    const { entity: owner, ...existing } = loaded;
-    if (!(await isInActiveTenant(owner.tenantId))) return { ...notFoundFailure("Field") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    // The field's place (its entity's tenant, domain and product) is judged BEFORE anything of it is read: the active tenant AND a covering role.
+    const access = await guardSubject("entity.write", { kind: "field", id: fieldId }, { label: "Field" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const existing = await prisma.field.findUnique({ where: { id: fieldId } });
+    if (!existing) return { ...notFoundFailure("Field") };
 
     // A RENAME to a name the AsyncAPI parser cannot read is refused. A name that does not change is not looked at: the field studio sends
     // the name with every other edit, and a field that already has such a name (created before the rule) must stay editable.
@@ -319,7 +325,7 @@ export async function updateFieldAction(
 
     // A NEW or CHANGED entity id inside the decorators must be an entity of the active tenant (an id the field already holds is left alone:
     // its entity may have been deleted since, and an unrelated edit of the field must stay possible).
-    if (!(await referencedEntityAllowed(decorators, existing.decorators, (id) => inActiveTenant("entity", id)))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    if (!(await referencedEntityAllowed(decorators, existing.decorators, readableEntity))) {
       return { error: FOREIGN_REFERENCE_MESSAGE, code: "VALIDATION_ERROR" as const };
     }
 
@@ -346,7 +352,7 @@ export async function updateFieldAction(
       action: "UPDATE",
       entityType: "Field",
       entityId: fieldId,
-      userId: session.user.id,
+      userId: access.principal.userId,
       beforeState: existing as unknown as object,
       fn: async () => {
         // The field write and the draft + stale-source mark are ONE atomic batch (see addFieldAction).
@@ -378,25 +384,19 @@ export async function updateEntityStatusAction(
   entityId: string,
   status: string,
   metadata?: Record<string, unknown>
-) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<{ success: true; error?: undefined } | { error: string; code?: string; success?: undefined }> {
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("entity.lifecycle", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
     const input: Record<string, unknown> = { status };
     if (metadata) {
       input.metadata = metadata;
     }
 
-    const userRole = await resolveUserRole(session.user.id);
-    const result = await updateEntity(entityId, input as UpdateEntityInput, {
-      userId: session.user.id,
-      userRole,
-      prisma,
-    });
+    const result = await updateEntity(entityId, input as UpdateEntityInput, contextOf(access.principal));
 
     if (!result.success) {
       return { ...failureOf(result.error, "updateEntityStatusAction") };
@@ -417,18 +417,14 @@ export async function updateEntityRelationshipsAction(
   entityId: string,
   relationships: Relationship[]
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   if (!Array.isArray(relationships)) return { error: "The relationships must be a list", code: "VALIDATION_ERROR" };
 
   try {
-    const entity = await prisma.entity.findUnique({
-      where: { id: entityId },
-      select: { metadata: true, tenantId: true },
-    });
-    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject("entity.write", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+    if (!entity) return { ...notFoundFailure("Entity") };
 
     const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
     // A relationships edit changes the draft, so the stored TypeSpec source is stale (R45).
@@ -438,7 +434,7 @@ export async function updateEntityRelationshipsAction(
       action: "UPDATE",
       entityType: "Entity",
       entityId,
-      userId: session.user.id,
+      userId: access.principal.userId,
       beforeState: { metadata: existingMeta } as unknown as object,
       fn: () =>
         prisma.entity.update({
@@ -459,12 +455,11 @@ export async function updateEntityRelationshipsAction(
  * Returns TypeSpec source + per-target emitted outputs with validation.
  */
 export async function emitEntityAction(entityId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
     // Ownership: the emitter reads the entity by id and trusts it, so scope it first.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("entity.read", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     const { emitEntity } = await import("@/lib/emission/emission.service");
     const { pickRequestOfRefusal } = await import("@/lib/emission/closure-generation");
     const result = await emitEntity(entityId);
@@ -489,8 +484,6 @@ export async function createTypeMappingOverrideAction(input: {
   entityId: string;
   isLossy: boolean;
 }) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   if (!isPlainObject(input) || (input.scope !== "global" && input.scope !== "per-entity")) {
     return { error: "The override must be global or per-entity", code: "VALIDATION_ERROR" };
@@ -498,18 +491,18 @@ export async function createTypeMappingOverrideAction(input: {
 
   try {
     // A per-entity override names an entity by id: it must belong to the active tenant (a global one names none).
-    if (input.scope === "per-entity" && !(await inActiveTenant("entity", input.entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    // A per-entity override is judged over its entity (typemapping.entity); a global one, which reaches every tenant, over the active tenant (typemapping.global).
+    const access =
+      input.scope === "per-entity"
+        ? await guardSubject("typemapping.entity", { kind: "entity", id: input.entityId }, { label: "Entity" })
+        : await guardActiveTenant("typemapping.global", { label: "Override" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
     const { createGlobalOverride, createEntityOverride } = await import(
       "@/services/type-mapping.service"
     );
 
-    const userRole = await resolveUserRole(session.user.id);
-    const ctx = {
-      userId: session.user.id,
-      userRole,
-      prisma,
-    };
+    const ctx = contextOf(access.principal);
 
     if (input.scope === "global") {
       const result = await createGlobalOverride(
@@ -554,25 +547,19 @@ export async function acknowledgeLossyMappingAction(input: {
   sourceType: string;
   targetFormat: string;
 }) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   if (!isPlainObject(input)) return { error: "The acknowledgement details are required", code: "VALIDATION_ERROR" };
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("entity", input.entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("typemapping.entity", { kind: "entity", id: input.entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
     const { acknowledgeLossyMapping } = await import(
       "@/services/type-mapping.service"
     );
 
-    const userRole = await resolveUserRole(session.user.id);
-    const result = await acknowledgeLossyMapping(input, {
-      userId: session.user.id,
-      userRole,
-      prisma,
-    });
+    const result = await acknowledgeLossyMapping(input, contextOf(access.principal));
 
     if (!result.success) return { ...failureOf(result.error, "acknowledgeLossyMappingAction") };
     revalidatePath("/schemas", "layout");
@@ -586,22 +573,16 @@ export async function acknowledgeLossyMappingAction(input: {
  * Get version history for an entity.
  */
 export async function getVersionHistoryAction(entityId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated", versions: [] };
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity"), versions: [] }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("entity.read", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code, versions: [] };
 
     const { getVersionHistory } = await import(
       "@/services/version-history/version.service"
     );
-    const userRole = await resolveUserRole(session.user.id);
-    const result = await getVersionHistory(entityId, {
-      userId: session.user.id,
-      userRole,
-      prisma,
-    });
+    const result = await getVersionHistory(entityId, contextOf(access.principal));
 
     if (!result.success) {
       return { ...failureOf(result.error, "getVersionHistoryAction"), versions: [] };
@@ -620,23 +601,17 @@ export async function compareVersionsAction(
   entityId: string,
   v1: number,
   v2: number
-) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<{ success: true; diff: DiffResult; error?: undefined } | { error: string; code?: string; success?: undefined; diff?: undefined }> {
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("entity.read", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
     const { compareVersionsStructured } = await import(
       "@/services/version-history/version.service"
     );
-    const userRole = await resolveUserRole(session.user.id);
-    const result = await compareVersionsStructured(entityId, v1, v2, {
-      userId: session.user.id,
-      userRole,
-      prisma,
-    });
+    const result = await compareVersionsStructured(entityId, v1, v2, contextOf(access.principal));
 
     if (!result.success) {
       return { ...failureOf(result.error, "compareVersionsAction") };
@@ -661,12 +636,11 @@ export async function getChangeHistoryAction(
   },
   cursor?: string
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("entity.read", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
     const { getChangeHistory } = await import(
       "@/services/change-history.service"
@@ -680,14 +654,9 @@ export async function getChangeHistoryAction(
         }
       : undefined;
 
-    const userRole = await resolveUserRole(session.user.id);
     const result = await getChangeHistory(
       entityId,
-      {
-        userId: session.user.id,
-        userRole,
-        prisma,
-      },
+      contextOf(access.principal),
       parsedFilters,
       cursor
     );
@@ -712,16 +681,12 @@ export async function getChangeHistoryAction(
  * Compiles the entity + fields into a SuperSchemaModel IR, then generates TypeSpec source.
  */
 export async function generateTypeSpecPreviewAction(entityId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated", source: "" };
 
   try {
-    const entity = await prisma.entity.findUnique({
-      where: { id: entityId },
-      include: { domain: true },
-    });
-    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity"), source: "" }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject("entity.read", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code, source: "" };
+    const entity = await prisma.entity.findUnique({ where: { id: entityId }, include: { domain: true } });
+    if (!entity) return { ...notFoundFailure("Entity"), source: "" };
 
     const fields = await prisma.field.findMany({
       where: { entityId },
@@ -748,18 +713,16 @@ export async function generateTypeSpecPreviewAction(entityId: string) {
 }
 
 export async function deleteFieldAction(fieldId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   const fieldIdCheck = requireId(fieldId, "Field id");
   if (!fieldIdCheck.success) return { error: fieldIdCheck.error.message, code: fieldIdCheck.error.code };
 
   try {
-    // Ownership: the field's entity must belong to the active tenant; anything else reads as missing.
-    const loaded = await prisma.field.findUnique({ where: { id: fieldId }, include: { entity: { select: { tenantId: true } } } });
-    if (!loaded) return { ...notFoundFailure("Field") };
-    const { entity: owner, ...existing } = loaded;
-    if (!(await isInActiveTenant(owner.tenantId))) return { ...notFoundFailure("Field") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    // The field's place (its entity's tenant, domain and product) is judged BEFORE anything of it is read: the active tenant AND a covering role.
+    const access = await guardSubject("entity.write", { kind: "field", id: fieldId }, { label: "Field" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const existing = await prisma.field.findUnique({ where: { id: fieldId } });
+    if (!existing) return { ...notFoundFailure("Field") };
 
     // If this is a reference field, clean up relationship from entity metadata
     if (existing.type === "reference") {
@@ -786,7 +749,7 @@ export async function deleteFieldAction(fieldId: string) {
       action: "DELETE",
       entityType: "Field",
       entityId: fieldId,
-      userId: session.user.id,
+      userId: access.principal.userId,
       beforeState: existing as unknown as object,
       fn: async () => {
         // Delete + draft / stale-source mark in ONE atomic batch (see addFieldAction).
@@ -858,13 +821,12 @@ async function applyTypeSpecFields(
   /** The names the source declares (models, enums, scalars, unions): what a union field's members may name besides the scalars. */
   declared?: ReadonlySet<string>,
 ): Promise<ApplyTypeSpecResult> {
-  const session = await auth();
-  if (!session?.user?.id) return { added: 0, updated: 0, removed: [], error: "Not authenticated" };
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing. Checked before the first
     // read: the field list below is the foreign entity's.
-    if (!(await inActiveTenant("entity", entityId))) return { added: 0, updated: 0, removed: [], error: notFoundFailure("Entity").error }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("entity.write", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { added: 0, updated: 0, removed: [], error: access.refusal.error };
     if (!Array.isArray(parsedFields)) return { added: 0, updated: 0, removed: [], error: "The parsed fields must be a list" };
 
     // Get existing fields for this entity
@@ -920,7 +882,7 @@ async function applyTypeSpecFields(
           action: "CREATE",
           entityType: "Field",
           entityId: "pending",
-          userId: session.user.id,
+          userId: access.principal.userId,
           fn: () =>
             prisma.field.create({
               data: {
@@ -946,7 +908,7 @@ async function applyTypeSpecFields(
             action: "UPDATE",
             entityType: "Field",
             entityId: existing.id,
-            userId: session.user.id,
+            userId: access.principal.userId,
             beforeState: existing as unknown as object,
             fn: () =>
               prisma.field.update({
@@ -978,7 +940,7 @@ async function applyTypeSpecFields(
             action: "DELETE",
             entityType: "Field",
             entityId: existing.id,
-            userId: session.user.id,
+            userId: access.principal.userId,
             beforeState: existing as unknown as object,
             fn: async () => {
               await prisma.field.delete({ where: { id: existing.id } });
@@ -1008,24 +970,17 @@ async function applyTypeSpecFields(
 async function getSchemaTargetFieldMappingsInternal(
   entityId: string,
   target: string,
-  userId: string
+  ctx: ServiceContext
 ) {
-  const entity = await prisma.entity.findUnique({
-    where: { id: entityId },
-    select: { id: true, metadata: true, tenantId: true },
-  });
-  // An entity of another tenant reads exactly like a missing one: no field rows, no override read, no write.
-  if (!entity || !(await isInActiveTenant(entity.tenantId))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
-    return { error: "Entity not found" as const };
-  }
+  // Every caller has authorized the entity BEFORE it gets here (it is in the active tenant and the caller's role covers it): this only reads.
+  const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { id: true, metadata: true } });
+  if (!entity) return { error: "Entity not found" as const };
 
   const fieldRows = await prisma.field.findMany({
     where: { entityId },
     orderBy: { sortOrder: "asc" },
   });
 
-  const userRole = await resolveUserRole(userId);
-  const ctx = { userId, userRole, prisma };
   const policyOverrideResult = await getOverridesForEntity(entityId, ctx);
   const policyOverrides = policyOverrideResult.success
     ? policyOverrideResult.data
@@ -1069,16 +1024,12 @@ async function getSchemaTargetFieldMappingsInternal(
  * Get all schema versions per target from entity metadata.
  */
 export async function getSchemaVersionsAction(entityId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
-    const entity = await prisma.entity.findUnique({
-      where: { id: entityId },
-      select: { metadata: true, tenantId: true },
-    });
-    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject("entity.read", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+    if (!entity) return { ...notFoundFailure("Entity") };
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -1092,10 +1043,10 @@ export async function getSchemaTargetFieldMappingsAction(
   entityId: string,
   target: string
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
+    const access = await guardSubject("entity.read", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     const targetDefinition = getSchemaTargetDefinition(target);
     const targetCatalog = getTargetTypeCatalogEntry(target);
     if (!targetDefinition) {
@@ -1117,7 +1068,7 @@ export async function getSchemaTargetFieldMappingsAction(
     const result = await getSchemaTargetFieldMappingsInternal(
       entityId,
       target,
-      session.user.id
+      contextOf(access.principal)
     );
     if ("error" in result) {
       return { error: result.error };
@@ -1140,12 +1091,12 @@ export async function saveSchemaFieldTypeOverrideAction(input: {
   fieldId: string;
   mappedType: string;
 }) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   if (!isPlainObject(input)) return { error: "The override details are required", code: "VALIDATION_ERROR" };
 
   try {
+    const access = await guardSubject("typemapping.entity", { kind: "entity", id: input.entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     const targetDefinition = getSchemaTargetDefinition(input.target);
     if (!targetDefinition) {
       return { error: `Unknown schema target "${input.target}"` };
@@ -1168,7 +1119,7 @@ export async function saveSchemaFieldTypeOverrideAction(input: {
     const result = await getSchemaTargetFieldMappingsInternal(
       input.entityId,
       input.target,
-      session.user.id
+      contextOf(access.principal)
     );
     if ("error" in result) {
       return { error: result.error };
@@ -1205,7 +1156,7 @@ export async function saveSchemaFieldTypeOverrideAction(input: {
             sourceType: field.type,
             mappedType: input.mappedType,
             defaultMappedType: mapping.defaultMappedType,
-            userId: session.user.id,
+            userId: access.principal.userId,
           });
 
     const existingMeta = (result.entity.metadata as Record<string, unknown>) ?? {};
@@ -1218,7 +1169,7 @@ export async function saveSchemaFieldTypeOverrideAction(input: {
       action: "UPDATE",
       entityType: "Entity",
       entityId: input.entityId,
-      userId: session.user.id,
+      userId: access.principal.userId,
       beforeState: { metadata: existingMeta } as unknown as object,
       fn: () =>
         prisma.entity.update({
@@ -1281,10 +1232,9 @@ export async function getSchemaGenerationRequirementsAction(
   entityId: string,
   target: string,
 ): Promise<{ needsInput: MissingRequirement[] } | { error: string; code?: string }> {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
   try {
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("entity.read", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     if (!getSchemaTargetDefinition(target)) return { error: `Unknown schema target "${target}"` };
     if (!hasTargetRequirements(target)) return { needsInput: [] };
     const shape = await loadRequirementShape(entityId);
@@ -1302,8 +1252,6 @@ const MAX_PRIMARY_KEY_FIELDS = 16;
  * other field `isKey = false` (one transaction, with the draft mark every field edit makes). The answer applies to every target.
  */
 export async function setEntityPrimaryKeyAction(entityId: string, fieldNames: string[]) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   if (!Array.isArray(fieldNames) || fieldNames.length === 0) {
     return { error: "Choose at least one field for the primary key", code: "VALIDATION_ERROR" as const };
@@ -1319,7 +1267,8 @@ export async function setEntityPrimaryKeyAction(entityId: string, fieldNames: st
   }
 
   try {
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("entity.write", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
     const existing = await prisma.field.findMany({
       where: { entityId },
@@ -1341,7 +1290,7 @@ export async function setEntityPrimaryKeyAction(entityId: string, fieldNames: st
       action: "UPDATE",
       entityType: "Entity",
       entityId,
-      userId: session.user.id,
+      userId: access.principal.userId,
       beforeState: { primaryKey: existing.filter((field) => field.isKey).map((field) => field.name) } as unknown as object,
       fn: () =>
         prisma.$transaction([
@@ -1370,21 +1319,18 @@ export async function setFieldReferenceAction(
   fieldId: string,
   ref: { entityId: string; pinnedVersion?: string | null }
 ): Promise<Result<void, ServiceError>> {
-  const session = await auth();
-  if (!session?.user?.id) return err({ code: "UNAUTHORIZED", message: "Not authenticated" });
   const notFound = (kind: string) => err({ code: "NOT_FOUND", message: `${kind} not found` });
   try {
     for (const [value, label] of [[entityId, "Entity id"], [fieldId, "Field id"], [ref?.entityId, "Referenced entity id"]] as const) {
       const id = requireId(value, label);
       if (!id.success) return id;
     }
-    // Re-pointing a reference is an edit: VIEWER (and an unassigned user, which resolves to VIEWER) is refused before anything is read.
-    const role = await resolveUserRole(session.user.id);
-    if (ROLE_HIERARCHY.indexOf(role as Role) < ROLE_HIERARCHY.indexOf("AUTHOR")) {
-      return err({ code: "FORBIDDEN", message: "You do not have permission to change this field's reference" });
-    }
-    if (!(await inActiveTenant("entity", entityId))) return notFound("Entity"); // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
-    if (!ref || typeof ref.entityId !== "string" || !(await inActiveTenant("entity", ref.entityId))) return notFound("Referenced entity"); // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    // Re-pointing a reference is an edit of the entity (entity.write over ITS place): the entity must be in the active tenant and the caller's
+    // role must cover it (a viewer is refused, a domain-scoped author only inside their domain), before anything is read.
+    const access = await authorizeSubject("entity.write", { kind: "entity", id: entityId }, { code: "NOT_FOUND", message: "Entity not found" });
+    if (!access.success) return err(access.error);
+    // The target is an entity the caller can see in the active tenant (a pick must not reach into a domain their role does not cover).
+    if (!ref || typeof ref.entityId !== "string" || !(await readableEntity(ref.entityId))) return notFound("Referenced entity");
 
     const field = await prisma.field.findUnique({
       where: { id: fieldId },
@@ -1432,7 +1378,7 @@ export async function setFieldReferenceAction(
       action: "UPDATE",
       entityType: "Field",
       entityId: fieldId,
-      userId: session.user.id,
+      userId: access.data.principal.userId,
       beforeState: field as unknown as object,
       fn: () =>
         prisma.$transaction([
@@ -1467,8 +1413,6 @@ export async function setFieldReferenceAction(
  * upgraded to the qualified form in a separate step that fails soft (see `upgradeLegacyReferences`).
  */
 export async function generateSchemaAction(entityId: string, target: string, opts?: { mode?: ResolveMode }) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   const requestedMode: unknown = opts?.mode;
   if (requestedMode !== undefined && requestedMode !== "draft" && requestedMode !== "published") {
@@ -1478,7 +1422,8 @@ export async function generateSchemaAction(entityId: string, target: string, opt
 
   try {
     // Ownership FIRST: both emitters read the entity by id and trust it, so a foreign id must stop here.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("schema.generate", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
     const targetDefinition = getSchemaTargetDefinition(target);
     if (!targetDefinition) {
@@ -1551,7 +1496,7 @@ export async function generateSchemaAction(entityId: string, target: string, opt
           action: "EMISSION_FAILED",
           entityType: "Entity",
           entityId,
-          userId: session.user.id,
+          userId: access.principal.userId,
           details: { target, mode, message: (firstError ?? "").slice(0, 500) },
         });
         return { error: firstError ?? `Failed to generate ${targetDefinition.displayName}` };
@@ -1578,7 +1523,7 @@ export async function generateSchemaAction(entityId: string, target: string, opt
       const mappingContext = await getSchemaTargetFieldMappingsInternal(
         entityId,
         target,
-        session.user.id
+        contextOf(access.principal)
       );
       if (!("error" in mappingContext)) {
         fieldTypeMappings = mappingContext.mappings.map((row) => ({
@@ -1636,7 +1581,7 @@ export async function generateSchemaAction(entityId: string, target: string, opt
       action: "GENERATE",
       entityType: "Entity",
       entityId,
-      userId: session.user.id,
+      userId: access.principal.userId,
       beforeState: { metadata: meta } as unknown as object,
       fn: () =>
         prisma.entity.update({
@@ -1646,7 +1591,7 @@ export async function generateSchemaAction(entityId: string, target: string, opt
     });
 
     // Generation is done and stored; qualifying the references it resolved is a separate step that never fails it.
-    if (closureRun) await upgradeLegacyReferences(entityId, session.user.id, closureRun.upgrades);
+    if (closureRun) await upgradeLegacyReferences(entityId, access.principal, access.resource, closureRun.upgrades);
 
     revalidatePath("/schemas");
     return {
@@ -1672,16 +1617,12 @@ export async function generateSchemaAction(entityId: string, target: string, opt
  * - not a draft edit (the reference means the same thing): the draft marker and the stale-source marker are left alone;
  * - fails soft per field: the generation is already stored, so a failure here is logged and nothing more.
  */
-async function upgradeLegacyReferences(entityId: string, userId: string, upgrades: LegacyUpgrade[]): Promise<void> {
+async function upgradeLegacyReferences(entityId: string, principal: Principal, resource: ResourceRef, upgrades: LegacyUpgrade[]): Promise<void> {
   const own = upgrades.filter((upgrade) => upgrade.entityId === entityId);
   if (own.length === 0) return;
-  try {
-    const role = await resolveUserRole(userId);
-    if (ROLE_HIERARCHY.indexOf(role as Role) < ROLE_HIERARCHY.indexOf("AUTHOR")) return;
-  } catch (e: unknown) {
-    console.error("[generateSchemaAction] legacy reference upgrade skipped: the role could not be read", e);
-    return;
-  }
+  // The same decision `setFieldReferenceAction` asks (an edit of this entity), taken from the principal that was just authorized to generate.
+  if (!can(principal.assignments, "entity.write", resource)) return;
+  const userId = principal.userId;
   for (const upgrade of own) {
     try {
       const field = await prisma.field.findUnique({ where: { id: upgrade.fieldId }, select: { id: true, entityId: true, type: true, decorators: true } });
@@ -1727,20 +1668,17 @@ export async function publishSchemaAction(
   version: number,
   opts?: { regenerateFromPublished?: boolean }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
+    const access = await guardSubject("entity.publish", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+
     // At most two rounds: the second only runs after a regeneration from the published versions and publishes what that produced.
     let publishing = version;
     let regenerated = false;
     for (;;) {
-      const entity = await prisma.entity.findUnique({
-        where: { id: entityId },
-        select: { metadata: true, tenantId: true },
-      });
-      // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-      if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+      const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+      if (!entity) return { ...notFoundFailure("Entity") };
 
       const meta = (entity.metadata as Record<string, unknown>) ?? {};
       const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -1821,7 +1759,7 @@ export async function publishSchemaAction(
         action: "UPDATE",
         entityType: "Entity",
         entityId,
-        userId: session.user.id,
+        userId: access.principal.userId,
         beforeState: { metadata: meta } as unknown as object,
         fn: () =>
           prisma.entity.update({
@@ -1846,16 +1784,12 @@ export async function deploySchemaAction(
   target: string,
   version: number
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
-    const entity = await prisma.entity.findUnique({
-      where: { id: entityId },
-      select: { metadata: true, tenantId: true },
-    });
-    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject("deploy.run", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+    if (!entity) return { ...notFoundFailure("Entity") };
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -1884,7 +1818,7 @@ export async function deploySchemaAction(
       action: "UPDATE",
       entityType: "Entity",
       entityId,
-      userId: session.user.id,
+      userId: access.principal.userId,
       beforeState: { metadata: meta } as unknown as object,
       fn: () =>
         prisma.entity.update({
@@ -1907,20 +1841,27 @@ export async function updateEntityMetadataAction(
   entityId: string,
   metadata: Record<string, unknown>
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
-
   // The merge below spreads `metadata`: only a plain object is a metadata patch (a Date, Map or string spreads to nothing
   // or to characters and would still mark the draft changed).
   if (!isPlainObject(metadata)) return { error: "The metadata changes must be an object", code: "VALIDATION_ERROR" };
 
+  // Which keys may be set, and by whom: bookkeeping is an edit (`entity.write`); the state of a release, of the lifecycle or of retention needs
+  // the action that changes it (see METADATA_KEY_ACTIONS); a key that is not listed is the server's and is refused. Decided from the keys alone.
+  const keys = Object.keys(metadata);
+  const unknownKey = keys.find((key) => !Object.hasOwn(METADATA_KEY_ACTIONS, key));
+  if (unknownKey !== undefined) return { error: `The metadata key "${unknownKey.slice(0, 64)}" cannot be changed here`, code: "VALIDATION_ERROR" };
+  const required = [...new Set<ActionId>(["entity.write", ...keys.flatMap((key) => METADATA_KEY_ACTIONS[key])])];
+
   try {
-    const entity = await prisma.entity.findUnique({
-      where: { id: entityId },
-      select: { metadata: true, tenantId: true },
-    });
-    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject(required[0], { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    // Every further action a key asks for is judged over the same place; one the caller lacks refuses the WHOLE patch (nothing is written).
+    if (required.slice(1).some((action) => !can(access.principal.assignments, action, access.resource))) {
+      return { error: "You do not have permission to do this", code: "FORBIDDEN" as const };
+    }
+
+    const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+    if (!entity) return { ...notFoundFailure("Entity") };
 
     const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
     const mergedMeta = { ...existingMeta, ...metadata };
@@ -1933,7 +1874,7 @@ export async function updateEntityMetadataAction(
       action: "UPDATE",
       entityType: "Entity",
       entityId,
-      userId: session.user.id,
+      userId: access.principal.userId,
       beforeState: { metadata: existingMeta } as unknown as object,
       fn: () =>
         prisma.entity.update({
@@ -1956,14 +1897,13 @@ export async function updateEntityDescriptionAction(
   entityId: string,
   description: string
 ) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   if (typeof description !== "string") return { error: "The description must be text", code: "VALIDATION_ERROR" };
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
+    const access = await guardSubject("entity.write", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
     // The description is rendered into the TypeSpec source (@doc): the write and the draft + stale-source
     // mark are one atomic batch, so the description can never land without the mark (R45).
@@ -2015,17 +1955,13 @@ function emissionTargetKey(entityId: string, targetId: unknown): string | null {
 
 export async function getEntityDeploymentStatusAction(
   entityId: string
-): Promise<{ success: true; data: DeploymentStatus[] } | { error: string }> {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<{ success: true; data: DeploymentStatus[] } | { error: string; code?: string }> {
 
   try {
-    const entity = await prisma.entity.findUnique({
-      where: { id: entityId },
-      select: { metadata: true, tenantId: true },
-    });
-    // Ownership: the entity must belong to the active tenant; anything else reads as missing (same answer).
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject("deploy.read", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+    if (!entity) return { error: "Entity not found" };
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -2043,19 +1979,15 @@ export async function markEntityDeployedAction(
   entityId: string,
   targetId: string,
   environment: string
-): Promise<{ success: true } | { error: string }> {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<{ success: true } | { error: string; code?: string }> {
 
   if (typeof environment !== "string") return { error: "The environment is required" };
 
   try {
-    const entity = await prisma.entity.findUnique({
-      where: { id: entityId },
-      select: { metadata: true, tenantId: true },
-    });
-    // Ownership: the entity must belong to the active tenant; anything else reads as missing (same answer).
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject("deploy.run", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+    if (!entity) return { error: "Entity not found" };
 
     // The target id is a second client-supplied id: it must be one of THIS entity's emission targets (`<entityId>:<target>`),
     // or the deployment record below would be written for another entity's target.
@@ -2070,7 +2002,7 @@ export async function markEntityDeployedAction(
 
     const res = await markAsDeployed(
       { emissionTargetId: targetId, environment, versionId: `v${latest.version}` },
-      session.user.id
+      access.principal.userId
     );
     if (!res.success) return { ...failureOf(res.error, "markEntityDeployedAction") };
 
@@ -2085,17 +2017,13 @@ export async function markEntityDeployedAction(
 export async function checkTargetDriftAction(
   entityId: string,
   targetId: string
-): Promise<{ success: true; data: DeploymentStatus[] } | { error: string }> {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
+): Promise<{ success: true; data: DeploymentStatus[] } | { error: string; code?: string }> {
 
   try {
-    const entity = await prisma.entity.findUnique({
-      where: { id: entityId },
-      select: { metadata: true, tenantId: true },
-    });
-    // Ownership: the entity must belong to the active tenant; anything else reads as missing (same answer).
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject("deploy.read", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+    if (!entity) return { error: "Entity not found" };
 
     // The target id must be one of THIS entity's emission targets (see markEntityDeployedAction).
     const targetKey = emissionTargetKey(entityId, targetId);
@@ -2157,16 +2085,12 @@ export async function checkTargetDriftAction(
  * the tab never shows — or re-saves — a source that lacks those edits.
  */
 export async function getTypeSpecSourceAction(entityId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
-    const entity = await prisma.entity.findUnique({
-      where: { id: entityId },
-      include: { domain: true },
-    });
-    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeInActiveTenant(action, resource) (it also needs the resource in the ACTIVE tenant)
+    const access = await guardSubject("entity.read", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const entity = await prisma.entity.findUnique({ where: { id: entityId }, include: { domain: true } });
+    if (!entity) return { ...notFoundFailure("Entity") };
 
     if (entity.typespecSource && !isSourceStale(entity.metadata)) {
       // A source stored before Story 16.6 (a publish wrote the generator's text back) can carry `@tag(...)`
@@ -2219,13 +2143,8 @@ export async function compileAndApplyTypeSpecSourceAction(
   /** Picks for the names an earlier call asked about: field name -> the id of the entity chosen. Anything that is not one of the candidates is ignored. */
   picks?: Record<string, string>
 ): Promise<TypeSpecSourceSaveResult> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return { success: false, diagnostics: [], error: "Not authenticated" };
-  }
-
   try {
-    return await compileAndApplyTypeSpecSource(session.user.id, entityId, source, picks);
+    return await compileAndApplyTypeSpecSource(entityId, source, picks);
   } catch (e: unknown) {
     // Anything unexpected (a driver / Prisma message with an absolute path, a compiler crash) is logged and answered
     // generically, in the shape the Source tab reads: the tab leaves "Saving..." and shows `error` in a toast. A disallowed
@@ -2248,16 +2167,15 @@ function stdTypeNameMessage(kind: string, name: string, own = false): string | n
 }
 
 async function compileAndApplyTypeSpecSource(
-  userId: string,
   entityId: string,
   source: string,
   picks?: unknown
 ): Promise<TypeSpecSourceSaveResult> {
-  // Ownership BEFORE anything is loaded: a malformed, missing or foreign id is the same "Entity not found" (a malformed id
-  // is rejected without a query, so it never reaches a Prisma validator), before the source is compiled or written.
-  if (!(await inActiveTenant("entity", entityId))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id }) (resolves the row, needs it in the ACTIVE tenant and a covering role)
-    return { success: false, diagnostics: [], error: "Entity not found" };
-  }
+  // The guard BEFORE anything is loaded: a malformed, missing or foreign id is the same "Entity not found" (a malformed id is rejected without a
+  // query, so it never reaches a Prisma validator), a role that cannot edit the entity is refused, and nothing is compiled or written.
+  const access = await guardSubject("entity.write", { kind: "entity", id: entityId }, { label: "Entity" });
+  if (!access.allowed) return { success: false, diagnostics: [], error: access.refusal.error };
+  const userId = access.principal.userId;
   if (typeof source !== "string") {
     return { success: false, diagnostics: [], error: "The TypeSpec source must be text" };
   }

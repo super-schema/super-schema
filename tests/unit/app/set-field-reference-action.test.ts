@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assign, resetSessionPrincipal, setSessionPrincipal } from "../../helpers/access-mocks";
 
 const { mockPrisma } = vi.hoisted(() => ({
   mockPrisma: {
@@ -12,13 +13,11 @@ const { mockPrisma } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: vi.fn().mockResolvedValue({ user: { id: "user-1" } }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
 vi.mock("@/lib/compiler/typespec-compiler", () => ({ compileTypeSpecWithGovernance: vi.fn() }));
-
-const { getEffectiveRole } = vi.hoisted(() => ({ getEffectiveRole: vi.fn() }));
-vi.mock("@/services/rbac.service", () => ({ getEffectiveRole }));
 
 import { setFieldReferenceAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 
@@ -30,7 +29,7 @@ const ENTITIES: Record<string, unknown> = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getEffectiveRole.mockResolvedValue({ success: true, data: "AUTHOR" });
+  resetSessionPrincipal();
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
   mockPrisma.entity.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ENTITIES[where.id] ?? null);
   mockPrisma.field.findUnique.mockResolvedValue({
@@ -151,12 +150,13 @@ describe("setFieldReferenceAction", () => {
     expect(mockPrisma.field.update).not.toHaveBeenCalled();
   });
 
-  it("refuses a viewer (and an unassigned user) before reading or writing anything", async () => {
-    for (const role of [{ success: true, data: "VIEWER" }, { success: true, data: null }, { success: false, error: { code: "DB_ERROR", message: "x" } }]) {
-      getEffectiveRole.mockResolvedValue(role);
-      const r = await setFieldReferenceAction("ent-1", "fld-1", { entityId: "ent-2" });
-      expect(r).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
-    }
+  it("refuses a viewer before reading or writing anything (generic FORBIDDEN), and a user with no role as a missing entity", async () => {
+    setSessionPrincipal([assign.tenant("VIEWER", "tenant-1")]);
+    const viewer = await setFieldReferenceAction("ent-1", "fld-1", { entityId: "ent-2" });
+    expect(viewer).toEqual({ success: false, error: { code: "FORBIDDEN", message: "You do not have permission to do this" } });
+    setSessionPrincipal([]);
+    const nobody = await setFieldReferenceAction("ent-1", "fld-1", { entityId: "ent-2" });
+    expect(nobody).toEqual({ success: false, error: { code: "NOT_FOUND", message: "Entity not found" } });
     expect(mockPrisma.field.findUnique).not.toHaveBeenCalled();
     expect(mockPrisma.field.update).not.toHaveBeenCalled();
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();

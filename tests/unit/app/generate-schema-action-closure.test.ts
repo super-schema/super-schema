@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { assign, resetSessionPrincipal, setSessionPrincipal } from "../../helpers/access-mocks";
 
 // Task 7: generateSchemaAction for a closure target (JSON Schema, OpenAPI, Protobuf, Avro, Java) loads the entity's reference
 // closure (draft or published mode), emits it as one file per entity, stores `files` + `resolution` on the schema version and, after
@@ -40,6 +41,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
@@ -111,6 +113,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.store.entities = [];
   h.store.versions = [];
+  resetSessionPrincipal();
   h.auth.mockResolvedValue({ user: { id: "user-1" } });
   h.getActiveTenantId.mockResolvedValue("tenant-1");
   h.getEffectiveRole.mockResolvedValue({ success: true, data: "AUTHOR" });
@@ -481,11 +484,23 @@ describe("generateSchemaAction: legacy reference upgrade", () => {
     expect(p.field.update).toHaveBeenCalledTimes(2);
   });
 
-  it("leaves a viewer's generation read-only: no upgrade is written without the edit role the pick action requires", async () => {
-    h.getEffectiveRole.mockResolvedValue({ success: true, data: "VIEWER" });
+  it("a viewer cannot generate at all (schema.generate is an author's act): refused, generic, nothing emitted and nothing written", async () => {
+    setSessionPrincipal([assign.tenant("VIEWER", "tenant-1")]);
     const result = await actions.generateSchemaAction("a", "json-schema");
-    expect(result).toMatchObject({ success: true });
+    expect(result).toEqual({ error: "You do not have permission to do this", code: "FORBIDDEN" });
+    expect(h.emitClosure).not.toHaveBeenCalled();
     expect(p.field.update).not.toHaveBeenCalled();
+  });
+
+  it("an author of the entity's own domain generates, and an author of a sibling domain gets the not-found of a missing entity", async () => {
+    // The first look-up of each call is the guard's, which asks where the entity lives: in domain "dom-a".
+    const placeOfEntity = { tenantId: "tenant-1", domainId: "dom-a", productId: null, product: null };
+    setSessionPrincipal([assign.domain("AUTHOR", "tenant-1", "dom-a")]);
+    p.entity.findUnique.mockResolvedValueOnce(placeOfEntity);
+    expect(await actions.generateSchemaAction("a", "json-schema")).toMatchObject({ success: true });
+    setSessionPrincipal([assign.domain("AUTHOR", "tenant-1", "dom-b")]);
+    p.entity.findUnique.mockResolvedValueOnce(placeOfEntity);
+    expect(await actions.generateSchemaAction("a", "json-schema")).toEqual({ error: "Entity not found", code: "NOT_FOUND" });
   });
 
   it("skips a field that was picked (or changed) between the load and the write", async () => {
