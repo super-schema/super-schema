@@ -9,7 +9,8 @@
  * The rules:
  *   - sign-in (`login`): 5 FAILURES in 15 minutes lock an e-mail (by hash) and, independently, a client address (by hash). A success resets the
  *     e-mail's count (failures before it are not counted), not the address's. An unknown e-mail is counted and locked like a known one: the state
- *     is by hash, so nothing here can tell them apart.
+ *     is by hash, so nothing here can tell them apart. A password attempt takes its place BEFORE its password is compared (`reserveLoginAttempt`: a
+ *     `pending` row that counts as a failure until it is settled), so attempts made at the same moment cannot all pass the check.
  *   - registration (`register`): every ATTEMPT counts against the client address (5 in 15 minutes): a success creates an account, which is
  *     what is being limited.
  *   - accepting an invitation (`invite_accept`) and using a reset link (`reset_consume`): 5 FAILURES in 15 minutes per client address.
@@ -39,8 +40,11 @@ export type ThrottleKind = "login" | "register" | "invite_accept" | "reset_consu
 export type ProviderRefusedKind = `provider_refused:${string}`;
 /** What `recordAuthEvent` accepts: the throttled kinds, a refused provider sign-in with its reason, and a successful one. */
 export type AuthEventKind = Exclude<ThrottleKind, "provider_refused"> | ProviderRefusedKind | "provider_login";
-/** `success` / `failure` of a sign-in or token use, `attempt` of a registration, `refused` for a provider sign-in the policy refused, `locked` for an attempt that was refused because of the limit. */
-export type AuthEventOutcome = "success" | "failure" | "attempt" | "refused" | "locked";
+/**
+ * `success` / `failure` of a sign-in or token use, `attempt` of a registration, `refused` for a provider sign-in the policy refused, `locked` for an
+ * attempt that was refused because of the limit, `pending` for a password sign-in that has reserved its place and is not decided yet (`reserveLoginAttempt`).
+ */
+export type AuthEventOutcome = "success" | "failure" | "attempt" | "refused" | "locked" | "pending";
 
 export const THROTTLE_WINDOW_MS = 15 * 60 * 1000;
 export const THROTTLE_MAX_FAILURES = 5;
@@ -53,14 +57,15 @@ export const PRUNE_AFTER_MS = 24 * 60 * 60 * 1000;
 /** At most this many old rows are deleted by one insert (a backlog is worked off over the following ones, no insert becomes a big delete). */
 export const PRUNE_BATCH = 200;
 
-/** Which outcome of each kind counts toward its limit, and whether a success of it resets an e-mail's count. */
-const COUNTED: Record<ThrottleKind, { outcome: AuthEventOutcome; successResets: boolean; kindPrefix?: string }> = {
-  login: { outcome: "failure", successResets: true },
-  register: { outcome: "attempt", successResets: false },
-  invite_accept: { outcome: "failure", successResets: false },
-  reset_consume: { outcome: "failure", successResets: false },
+/** Which outcomes of each kind count toward its limit, and whether a success of it resets an e-mail's count. */
+const COUNTED: Record<ThrottleKind, { outcomes: AuthEventOutcome[]; successResets: boolean; kindPrefix?: string }> = {
+  // an attempt still being decided counts like a failure: it has not been shown to be anything else
+  login: { outcomes: ["failure", "pending"], successResets: true },
+  register: { outcomes: ["attempt"], successResets: false },
+  invite_accept: { outcomes: ["failure"], successResets: false },
+  reset_consume: { outcomes: ["failure"], successResets: false },
   // every reason counts: the rows of this family are `provider_refused:<reason>`
-  provider_refused: { outcome: "refused", successResets: false, kindPrefix: "provider_refused:" },
+  provider_refused: { outcomes: ["refused"], successResets: false, kindPrefix: "provider_refused:" },
 };
 
 function keyedDigest(label: "email" | "ip", value: string): string {
@@ -95,6 +100,19 @@ export function clientIp(headers: { get(name: string): string | null }, env: Rea
   return first.toLowerCase();
 }
 
+/** Inserts one event (and prunes old rows in the same transaction) and returns its id. */
+async function insertEvent(kind: AuthEventKind, event: { email?: string; ip?: string; outcome: AuthEventOutcome }, now: Date): Promise<string> {
+  const emailHash = event.email !== undefined ? hashEmail(event.email) : null;
+  const ipHash = event.ip !== undefined ? hashIp(event.ip) : null;
+  const cutoff = new Date(now.getTime() - PRUNE_AFTER_MS);
+  return prisma.$transaction(async (tx) => {
+    const old = await tx.authEvent.findMany({ where: { createdAt: { lt: cutoff } }, select: { id: true }, take: PRUNE_BATCH });
+    if (old.length > 0) await tx.authEvent.deleteMany({ where: { id: { in: old.map((row) => row.id) } } });
+    const row = await tx.authEvent.create({ data: { kind, emailHash, ipHash, outcome: event.outcome, createdAt: now }, select: { id: true } });
+    return row.id;
+  });
+}
+
 /**
  * Records one event. Rows older than 24 hours are deleted in the same transaction (a bounded batch), so the table cleans itself where it is
  * written and nothing needs a scheduler. Throws on a database failure: the caller decides whether that blocks (for a failure it must not be
@@ -107,38 +125,23 @@ export async function recordAuthEvent(
   event: { email?: string; ip?: string; outcome: AuthEventOutcome },
   now: Date = new Date(),
 ): Promise<void> {
-  const emailHash = event.email !== undefined ? hashEmail(event.email) : null;
-  const ipHash = event.ip !== undefined ? hashIp(event.ip) : null;
-  const cutoff = new Date(now.getTime() - PRUNE_AFTER_MS);
-  await prisma.$transaction(async (tx) => {
-    const old = await tx.authEvent.findMany({ where: { createdAt: { lt: cutoff } }, select: { id: true }, take: PRUNE_BATCH });
-    if (old.length > 0) await tx.authEvent.deleteMany({ where: { id: { in: old.map((row) => row.id) } } });
-    await tx.authEvent.create({ data: { kind, emailHash, ipHash, outcome: event.outcome, createdAt: now } });
-  });
+  await insertEvent(kind, event, now);
 }
 
 type Dimension = { field: "emailHash" | "ipHash"; hash: string; limit: number };
 
-/** How many seconds until the count of this dimension falls below its limit: when enough of the oldest counted rows have left the window. */
-async function secondsUntilBelowLimit(where: object, count: number, limit: number, now: Date): Promise<number> {
-  const [expiring] = await prisma.authEvent.findMany({ where, orderBy: { createdAt: "asc" }, skip: count - limit, take: 1, select: { createdAt: true } });
+/** How many seconds until the count of this dimension falls below `threshold`: when enough of the oldest counted rows have left the window. */
+async function secondsUntilBelowThreshold(where: object, count: number, threshold: number, now: Date): Promise<number> {
+  const [expiring] = await prisma.authEvent.findMany({ where, orderBy: { createdAt: "asc" }, skip: count - threshold, take: 1, select: { createdAt: true } });
   if (!expiring) return 1;
   return Math.max(1, Math.ceil((expiring.createdAt.getTime() + THROTTLE_WINDOW_MS - now.getTime()) / 1000));
 }
 
 /**
- * Is this visitor locked out? Asks about each dimension it is given: the e-mail (by hash; for kinds where a success resets it, only the failures
- * after the last success count) and the client address (by hash). Locked when either is at or over its limit. `retryAfterSeconds` is when the
- * later of the locks lifts.
- *
- * @param kind which endpoint (default `login`)
- * @param now the clock unless a test sets it
+ * The seconds each locked dimension still has to wait (empty: not locked). A dimension is locked at `limit` counted rows, or, when the caller's own
+ * reserved row is among the counted ones (`ownReserved`), at `limit + 1`: the caller is the (limit)th attempt that is let through, not the one after it.
  */
-export async function isThrottled(
-  input: { email?: string; ip?: string; kind?: ThrottleKind },
-  now: Date = new Date(),
-): Promise<{ throttled: boolean; retryAfterSeconds?: number }> {
-  const kind = input.kind ?? "login";
+async function lockWaits(input: { email?: string; ip?: string }, kind: ThrottleKind, now: Date, ownReserved: boolean): Promise<number[]> {
   const rule = COUNTED[kind];
   const windowStart = new Date(now.getTime() - THROTTLE_WINDOW_MS);
 
@@ -159,13 +162,55 @@ export async function isThrottled(
         });
         if (lastSuccess) since = lastSuccess.createdAt;
       }
-      const where = { [dimension.field]: dimension.hash, kind: rule.kindPrefix ? { startsWith: rule.kindPrefix } : kind, outcome: rule.outcome, createdAt: { gt: since } };
-      const count = await prisma.authEvent.count({ where });
-      if (count < dimension.limit) return null;
-      return secondsUntilBelowLimit(where, count, dimension.limit, now);
+      const where = { [dimension.field]: dimension.hash, kind: rule.kindPrefix ? { startsWith: rule.kindPrefix } : kind, outcome: { in: rule.outcomes }, createdAt: { gt: since } };
+      // A success that reserved AFTER this caller moved `since` past the caller's own row: that row is still the caller's attempt, so it is counted by hand.
+      const ownOutsideWindow = ownReserved && now.getTime() <= since.getTime();
+      const count = (await prisma.authEvent.count({ where })) + (ownOutsideWindow ? 1 : 0);
+      const threshold = dimension.limit + (ownReserved ? 1 : 0);
+      if (count < threshold) return null;
+      return secondsUntilBelowThreshold(where, count, threshold, now);
     }),
   );
+  return waits.filter((wait): wait is number => wait !== null);
+}
 
-  const locked = waits.filter((wait): wait is number => wait !== null);
+/**
+ * Is this visitor locked out? Asks about each dimension it is given: the e-mail (by hash; for kinds where a success resets it, only the failures
+ * after the last success count) and the client address (by hash). Locked when either is at or over its limit. `retryAfterSeconds` is when the
+ * later of the locks lifts.
+ *
+ * @param kind which endpoint (default `login`)
+ * @param now the clock unless a test sets it
+ */
+export async function isThrottled(
+  input: { email?: string; ip?: string; kind?: ThrottleKind },
+  now: Date = new Date(),
+): Promise<{ throttled: boolean; retryAfterSeconds?: number }> {
+  const locked = await lockWaits(input, input.kind ?? "login", now, false);
   return locked.length === 0 ? { throttled: false } : { throttled: true, retryAfterSeconds: Math.max(...locked) };
+}
+
+/** A password sign-in's place in the count: `id` settles it (`settleAuthEvent`), `locked` says the attempt must be refused. */
+export type LoginReservation = { id: string; locked: boolean; retryAfterSeconds?: number };
+
+/**
+ * Asks "may this password be tried?" AND takes the place in one move, so attempts made at the same moment cannot all pass the check: a `pending` row
+ * is written FIRST and the count includes it, so of any number of simultaneous attempts at most `limit` are let through (the last of them to count
+ * sees every other one's row). Reading the count before the compare and writing the failure after it would let every one of them pass.
+ *
+ * The row counts as a failure until it is settled. A caller that never settles it (a crash between here and the compare) leaves it counted for the
+ * rest of the window, which is the safe side. Attempts made at the very same moment can refuse each other (each counts the other's row); the
+ * refused ones settle as `locked` and stop counting, so the next attempt is judged on what was really tried.
+ *
+ * Throws on a database failure; the caller fails closed (a throttle that cannot be read or written refuses).
+ */
+export async function reserveLoginAttempt(input: { email: string; ip: string }, now: Date = new Date()): Promise<LoginReservation> {
+  const id = await insertEvent("login", { email: input.email, ip: input.ip, outcome: "pending" }, now);
+  const waits = await lockWaits(input, "login", now, true);
+  return waits.length === 0 ? { id, locked: false } : { id, locked: true, retryAfterSeconds: Math.max(...waits) };
+}
+
+/** Settles a reserved attempt: `success` (resets the e-mail's count), `failure` (stays counted) or `locked` (refused: stops counting). */
+export async function settleAuthEvent(id: string, outcome: Extract<AuthEventOutcome, "success" | "failure" | "locked">): Promise<void> {
+  await prisma.authEvent.update({ where: { id }, data: { outcome } });
 }

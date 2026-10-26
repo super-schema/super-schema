@@ -2,7 +2,8 @@
  * Throttling and lockout against a real database (PGlite with every migration): 5 failures in 15 minutes per e-mail hash and, independently,
  * per client-address hash; a success resets the e-mail's count (not the address's); the answer for a locked e-mail is the one for an unknown
  * e-mail (the state is by hash, so it cannot tell); registration counts every attempt per address; rows hold hashes only; and rows older than
- * 24 hours are pruned in the transaction of an insert, a bounded batch at a time.
+ * 24 hours are pruned in the transaction of an insert, a bounded batch at a time. A password attempt takes its place (a `pending` row that counts
+ * as a failure) BEFORE it is tried, so attempts made at the same moment cannot all pass the check.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TestDb } from "../../helpers/pglite-db";
@@ -24,6 +25,8 @@ import {
   hashIp,
   isThrottled,
   recordAuthEvent,
+  reserveLoginAttempt,
+  settleAuthEvent,
 } from "@/lib/auth/throttle";
 
 const db = () => holder.db!.prisma;
@@ -306,5 +309,79 @@ describe("refused sign-ins through an identity provider are throttled per addres
     const [row] = await db().authEvent.findMany();
     expect(row).toMatchObject({ kind: "provider_refused:email-unverified", outcome: "refused", emailHash: hashEmail("ada@example.test"), ipHash: hashIp("203.0.113.5") });
     expect(JSON.stringify(row)).not.toMatch(/ada|203\.0\.113/i);
+  }, 60_000);
+});
+
+describe("a password attempt takes its place before it is tried (reserveLoginAttempt)", () => {
+  const counted = (email: string) => db().authEvent.count({ where: { emailHash: hashEmail(email), kind: "login", outcome: { in: ["failure", "pending"] } } });
+
+  it("lets exactly five attempts through for one e-mail, whatever they do, and refuses the sixth", async () => {
+    const results = [];
+    for (let i = 0; i < 6; i++) results.push(await reserveLoginAttempt({ email: "a@example.test", ip: `203.0.113.${10 + i}` }, NOW));
+    expect(results.map((r) => r.locked)).toEqual([false, false, false, false, false, true]);
+    expect(results[5].retryAfterSeconds).toBeGreaterThan(0);
+    expect(results[5].retryAfterSeconds).toBeLessThanOrEqual(15 * 60);
+  }, 60_000);
+
+  it("a place that is not settled counts as a failure (a crash between the reservation and the compare leaves the count where it was)", async () => {
+    for (let i = 0; i < 5; i++) await reserveLoginAttempt({ email: "a@example.test", ip: "203.0.113.1" }, NOW);
+    expect((await throttled("a@example.test", undefined)).throttled).toBe(true);
+    expect(await db().authEvent.count({ where: { outcome: "pending" } })).toBe(5);
+  }, 60_000);
+
+  it("a refused attempt settles as 'locked' and stops counting, so the refusals do not extend the lock", async () => {
+    for (let i = 0; i < 5; i++) await reserveLoginAttempt({ email: "a@example.test", ip: "203.0.113.1" }, NOW);
+    const refused = await reserveLoginAttempt({ email: "a@example.test", ip: "203.0.113.1" }, NOW);
+    expect(refused.locked).toBe(true);
+    expect(await counted("a@example.test")).toBe(6);
+    await settleAuthEvent(refused.id, "locked");
+    expect(await counted("a@example.test")).toBe(5);
+  }, 60_000);
+
+  it("settling as a failure keeps the count; settling as a success resets the e-mail's count", async () => {
+    // every attempt from its own address: a success resets the e-mail's count, never the address's
+    let n = 0;
+    const reserve = (at: Date) => reserveLoginAttempt({ email: "a@example.test", ip: `203.0.113.${++n}` }, at);
+    for (let i = 0; i < 4; i++) await settleAuthEvent((await reserve(ago((6 - i) * MINUTE))).id, "failure");
+    expect(await counted("a@example.test")).toBe(4);
+    const winner = await reserve(ago(2 * MINUTE));
+    expect(winner.locked).toBe(false);
+    await settleAuthEvent(winner.id, "success");
+    // the five attempts since the success are let through (the last of them is the fifth to be counted), the sixth is refused
+    for (let i = 0; i < 5; i++) expect((await reserve(ago(MINUTE))).locked).toBe(false);
+    expect((await reserve(ago(MINUTE))).locked).toBe(true);
+  }, 60_000);
+
+  it("the client address is limited too: five attempts from one address, five e-mails, and the sixth e-mail is refused", async () => {
+    const ip = "198.51.100.40";
+    for (let i = 0; i < 5; i++) expect((await reserveLoginAttempt({ email: `user${i}@example.test`, ip }, NOW)).locked).toBe(false);
+    expect((await reserveLoginAttempt({ email: "user5@example.test", ip }, NOW)).locked).toBe(true);
+    expect((await reserveLoginAttempt({ email: "user5@example.test", ip: "198.51.100.41" }, NOW)).locked).toBe(false);
+  }, 60_000);
+
+  it("the shared bucket of an unknown address keeps its ceiling of 100: five attempts of five people are not refused", async () => {
+    for (let i = 0; i < 5; i++) expect((await reserveLoginAttempt({ email: `user${i}@example.test`, ip: UNTRUSTED_IP }, NOW)).locked).toBe(false);
+  }, 60_000);
+
+  it("simultaneous attempts: never more than five are let through (checking first and writing the failure afterwards would let all of them through)", async () => {
+    for (let round = 0; round < 3; round++) {
+      await db().authEvent.deleteMany();
+      const places = await Promise.all(Array.from({ length: 20 }, (_, i) => reserveLoginAttempt({ email: "race@example.test", ip: `203.0.113.${100 + i}` })));
+      expect(places.filter((place) => !place.locked).length).toBeLessThanOrEqual(THROTTLE_MAX_FAILURES);
+    }
+  }, 120_000);
+
+  it("an attempt whose own row lies before a later success is still counted as one of the attempts (a success that reserved after it moves the window past it)", async () => {
+    // A success at +1 s resets the count; five failures after it are the five that count. The sixth place, taken at NOW, is the one after them.
+    await recordAuthEvent("login", { email: "a@example.test", ip: "203.0.113.1", outcome: "success" }, new Date(NOW.getTime() + 1000));
+    await failTimes(5, "a@example.test", "203.0.113.1", new Date(NOW.getTime() + 2000));
+    expect((await reserveLoginAttempt({ email: "a@example.test", ip: "203.0.113.1" }, NOW)).locked).toBe(true);
+  }, 60_000);
+
+  it("a row says 'pending' with hashes only", async () => {
+    const place = await reserveLoginAttempt({ email: "Visible.Name@Example.TEST", ip: "203.0.113.200" }, NOW);
+    const row = await db().authEvent.findUniqueOrThrow({ where: { id: place.id } });
+    expect(row).toMatchObject({ kind: "login", outcome: "pending", emailHash: hashEmail("visible.name@example.test"), ipHash: hashIp("203.0.113.200") });
+    expect(JSON.stringify(row).toLowerCase()).not.toMatch(/visible|example\.test|203\.0\.113/);
   }, 60_000);
 });
