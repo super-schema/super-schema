@@ -274,8 +274,9 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   `tests/unit/access/deny-by-default.test.ts` fails for a server action or a route handler that is neither guarded nor on the allow-list, and both pending lists are empty.
   What is left: the choice lives in a cookie of one browser, so a user with roles in two tenants who opens a deep link into the tenant that is not in view gets a 404 until they switch (the same answer as a
   missing page, on purpose: it says nothing about what exists), and a cookie that names a tenant whose role was since revoked falls back to the first accessible tenant without telling the user.
-  Not a boundary either, and recorded on their own: the glossary is one list for every tenant (KD-043), an event document may name an entity its author may not read (KD-044), and an entity's emission
-  includes the entities it references (KD-045).
+  Not a boundary either, and recorded on their own: the glossary is one list for every tenant (KD-043) and an event document may name an entity its author may not read (KD-044). An entity's emission,
+  validation, preview, generation and publish used to include the entities it references whether or not the caller could read them (KD-045, fixed): the closure now refuses (`REFERENCE_NOT_READABLE`) when
+  it reaches an entity no role of the caller covers, before anything is built from it (`entityReader`, `tests/unit/access/closure-reader-scan.test.ts` keeps every caller honest).
 - where: `src/lib/active-tenant.ts`, `setActiveTenantAction`, `src/lib/access/api.ts`, `src/lib/access/page-access.ts`, `src/app/api/tenants/route.ts`.
 - cost to fix: keep the choice per user on the server (a column on `users`, read by `getActiveTenantId`) and say so on the page that falls back; or show the user the tenant they were sent to.
 
@@ -389,14 +390,3 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   the referenced version's stored content into the event's own emission. A domain-scoped author who learns an id from outside their scope can therefore read what the pin resolves to through the event's preview.
 - where: `src/services/events/event.service.ts` (`updateEventDocument`, the reference and pin validation), `src/services/events/event-publish.service.ts`.
 - cost to fix: pass the caller's assignments into the document validation and refuse a pin or reference that no role of theirs covers (`entity.read` / `event.read`), the way the loaders do.
-
-## KD-045: an entity's emission includes the entities it references, whether or not the caller may read them
-
-- status: no-test (a policy gap found while scoping the REST API; the reference closure is built inside the entity's own tenant and knows nothing of the caller's roles)
-- symptom: `POST /api/v1/schemas/:id/emit` and `/validate`, and the emission preview of the entity page, require `entity.read` over the ENTITY asked for, and then emit it together with everything it
-  references (one file per entity, in `files` and `output`). A caller whose role is scoped to one domain or product (`API_KEY_ROLE=VIEWER` is tenant-wide, so it is not affected; a domain- or
-  product-scoped user is) who can read entity A, which references entity B of another domain, therefore receives B's generated schema in the emission of A. A tenant-wide role reads every entity of the
-  tenant, so for it the closure shows nothing it could not read.
-- where: `src/lib/emission/emission.service.ts` (`emitTargetsForEntity`), `src/lib/references/closure.ts` (the closure is loaded by tenant, not by what the caller may read).
-- cost to fix: pass the caller's assignments into the closure loader and either refuse the emission (a 422 naming the unreadable reference as unresolved) or emit the reference as an opaque type, the way a
-  dangling reference is emitted (KD-031); a product decision between the two.

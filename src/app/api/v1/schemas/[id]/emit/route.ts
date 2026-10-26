@@ -15,6 +15,7 @@
  */
 
 import { withApiAuth } from "@/lib/access/api";
+import { entityReader } from "@/lib/access/entity-reader";
 import { checkRateLimit } from "@/app/api/v1/rate-limit";
 import { isUsableId, unusableIdNotFound } from "@/app/api/v1/request";
 import {
@@ -58,9 +59,10 @@ export const POST = withApiAuth<{ id: string }>("entity.read", async (_request, 
     const prismaFields = fields as unknown as PrismaFieldInput[];
 
     const enabledTargets = getSchemaTargetCatalog().filter((t) => t.enabledInSchemaTab);
-    // The root is an entity of the acting tenant that a role of the caller covers (`getEntityById` above), and the closure stays inside that tenant. It
-    // is NOT limited to what the caller may read: an entity the root references is emitted with it (KD-045).
-    const run = await emitTargetsForEntity(prisma, prismaEntity, prismaFields, enabledTargets, "draft");
+    // The root is an entity of the acting tenant that a role of the caller covers (`getEntityById` above), and the closure stays inside that tenant. Every
+    // entity the root references (transitively) must be covered by a role of the caller too, or the run is refused before anything is built from it: 403
+    // REFERENCE_NOT_READABLE, a message that names nothing of the other entity (KD-045).
+    const run = await emitTargetsForEntity(prisma, prismaEntity, prismaFields, enabledTargets, "draft", entityReader(api.principal.assignments));
     if (run.refusal) return apiError(run.refusal);
     const results = run.results.map(({ target, result }) => ({
       target: target.key,

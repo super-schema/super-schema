@@ -41,6 +41,9 @@ function mapErrorCodeToStatus(code: string): number {
     case "UNAUTHORIZED":
       return 401;
     case "FORBIDDEN":
+    // The caller reaches the entity asked for but none of their roles covers an entity its schema refers to (KD-045): the same 403 as a role that is
+    // too low, with a message that names nothing of the other entity.
+    case "REFERENCE_NOT_READABLE":
       return 403;
     case "NOT_FOUND":
       return 404;

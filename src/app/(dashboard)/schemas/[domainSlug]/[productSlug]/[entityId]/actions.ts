@@ -12,7 +12,7 @@ import { updateEntity } from "@/services/entity.service";
 import type { UpdateEntityInput } from "@/types/schemas/entity.schema";
 import type { Relationship } from "@/types/schemas/entity-metadata.schema";
 import type { DiffResult } from "@/services/version-history/version.types";
-import { can, type ActionId, type ResourceRef } from "@/lib/access";
+import { can, entityReader, type ActionId, type ResourceRef } from "@/lib/access";
 import type { Principal } from "@/lib/access/principal";
 import { authorizeSubject, contextOf, failureOf, guardActiveTenant, guardSubject, notFoundFailure, unexpectedFailure } from "@/lib/action-context";
 import {
@@ -465,7 +465,8 @@ export async function emitEntityAction(entityId: string) {
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     const { emitEntity } = await import("@/lib/emission/emission.service");
     const { pickRequestOfRefusal } = await import("@/lib/emission/closure-generation");
-    const result = await emitEntity(entityId);
+    // The preview emits the entity with everything it references, limited to what the caller's roles cover (KD-045): otherwise it comes back refused.
+    const result = await emitEntity(entityId, entityReader(access.principal.assignments));
     // A name that two entities answer to is a question (the same one a generation asks): answered beside the result so the page can open
     // the pick dialog and run the emission again.
     const needsReference = pickRequestOfRefusal(result.refusal);
@@ -1459,7 +1460,7 @@ export async function generateSchemaAction(entityId: string, target: string, opt
 
     if (targetDefinition.runtime === "native") {
       const { emitEntity } = await import("@/lib/emission/emission.service");
-      const result = await emitEntity(entityId);
+      const result = await emitEntity(entityId, entityReader(access.principal.assignments));
       const nativeTargetOutput = result.targets[target];
       if (!nativeTargetOutput) {
         return { error: `No output found for target "${target}"` };
@@ -1468,11 +1469,12 @@ export async function generateSchemaAction(entityId: string, target: string, opt
     } else {
       let officialResult: ClosureTargetResult;
       if (targetDefinition.closureEmission) {
-        // The root passed the tenant check above, so its closure is confined to that same (active) tenant.
+        // The root passed the tenant check above, so its closure is confined to that same (active) tenant, and to what the caller's roles cover: an
+        // entity it references that they may not read refuses the generation (REFERENCE_NOT_READABLE) before anything is built from it (KD-045).
         // In published mode the ROOT too is read from its latest PUBLISHED version, not from its saved rows: unpublished edits to the
         // entity itself are not in the result (publish the entity first to include them), exactly like its referenced entities.
         const { closureFailure, describeResolution, emitClosureTarget } = await import("@/lib/emission/closure-generation");
-        const loaded = await loadReferenceClosure(prisma, await getActiveTenantId(), entityId, mode);
+        const loaded = await loadReferenceClosure(prisma, await getActiveTenantId(), entityId, mode, { reader: entityReader(access.principal.assignments) });
         if (!loaded.success) {
           // A name frozen in a published or pinned member is not a question (a pick cannot change a published version): it is the refusal.
           if (loaded.error.code === "AMBIGUOUS_REFERENCE" && !loaded.error.frozen) {

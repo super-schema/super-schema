@@ -13,7 +13,7 @@
 
 import type { PrismaClient, Prisma } from "@/generated/prisma/client";
 import { closureFailure } from "@/lib/emission/closure-generation";
-import { loadReferenceClosure, type ClosureError, type ReferenceClosure } from "@/lib/references/closure";
+import { loadReferenceClosure, type ClosureError, type ClosureReader, type ReferenceClosure } from "@/lib/references/closure";
 import { describeEntityRef, type EntityRef } from "@/lib/references/entity-reference";
 import type { Result } from "@/types/result";
 import type { ReferencedVersion } from "./referenced-versions";
@@ -65,11 +65,14 @@ export function publishBlockerFor(error: ClosureError, rootName: string): Publis
  * Loads the closure of `entity` for a publish: the entity at its saved rows, every member published or pinned. `entity.tenantId` is
  * the entity's own tenant (a publish never reaches across tenants; the caller already proved the entity is the user's). Never throws
  * for a domain failure.
+ *
+ * `opts.reader` (KD-045) is who may read what: a member the publisher's roles do not cover blocks the publish (`REFERENCE_NOT_READABLE`, a message
+ * that names nothing of it) before its published content is read, so it never reaches the combined source that is compiled nor the record stored.
  */
 export async function loadPublishClosure(
   db: Db,
   entity: { id: string; tenantId: string; name: string },
-  opts?: { maxEntities?: number }
+  opts?: { maxEntities?: number; reader?: ClosureReader }
 ): Promise<Result<PublishClosure, PublishClosureBlocker>> {
   const loaded = await loadReferenceClosure(db, entity.tenantId, entity.id, "published", { rootAtDraft: true, ...opts });
   if (!loaded.success) return { success: false, error: publishBlockerFor(loaded.error, entity.name) };

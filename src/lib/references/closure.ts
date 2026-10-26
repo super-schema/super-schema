@@ -44,7 +44,23 @@ export type ClosureError =
   | { code: "PIN_CONFLICT"; ref: EntityRef; pins: { field: string; owner: EntityRef; version: string }[] }
   | { code: "NEVER_PUBLISHED"; ref: EntityRef }
   | { code: "CLOSURE_TOO_LARGE"; limit: number }
+  /**
+   * The closure reaches an entity the caller's roles do not cover (KD-045): refused whole, never omitted and never described. `field` is the field of
+   * an entity the caller CAN read that holds the reference (their own field); the unreadable entity is named nowhere in the error: not its name,
+   * domain, product, id, pin or candidates.
+   */
+  | { code: "REFERENCE_NOT_READABLE"; field: string }
   | { code: "CROSS_TENANT" };
+
+/** Where an entity sits in the scope tree: what a role is judged against (the tenant, the domain it hangs under, its product). */
+export type ClosurePlace = { tenantId: string; domainId: string | null; productId: string | null };
+
+/**
+ * May the caller read the entity at `place`? The closure asks it of every entity it is about to add, before it reads a row of that entity's
+ * content (KD-045). `entityReader(assignments)` in `@/lib/access` is the one implementation (the policy's `entity.read`); this module stays free
+ * of policy and takes the answer as a function. No reader = nothing is held back (the loader's own tests, a caller that has no principal).
+ */
+export type ClosureReader = (place: ClosurePlace) => boolean;
 
 /** A legacy name-only reference (on a live field row) that resolved to exactly one entity: what the qualified form would point at. */
 export type LegacyUpgrade = { entityId: string; fieldId: string; fieldName: string; ref: EntityRef };
@@ -78,6 +94,8 @@ type IndexedEntity = {
   status: string;
   version: number;
   domainId: string | null;
+  /** The entity's place for access: its tenant, the domain it counts as being in (a product row with an empty domain column takes its product's) and its product. */
+  place: ClosurePlace;
   latestVersionId: string | null;
   domain: { id: string; name: string; slug: string } | null;
   product: { name: string } | null;
@@ -131,16 +149,20 @@ async function loadTenantIndex(db: DbClient, tenantId: string): Promise<Map<stri
       status: true,
       version: true,
       domainId: true,
+      productId: true,
       latestVersionId: true,
       domain: { select: { id: true, name: true, slug: true } },
-      product: { select: { name: true } },
+      product: { select: { name: true, domainId: true } },
     },
     orderBy: { id: "asc" },
   });
   const index = new Map<string, IndexedEntity>();
   for (const r of rows) {
+    const { productId, product, ...row } = r;
     index.set(r.id, {
-      ...r,
+      ...row,
+      product: product ? { name: product.name } : null,
+      place: { tenantId, domainId: r.domainId ?? product?.domainId ?? null, productId: productId ?? null },
       ref: {
         entityId: r.id,
         domain: r.domain?.name ?? TENANT_PLACEHOLDER,
@@ -343,13 +365,17 @@ function findCycles(graph: Map<string, string[]>, label: (id: string) => string)
  * `mode`. This is the closure a PUBLISH of the root is judged against: the root is the draft being frozen (it may never have been
  * published, so it has no published version to read) and what it references must be a published version, never a draft. The root
  * is then the only entity of the closure that can be at draft state.
+ *
+ * `opts.reader` (KD-045): who may read what. The root is the caller's own (they were authorized for it before the load); every OTHER entity the walk
+ * is about to add is asked about first, and one the caller may not read refuses the whole closure with `REFERENCE_NOT_READABLE` before a single row of its
+ * content (fields, versions, metadata) is read, so nothing of it can reach a source or a file, an error text or a candidate list.
  */
 export async function loadReferenceClosure(
   db: DbClient,
   tenantId: string,
   rootEntityId: string,
   mode: ResolveMode,
-  opts?: { maxEntities?: number; rootAtDraft?: boolean }
+  opts?: { maxEntities?: number; rootAtDraft?: boolean; reader?: ClosureReader }
 ): Promise<Result<ReferenceClosure, ClosureError>> {
   const limit = opts?.maxEntities ?? DEFAULT_MAX_CLOSURE_ENTITIES;
   // Fail closed: Prisma reads `where: { tenantId: undefined }` as "no filter", i.e. every tenant. A caller without a tenant gets the
@@ -358,6 +384,8 @@ export async function loadReferenceClosure(
   const index = await loadTenantIndex(db, tenantId);
   const rootIndexed = index.get(rootEntityId);
   if (!rootIndexed) return { success: false, error: { code: "CROSS_TENANT" } };
+  const reader = opts?.reader;
+  const refuse = (field: string): Result<never, ClosureError> => ({ success: false, error: { code: "REFERENCE_NOT_READABLE", field } });
 
   /** One edge to an entity, as a field of a member declared it: who owns the field and the version it pins (none: unpinned). */
   type Observation = { field: string; owner: IndexedEntity; ownerRef: EntityRef; pin?: string };
@@ -427,6 +455,8 @@ export async function loadReferenceClosure(
         if (!fieldRef) continue;
         const resolved = resolveTarget(index, fieldRef);
         if (!resolved) continue; // dangling
+        // A bare name that several entities answer to lists them as the question to pick from: it may not list one the caller cannot read.
+        if ("ambiguous" in resolved && reader && resolved.ambiguous.some((candidate) => !reader(candidate.place))) return refuse(field.name);
         if ("ambiguous" in resolved) {
           return {
             success: false,
@@ -459,6 +489,8 @@ export async function loadReferenceClosure(
       edges.sort((a, b) => byQualified(a.target, b.target) || compareStr(a.field, b.field));
       for (const edge of edges) {
         if (seen.has(edge.target.id)) continue;
+        // Before the content of the target is read (and before any error about it could name it): the caller's roles must cover it.
+        if (reader && !reader(edge.target.place)) return refuse(edge.field);
         if (entities.length >= limit) return { success: false, error: { code: "CLOSURE_TOO_LARGE", limit } };
         const force = forced.get(edge.target.id);
         const loaded = await add(edge.target, force ? force.pin : edge.pin, force ? force.field : edge.field);

@@ -12,6 +12,7 @@
  */
 
 import { withApiAuth } from "@/lib/access/api";
+import { entityReader } from "@/lib/access/entity-reader";
 import { checkRateLimit } from "@/app/api/v1/rate-limit";
 import { isUsableId, unusableIdNotFound } from "@/app/api/v1/request";
 import {
@@ -52,9 +53,10 @@ export const POST = withApiAuth<{ id: string }>("entity.read", async (_request, 
     const prismaEntity = entity as unknown as PrismaEntityInput & { tenantId: string };
     const prismaFields = fields as unknown as PrismaFieldInput[];
 
-    // Run emission pipeline (validation is part of emission)
+    // Run emission pipeline (validation is part of emission). The closure only holds what the caller's roles cover: an entity the schema refers to that
+    // they may not read refuses the whole request (403 REFERENCE_NOT_READABLE) before anything is built from it (KD-045).
     const enabledTargets = getSchemaTargetCatalog().filter((t) => t.enabledInSchemaTab);
-    const run = await emitTargetsForEntity(prisma, prismaEntity, prismaFields, enabledTargets, "draft");
+    const run = await emitTargetsForEntity(prisma, prismaEntity, prismaFields, enabledTargets, "draft", entityReader(api.principal.assignments));
     if (run.refusal) return apiError(run.refusal);
     const results = run.results.map(({ target, result }) => ({
       target: target.key,

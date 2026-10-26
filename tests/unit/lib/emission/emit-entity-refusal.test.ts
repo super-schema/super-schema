@@ -38,7 +38,7 @@ import { pickRequestOfRefusal } from "@/lib/emission/closure-generation";
 
 describe("emitEntity carries the closure's refusal", () => {
   it("an ambiguous name: the result has the structured refusal, the closure targets are invalid with its message, the DB targets still emit", async () => {
-    const result = await emitEntity("a");
+    const result = await emitEntity("a", () => true);
     expect(result.refusal).toMatchObject({ code: "AMBIGUOUS_REFERENCE", details: { field: "addr", name: "Address", entityId: "a", fieldId: "a-addr" } });
     expect(result.targets["json-schema"]).toMatchObject({ validationStatus: "INVALID", errors: [{ message: result.refusal?.message }] });
     expect(result.targets.postgresql).toMatchObject({ validationStatus: "VALID" });
@@ -46,7 +46,7 @@ describe("emitEntity carries the closure's refusal", () => {
   });
 
   it("the pick it asks for is the one a generate answers: the field, the name, the candidates and where the pick is written", async () => {
-    const result = await emitEntity("a");
+    const result = await emitEntity("a", () => true);
     expect(pickRequestOfRefusal(result.refusal)).toEqual({
       field: "addr",
       name: "Address",

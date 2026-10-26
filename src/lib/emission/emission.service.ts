@@ -13,7 +13,7 @@ import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import type { EmissionResult, TargetOutput } from "./emission.types";
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
 import { getSchemaTargetCatalog, type SchemaTargetDefinition } from "@/lib/schema-targets/catalog";
-import { loadReferenceClosure, withoutSchemaVersions, type ReferenceClosure, type ResolveMode } from "@/lib/references/closure";
+import { loadReferenceClosure, withoutSchemaVersions, type ClosureReader, type ReferenceClosure, type ResolveMode } from "@/lib/references/closure";
 import type { ServiceError } from "@/types/result";
 import type { SchemaVersionResolution } from "@/types/schema-version";
 import { closureFailure, describeResolution, emitClosureTarget, type ClosureTargetResult } from "./closure-generation";
@@ -57,18 +57,23 @@ export interface EntityTargetsEmission {
  * `mode` decides what an unpinned reference resolves to: `draft` the latest saved definition (the output is a preview), `published`
  * the latest published version (never a draft). Loading and emitting never write: a legacy name-only reference that resolved is not
  * upgraded here. Never throws for a domain failure.
+ *
+ * `reader` (KD-045) is who may read what: the closure refuses (`refusal`, code `REFERENCE_NOT_READABLE`) when it reaches an entity the caller's
+ * roles do not cover, before any source or file is built from it. It is REQUIRED, so a new caller has to say whose roles decide
+ * (`entityReader(principal.assignments)`); the entity itself is the caller's, authorized before this runs.
  */
 export async function emitTargetsForEntity(
   db: DbClient,
   entity: PrismaEntityInput & { tenantId: string },
   fields: PrismaFieldInput[],
   targets: SchemaTargetDefinition[],
-  mode: ResolveMode
+  mode: ResolveMode,
+  reader: ClosureReader
 ): Promise<EntityTargetsEmission> {
   let closure: ReferenceClosure | undefined;
   let refusal: ServiceError | undefined;
   if (targets.some((target) => target.closureEmission)) {
-    const loaded = await loadReferenceClosure(db, entity.tenantId, entity.id, mode);
+    const loaded = await loadReferenceClosure(db, entity.tenantId, entity.id, mode, { reader });
     if (loaded.success) closure = loaded.data;
     else refusal = closureFailure(loaded.error);
   }
@@ -95,9 +100,10 @@ export async function emitTargetsForEntity(
  * through the real TypeSpec compiler (every target is `runtime: "typespec-cli"`
  * as of 2026-10-12 — see src/emitters/index.ts for why the native-only
  * `emitFromData()` this used to delegate to is no longer sufficient here).
- * The closure targets emit the entity together with everything it references (draft mode, see `emitTargetsForEntity`).
+ * The closure targets emit the entity together with everything it references (draft mode, see `emitTargetsForEntity`), limited to what `reader`
+ * says the caller may read (KD-045: otherwise the run is refused).
  */
-export async function emitEntity(entityId: string): Promise<EmissionResult> {
+export async function emitEntity(entityId: string, reader: ClosureReader): Promise<EmissionResult> {
   // 1. Load entity + fields
   const entity = await prisma.entity.findUnique({
     where: { id: entityId },
@@ -148,7 +154,7 @@ export async function emitEntity(entityId: string): Promise<EmissionResult> {
   const enabledTargets = getSchemaTargetCatalog().filter((t) => t.enabledInSchemaTab);
   const targets: Record<string, TargetOutput> = {};
 
-  const emission = await emitTargetsForEntity(prisma, prismaEntity, prismaFields, enabledTargets, "draft");
+  const emission = await emitTargetsForEntity(prisma, prismaEntity, prismaFields, enabledTargets, "draft", reader);
   for (const { target, result } of emission.results) {
     targets[target.key] = {
       name: target.key,

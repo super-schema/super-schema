@@ -67,6 +67,15 @@ export function closureFailure(error: ClosureError): ServiceError {
         message: `The schema references more than ${error.limit} entities, directly or through other entities. Shorten the chain of references.`,
         details: { limit: error.limit },
       };
+    case "REFERENCE_NOT_READABLE":
+      // KD-045. Names the caller's OWN field and nothing of the entity it points at (not its name, domain, product, id or version): the caller
+      // may hold no role that covers it, and the answer must not tell them what is there.
+      return {
+        code: error.code,
+        message: `Field "${error.field}" refers to an entity that none of your roles covers, so this schema cannot be generated from here.`,
+        details: { field: error.field },
+        suggestedFix: "Ask an administrator for a role that covers the referenced entity, or remove the reference.",
+      };
     case "CROSS_TENANT":
       return { code: "NOT_FOUND", message: "Entity not found" };
   }

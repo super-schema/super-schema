@@ -56,7 +56,7 @@ function fakeDb(referencedEntityId: string) {
   return db;
 }
 
-const ctx = (db: unknown) => ({ userId: "u1", userRole: "AUTHOR", prisma: db }) as never;
+const ctx = (db: unknown) => ({ userId: "u1", userRole: "AUTHOR", assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }], prisma: db }) as never;
 
 beforeEach(() => {
   vi.clearAllMocks();

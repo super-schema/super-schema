@@ -35,3 +35,5 @@ export { can, contextRole, effectiveRole, globalRole, grantAllowed, roleAtLeast 
 export { canListDomain, canListProduct, productScopesIn, readableScopes, readableWhere, seesWholeDomain, type ReadableScopes } from "./visibility";
 
 export { ctxCan } from "./context";
+
+export { entityReader, type EntityPlace } from "./entity-reader";

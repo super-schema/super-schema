@@ -77,7 +77,7 @@ function fakePrisma(typespecSource: string) {
   return { prisma, created, executed };
 }
 
-const ctxFor = (prisma: unknown) => ({ userId: "u1", userRole: "AUTHOR", prisma }) as unknown as ServiceContext;
+const ctxFor = (prisma: unknown) => ({ userId: "u1", userRole: "AUTHOR", assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }], prisma }) as unknown as ServiceContext;
 
 describe("freezableStoredSource", () => {
   it("upgrades legacy @tag lines and reports it; leaves a current source untouched", () => {

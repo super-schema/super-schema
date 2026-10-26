@@ -133,7 +133,9 @@ beforeEach(() => {
     entities()
       .filter((e) => e.tenantId === where.tenantId)
       .map((e) => ({
-        id: e.id, name: e.name, description: "", status: "DRAFT", version: e.version, domainId: e.domain ? `d-${e.domain}` : null, metadata: e.metadata,
+        // Every entity of this fixture lives in the one domain "dom-a" (the domain the own-domain author of the access test below holds): the closure
+        // only holds what the caller's roles cover (KD-045), and a closure member in another domain would refuse a domain-scoped author.
+        id: e.id, name: e.name, description: "", status: "DRAFT", version: e.version, domainId: e.domain ? "dom-a" : null, productId: null, metadata: e.metadata,
         latestVersionId: e.latestVersionId,
         domain: e.domain ? { id: `d-${e.domain}`, name: e.domain, slug: `${e.domain}-slug` } : null,
         product: e.product ? { name: e.product } : null,

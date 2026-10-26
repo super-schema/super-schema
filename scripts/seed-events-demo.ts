@@ -40,7 +40,7 @@ const cleanupNotes: string[] = [];
 async function main() {
   const user =
     (await prisma.user.findFirst({ where: { email: "jayesh.senjaliya@gmail.com" } })) ?? (await prisma.user.findFirstOrThrow());
-  const ctx: ServiceContext = { userId: user.id, userRole: "AUTHOR", prisma };
+  const ctx: ServiceContext = { userId: user.id, userRole: "AUTHOR", assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }], prisma };
 
   async function domain(slug: string, name: string) {
     return (await prisma.domain.findFirst({ where: { slug, tenantId: TENANT } })) ?? prisma.domain.create({ data: { name, slug, tenantId: TENANT } });

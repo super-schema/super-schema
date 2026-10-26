@@ -14,7 +14,7 @@ export function connectTestDb(): PrismaClient {
 
 export async function testContext(prisma: PrismaClient): Promise<ServiceContext> {
   const user = await prisma.user.findFirstOrThrow();
-  return { userId: user.id, userRole: "AUTHOR", prisma };
+  return { userId: user.id, userRole: "AUTHOR", assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }], prisma };
 }
 
 export function unwrap<T>(r: Result<T>): T {

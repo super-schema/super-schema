@@ -41,6 +41,7 @@ import { readReferencedVersions } from "@/lib/entity-versioning/referenced-versi
 import { readEntitySnapshot } from "@/lib/entity-versioning/entity-snapshot";
 import { needsReferenceOf } from "@/lib/entity-versioning/publish-plan";
 import type { ServiceContext } from "@/types/service-context";
+import type { Assignment } from "@/lib/access";
 
 const entities = () => h.store.entities as EntityRow[];
 const versions = () => h.store.versions as VersionRow[];
@@ -118,7 +119,10 @@ function fakePrisma() {
           .filter((e) => args.where.id!.in.includes(e.id))
           .map((e) => {
             const latest = latestOf(e);
-            return { id: e.id, name: e.name, latestVersionId: e.latestVersionId, latestVersion: latest ? { major: latest.major, minor: latest.minor } : null };
+            return {
+              id: e.id, name: e.name, latestVersionId: e.latestVersionId, latestVersion: latest ? { major: latest.major, minor: latest.minor } : null,
+              domainId: `d-${e.domain}`, productId: `p-${e.product}`, product: { domainId: `d-${e.domain}` },
+            };
           });
       }
       // The entity's line and the closure's tenant index: every entity of the tenant (all share one domain and product here).
@@ -170,7 +174,8 @@ function fakePrisma() {
   return { prisma: { ...tx, $transaction: async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx) }, tx };
 }
 
-const ctxFor = (prisma: unknown) => ({ userId: "u1", userRole: "AUTHOR", prisma }) as unknown as ServiceContext;
+const ctxFor = (prisma: unknown, assignments: Assignment[] = [{ role: "ADMIN", scope: { kind: "GLOBAL" } }]) =>
+  ({ userId: "u1", userRole: "AUTHOR", assignments, prisma }) as unknown as ServiceContext;
 const compiledSource = () => h.compile.mock.calls[0][0] as string;
 const createdReport = () => h.created[0].compatReport;
 
@@ -568,5 +573,76 @@ describe("loadReferenceStaleness", () => {
     const { prisma } = fakePrisma();
     const res = await loadReferenceStaleness(prisma as never, "nope");
     expect(!res.success && res.error.code).toBe("NOT_FOUND");
+  });
+});
+
+describe("KD-045: a publish only draws on entities the publisher's roles cover", () => {
+  const stewardOfSales: Assignment[] = [{ role: "STEWARD", scope: { kind: "DOMAIN", tenantId: "tenant-1", domainId: "d-Sales" } }];
+  /** Order (Sales) references Customer, which sits in ANOTHER domain (Finance) and is published. */
+  const orderAndForeignCustomer = () => {
+    h.store.entities = [
+      entity("order", "Order", [["id", "string"], ["buyer", "reference", qref("cust", "Customer")]]),
+      entity("cust", "Customer", [["name", "string"]], { domain: "Finance", product: "Ledger" }),
+    ];
+    publishAs("cust", 1, 0, [["name", "string"]]);
+  };
+
+  it("a domain-scoped steward is blocked: nothing compiled, nothing created, the message names nothing of the other entity", async () => {
+    orderAndForeignCustomer();
+    const { prisma, tx } = fakePrisma();
+    const res = await publishEntity("order", {}, ctxFor(prisma, stewardOfSales));
+    expect(res.success).toBe(false);
+    if (res.success) return;
+    expect(res.error.code).toBe("PUBLISH_BLOCKED");
+    expect(res.error.message).toContain('"buyer"');
+    expect(res.error.message).not.toMatch(/Customer|Finance|Ledger|cust\b/);
+    expect(h.compile).not.toHaveBeenCalled();
+    expect(h.created).toHaveLength(0);
+    // The other entity's rows were never read.
+    expect(tx.field.findMany.mock.calls.map(([args]) => (args as { where: { entityId: string } }).where.entityId)).not.toContain("cust");
+  });
+
+  it("the preview blocks the same way, with the code a client can act on and no pin to the other entity", async () => {
+    orderAndForeignCustomer();
+    const { prisma } = fakePrisma();
+    const res = await previewPublish("order", ctxFor(prisma, stewardOfSales));
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    expect(res.data.blockers).toEqual([expect.objectContaining({ kind: "CLOSURE_BLOCKED", code: "REFERENCE_NOT_READABLE", details: { field: "buyer" } })]);
+    expect(JSON.stringify(res.data)).not.toMatch(/Customer|Finance|Ledger/);
+    expect(res.data.pins).toEqual([]);
+  });
+
+  it("the same domain publishes, and so do a tenant administrator, a tenant steward and a platform administrator", async () => {
+    for (const assignments of [
+      [...stewardOfSales, { role: "STEWARD", scope: { kind: "DOMAIN", tenantId: "tenant-1", domainId: "d-Finance" } } as Assignment],
+      [{ role: "ADMIN", scope: { kind: "TENANT", tenantId: "tenant-1" } } as Assignment],
+      [{ role: "STEWARD", scope: { kind: "TENANT", tenantId: "tenant-1" } } as Assignment],
+      [{ role: "ADMIN", scope: { kind: "GLOBAL" } } as Assignment],
+    ]) {
+      vi.clearAllMocks();
+      h.created = [];
+      orderAndForeignCustomer();
+      const { prisma } = fakePrisma();
+      const res = await publishEntity("order", {}, ctxFor(prisma, assignments));
+      expect(res.success, JSON.stringify(assignments)).toBe(true);
+      expect(h.created).toHaveLength(1);
+    }
+  });
+
+  it("a referenced entity in the publisher's own domain is fine for the domain-scoped steward", async () => {
+    h.store.entities = [entity("order", "Order", [["buyer", "reference", qref("cust", "Customer")]]), entity("cust", "Customer", [["name", "string"]])];
+    publishAs("cust", 1, 0, [["name", "string"]]);
+    const { prisma } = fakePrisma();
+    const res = await publishEntity("order", {}, ctxFor(prisma, stewardOfSales));
+    expect(res.success).toBe(true);
+  });
+
+  it("a context that carries no assignments covers nothing: a reference blocks the publish (fail closed)", async () => {
+    orderAndForeignCustomer();
+    const { prisma } = fakePrisma();
+    const ctx = { userId: "u1", userRole: "ADMIN", prisma } as unknown as ServiceContext;
+    const res = await publishEntity("order", {}, ctx);
+    expect(res.success).toBe(false);
   });
 });

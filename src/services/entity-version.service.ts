@@ -37,6 +37,8 @@ import {
   freezableStoredSource,
 } from "@/lib/entity-versioning/resolve-source";
 import { loadPublishClosure } from "@/lib/entity-versioning/publish-closure";
+import { entityReader } from "@/lib/access/entity-reader";
+import type { ClosureReader } from "@/lib/references/closure";
 import { entitySnapshotReport } from "@/lib/entity-versioning/entity-snapshot";
 import {
   readReferencedVersions,
@@ -147,7 +149,12 @@ function sameReferencedVersions(a: readonly ReferencedVersion[], b: readonly Ref
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-async function loadPublishState(db: Db, entityId: string): Promise<Result<LoadedPublishState>> {
+/**
+ * `reader` is who may read what (KD-045): the closure the publish is judged against (and compiled from) holds only entities the caller's roles
+ * cover; one they may not read blocks the publish with REFERENCE_NOT_READABLE (a message that names nothing of it) before its published content is
+ * read, and the direct references below leave it out (its name is not shown, no pin is made to it).
+ */
+async function loadPublishState(db: Db, entityId: string, reader: ClosureReader): Promise<Result<LoadedPublishState>> {
   const entity = await db.entity.findUnique({
     where: { id: entityId },
     include: {
@@ -162,15 +169,25 @@ async function loadPublishState(db: Db, entityId: string): Promise<Result<Loaded
   const { targetIds, unresolvedNames } = await resolveEntityReferences(db, entity);
   // Only entities of THIS entity's tenant: an id of another tenant's entity (stored by a client that forged it) is not found, so it reads as a
   // missing reference and blocks the publish instead of showing that entity's name or pinning its latest version.
-  const targets =
+  const found =
     targetIds.length > 0
-      ? await db.entity.findMany({ where: { id: { in: targetIds }, tenantId: entity.tenantId }, select: { id: true, name: true, latestVersionId: true } })
+      ? await db.entity.findMany({
+          where: { id: { in: targetIds }, tenantId: entity.tenantId },
+          select: { id: true, name: true, latestVersionId: true, domainId: true, productId: true, product: { select: { domainId: true } } },
+        })
       : [];
+  // One the caller may not read is not shown (not its name, not a pin to its version): the closure below says why the publish is blocked.
+  const unreadable = new Set(
+    found
+      .filter((t) => !reader({ tenantId: entity.tenantId, domainId: t.domainId ?? t.product?.domainId ?? null, productId: t.productId ?? null }))
+      .map((t) => t.id)
+  );
+  const targets = found.filter((t) => !unreadable.has(t.id));
   const byId = new Map(targets.map((t) => [t.id, t]));
 
   // The real closure: the draft at its saved rows, every member at its published version or pin. The direct references above only
   // see one level (and only by id or by name in the line); this sees the whole closure, and what it used is what gets recorded.
-  const published = await loadPublishClosure(db, { id: entity.id, tenantId: entity.tenantId, name: entity.name });
+  const published = await loadPublishClosure(db, { id: entity.id, tenantId: entity.tenantId, name: entity.name }, { reader });
 
   return ok({
     closure: published.success ? published.data.closure : null,
@@ -196,7 +213,7 @@ async function loadPublishState(db: Db, entityId: string): Promise<Result<Loaded
         }
       : null,
     currentFields: entity.fields.map(toFieldSnapshot),
-    references: targetIds.map((id) => {
+    references: targetIds.filter((id) => !unreadable.has(id)).map((id) => {
       const t = byId.get(id);
       return { entityId: id, entityName: t?.name ?? null, latestVersionId: t?.latestVersionId ?? null };
     }),
@@ -206,7 +223,7 @@ async function loadPublishState(db: Db, entityId: string): Promise<Result<Loaded
 
 /** What the publish dialog shows: suggested bump, next labels, reasons, blockers, pins. */
 export async function previewPublish(entityId: string, ctx: ServiceContext): Promise<Result<PublishAnalysis>> {
-  const state = await loadPublishState(ctx.prisma, entityId);
+  const state = await loadPublishState(ctx.prisma, entityId, entityReader(ctx.assignments));
   if (!state.success) return state;
   return ok(analyzePublish(state.data));
 }
@@ -218,11 +235,13 @@ export async function publishEntity(
 ): Promise<Result<EntityVersionSummary>> {
   const db = ctx.prisma;
   const changeSummary = opts.changeSummary?.trim() ? opts.changeSummary.trim() : null;
+  // Who may read what (KD-045): the closure is judged and compiled over entities the caller's roles cover, and no others.
+  const reader = entityReader(ctx.assignments);
   try {
     // Phase 1 — no lock, no transaction. Fail fast on blockers, and when the stored source is stale or
     // missing regenerate it and gate it with the real compiler. The compile can take seconds, so it
     // must never run while holding the row lock (or PGlite's single connection).
-    const pre = await loadPublishState(db, entityId);
+    const pre = await loadPublishState(db, entityId, reader);
     if (!pre.success) return err(pre.error);
     const prePlan = planPublish(pre.data, opts.bump);
     if (!prePlan.success) return err(prePlan.error);
@@ -253,7 +272,7 @@ export async function publishEntity(
             // concurrent draft edit's hasUnpublishedChanges=true land after our false.
             await tx.$queryRaw`SELECT "id" FROM "entities" WHERE "id" = ${entityId} FOR UPDATE`;
 
-            const state = await loadPublishState(tx, entityId);
+            const state = await loadPublishState(tx, entityId, reader);
             if (!state.success) throw new ServiceErrorRejection(state.error);
             const plan = planPublish(state.data, opts.bump);
             if (!plan.success) throw new ServiceErrorRejection(plan.error);

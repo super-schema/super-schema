@@ -44,7 +44,7 @@ import { emitEntity } from "@/lib/emission/emission.service";
 
 describe("emitEntity isValid", () => {
   it("is true for VALID and WARNING targets, false only for INVALID", async () => {
-    const result = await emitEntity("e1");
+    const result = await emitEntity("e1", () => true);
     expect(result.targets.avro).toMatchObject({ validationStatus: "WARNING", isValid: true });
     expect(result.targets.avro.warnings).toEqual([{ message: 'Avro enum symbol "in-progress" of Ticket_status is published as "in_progress"' }]);
     expect(result.targets.spanner).toMatchObject({ validationStatus: "INVALID", isValid: false });
@@ -55,7 +55,7 @@ describe("emitEntity isValid", () => {
   });
 
   it("carries the file list of a closure target and none for a DB target", async () => {
-    const result = await emitEntity("e1");
+    const result = await emitEntity("e1", () => true);
     expect(result.targets["json-schema"].files).toEqual([{ path: "json-schema.out", content: "{}", target: "json-schema", entityId: "e1" }]);
     expect(result.targets.spanner.files).toBeUndefined();
   });

@@ -18,7 +18,7 @@ const TENANT = "tenant_default";
 beforeAll(async () => {
   prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
   const user = await prisma.user.findFirstOrThrow();
-  ctx = { userId: user.id, userRole: "AUTHOR", prisma };
+  ctx = { userId: user.id, userRole: "AUTHOR", assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }], prisma };
 });
 afterAll(async () => prisma.$disconnect());
 

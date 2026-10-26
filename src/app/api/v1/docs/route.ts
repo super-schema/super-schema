@@ -161,6 +161,7 @@ const openApiSpec = {
             },
           },
           "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { description: "The entity refers to an entity that none of the caller's roles covers (REFERENCE_NOT_READABLE): nothing is emitted, and the message names the field, never the other entity" },
           "404": { $ref: "#/components/responses/NotFound" },
           "422": { description: "A reference of the entity cannot be resolved (AMBIGUOUS_REFERENCE, PIN_NOT_FOUND, PIN_CONFLICT, NEVER_PUBLISHED, CLOSURE_TOO_LARGE)" },
         },
