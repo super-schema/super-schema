@@ -77,6 +77,9 @@ export const HERMETIC_BLANKED_NAMES = Object.freeze([
   // default admin@admin.com / admin, the contract of the browser suite; a developer's own bootstrap administrator must not replace it
   "BOOTSTRAP_ADMIN_EMAIL",
   "BOOTSTRAP_ADMIN_PASSWORD",
+  // src/lib/auth/throttle.ts: `1` makes sign-in throttling take the client address from X-Forwarded-For (a proxy in front sets it). Blank = not trusted,
+  // the run's one constant address bucket: the browser run is one client, and a developer's own proxy setting must not change what it tests
+  "AUTH_TRUST_PROXY",
   // Auth.js: a proxy for OAuth callbacks, rotated secrets
   "AUTH_REDIRECT_PROXY_URL",
   "AUTH_SECRET_1",

@@ -8,10 +8,9 @@
  * run, and the user's e-mail address and the name in front of the `@`.
  */
 import { isCommonPassword } from "@/lib/auth/common-passwords";
+import { PASSWORD_MAX_BYTES, PASSWORD_MIN_BYTES } from "@/lib/auth/password-limits";
 
-export const PASSWORD_MIN_BYTES = 12;
-/** bcrypt's own limit: it hashes the first 72 bytes only. */
-export const PASSWORD_MAX_BYTES = 72;
+export { PASSWORD_MAX_BYTES, PASSWORD_MIN_BYTES };
 
 /** An e-mail address as it is stored and compared: trimmed and lower-cased (the database's unique index is on `lower(email)`). Anything that is not a string is "". */
 export function normalizeEmail(raw: string): string {

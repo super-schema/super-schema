@@ -6,7 +6,7 @@
  * Accepted: a string of at most 2048 characters that starts with exactly one `/`, has no backslash and no control character (browsers
  * drop tabs and newlines inside a URL, so `/\t/evil.com` is `//evil.com`), still starts with one `/` after percent-decoding, up to three
  * rounds (`/%5Cevil.com`, `/%2Fevil.com`, `/%252Fevil.com`), parses against a dummy origin to that same origin, and whose normalised
- * path is neither the login and register pages (a loop) nor under `/api/` (an endpoint, not a page). The value that is returned is the
+ * path is neither the login, register, invitation and reset pages (a loop: a signed-in user is sent away from them) nor under `/api/` (an endpoint, not a page). The value that is returned is the
  * parsed `pathname + search + hash`, and it is checked again in its own form and decoded, because `/..//evil.com` normalises to
  * `//evil.com` and `/./%2fevil.com` to `/%2fevil.com`, which decodes to `//evil.com`.
  */
@@ -16,7 +16,7 @@ const MAX_LENGTH = 2048;
 const DUMMY_ORIGIN = "http://callback.invalid";
 const CONTROL_OR_BACKSLASH = /[\u0000-\u001f\u007f\\]/;
 /** Pages that must not be a destination (the sign-in pages: a loop), and the endpoints. */
-const EXCLUDED_PATHS = ["/login", "/register", "/api"];
+const EXCLUDED_PATHS = ["/login", "/register", "/invite", "/reset", "/api"];
 
 /** A router or a proxy may decode a path once (a double-encoded one twice) before it uses it: this many rounds are looked at. */
 const MAX_DECODE_ROUNDS = 3;

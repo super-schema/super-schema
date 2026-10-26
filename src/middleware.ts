@@ -10,16 +10,21 @@ import { PUBLIC_ASSET_PATHS } from "@/lib/public-assets";
  * - A visitor needs a VALID session (the cookie is decrypted and verified, `hasValidSession`; a cookie that merely has a session's
  *   name is no session). Without one a page redirects to `/login?callbackUrl=<the page asked for>` (the login page returns there
  *   when it is a safe path of this site, `safeCallbackUrl`), and the app's own JSON endpoints answer 401.
- * - Public: the login and register pages (a visitor with a bad cookie must be able to open them: no redirect loop), Auth.js's own
+ * - Public: the login and register pages and the invitation and password-reset links `/invite/<token>` and `/reset/<token>` (a visitor with a
+ *   bad cookie, or none, must be able to open them: no redirect loop, and the link's whole point is that the visitor has no session), Auth.js's own
  *   `/api/auth/*`, the REST API under `/api/v1/*` (each handler checks an API key or the session itself, and the health probe is
  *   unauthenticated on purpose), and the preview iframe's static assets (a sandboxed iframe sends no cookie).
  * - `/no-access` ("no role assigned yet", where the dashboard sends a signed-in user who may access no tenant) needs a session and no role: it is
  *   not public (a visitor without a session goes to `/login`) and not an auth page (a signed-in user is let through, never bounced to the
  *   dashboard, which would send them straight back: no redirect loop).
- * - A signed-in user on `/`, `/login` or `/register` goes to the dashboard.
+ * - A signed-in user on `/`, `/login`, `/register`, `/invite/...` or `/reset/...` goes to the dashboard (the links are for a person with no
+ *   account or no session; a signed-in person who follows one signs out first).
  * - A server action (a request with a `Next-Action` header) from a page whose session has gone gets a 401 JSON, not a redirect: the
  *   browser would POST the redirect's target again.
  */
+
+/** Pages a visitor with no session may open (see above); a signed-in visitor is sent to the dashboard from them. */
+const AUTH_PAGE_PREFIXES = ["/login", "/register", "/invite", "/reset"];
 
 /** `/api/` URLs that answer without a session (see above). Every other `/api/` URL needs one. */
 const PUBLIC_API_PREFIXES = ["/api/auth", "/api/v1", "/api/asyncapi-preview"];
@@ -33,7 +38,8 @@ export async function middleware(req: NextRequest) {
   if (isPublicAssetRequest(req)) return NextResponse.next();
   const { pathname } = req.nextUrl;
 
-  const isAuthPage = isUnder(pathname, "/login") || isUnder(pathname, "/register");
+  // Exact-or-slash, like every path here: `/invite` and `/invite/<token>`, never `/inviteme` or an encoded `/invite%2F..`.
+  const isAuthPage = AUTH_PAGE_PREFIXES.some((prefix) => isUnder(pathname, prefix));
   const isDevPage = process.env.NODE_ENV === "development" && isUnder(pathname, "/dev");
   const isApi = pathname.startsWith("/api/");
 

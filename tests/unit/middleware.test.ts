@@ -238,6 +238,47 @@ describe("the public prefixes", () => {
   });
 });
 
+describe("/invite/[token] and /reset/[token]: a visitor with no session opens them (that is why they have the link)", () => {
+  const TOKEN = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
+  const FORGED = `${PLAIN}=forged.not-a-valid-jwt.value`;
+
+  it.each(["/invite", `/invite/${TOKEN}`, "/reset", `/reset/${TOKEN}`, "/invite/", `/reset/${TOKEN}/`])("%s is open to a visitor with no cookie and with a forged one (no redirect loop)", async (path) => {
+    expect(await redirectOf(path), path).toBeNull();
+    expect(await redirectOf(path, FORGED), path).toBeNull();
+    expect(await redirectOf(path, `next-auth.session-token=forged`), path).toBeNull();
+  });
+
+  it("the form's own server-action POST gets through too (a 401 would be the visitor's answer to every submit)", async () => {
+    for (const path of [`/invite/${TOKEN}`, `/reset/${TOKEN}`]) {
+      const response = await middleware(new NextRequest(`http://localhost:3000${path}`, { method: "POST", headers: { "next-action": "40abc" } }));
+      expect(response.status, path).toBe(200);
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
+  it("only exact-or-slash: lookalikes and encoded slashes are ordinary pages, which send a visitor to /login", async () => {
+    for (const path of ["/inviteme", "/invites/abc", "/resetpassword", "/reset-password", "/invite.json", "/invite%2F..%2Fschemas", "/reset%2F..%2Fschemas", `/invite%2F${TOKEN}`, "/INVITE/abc", "/Reset/abc"]) {
+      expect(await redirectOf(path), path).not.toBeNull();
+    }
+    // An encoded slash does not make a path under /invite out of an endpoint of the app.
+    for (const path of ["/invite%2F..%2Fapi%2Fdomains-tree", "/reset%2F..%2Fapi%2Fdomains-tree"]) {
+      expect((await middleware(request(path))).status, path).not.toBe(200);
+    }
+  });
+
+  it("do not open the app: nothing under them is a dashboard page, and the endpoints stay closed", async () => {
+    expect((await middleware(request("/api/domains-tree"))).status).toBe(401);
+    expect(await redirectOf("/schemas")).toBe("/login?callbackUrl=%2Fschemas");
+  });
+
+  it("send a visitor who is already signed in to the dashboard, like the login and register pages (the link is for someone with no account or no session)", async () => {
+    const cookie = `${PLAIN}=${await token()}`;
+    for (const path of [`/invite/${TOKEN}`, `/reset/${TOKEN}`, "/invite/x/y"]) expect(await redirectOf(path, cookie), path).toBe("/schemas");
+    // ... and not a lookalike
+    expect(await redirectOf("/inviteme", cookie)).toBeNull();
+  });
+});
+
 describe("a session cookie in chunks", () => {
   it("is accepted: Auth.js splits a large session into authjs.session-token.0, .1 ...", async () => {
     const whole = await token();
