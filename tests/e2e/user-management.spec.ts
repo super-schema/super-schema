@@ -107,7 +107,7 @@ test.describe("invitations", () => {
       await expect(dialog.getByTestId("invite-link-expiry")).toContainText("expires");
       await expect(dialog.getByTestId("invite-link-warning")).toContainText("shown only once");
       await expect(dialog.getByTestId("invite-link-copy")).toBeFocused();
-      expect(await pg().query(`SELECT 1 FROM invitations WHERE "emailLower" = $1 AND "usedAt" IS NULL`, [email])).toHaveProperty("rowCount", 1);
+      expect((await pg().query(`SELECT 1 FROM invitations WHERE "emailLower" = $1 AND "usedAt" IS NULL`, [email])).rows).toHaveLength(1);
       await dialog.getByTestId("invite-done").click();
       await expect(dialog).toHaveCount(0);
 
@@ -190,14 +190,14 @@ test.describe("invitations", () => {
         await row.getByTestId("invitation-revoke").click();
         // Asked first: nothing is revoked until it is confirmed.
         await expect(row.getByTestId("invitation-revoke-confirm")).toBeVisible();
-        expect(await pg().query(`SELECT 1 FROM invitations WHERE "emailLower" = $1`, [email])).toHaveProperty("rowCount", 1);
+        expect((await pg().query(`SELECT 1 FROM invitations WHERE "emailLower" = $1`, [email])).rows).toHaveLength(1);
         await row.getByTestId("invitation-revoke-confirm").click();
         await expect(centerPanel(page).locator(`[data-testid="invitation-row"][data-email="${email}"]`)).toHaveCount(0);
-        expect(await pg().query(`SELECT 1 FROM invitations WHERE "emailLower" = $1`, [email])).toHaveProperty("rowCount", 0);
+        expect((await pg().query(`SELECT 1 FROM invitations WHERE "emailLower" = $1`, [email])).rows).toHaveLength(0);
 
         // The revoke is in the audit trail, in the tenant the invitation was for, and carries no address and no token.
         const audit = await pg().query(`SELECT "tenantId", "beforeState"::text AS before, "afterState"::text AS after FROM audit_log WHERE action = 'INVITATION_REVOKED' AND "tenantId" = $1`, [rows.tenantId]);
-        expect(audit.rowCount).toBe(1);
+        expect(audit.rows).toHaveLength(1);
         expect(`${audit.rows[0].before}${audit.rows[0].after}`).not.toContain(email);
         expect(`${audit.rows[0].before}${audit.rows[0].after}`).not.toContain(token);
 
@@ -299,7 +299,7 @@ test.describe("accounts", () => {
         await resetDialog.getByTestId("reset-done").click();
         await expect(resetDialog).toHaveCount(0);
         const audit = await pg().query(`SELECT "beforeState"::text AS before, "afterState"::text AS after FROM audit_log WHERE action = 'PASSWORD_RESET_ISSUED' AND "entityId" = $1`, [person.id]);
-        expect(audit.rowCount).toBe(1);
+        expect(audit.rows).toHaveLength(1);
         expect(`${audit.rows[0].before}${audit.rows[0].after}`).not.toContain(new URL(resetLink).pathname.split("/").pop());
 
         // The person opens it in a browser of their own and chooses a new password; nobody is signed in by it.
