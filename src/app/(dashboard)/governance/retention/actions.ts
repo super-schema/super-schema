@@ -69,7 +69,7 @@ export async function updateRetentionPolicyAction(
       select: { metadata: true, tenantId: true },
     });
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
     const mergedMeta = { ...existingMeta, retentionPolicy: policy };

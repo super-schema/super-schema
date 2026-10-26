@@ -322,13 +322,15 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 
 - status: no-test (a design limit of the current model, resolved by the access-control project: nothing to pin until it has a rule to pin)
 - symptom: every route and page that is "scoped to the tenant" (the command palette, compliance Query and Gaps, governance requests, lineage, the glossary, the schemas
-  lists) reads the `active_tenant` cookie (`getActiveTenantId`, `src/lib/active-tenant.ts`). `setActiveTenantAction` accepts the id of ANY existing tenant and `/api/tenants`
-  lists every tenant, so any signed-in user (registration is open: KD-038) can choose another tenant and see its palette, governance requests, lineage and compliance data.
-  The scoping stops one tenant's data from showing up by accident in another's screens; it is not a boundary, and KD-016, KD-020 and KD-023 must not be read as one.
-  `/api/ai/generate-entity` now checks that the domain it is given belongs to the tenant being viewed (an id of another tenant answers like an unknown one), which is the same soft rule.
+  lists) reads the `active_tenant` cookie (`getActiveTenantId`, `src/lib/active-tenant.ts`). Fixed already (access-control Task 3): the cookie counts only for a tenant the signed-in
+  user holds a role in (at any depth; a global administrator: any tenant), else the first tenant they can access, else `NoTenantAccess` (the dashboard layout and the pages send
+  that user to `/no-access`); `setActiveTenantAction` refuses any other tenant exactly as it refuses a missing one, and `/api/tenants` lists only the tenants the user may access.
+  What is NOT yet a boundary: the by-id actions, the services and most `/api/*` routes still check the ACTIVE TENANT only (`inActiveTenant` and its siblings, each marked
+  `TODO(access-control task 5)`) and ask no role, so a user with any role in a tenant can still do what the old rules allowed there until Task 5 moves each action to `authorize`;
+  KD-016, KD-020 and KD-023 must not be read as a boundary either.
+  `/api/ai/generate-entity` checks that the domain it is given belongs to the tenant being viewed (an id of another tenant answers like an unknown one), which is the same soft rule.
 - where: `src/lib/active-tenant.ts`, `setActiveTenantAction`, `src/app/api/tenants/route.ts`.
-- cost to fix: the access-control work: a user's tenants come from the roles it holds (a `UserRole` per tenant), `getActiveTenantId` refuses a cookie for a tenant the user
-  has no role in, and `/api/tenants` lists only the user's own.
+- cost to fix: the rest of the access-control work: every action, route and page loader asks `authorize(action, resource)` (Tasks 5 and 6), so the role and the scope decide, not the tenant alone.
 
 ## KD-035: granting and revoking a role is not audited
 
@@ -370,12 +372,13 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - status: no-test (the access-control project is replacing what is left; `docs/auth-ops.md` says what to do until then, and nothing in the suite should pin an insecure default)
 - symptom: `/register` creates an account for anyone who can reach the app (no invitation, no throttling; bcrypt cost 12 is about 340 ms of CPU per attempt, so it is also a way to load the
   server); the account holds no role. `npm run db:seed` creates `admin@admin.com` with the password `admin` as the global ADMIN unless `NODE_ENV` is `production` or
-  `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` are set (the e2e suite relies on the default). A forged session token that carries a known administrator's e-mail maps to
-  that administrator through `resolveCurrentUserId`'s e-mail fallback, so the session secret is the whole boundary (a production server now refuses a weak one: `docs/auth-ops.md`).
-  Fixed already: the first registrant no longer becomes the ADMIN (no request creates an administrator: `src/lib/admin-bootstrap.ts` is called by the seed and `npm run admin:create` only), and
-  production has no default password.
-- where: `src/app/(auth)/register/actions.ts`, `prisma/seed.ts`, `src/lib/current-user.ts`.
-- cost to fix: the rest of the access-control work: closed or invitation-only registration (`AUTH_REGISTRATION`), throttling, and no e-mail fallback in the identity resolution.
+  `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` are set (the e2e suite relies on the default). The session secret is still the whole boundary of a session (a production
+  server now refuses a weak one: `docs/auth-ops.md`).
+  Fixed already: the first registrant no longer becomes the ADMIN (no request creates an administrator: `src/lib/admin-bootstrap.ts` is called by the seed and `npm run admin:create` only),
+  production has no default password, and the user is found by the session's user id ALONE (access-control Task 3: `resolveCurrentUserId`, `resolveGlobalAdminAccess` and the principal
+  loader have no look-up by e-mail, so a forged or stale token that carries an administrator's address is nobody; a disabled user is nobody too).
+- where: `src/app/(auth)/register/actions.ts`, `prisma/seed.ts`.
+- cost to fix: the rest of the access-control work: closed or invitation-only registration (`AUTH_REGISTRATION`) and throttling (Task 4).
 
 ## KD-039: the lineage graph's first view is fitted once, 50 ms after it starts, and not again when a node changes size
 

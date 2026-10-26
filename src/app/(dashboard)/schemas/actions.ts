@@ -94,7 +94,7 @@ export async function deleteDomainAction(domainId: string) {
     });
 
     // Ownership: the domain must belong to the active tenant; anything else reads as missing (same answer, nothing deleted).
-    if (!domain || !(await isInActiveTenant(domain.tenantId))) {
+    if (!domain || !(await isInActiveTenant(domain.tenantId))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
       return { error: "Domain not found" };
     }
 

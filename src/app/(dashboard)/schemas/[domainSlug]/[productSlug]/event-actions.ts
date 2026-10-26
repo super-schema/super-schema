@@ -29,19 +29,19 @@ const productOwner = (productId: string) => ({ level: "PRODUCT" as const, produc
  * product and the service never runs). `runMutation` revalidates `/schemas` on success only.
  */
 export async function createEventAction(productId: string, input: { name: string; description?: string }): Promise<ActionResult<EventDetail>> {
-  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => createEvent(productId, input, ctx)), "createEventAction");
+  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => createEvent(productId, input, ctx)), "createEventAction"); // TODO(access-control task 5): runMutation without an action: pass { action, resource } as the first argument
 }
 
 export async function updateEventDocumentAction(eventId: string, productId: string, document: unknown): Promise<ActionResult<EventDetail>> {
-  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => updateEventDocument(eventId, document, productOwner(productId), ctx)), "updateEventDocumentAction");
+  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => updateEventDocument(eventId, document, productOwner(productId), ctx)), "updateEventDocumentAction"); // TODO(access-control task 5): runMutation without an action: pass { action, resource } as the first argument
 }
 
 export async function renameEventAction(eventId: string, productId: string, name: string): Promise<ActionResult<EventDetail>> {
-  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => renameEvent(eventId, name, productOwner(productId), ctx)), "renameEventAction");
+  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => renameEvent(eventId, name, productOwner(productId), ctx)), "renameEventAction"); // TODO(access-control task 5): runMutation without an action: pass { action, resource } as the first argument
 }
 
 export async function deleteEventAction(eventId: string, productId: string): Promise<ActionResult<{ id: string }>> {
-  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => deleteEvent(eventId, productOwner(productId), ctx)), "deleteEventAction");
+  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => deleteEvent(eventId, productOwner(productId), ctx)), "deleteEventAction"); // TODO(access-control task 5): runMutation without an action: pass { action, resource } as the first argument
 }
 
 /**
@@ -54,7 +54,7 @@ async function readAction<T>(productId: string, label: string, run: (ctx: Servic
   try {
     const ctx = await getActionContext();
     if (!ctx) return NOT_AUTHENTICATED;
-    return toActionResult(await withOwnedTarget(productOwner(productId), () => run(ctx)), label);
+    return toActionResult(await withOwnedTarget(productOwner(productId), () => run(ctx)), label); // TODO(access-control task 5): withOwnedTarget without an action: pass the action as the first argument
   } catch (e: unknown) {
     unstable_rethrow(e);
     console.error(`[${label}] unexpected error`, e);
@@ -137,7 +137,7 @@ export async function previewEventPublishAction(eventId: string, productId: stri
  * retryable CONFLICT.
  */
 export async function publishEventAction(eventId: string, productId: string, input: PublishInput): Promise<ActionResult<EventVersionSummary>> {
-  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => publishEvent(eventId, productId, input, ctx)), "publishEventAction");
+  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => publishEvent(eventId, productId, input, ctx)), "publishEventAction"); // TODO(access-control task 5): runMutation without an action: pass { action, resource } as the first argument
 }
 
 /** The published versions of the event, newest first. */
@@ -170,5 +170,5 @@ export async function previewAsyncApiImportAction(productId: string, input: Asyn
  * (the tenant's built-in library traits, installed idempotently before the first entity is written, stay).
  */
 export async function importAsyncApiAction(productId: string, input: AsyncApiImportInput): Promise<ActionResult<{ eventId: string; preview: AsyncApiImportPreview }>> {
-  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => importAsyncApi(productId, input, ctx)), "importAsyncApiAction");
+  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => importAsyncApi(productId, input, ctx)), "importAsyncApiAction"); // TODO(access-control task 5): runMutation without an action: pass { action, resource } as the first argument
 }

@@ -55,8 +55,11 @@ the app is reached at one address only. Directly on the internet, set `AUTH_URL`
 - **`npm run admin:create`** makes one global administrator without seeding anything: `npm run admin:create -- --email you@example.com` and type the
   password at the prompt (not shown), or pipe it on standard input, or set `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD`. It refuses a password
   outside 12 to 72 bytes and an e-mail that already has an account (it never promotes an existing account), says why, and changes nothing.
-- Every signed-in user can currently read what the app shows: a role limits what a user may change, not which tenant (a tenant is a cookie and an
-  organisational label: KD-034 in `docs/testing/known-defects.md`).
+- **A signed-in user is known by the id in the session, and only by it.** There is no look-up by e-mail: after a database reset and reseed an old session
+  names a user that no longer exists and is refused (the user signs in again), and a disabled account is refused on every request. A signed-in user who
+  holds no role in any tenant lands on `/no-access` instead of the app, and the tenant they work in (the `active_tenant` cookie) is only ever one they hold a role in.
+- A role limits what a user may change, and it also decides which tenants the user may open, but the older actions and routes still check the tenant only
+  until the access-control work has moved each of them to the role check (KD-034 in `docs/testing/known-defects.md`).
 
 What to do meanwhile, on any deployment that is not a laptop:
 

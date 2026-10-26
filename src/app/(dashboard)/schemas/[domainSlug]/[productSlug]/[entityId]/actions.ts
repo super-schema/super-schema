@@ -148,7 +148,7 @@ export async function addFieldAction(
   try {
     // Ownership of the PARENT: the entity must belong to the active tenant; anything else reads as missing. Checked before
     // every other read: the lookups below would otherwise answer a foreign entity's field numbers.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     const maxField = await prisma.field.findFirst({
       where: { entityId },
@@ -165,7 +165,7 @@ export async function addFieldAction(
     }
 
     // The entity id inside the decorators is what publish pins and the renderers load: it must be an entity of the active tenant.
-    if (!(await referencedEntityAllowed(opts?.decorators, undefined, (id) => inActiveTenant("entity", id)))) {
+    if (!(await referencedEntityAllowed(opts?.decorators, undefined, (id) => inActiveTenant("entity", id)))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
       return { error: FOREIGN_REFERENCE_MESSAGE, code: "VALIDATION_ERROR" as const };
     }
 
@@ -295,7 +295,7 @@ export async function updateFieldAction(
     const loaded = await prisma.field.findUnique({ where: { id: fieldId }, include: { entity: { select: { tenantId: true } } } });
     if (!loaded) return { ...notFoundFailure("Field") };
     const { entity: owner, ...existing } = loaded;
-    if (!(await isInActiveTenant(owner.tenantId))) return { ...notFoundFailure("Field") };
+    if (!(await isInActiveTenant(owner.tenantId))) return { ...notFoundFailure("Field") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     // A RENAME to a name the AsyncAPI parser cannot read is refused. A name that does not change is not looked at: the field studio sends
     // the name with every other edit, and a field that already has such a name (created before the rule) must stay editable.
@@ -319,7 +319,7 @@ export async function updateFieldAction(
 
     // A NEW or CHANGED entity id inside the decorators must be an entity of the active tenant (an id the field already holds is left alone:
     // its entity may have been deleted since, and an unrelated edit of the field must stay possible).
-    if (!(await referencedEntityAllowed(decorators, existing.decorators, (id) => inActiveTenant("entity", id)))) {
+    if (!(await referencedEntityAllowed(decorators, existing.decorators, (id) => inActiveTenant("entity", id)))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
       return { error: FOREIGN_REFERENCE_MESSAGE, code: "VALIDATION_ERROR" as const };
     }
 
@@ -384,7 +384,7 @@ export async function updateEntityStatusAction(
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     const input: Record<string, unknown> = { status };
     if (metadata) {
@@ -428,7 +428,7 @@ export async function updateEntityRelationshipsAction(
       select: { metadata: true, tenantId: true },
     });
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
     // A relationships edit changes the draft, so the stored TypeSpec source is stale (R45).
@@ -464,7 +464,7 @@ export async function emitEntityAction(entityId: string) {
 
   try {
     // Ownership: the emitter reads the entity by id and trusts it, so scope it first.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
     const { emitEntity } = await import("@/lib/emission/emission.service");
     const { pickRequestOfRefusal } = await import("@/lib/emission/closure-generation");
     const result = await emitEntity(entityId);
@@ -498,7 +498,7 @@ export async function createTypeMappingOverrideAction(input: {
 
   try {
     // A per-entity override names an entity by id: it must belong to the active tenant (a global one names none).
-    if (input.scope === "per-entity" && !(await inActiveTenant("entity", input.entityId))) return { ...notFoundFailure("Entity") };
+    if (input.scope === "per-entity" && !(await inActiveTenant("entity", input.entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     const { createGlobalOverride, createEntityOverride } = await import(
       "@/services/type-mapping.service"
@@ -561,7 +561,7 @@ export async function acknowledgeLossyMappingAction(input: {
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("entity", input.entityId))) return { ...notFoundFailure("Entity") };
+    if (!(await inActiveTenant("entity", input.entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     const { acknowledgeLossyMapping } = await import(
       "@/services/type-mapping.service"
@@ -591,7 +591,7 @@ export async function getVersionHistoryAction(entityId: string) {
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity"), versions: [] };
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity"), versions: [] }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     const { getVersionHistory } = await import(
       "@/services/version-history/version.service"
@@ -626,7 +626,7 @@ export async function compareVersionsAction(
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     const { compareVersionsStructured } = await import(
       "@/services/version-history/version.service"
@@ -666,7 +666,7 @@ export async function getChangeHistoryAction(
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     const { getChangeHistory } = await import(
       "@/services/change-history.service"
@@ -721,7 +721,7 @@ export async function generateTypeSpecPreviewAction(entityId: string) {
       include: { domain: true },
     });
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity"), source: "" };
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity"), source: "" }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     const fields = await prisma.field.findMany({
       where: { entityId },
@@ -759,7 +759,7 @@ export async function deleteFieldAction(fieldId: string) {
     const loaded = await prisma.field.findUnique({ where: { id: fieldId }, include: { entity: { select: { tenantId: true } } } });
     if (!loaded) return { ...notFoundFailure("Field") };
     const { entity: owner, ...existing } = loaded;
-    if (!(await isInActiveTenant(owner.tenantId))) return { ...notFoundFailure("Field") };
+    if (!(await isInActiveTenant(owner.tenantId))) return { ...notFoundFailure("Field") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     // If this is a reference field, clean up relationship from entity metadata
     if (existing.type === "reference") {
@@ -864,7 +864,7 @@ async function applyTypeSpecFields(
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing. Checked before the first
     // read: the field list below is the foreign entity's.
-    if (!(await inActiveTenant("entity", entityId))) return { added: 0, updated: 0, removed: [], error: notFoundFailure("Entity").error };
+    if (!(await inActiveTenant("entity", entityId))) return { added: 0, updated: 0, removed: [], error: notFoundFailure("Entity").error }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
     if (!Array.isArray(parsedFields)) return { added: 0, updated: 0, removed: [], error: "The parsed fields must be a list" };
 
     // Get existing fields for this entity
@@ -1015,7 +1015,7 @@ async function getSchemaTargetFieldMappingsInternal(
     select: { id: true, metadata: true, tenantId: true },
   });
   // An entity of another tenant reads exactly like a missing one: no field rows, no override read, no write.
-  if (!entity || !(await isInActiveTenant(entity.tenantId))) {
+  if (!entity || !(await isInActiveTenant(entity.tenantId))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
     return { error: "Entity not found" as const };
   }
 
@@ -1078,7 +1078,7 @@ export async function getSchemaVersionsAction(entityId: string) {
       select: { metadata: true, tenantId: true },
     });
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -1284,7 +1284,7 @@ export async function getSchemaGenerationRequirementsAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
     if (!getSchemaTargetDefinition(target)) return { error: `Unknown schema target "${target}"` };
     if (!hasTargetRequirements(target)) return { needsInput: [] };
     const shape = await loadRequirementShape(entityId);
@@ -1319,7 +1319,7 @@ export async function setEntityPrimaryKeyAction(entityId: string, fieldNames: st
   }
 
   try {
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     const existing = await prisma.field.findMany({
       where: { entityId },
@@ -1383,8 +1383,8 @@ export async function setFieldReferenceAction(
     if (ROLE_HIERARCHY.indexOf(role as Role) < ROLE_HIERARCHY.indexOf("AUTHOR")) {
       return err({ code: "FORBIDDEN", message: "You do not have permission to change this field's reference" });
     }
-    if (!(await inActiveTenant("entity", entityId))) return notFound("Entity");
-    if (!ref || typeof ref.entityId !== "string" || !(await inActiveTenant("entity", ref.entityId))) return notFound("Referenced entity");
+    if (!(await inActiveTenant("entity", entityId))) return notFound("Entity"); // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
+    if (!ref || typeof ref.entityId !== "string" || !(await inActiveTenant("entity", ref.entityId))) return notFound("Referenced entity"); // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     const field = await prisma.field.findUnique({
       where: { id: fieldId },
@@ -1478,7 +1478,7 @@ export async function generateSchemaAction(entityId: string, target: string, opt
 
   try {
     // Ownership FIRST: both emitters read the entity by id and trust it, so a foreign id must stop here.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     const targetDefinition = getSchemaTargetDefinition(target);
     if (!targetDefinition) {
@@ -1740,7 +1740,7 @@ export async function publishSchemaAction(
         select: { metadata: true, tenantId: true },
       });
       // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-      if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
+      if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
       const meta = (entity.metadata as Record<string, unknown>) ?? {};
       const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -1855,7 +1855,7 @@ export async function deploySchemaAction(
       select: { metadata: true, tenantId: true },
     });
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -1920,7 +1920,7 @@ export async function updateEntityMetadataAction(
       select: { metadata: true, tenantId: true },
     });
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
     const mergedMeta = { ...existingMeta, ...metadata };
@@ -1963,7 +1963,7 @@ export async function updateEntityDescriptionAction(
 
   try {
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     // The description is rendered into the TypeSpec source (@doc): the write and the draft + stale-source
     // mark are one atomic batch, so the description can never land without the mark (R45).
@@ -2025,7 +2025,7 @@ export async function getEntityDeploymentStatusAction(
       select: { metadata: true, tenantId: true },
     });
     // Ownership: the entity must belong to the active tenant; anything else reads as missing (same answer).
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" };
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -2055,7 +2055,7 @@ export async function markEntityDeployedAction(
       select: { metadata: true, tenantId: true },
     });
     // Ownership: the entity must belong to the active tenant; anything else reads as missing (same answer).
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" };
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     // The target id is a second client-supplied id: it must be one of THIS entity's emission targets (`<entityId>:<target>`),
     // or the deployment record below would be written for another entity's target.
@@ -2095,7 +2095,7 @@ export async function checkTargetDriftAction(
       select: { metadata: true, tenantId: true },
     });
     // Ownership: the entity must belong to the active tenant; anything else reads as missing (same answer).
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" };
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     // The target id must be one of THIS entity's emission targets (see markEntityDeployedAction).
     const targetKey = emissionTargetKey(entityId, targetId);
@@ -2166,7 +2166,7 @@ export async function getTypeSpecSourceAction(entityId: string) {
       include: { domain: true },
     });
     // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     if (entity.typespecSource && !isSourceStale(entity.metadata)) {
       // A source stored before Story 16.6 (a publish wrote the generator's text back) can carry `@tag(...)`
@@ -2255,7 +2255,7 @@ async function compileAndApplyTypeSpecSource(
 ): Promise<TypeSpecSourceSaveResult> {
   // Ownership BEFORE anything is loaded: a malformed, missing or foreign id is the same "Entity not found" (a malformed id
   // is rejected without a query, so it never reaches a Prisma validator), before the source is compiled or written.
-  if (!(await inActiveTenant("entity", entityId))) {
+  if (!(await inActiveTenant("entity", entityId))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
     return { success: false, diagnostics: [], error: "Entity not found" };
   }
   if (typeof source !== "string") {

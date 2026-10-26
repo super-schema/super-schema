@@ -25,13 +25,13 @@ async function serverTarget(target: ScopeTarget): Promise<ScopeTarget> {
  * render the result.
  */
 export async function createTraitAction(target: ScopeTarget, input: TraitInput): Promise<ActionResult<TraitDetail>> {
-  return runMutation((ctx) => sanitizeActionError((async () => { const owner = await serverTarget(target); return withOwnedTarget(owner, async () => createTrait(owner, input, ctx)); })(), "createTraitAction"));
+  return runMutation((ctx) => sanitizeActionError((async () => { const owner = await serverTarget(target); return withOwnedTarget(owner, async () => createTrait(owner, input, ctx)); })(), "createTraitAction")); // TODO(access-control task 5): runMutation without an action: pass { action, resource } as the first argument
 }
 
 export async function updateTraitAction(traitId: string, owner: ScopeTarget, input: Omit<TraitInput, "kind">): Promise<ActionResult<TraitDetail>> {
-  return runMutation((ctx) => sanitizeActionError((async () => { const target = await serverTarget(owner); return withOwnedTarget(target, async () => updateTrait(traitId, input, target, ctx)); })(), "updateTraitAction"));
+  return runMutation((ctx) => sanitizeActionError((async () => { const target = await serverTarget(owner); return withOwnedTarget(target, async () => updateTrait(traitId, input, target, ctx)); })(), "updateTraitAction")); // TODO(access-control task 5): runMutation without an action: pass { action, resource } as the first argument
 }
 
 export async function deleteTraitAction(traitId: string, owner: ScopeTarget): Promise<ActionResult<{ id: string }>> {
-  return runMutation((ctx) => sanitizeActionError((async () => { const target = await serverTarget(owner); return withOwnedTarget(target, async () => deleteTrait(traitId, target, ctx)); })(), "deleteTraitAction"));
+  return runMutation((ctx) => sanitizeActionError((async () => { const target = await serverTarget(owner); return withOwnedTarget(target, async () => deleteTrait(traitId, target, ctx)); })(), "deleteTraitAction")); // TODO(access-control task 5): runMutation without an action: pass { action, resource } as the first argument
 }

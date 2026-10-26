@@ -51,7 +51,7 @@ async function resolveEntityApiTarget(
 ): Promise<{ target: ScopeTarget } | { error: string }> {
   if (typeof entityId !== "string" || !entityId) return { error: "Select an entity for an entity-scoped API" };
   // An entity of another tenant reads exactly like a missing one (same answer, nothing derived from it).
-  if (!(await inActiveTenant("entity", entityId))) return { error: "Entity not found" };
+  if (!(await inActiveTenant("entity", entityId))) return { error: "Entity not found" }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
   const entity = await prisma.entity.findUnique({
     where: { id: entityId },
     select: { id: true, productId: true },
@@ -92,7 +92,7 @@ async function dataTypeTarget(domainId: unknown, target: unknown): Promise<Resul
  * otherwise the very `{ error }` a missing target gets (`resolveScope`'s NOT_FOUND text), so a foreign one reveals nothing.
  */
 async function foreignTarget(target: ScopeTarget): Promise<{ error: string } | null> {
-  const owned = await targetInActiveTenant(target);
+  const owned = await targetInActiveTenant(target); // TODO(access-control task 5): tenant-only guard, asks no role: move to withOwnedTarget(action, target, run)
   return owned.success ? null : { error: owned.error.message };
 }
 
@@ -220,10 +220,10 @@ export async function createEntityWithFieldsAction(
 
   try {
     // Ownership of the PARENT: the domain must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("domain", domainId))) return { ...notFoundFailure("Domain") };
+    if (!(await inActiveTenant("domain", domainId))) return { ...notFoundFailure("Domain") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     // An entity id inside a field's decorators is what publish pins and the renderers load: it must be an entity of the active tenant.
-    if (!(await fieldsReferenceAllowed(fields, (id) => inActiveTenant("entity", id)))) {
+    if (!(await fieldsReferenceAllowed(fields, (id) => inActiveTenant("entity", id)))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
       return { error: FOREIGN_REFERENCE_MESSAGE, code: "VALIDATION_ERROR" as const };
     }
 
@@ -273,7 +273,7 @@ export async function createEntityAction(domainId: string, formData: FormData) {
 
   try {
     // Ownership of the PARENT: the domain must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("domain", domainId))) return { ...notFoundFailure("Domain") };
+    if (!(await inActiveTenant("domain", domainId))) return { ...notFoundFailure("Domain") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     const currentUserId = await resolveCurrentUserId(session.user);
 
@@ -329,7 +329,7 @@ export async function addModelFieldAction(
       where: { id: id.data },
       select: { domain: { select: { tenantId: true } }, _count: { select: { fields: true } } },
     });
-    if (!model || !(await isInActiveTenant(model.domain.tenantId))) return { ...notFoundFailure("Model") };
+    if (!model || !(await isInActiveTenant(model.domain.tenantId))) return { ...notFoundFailure("Model") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     await prisma.modelFieldDefinition.create({
       data: {
@@ -384,7 +384,7 @@ export async function updateModelFieldAction(
       where: { id: id.data },
       select: { name: true, model: { select: { domain: { select: { tenantId: true } } } } },
     });
-    if (!row || !(await isInActiveTenant(row.model.domain.tenantId))) return { ...notFoundFailure("Field") };
+    if (!row || !(await isInActiveTenant(row.model.domain.tenantId))) return { ...notFoundFailure("Field") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
 
     // A RENAME to a name the AsyncAPI parser cannot read is refused; a name that does not change is not looked at (an old field stays editable).
     if (typeof picked.data.name === "string" && picked.data.name !== row.name) {
@@ -412,7 +412,7 @@ export async function deleteModelFieldAction(fieldId: string) {
 
   try {
     // Ownership: the field's model's domain must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("modelField", id.data))) return { ...notFoundFailure("Field") };
+    if (!(await inActiveTenant("modelField", id.data))) return { ...notFoundFailure("Field") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
     await prisma.modelFieldDefinition.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
@@ -442,7 +442,7 @@ export async function deleteEntityAction(entityId: string) {
       select: { id: true, name: true, tenantId: true },
     });
     // An entity of another tenant reads exactly like a missing one (same answer, nothing deleted).
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" };
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
     const target = entity;
 
     // The guards (library traits that pin it, other entities whose published versions reference one of its versions, events —
@@ -522,7 +522,7 @@ export async function deleteSharedEnumAction(enumId: string) {
   if (!id.success) return failure(id.error);
   try {
     // Ownership: the data type must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("sharedEnum", id.data))) return { ...notFoundFailure("Enum") };
+    if (!(await inActiveTenant("sharedEnum", id.data))) return { ...notFoundFailure("Enum") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
     await prisma.sharedEnum.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
@@ -554,7 +554,7 @@ export async function updateSharedEnumAction(
 
   try {
     const row = await prisma.sharedEnum.findUnique({ where: { id: id.data }, select: { tenantId: true } });
-    if (!row || !(await isInActiveTenant(row.tenantId))) return { ...notFoundFailure("Enum") };
+    if (!row || !(await isInActiveTenant(row.tenantId))) return { ...notFoundFailure("Enum") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
     await prisma.sharedEnum.update({ where: { id: id.data }, data: picked.data as Prisma.SharedEnumUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
@@ -619,7 +619,7 @@ export async function deleteCustomScalarAction(scalarId: string) {
   if (!id.success) return failure(id.error);
   try {
     // Ownership: the data type must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("customScalar", id.data))) return { ...notFoundFailure("Scalar") };
+    if (!(await inActiveTenant("customScalar", id.data))) return { ...notFoundFailure("Scalar") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
     await prisma.customScalar.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
@@ -642,7 +642,7 @@ export async function updateCustomScalarAction(
 
   try {
     const row = await prisma.customScalar.findUnique({ where: { id: id.data }, select: { tenantId: true } });
-    if (!row || !(await isInActiveTenant(row.tenantId))) return { ...notFoundFailure("Scalar") };
+    if (!row || !(await isInActiveTenant(row.tenantId))) return { ...notFoundFailure("Scalar") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
     await prisma.customScalar.update({ where: { id: id.data }, data: picked.data as Prisma.CustomScalarUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
@@ -696,7 +696,7 @@ export async function deleteUnionTypeAction(unionId: string) {
   if (!id.success) return failure(id.error);
   try {
     // Ownership: the data type must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("unionType", id.data))) return { ...notFoundFailure("Union") };
+    if (!(await inActiveTenant("unionType", id.data))) return { ...notFoundFailure("Union") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
     await prisma.unionType.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
@@ -719,7 +719,7 @@ export async function updateUnionTypeAction(
 
   try {
     const row = await prisma.unionType.findUnique({ where: { id: id.data }, select: { tenantId: true } });
-    if (!row || !(await isInActiveTenant(row.tenantId))) return { ...notFoundFailure("Union") };
+    if (!row || !(await isInActiveTenant(row.tenantId))) return { ...notFoundFailure("Union") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
     await prisma.unionType.update({ where: { id: id.data }, data: picked.data as Prisma.UnionTypeUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
@@ -842,7 +842,7 @@ export async function deleteServiceAction(serviceId: string) {
   if (!id.success) return failure(id.error);
   try {
     // Ownership: the API must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("service", id.data))) return { ...notFoundFailure("API service") };
+    if (!(await inActiveTenant("service", id.data))) return { ...notFoundFailure("API service") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
     await prisma.serviceDefinition.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
@@ -939,7 +939,7 @@ export async function createOperationAction(
 
   try {
     // Ownership of the PARENT: the API must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("service", id.data))) return { ...notFoundFailure("API service") };
+    if (!(await inActiveTenant("service", id.data))) return { ...notFoundFailure("API service") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     const created = await prisma.operation.create({
       data: {
@@ -985,7 +985,7 @@ export async function updateOperationAction(
   try {
     // Ownership: the operation's API must belong to the caller's active tenant; anything else reads as missing.
     const row = await prisma.operation.findUnique({ where: { id: id.data }, select: { service: { select: { tenantId: true } } } });
-    if (!row || !(await isInActiveTenant(row.service.tenantId))) return { ...notFoundFailure("Operation") };
+    if (!row || !(await isInActiveTenant(row.service.tenantId))) return { ...notFoundFailure("Operation") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorize(action, resource)
     await prisma.operation.update({ where: { id: id.data }, data: picked.data as Prisma.OperationUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
@@ -1020,7 +1020,7 @@ export async function replaceOperationDetailsAction(
   try {
     // Ownership: the operation's API must belong to the active tenant; anything else reads as missing. Checked before the
     // batch: its first statements delete the operation's parameters and responses.
-    if (!(await inActiveTenant("operation", id.data))) return { ...notFoundFailure("Operation") };
+    if (!(await inActiveTenant("operation", id.data))) return { ...notFoundFailure("Operation") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
 
     await prisma.$transaction([
       prisma.operationParameter.deleteMany({ where: { operationId: id.data } }),
@@ -1051,7 +1051,7 @@ export async function deleteOperationAction(operationId: string) {
   if (!id.success) return failure(id.error);
   try {
     // Ownership: the operation's API must belong to the active tenant; anything else reads as missing.
-    if (!(await inActiveTenant("operation", id.data))) return { ...notFoundFailure("Operation") };
+    if (!(await inActiveTenant("operation", id.data))) return { ...notFoundFailure("Operation") }; // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
     await prisma.operation.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
@@ -1305,7 +1305,7 @@ export async function createDomainAssetsFromImportAction(
     // An entity id inside a field's decorators is what publish pins and the renderers load: it must be an entity of the active tenant.
     if (Array.isArray(payload.entities)) {
       for (const entity of payload.entities) {
-        if (!(await fieldsReferenceAllowed(isPlainObject(entity) ? entity.fields : undefined, (id) => inActiveTenant("entity", id)))) {
+        if (!(await fieldsReferenceAllowed(isPlainObject(entity) ? entity.fields : undefined, (id) => inActiveTenant("entity", id)))) { // TODO(access-control task 5): tenant-only guard, asks no role: move to authorizeSubject(action, { kind, id })
           return emptyImportResult([FOREIGN_REFERENCE_MESSAGE]);
         }
       }
