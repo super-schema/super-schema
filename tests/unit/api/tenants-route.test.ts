@@ -26,6 +26,8 @@ vi.mock("@/lib/active-tenant", async (importOriginal) => {
 
 import { GET } from "@/app/api/tenants/route";
 
+const REQUEST = new Request("http://localhost/api/tenants");
+const ROUTE = { params: Promise.resolve({}) };
 const row = (id: string, domains = 1) => ({ id, name: `Tenant ${id}`, slug: id, description: "", isSystem: false, _count: { domains } });
 
 beforeEach(() => {
@@ -40,14 +42,14 @@ describe("GET /api/tenants", () => {
   it("is a 401 without a session, as before, and reads nothing", async () => {
     mocks.auth.mockResolvedValue(null);
     signedOut();
-    const response = await GET();
+    const response = await GET(REQUEST, ROUTE);
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Not authenticated" });
     expect(mocks.prisma.tenant.findMany).not.toHaveBeenCalled();
   });
 
   it("lists the tenants the user holds a role in, with the active one", async () => {
-    const response = await GET();
+    const response = await GET(REQUEST, ROUTE);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       activeTenantId: "t1",
@@ -60,7 +62,7 @@ describe("GET /api/tenants", () => {
   it("is an empty list for a user with no role at all (200, no active tenant), and queries no tenant", async () => {
     signInAs(roleless());
     mocks.activeTenant.mockRejectedValue(new NoTenantAccess());
-    const response = await GET();
+    const response = await GET(REQUEST, ROUTE);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ activeTenantId: null, tenants: [] });
     expect(mocks.prisma.tenant.findMany).not.toHaveBeenCalled();
@@ -69,13 +71,31 @@ describe("GET /api/tenants", () => {
   it("lists every active tenant for a global administrator", async () => {
     signInAs(globalAdmin());
     mocks.prisma.tenant.findMany.mockResolvedValue([row("t1"), row("t2")]);
-    const body = await (await GET()).json();
+    const body = await (await GET(REQUEST, ROUTE)).json();
     expect(body.tenants.map((t: { id: string }) => t.id)).toEqual(["t1", "t2"]);
     expect(mocks.prisma.tenant.findMany.mock.calls[0][0].where).toEqual({ isActive: true });
   });
 
-  it("does not hide a failure that is not 'no access'", async () => {
-    mocks.activeTenant.mockRejectedValue(new Error("connection lost"));
-    await expect(GET()).rejects.toThrow("connection lost");
+  it("does not hide a failure that is not 'no access': it is a generic 500 in the app's shape (nothing of the cause), and the cause is logged", async () => {
+    mocks.activeTenant.mockRejectedValue(new Error("connection to db.internal lost"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const response = await GET(REQUEST, ROUTE);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Internal server error" });
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("answers a user with no role at all (200, an empty list), never a 403 or a 404: the list is the user's own memberships", async () => {
+    signInAs(roleless());
+    mocks.activeTenant.mockRejectedValue(new NoTenantAccess());
+    expect((await GET(REQUEST, ROUTE)).status).toBe(200);
+  });
+
+  it("is for a session only: a bearer key is not looked at", async () => {
+    signedOut();
+    const response = await GET(new Request("http://localhost/api/tenants", { headers: { authorization: "Bearer anything" } }), ROUTE);
+    expect(response.status).toBe(401);
+    expect(mocks.prisma.tenant.findMany).not.toHaveBeenCalled();
   });
 });

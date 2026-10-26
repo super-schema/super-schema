@@ -8,10 +8,9 @@
  * The scan reads the syntax tree (tests/helpers/access-scan.ts): a guard that is only named in a comment or a string counts for nothing, and
  * a guard that comes after the function's first prisma / service / fetch call counts for nothing either. Its own behaviour is pinned below.
  *
- * TEMPORARY while access-control Task 6 is in progress: `PENDING_TASK_6` (routes) names what is still unguarded, each with its owning surface, so
- * the test is green now. The list only shrinks: an entry whose handler is in fact guarded (or no longer exists) fails the test until it is
- * removed, so Task 6 must empty it and cannot leave a stale entry behind. `PENDING_TASK_5B` (server actions) is EMPTY since Task 5b: every
- * server action is guarded or public, and a new one with neither fails the first test.
+ * `PENDING_TASK_5B` (server actions) is EMPTY since Task 5b and `PENDING_TASK_6` (route handlers) since Task 6: every server action and every route
+ * handler is guarded or public, and a new one with neither fails the first test of its kind. The constants stay (empty) so that the "only shrinks"
+ * checks keep their shape: an entry added back would have to be a function that is really unguarded, and would fail once it is guarded.
  */
 import { describe, expect, it } from "vitest";
 import { PUBLIC_ACTIONS, PUBLIC_ROUTES, isPublicRoute } from "@/lib/access/public-actions";
@@ -20,16 +19,8 @@ import { analyzeModule, scanRepository } from "../../helpers/access-scan";
 /** EMPTY (Task 5b is done). Server actions still unguarded, keyed `<file>#<function>` -> owning area; an entry here fails once the action is guarded. */
 const PENDING_TASK_5B: Record<string, string> = {};
 
-/** TEMPORARY. Route handlers still unguarded, keyed `<route path>#<METHOD>` -> owning surface. */
-const PENDING_TASK_6: Record<string, string> = {
-  "/api/ai/generate-entity#POST": "Task 6 internal API",
-  "/api/command-palette-fields#GET": "Task 6 internal API",
-  "/api/compliance/audit-trail#POST": "Task 6 compliance routes",
-  "/api/compliance/gaps#POST": "Task 6 compliance routes",
-  "/api/compliance/query#POST": "Task 6 compliance routes",
-  "/api/domains-tree#GET": "Task 6 internal API",
-  "/api/tenants#GET": "Task 6 internal API",
-};
+/** EMPTY (Task 6 is done). Route handlers still unguarded, keyed `<route path>#<METHOD>` -> owning surface; an entry here fails once the handler is guarded. */
+const PENDING_TASK_6: Record<string, string> = {};
 
 const surfaces = scanRepository("src");
 const actions = surfaces.filter((s) => s.kind === "action");

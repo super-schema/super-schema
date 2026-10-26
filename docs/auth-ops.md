@@ -183,6 +183,20 @@ active tenant that its roles cover (a domain- or product-scoped role sees only i
 administrator. A user with no role is told 404 on the schema routes and 403 on the webhook routes, never a 500. **The webhook list never carries a signing
 secret**: the secret is in the answer of the creation, once.
 
+## The audit trail has a tenant
+
+Every audit row (`audit_log`) carries the tenant it belongs to (`audit_log.tenantId`), written by `withAudit` (`src/lib/audit.ts`) from the **acting tenant**: the
+tenant the guard resolved for the action (an action passes it), or, where a caller does not know it, the tenant of the row the entry is about (an entity, a domain, an
+event or a trait states its own tenant, a field is found through its entity, a product through its domain, an annotation through the entity or field it is on). The compliance
+**Audit Trail** and its CSV export (`/api/compliance/audit-trail`, `compliance.audit` / `compliance.export`: a compliance officer or administrator of the **whole** tenant)
+read only the rows of the tenant being viewed.
+
+Rows **no tenant owns** have `tenantId = NULL` and are **shown to platform administrators only** (a platform administrator reading a tenant's trail also gets them):
+the entries about the platform itself (a user's name, the git connection, a pull request) and **the rows written before the column existed that the migration could
+not attribute** (a CREATE that was written with the placeholder id `pending`, a row whose target had been deleted and whose state names no tenant). A tenant's own
+compliance officers never see them, which is the point: they cannot be told apart from another tenant's. If you need an old row in a tenant's trail, set its `tenantId`
+by hand (the table is immutable: lift the `audit_log_immutable` trigger for that statement, as the migration does, and put it back).
+
 ## See also
 
 - `docs/testing/e2e.md`: the browser suite, which runs with its own throwaway secret and database and never uses a `.env`. Access control, and what

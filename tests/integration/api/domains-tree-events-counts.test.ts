@@ -7,6 +7,12 @@ import { createForeignTenant } from "../services/events/foreign-tenant";
 
 const active = vi.hoisted(() => ({ tenantId: "" }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: async () => active.tenantId }));
+// The caller is a platform administrator (a principal the route reads through `withApiAuth`); this suite is about the counts, not about who may ask.
+vi.mock("@/lib/auth", () => ({ auth: async () => null }));
+vi.mock("@/lib/access/principal", () => {
+  const admin = { userId: "admin-1", email: "admin@example.test", assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }], isGlobalAdmin: true };
+  return { getPrincipal: async () => admin, loadPrincipalById: async () => admin };
+});
 
 let prisma: PrismaClient;
 beforeAll(() => {
@@ -17,7 +23,7 @@ afterAll(async () => prisma.$disconnect());
 async function fetchTree(tenantId: string): Promise<ExplorerTree> {
   const { GET } = await import("@/app/api/domains-tree/route");
   active.tenantId = tenantId;
-  return (await (await GET()).json()) as ExplorerTree;
+  return (await (await GET(new Request("http://localhost/api/domains-tree"), { params: Promise.resolve({}) })).json()) as ExplorerTree;
 }
 
 describe("GET /api/domains-tree — events counts", () => {

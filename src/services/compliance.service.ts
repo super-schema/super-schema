@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { can, readableScopes, type ActionId } from "@/lib/access";
+import { can, ctxCan, readableScopes, type ActionId } from "@/lib/access";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -453,17 +453,29 @@ export async function queryAuditTrail(
 ): Promise<Result<{ entries: AuditTrailEntry[]; total: number }>> {
   const access = assertComplianceTenant(ctx, "compliance.audit");
   if (!access.success) return access as Result<never>;
-  return readAuditTrail(filters, pagination);
+  return readAuditTrail(filters, pagination, auditTenantScope(ctx));
 }
 
-/** The audit trail itself, after the caller's access was decided (`compliance.audit` to read it, `compliance.export` to export it). */
+/**
+ * Whose audit rows the caller reads (KD-016): the entries of the tenant in view (`audit_log.tenantId`, written by `withAudit`), nothing of another
+ * tenant's. Rows no tenant owns (`tenantId` NULL: written before the column existed and not derivable from their row, or about the platform: a
+ * user, the git connection) are the platform administrators' to read, so they are added for them and for nobody else. With no tenant in view only a
+ * platform administrator got this far (`assertComplianceTenant`), and reads every row.
+ */
+function auditTenantScope(ctx: ServiceContext): Record<string, unknown> {
+  if (ctx.tenantId === undefined) return {};
+  return ctxCan(ctx, "platform.admin") ? { OR: [{ tenantId: ctx.tenantId }, { tenantId: null }] } : { tenantId: ctx.tenantId };
+}
+
+/** The audit trail itself, after the caller's access was decided (`compliance.audit` to read it, `compliance.export` to export it) and its scope (`auditTenantScope`). */
 async function readAuditTrail(
   filters: AuditTrailFilter,
-  pagination: AuditPagination
+  pagination: AuditPagination,
+  scope: Record<string, unknown>
 ): Promise<Result<{ entries: AuditTrailEntry[]; total: number }>> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const where: any = {};
+    const where: any = { ...scope };
 
     if (filters.actionTypes && filters.actionTypes.length > 0) {
       where.action = { in: filters.actionTypes };
@@ -528,7 +540,7 @@ export async function exportAuditTrail(
 ): Promise<Result<AuditTrailEntry[]>> {
   const access = assertComplianceTenant(ctx, "compliance.export");
   if (!access.success) return access as Result<never>;
-  const result = await readAuditTrail(filters, { page: 1, pageSize: 10000 });
+  const result = await readAuditTrail(filters, { page: 1, pageSize: 10000 }, auditTenantScope(ctx));
   if (!result.success) return result as Result<never>;
   return ok(result.data.entries);
 }

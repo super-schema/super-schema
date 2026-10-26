@@ -1,18 +1,19 @@
 import { NextResponse } from "next/server";
+import { COMPLIANCE_ERRORS, withApiAuth } from "@/lib/access/api";
 import { detectGaps } from "@/services/compliance.service";
-import { resolveContext } from "../_context";
 import { GapsBodySchema, readBody, statusOf } from "../_body";
 
-export async function POST(req: Request) {
-  const auth = await resolveContext();
-  if (!auth.ok) {
-    return NextResponse.json({ success: false, error: auth.message }, { status: auth.status });
-  }
-  const body = await readBody(req, GapsBodySchema);
-  if (!body.ok) return body.response;
-  const result = await detectGaps(body.data.filters ?? {}, auth.ctx);
-  if (!result.success) {
-    return NextResponse.json({ success: false, error: result.error.message }, { status: statusOf(result.error) });
-  }
-  return NextResponse.json({ success: true, data: result.data });
-}
+/** The Gaps tab: the gaps of the tenant in view's entities that the caller's compliance role reaches (`compliance.gaps`, judged per entity by the service). */
+export const POST = withApiAuth(
+  "compliance.gaps",
+  async (req, api) => {
+    const body = await readBody(req, GapsBodySchema);
+    if (!body.ok) return body.response;
+    const result = await detectGaps(body.data.filters ?? {}, api.ctx);
+    if (!result.success) {
+      return NextResponse.json({ success: false, error: result.error.message }, { status: statusOf(result.error) });
+    }
+    return NextResponse.json({ success: true, data: result.data });
+  },
+  { respond: COMPLIANCE_ERRORS, allowApiKey: false }
+);

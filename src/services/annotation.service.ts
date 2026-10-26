@@ -1,6 +1,6 @@
 import { ctxCan, type ResourceRef } from "@/lib/access";
 import { prisma } from "@/lib/db";
-import { withAudit } from "@/lib/audit";
+import { auditTenantOf, withAudit } from "@/lib/audit";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -66,11 +66,14 @@ export async function createAnnotation(
   ];
 
   try {
+    // The annotation is stored as an audit row of its own: it carries the tenant of the entity (or field) it is on, like the entry `withAudit` writes.
+    const tenantId = await auditTenantOf({ entityType: "Annotation", entityId: input.entityId || input.fieldId || "unknown" });
     const annotation = await withAudit({
       action: "annotation.create",
       entityType: "Annotation",
       entityId: input.entityId || input.fieldId || "unknown",
       userId: ctx.userId,
+      tenantId,
       fn: async () => {
         return prisma.auditLog.create({
           data: {
@@ -78,6 +81,7 @@ export async function createAnnotation(
             entityType: "Annotation",
             entityId: input.entityId || input.fieldId || "unknown",
             userId: ctx.userId,
+            ...(tenantId ? { tenantId } : {}),
             afterState: {
               entityId: input.entityId || null,
               fieldId: input.fieldId || null,

@@ -20,7 +20,7 @@
  *   - Compliance Gaps        what is missing on the fields of the tenant being viewed (unclassified, PII without anonymization, sensitive
  *                            without encryption or retention), and a row opens the entity at the field.
  *   - Compliance Audit Trail an action performed in the app (deleting a field) is listed with its user, action, type and id, filtered by
- *                            id and by action, expanded to its before / after state (it lists the audit rows of ALL tenants: KD-016).
+ *                            id and by action, expanded to its before / after state (the audit rows of the tenant being viewed: `audit_log.tenantId`).
  *   - Exports                CSV and JSON of the query and of the gaps, the audit trail's CSV: asserted through the browser's download
  *                            (file name, header row, a row for the data the test made).
  *   - Access                 a visitor with no role is refused by the compliance API (401 without a session, 403 without a role), and the
@@ -860,9 +860,9 @@ test.describe("compliance tenants", () => {
   const prefix = unique("CompIso");
   test.use({ workspaceEntities: [`${prefix}Home`] });
 
-  // The Query and Gaps tabs read the fields of the tenant being viewed (the audit trail has no tenant column: KD-016).
+  // The Query and Gaps tabs read the fields of the tenant being viewed (so does the audit trail: `audit_log.tenantId`).
   test("the Query and Gaps tabs list the fields of this tenant and not those of another", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
-    // `workspace` is asked for by name: a fixture that no test asks for is never made (the pinned test of KD-016 never made its home entity,
+    // `workspace` is asked for by name: a fixture that no test asks for is never made (the test that pinned the audit trail as unscoped never made its home entity,
     // and "failed" because the row was missing, not because the other tenant's was there).
     const home = workspace.entities[0].name;
     expect(home).toBe(`${prefix}Home`);

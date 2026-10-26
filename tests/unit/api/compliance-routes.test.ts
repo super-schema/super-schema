@@ -5,23 +5,34 @@
  * the driver's). The body is validated now; the failures answer in fixed words.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assign, principalOf, roleless, signInAs, signedOut, tenantMember } from "../../helpers/access-mocks";
 
-const mocks = vi.hoisted(() => ({ resolveContext: vi.fn(), queryFields: vi.fn(), detectGaps: vi.fn(), queryAuditTrail: vi.fn() }));
-vi.mock("@/app/api/compliance/_context", () => ({ resolveContext: mocks.resolveContext }));
+// Through the REAL guard (`withApiAuth`): only the session, the database, the tenant in view and the services are stand-ins.
+const mocks = vi.hoisted(() => ({ activeTenant: vi.fn(), queryFields: vi.fn(), detectGaps: vi.fn(), queryAuditTrail: vi.fn() }));
+vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/db", () => ({ prisma: {} }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).principalModule);
+vi.mock("@/lib/active-tenant", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/active-tenant")>()), getActiveTenantId: mocks.activeTenant }));
 vi.mock("@/services/compliance.service", () => ({ queryFields: mocks.queryFields, detectGaps: mocks.detectGaps, queryAuditTrail: mocks.queryAuditTrail }));
 
-import { POST as postQuery } from "@/app/api/compliance/query/route";
-import { POST as postGaps } from "@/app/api/compliance/gaps/route";
-import { POST as postAudit } from "@/app/api/compliance/audit-trail/route";
+import { POST as rawQuery } from "@/app/api/compliance/query/route";
+import { POST as rawGaps } from "@/app/api/compliance/gaps/route";
+import { POST as rawAudit } from "@/app/api/compliance/audit-trail/route";
 
-const CTX = { userId: "u1", userRole: "AUTHOR", tenantId: "t1", prisma: {} };
+const ROUTE = { params: Promise.resolve({}) };
+const postQuery = (req: Request) => rawQuery(req, ROUTE);
+const postGaps = (req: Request) => rawGaps(req, ROUTE);
+const postAudit = (req: Request) => rawAudit(req, ROUTE);
+/** What the services are handed: the principal's context, with the tenant in view. */
+const CTX = expect.objectContaining({ userId: "officer-1", tenantId: "t1", assignments: [assign.tenant("COMPLIANCE_OFFICER", "t1")] });
 const request = (body: unknown, raw = false) =>
   new Request("http://localhost/api/compliance/x", { method: "POST", body: raw ? (body as string) : JSON.stringify(body), headers: { "content-type": "application/json" } });
 const json = async (res: Response) => (await res.json()) as { success: boolean; error?: string; details?: unknown; data?: unknown };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.resolveContext.mockResolvedValue({ ok: true, ctx: CTX });
+  signInAs(principalOf([assign.tenant("COMPLIANCE_OFFICER", "t1")], { userId: "officer-1" }));
+  mocks.activeTenant.mockResolvedValue("t1");
   mocks.queryFields.mockResolvedValue({ success: true, data: { fields: [], total: 0 } });
   mocks.detectGaps.mockResolvedValue({ success: true, data: { gaps: [], summary: {} } });
   mocks.queryAuditTrail.mockResolvedValue({ success: true, data: { entries: [], total: 0 } });
@@ -100,8 +111,82 @@ describe("POST /api/compliance/query", () => {
     expect((await json(failed)).error).toBe("Failed to query fields");
     mocks.queryFields.mockResolvedValue({ success: false, error: { code: "FORBIDDEN", message: "Insufficient permissions" } });
     expect((await postQuery(request({}))).status).toBe(403);
-    mocks.resolveContext.mockResolvedValue({ ok: false, status: 401, message: "Not authenticated" });
+    signedOut();
     expect((await postQuery(request({}))).status).toBe(401);
+  });
+});
+
+// Who may call what (the guard, before the body is read and before any service runs): 401 nobody, 404 no role in the tenant, 403 a role that does
+// not reach the page, and the services are handed the principal's own context with the tenant in view (KD-016: the audit trail is that tenant's).
+describe("who may call the compliance routes", () => {
+  const ROUTES = [
+    ["query", postQuery, () => mocks.queryFields],
+    ["gaps", postGaps, () => mocks.detectGaps],
+    ["audit-trail", postAudit, () => mocks.queryAuditTrail],
+  ] as const;
+
+  describe.each(ROUTES)("POST /api/compliance/%s", (_name, post, service) => {
+    it("is a 401 in the compliance shape for nobody, and runs nothing", async () => {
+      signedOut();
+      const res = await post(request({}));
+      expect([res.status, await json(res)]).toEqual([401, { success: false, error: "Not authenticated" }]);
+      expect(service()).not.toHaveBeenCalled();
+    });
+
+    it("is a 404 'Not found' for a user with no role in any tenant (no tenant to reach: never a 500), and for one with no role in the tenant in view", async () => {
+      signInAs(roleless());
+      const { NoTenantAccess } = await import("@/lib/access/no-tenant-access");
+      mocks.activeTenant.mockRejectedValue(new NoTenantAccess());
+      const none = await post(request({}));
+      expect([none.status, await json(none)]).toEqual([404, { success: false, error: "Not found" }]);
+      mocks.activeTenant.mockResolvedValue("t1");
+      expect((await post(request({}))).status).toBe(404);
+      signInAs(tenantMember("COMPLIANCE_OFFICER", "t2"));
+      expect((await post(request({}))).status).toBe(404);
+      expect(service()).not.toHaveBeenCalled();
+    });
+
+    it("is a 403 for roles that hold no compliance rights in the tenant (a viewer, an author, a steward), and runs nothing", async () => {
+      for (const role of ["VIEWER", "AUTHOR", "STEWARD"] as const) {
+        signInAs(tenantMember(role, "t1"));
+        const res = await post(request({}));
+        expect([res.status, await json(res)], role).toEqual([403, { success: false, error: "You do not have permission to do this" }]);
+      }
+      expect(service()).not.toHaveBeenCalled();
+    });
+
+    it("runs for a compliance officer and for an administrator of the tenant, with the principal's context and the tenant in view", async () => {
+      for (const role of ["COMPLIANCE_OFFICER", "ADMIN"] as const) {
+        signInAs(principalOf([assign.tenant(role, "t1")], { userId: "officer-1" }));
+        expect((await post(request({}))).status, role).toBe(200);
+      }
+      expect(service()).toHaveBeenCalledTimes(2);
+      expect(service().mock.calls[0].at(-1)).toMatchObject({ userId: "officer-1", tenantId: "t1" });
+    });
+
+    it("answers to a session only: a bearer key is not a credential here", async () => {
+      signedOut();
+      process.env.API_KEY = "the-key";
+      try {
+        const res = await post(new Request("http://localhost/api/compliance/x", { method: "POST", body: "{}", headers: { authorization: "Bearer the-key" } }));
+        expect(res.status).toBe(401);
+      } finally {
+        delete process.env.API_KEY;
+      }
+    });
+  });
+
+  it("the audit trail needs the compliance role over the WHOLE tenant: an officer of one domain only is refused (the service decides per entity for Query and Gaps, so there they pass the guard)", async () => {
+    signInAs(principalOf([assign.domain("COMPLIANCE_OFFICER", "t1", "d1")]));
+    expect((await postAudit(request({}))).status).toBe(403);
+    expect((await postQuery(request({}))).status).toBe(200);
+    expect((await postGaps(request({}))).status).toBe(200);
+  });
+
+  it("a platform administrator reads the audit trail of the tenant in view", async () => {
+    signInAs(principalOf([assign.global()], { userId: "officer-1" }));
+    expect((await postAudit(request({}))).status).toBe(200);
+    expect(mocks.queryAuditTrail.mock.calls[0].at(-1)).toMatchObject({ tenantId: "t1" });
   });
 });
 

@@ -179,6 +179,8 @@ export async function updateUser(
       entityType: "User",
       entityId: existing.id,
       userId: ctx.userId,
+      // The tenant a tenant administrator acts in; a platform administrator's (and your own) rename is a platform-level entry.
+      tenantId: scope.tenantId,
       beforeState: { name: existing.name },
       fn: () =>
         ctx.prisma.user.update({

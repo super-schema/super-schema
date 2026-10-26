@@ -68,8 +68,8 @@ describe("Compliance Service", () => {
     vi.clearAllMocks();
   });
 
-  // The Query and Gaps tabs show the tenant being viewed: a field has no tenant of its own, its entity does. (The audit trail has no
-  // tenant column: KD-016.)
+  // The Query and Gaps tabs show the tenant being viewed: a field has no tenant of its own, its entity does. The audit trail has one
+  // (`audit_log.tenantId`, KD-016): see "queryAuditTrail > tenant scope" below.
   describe("tenant scope", () => {
     const inTenant: ServiceContext = { ...mockCtx, tenantId: "tenant-a" };
 
@@ -826,6 +826,64 @@ describe("Compliance Service", () => {
       if (!result.success) {
         expect(result.error.code).toBe("FORBIDDEN");
       }
+    });
+
+    // The audit trail has a tenant (KD-016): the rows of the tenant in view, for the count and for the page, and nothing of another tenant's.
+    describe("tenant scope (audit_log.tenantId)", () => {
+      const officerOf = (tenantId: string): ServiceContext => ({ ...mockCtx, userRole: "COMPLIANCE_OFFICER", assignments: [assign.tenant("COMPLIANCE_OFFICER", tenantId)], tenantId });
+      const adminOf = (tenantId: string): ServiceContext => ({ ...mockCtx, assignments: [assign.global()], tenantId });
+      const whereOfPage = () => vi.mocked(prisma.auditLog.findMany).mock.calls.at(-1)?.[0]?.where;
+      const whereOfCount = () => vi.mocked(prisma.auditLog.count).mock.calls.at(-1)?.[0]?.where;
+
+      beforeEach(() => {
+        vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
+        vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
+      });
+
+      it("a tenant's compliance officer reads only the rows of that tenant: the count and the page ask for it", async () => {
+        const result = await queryAuditTrail({}, { page: 1, pageSize: 50 }, officerOf("tenant-a"));
+        expect(result.success).toBe(true);
+        expect(whereOfPage()).toEqual({ tenantId: "tenant-a" });
+        expect(whereOfCount()).toEqual({ tenantId: "tenant-a" });
+      });
+
+      it("keeps every filter next to the tenant (a filter never widens the scope)", async () => {
+        await queryAuditTrail({ actionTypes: ["CREATE"], userId: "u1", entityType: "Field", entityName: "fld" }, { page: 1, pageSize: 50 }, officerOf("tenant-a"));
+        expect(whereOfPage()).toEqual({ tenantId: "tenant-a", action: { in: ["CREATE"] }, userId: "u1", entityType: "Field", entityId: { contains: "fld", mode: "insensitive" } });
+      });
+
+      it("a platform administrator also reads the rows no tenant owns (what was written before the column, or about the platform): the tenant in view's AND the null ones", async () => {
+        await queryAuditTrail({}, { page: 1, pageSize: 50 }, adminOf("tenant-a"));
+        expect(whereOfPage()).toEqual({ OR: [{ tenantId: "tenant-a" }, { tenantId: null }] });
+        expect(whereOfCount()).toEqual({ OR: [{ tenantId: "tenant-a" }, { tenantId: null }] });
+      });
+
+      it("a tenant's officer never reads the unowned (null) rows", async () => {
+        await queryAuditTrail({}, { page: 1, pageSize: 50 }, officerOf("tenant-a"));
+        expect(JSON.stringify(whereOfPage())).not.toContain("null");
+      });
+
+      it("the export is scoped the same way", async () => {
+        await exportAuditTrail({}, officerOf("tenant-b"));
+        expect(whereOfPage()).toEqual({ tenantId: "tenant-b" });
+        expect(whereOfCount()).toEqual({ tenantId: "tenant-b" });
+        await exportAuditTrail({}, adminOf("tenant-b"));
+        expect(whereOfPage()).toEqual({ OR: [{ tenantId: "tenant-b" }, { tenantId: null }] });
+      });
+
+      it("a role in ANOTHER tenant than the one in view reads nothing of either: refused before anything is read", async () => {
+        vi.mocked(prisma.auditLog.findMany).mockClear();
+        const ctx = { ...officerOf("tenant-a"), tenantId: "tenant-b" };
+        const result = await queryAuditTrail({}, { page: 1, pageSize: 50 }, ctx);
+        expect(result.success).toBe(false);
+        expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
+        expect((await exportAuditTrail({}, ctx)).success).toBe(false);
+      });
+
+      it("with no tenant in view only a platform administrator reads, across every tenant (and the unowned rows)", async () => {
+        await queryAuditTrail({}, { page: 1, pageSize: 50 }, mockCtx);
+        expect(whereOfPage()).toEqual({});
+      });
     });
   });
 

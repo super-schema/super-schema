@@ -23,7 +23,7 @@
  * domain's ENTITIES are found by it, and "Go to Domains" is the one domain entry), Esc discarding an edit in the field list (the entity
  * workspace's handler needs a form that registers itself dirty; none does on the page).
  *
- * `/api/command-palette-fields` returns the first 100 fields of the database (all tenants, by entity name: KD-020), so the field test
+ * `/api/command-palette-fields` returns the first 100 fields of the tenant being viewed that the caller may read (by entity name: KD-020), so the field test
  * names its entity to sort first. Mod is Control or Meta (`ControlOrMeta`): the app asks the browser's platform.
  */
 import type { Locator, Page } from "@playwright/test";

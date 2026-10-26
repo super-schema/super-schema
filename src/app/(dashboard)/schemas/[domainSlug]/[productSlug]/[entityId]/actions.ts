@@ -209,6 +209,7 @@ export async function addFieldAction(
       entityType: "Field",
       entityId: "pending",
       userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
       fn: async () => {
         // The field write and the draft + stale-source mark are ONE atomic batch: a failure between them can never
         // leave a changed field with `hasUnpublishedChanges` still false (publish would answer NO_CHANGES).
@@ -353,6 +354,7 @@ export async function updateFieldAction(
       entityType: "Field",
       entityId: fieldId,
       userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
       beforeState: existing as unknown as object,
       fn: async () => {
         // The field write and the draft + stale-source mark are ONE atomic batch (see addFieldAction).
@@ -435,6 +437,7 @@ export async function updateEntityRelationshipsAction(
       entityType: "Entity",
       entityId,
       userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
       beforeState: { metadata: existingMeta } as unknown as object,
       fn: () =>
         prisma.entity.update({
@@ -750,6 +753,7 @@ export async function deleteFieldAction(fieldId: string) {
       entityType: "Field",
       entityId: fieldId,
       userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
       beforeState: existing as unknown as object,
       fn: async () => {
         // Delete + draft / stale-source mark in ONE atomic batch (see addFieldAction).
@@ -883,6 +887,7 @@ async function applyTypeSpecFields(
           entityType: "Field",
           entityId: "pending",
           userId: access.principal.userId,
+          tenantId: access.resource.tenantId,
           fn: () =>
             prisma.field.create({
               data: {
@@ -909,6 +914,7 @@ async function applyTypeSpecFields(
             entityType: "Field",
             entityId: existing.id,
             userId: access.principal.userId,
+            tenantId: access.resource.tenantId,
             beforeState: existing as unknown as object,
             fn: () =>
               prisma.field.update({
@@ -941,6 +947,7 @@ async function applyTypeSpecFields(
             entityType: "Field",
             entityId: existing.id,
             userId: access.principal.userId,
+            tenantId: access.resource.tenantId,
             beforeState: existing as unknown as object,
             fn: async () => {
               await prisma.field.delete({ where: { id: existing.id } });
@@ -1170,6 +1177,7 @@ export async function saveSchemaFieldTypeOverrideAction(input: {
       entityType: "Entity",
       entityId: input.entityId,
       userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
       beforeState: { metadata: existingMeta } as unknown as object,
       fn: () =>
         prisma.entity.update({
@@ -1291,6 +1299,7 @@ export async function setEntityPrimaryKeyAction(entityId: string, fieldNames: st
       entityType: "Entity",
       entityId,
       userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
       beforeState: { primaryKey: existing.filter((field) => field.isKey).map((field) => field.name) } as unknown as object,
       fn: () =>
         prisma.$transaction([
@@ -1497,6 +1506,7 @@ export async function generateSchemaAction(entityId: string, target: string, opt
           entityType: "Entity",
           entityId,
           userId: access.principal.userId,
+          tenantId: access.resource.tenantId,
           details: { target, mode, message: (firstError ?? "").slice(0, 500) },
         });
         return { error: firstError ?? `Failed to generate ${targetDefinition.displayName}` };
@@ -1582,6 +1592,7 @@ export async function generateSchemaAction(entityId: string, target: string, opt
       entityType: "Entity",
       entityId,
       userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
       beforeState: { metadata: meta } as unknown as object,
       fn: () =>
         prisma.entity.update({
@@ -1760,6 +1771,7 @@ export async function publishSchemaAction(
         entityType: "Entity",
         entityId,
         userId: access.principal.userId,
+        tenantId: access.resource.tenantId,
         beforeState: { metadata: meta } as unknown as object,
         fn: () =>
           prisma.entity.update({
@@ -1819,6 +1831,7 @@ export async function deploySchemaAction(
       entityType: "Entity",
       entityId,
       userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
       beforeState: { metadata: meta } as unknown as object,
       fn: () =>
         prisma.entity.update({
@@ -1875,6 +1888,7 @@ export async function updateEntityMetadataAction(
       entityType: "Entity",
       entityId,
       userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
       beforeState: { metadata: existingMeta } as unknown as object,
       fn: () =>
         prisma.entity.update({

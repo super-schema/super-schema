@@ -33,6 +33,8 @@ import { GET as getTenants } from "@/app/api/tenants/route";
 import { requireSession } from "@/lib/require-session";
 
 const SESSION = { user: { id: "user-1", email: "a@b.c" }, expires: "2999-01-01" };
+const REQUEST = new Request("http://localhost/api/x");
+const ROUTE = { params: Promise.resolve({}) };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -83,7 +85,7 @@ describe.each([
 ])("%s", (_name, handler) => {
   it("answers 401 without a session, even when it is called directly, and queries nothing", async () => {
     mocks.auth.mockResolvedValue(null);
-    const response = await handler();
+    const response = await handler(REQUEST, ROUTE);
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Not authenticated" });
     expect(queriesMade(), "a database query was made for a request without a session").toBe(0);
@@ -92,13 +94,13 @@ describe.each([
 
   it("answers 401 for a session without a user", async () => {
     mocks.auth.mockResolvedValue({ expires: "2999-01-01" });
-    expect((await handler()).status).toBe(401);
+    expect((await handler(REQUEST, ROUTE)).status).toBe(401);
     expect(queriesMade()).toBe(0);
   });
 
   it("answers its data with a session", async () => {
     mocks.auth.mockResolvedValue(SESSION);
-    const response = await handler();
+    const response = await handler(REQUEST, ROUTE);
     expect(response.status).toBe(200);
     expect(queriesMade()).toBeGreaterThan(0);
   });
@@ -107,14 +109,14 @@ describe.each([
 describe("what the endpoints answer with a session", () => {
   it("/api/tenants lists the organizations and the active one", async () => {
     mocks.auth.mockResolvedValue(SESSION);
-    const body = await (await getTenants()).json();
+    const body = await (await getTenants(REQUEST, ROUTE)).json();
     expect(body.activeTenantId).toBe("tenant-1");
     expect(body.tenants).toEqual([expect.objectContaining({ id: "tenant-1", name: "Default", domainCount: 2 })]);
   });
 
   it("/api/domains-tree lists the domains of the active tenant", async () => {
     mocks.auth.mockResolvedValue(SESSION);
-    const body = await (await getDomainsTree()).json();
+    const body = await (await getDomainsTree(REQUEST, ROUTE)).json();
     expect(JSON.stringify(body)).toContain("Billing");
   });
 });

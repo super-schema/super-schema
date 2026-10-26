@@ -128,20 +128,6 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - pinned by: `governance-compliance.spec.ts`, "a user who may not decide is told so".
 - cost to fix: show the error (a toast, or under the card) and, better, not offer the buttons to a user who cannot use them.
 
-## KD-016: the compliance Audit Trail reads the audit rows of every tenant
-
-- status: no-test (the Query and Gaps tabs were scoped to the tenant being viewed, the "compliance tenants" test in `governance-compliance.spec.ts` pins it; the Audit Trail cannot be, see below, and no test can say what the right answer is until it has a tenant)
-- symptom: the Audit Trail tab lists, and its CSV exports, the `audit_log` rows of ALL tenants: who changed what, in entities, domains and products
-  of another tenant. (Before this was partly fixed the Query and Gaps tabs read every tenant's fields too: `resolveContext` now passes the tenant being
-  viewed and `queryFields` / `detectGaps` filter `entity.tenantId`. "Scoped" there means the tenant being viewed, which is a cookie: KD-034.)
-- where: `src/services/compliance.service.ts` (`queryAuditTrail`): `audit_log` has no tenant column. A row names an `entityType` and an `entityId`, and a join per
-  type (Entity, Field, Domain, Product, GitConfig ...) cannot attribute the rows that matter: **a CREATE row is written with the literal `entityId: "pending"`**
-  (`domain-row.service.ts:72`, `entity.service.ts:66`, `field.service.ts:81`, `product.service.ts:143`, and `git.service.ts:614` for a new connection), because the
-  audit row is written before the row it describes has an id, and no table has a row called "pending". The per-type join would find the updates and deletes of a
-  tenant's rows and none of its creates.
-- cost to fix: only an `audit_log.tenantId` column works: written by `withAudit` (the caller knows the tenant), the filter in `queryAuditTrail`, and a backfill
-  for the old rows (the updates and deletes through the join; the old creates cannot be attributed and stay unattributed).
-
 ## KD-017: the glossary's detail panel never lists the linked fields
 
 - status: open
@@ -172,9 +158,11 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 
 ## KD-020: the command palette finds fields among the first 100 of the tenant
 
-- status: no-test (a limit for performance, noted in the route; the route filters `entity.tenantId` of the tenant being viewed, which is a cookie any signed-in user can set to any tenant: KD-034. `discovery.spec.ts` ("the palette is offered the fields of the tenant being viewed") pins the filter)
+- status: no-test (a limit for performance, noted in the route; `discovery.spec.ts` ("the palette is offered the fields of the tenant being viewed") pins the tenant filter)
 - symptom: `/api/command-palette-fields` returns 100 fields (`take: 100`, by entity name, then field name): a field of an entity whose name sorts after
-  the first hundred fields of the tenant is not found by the palette.
+  the first hundred fields the caller may read in the tenant is not found by the palette. (Fixed with the access-control work: the tenant being viewed is one the
+  user holds a role in, and the fields are those of the entities their roles cover, restricted in the query: a domain- or product-scoped role finds the fields of its own
+  entities only, a user with no role gets 404. KD-034.)
 - where: `src/app/api/command-palette-fields/route.ts`. The route answers to a session only. It used to call `authenticateRequest`, whose API-key branch could never
   run: the root middleware (`src/middleware.ts`) reads the Cookie header and nothing else, so a caller with only `Authorization: Bearer <key>` got 401 there, before the
   route (a note here said such a caller "gets the default tenant", which was never true). The branch is removed.
@@ -300,9 +288,11 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   cover, in the query.
   Fixed since (access-control Task 6, the REST API): every `/api/v1/*` route asks `withApiAuth(action, handler)` (`src/lib/access/api.ts`) before it reads anything: a session carries the signed-in user's real
   roles (it used to be a viewer, always), the API key is a service principal that acts in `API_KEY_TENANT_ID` with `API_KEY_ROLE`, the entity routes answer for the acting tenant and the roles that cover
-  the entity (`getEntities`, `getEntityById`), the webhook routes need a platform administrator, and a user with no role is told 404 or 403, never a 500. What is NOT yet a boundary: the app's own
-  `/api/*` routes and every server-component loader that reads the database directly except the entity workspace (listed by name in `PENDING_TASK_6`). They still check the ACTIVE TENANT only or nothing,
-  so a user with any role in a tenant can still read through them what the old rules allowed there. KD-016 and KD-020 must not be read as a boundary either.
+  the entity (`getEntities`, `getEntityById`), the webhook routes need a platform administrator, and a user with no role is told 404 or 403, never a 500. The same guard now stands in front of the
+  app's own JSON endpoints (`/api/tenants`, `/api/domains-tree`, `/api/command-palette-fields`, `/api/compliance/*`, `/api/ai/generate-entity`): `PENDING_TASK_6` of the deny-by-default scan is EMPTY for routes,
+  the tree, the palette and the compliance pages show what the caller's roles reach, and the compliance Audit Trail is the tenant in view's (`audit_log.tenantId`, written by `withAudit`;
+  rows written before the column that could not be attributed have no tenant and are shown to platform administrators only). What is NOT yet a boundary: every server-component loader that reads the database
+  directly except the entity workspace (the pages). They still check the ACTIVE TENANT only or nothing, so a user with any role in a tenant can still read through them what the old rules allowed there.
   The first write-up of this entry (and the Task 3 report) said a role-less or disabled user reached nothing through the older actions: that was wrong. Until Task 5 they reached,
   with a valid session and no role, `getDeploymentOverviewAction` and `getDomainsAction` (every tenant's entity names, versions and domains), the eight glossary actions (which ran as a
   hard-coded AUTHOR for ANY session), the three import actions (the converter, the compiler and an outbound fetch on their say-so), and `/api/v1/*` (a session there is a VIEWER). The

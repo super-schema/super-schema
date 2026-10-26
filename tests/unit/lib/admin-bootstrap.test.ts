@@ -267,5 +267,6 @@ describe("no bootstrap from a request path", () => {
     };
     walk("src");
     expect(importers).toEqual([]);
-  });
+    // (a whole-repository scan: over the default 5 s under the load of the whole suite, so a limit of its own)
+  }, 60_000);
 });
