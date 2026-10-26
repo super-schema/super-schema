@@ -325,9 +325,19 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   lists) reads the `active_tenant` cookie (`getActiveTenantId`, `src/lib/active-tenant.ts`). Fixed already (access-control Task 3): the cookie counts only for a tenant the signed-in
   user holds a role in (at any depth; a global administrator: any tenant), else the first tenant they can access, else `NoTenantAccess` (the dashboard layout and the pages send
   that user to `/no-access`); `setActiveTenantAction` refuses any other tenant exactly as it refuses a missing one, and `/api/tenants` lists only the tenants the user may access.
-  What is NOT yet a boundary: the by-id actions, the services and most `/api/*` routes still check the ACTIVE TENANT only (`inActiveTenant` and its siblings, each marked
-  `TODO(access-control task 5)`) and ask no role, so a user with any role in a tenant can still do what the old rules allowed there until Task 5 moves each action to `authorize`;
-  KD-016, KD-020 and KD-023 must not be read as a boundary either.
+  Fixed since (access-control Task 5, the first half): an action on a resource now needs BOTH the resource in the ACTIVE tenant (else the answer of a missing resource, even for
+  a user who holds a role in the tenant that is not in view, and for a global administrator) AND a covering role (`authorizeInActiveTenant`); the entity, field, schema, publish,
+  deploy, type-mapping (per entity), TypeSpec-source, version, domain-asset, import, entity-creation and tenant-level-entity actions, the Domains list, the domain create and delete
+  and the glossary ask it before they read or write (domain- and product-scoped roles are judged at the row's own domain and product).
+  What is NOT yet a boundary, and is listed by name (with its owning area) in `PENDING_TASK_5B` and `PENDING_TASK_6` of `tests/unit/access/deny-by-default.test.ts`: the product,
+  event, trait, usage, governance, retention, deployments-overview and admin actions; the global type-mapping service checks, the other services that read a role label; the
+  `/api/*` and `/api/v1` routes; and every server-component loader that reads the database directly except the entity workspace. They still check the ACTIVE TENANT only (`inActiveTenant`
+  and its siblings, each marked `TODO(access-control task 5)`) or nothing, so a user with any role in a tenant can still do what the old rules allowed there until those move to
+  `authorize`. KD-016, KD-020 and KD-023 must not be read as a boundary either.
+  The first write-up of this entry (and the Task 3 report) said a role-less or disabled user reached nothing through the older actions: that was wrong. Until Task 5 they reached,
+  with a valid session and no role, `getDeploymentOverviewAction` and `getDomainsAction` (every tenant's entity names, versions and domains), the eight glossary actions (which ran as a
+  hard-coded AUTHOR for ANY session), the three import actions (the converter, the compiler and an outbound fetch on their say-so), and `/api/v1/*` (a session there is a VIEWER). The
+  Domains list, the three import actions and the glossary are closed now; `getDeploymentOverviewAction` and `/api/v1` are still open (Tasks 5b and 6), and registration was open until Task 4.
   `/api/ai/generate-entity` checks that the domain it is given belongs to the tenant being viewed (an id of another tenant answers like an unknown one), which is the same soft rule.
 - where: `src/lib/active-tenant.ts`, `setActiveTenantAction`, `src/app/api/tenants/route.ts`.
 - cost to fix: the rest of the access-control work: every action, route and page loader asks `authorize(action, resource)` (Tasks 5 and 6), so the role and the scope decide, not the tenant alone.

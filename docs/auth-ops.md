@@ -119,8 +119,11 @@ look-up by e-mail: after a database reset and reseed an old session names a user
 the end of the session. A signed-in user who holds no role in any tenant lands on `/no-access` (which shows who is signed in, says to ask an administrator, and offers to sign out), and the tenant they
 work in (the `active_tenant` cookie) is only ever one they hold a role in.
 
-A role limits what a user may change, and it also decides which tenants the user may open, but the older actions and routes still check the tenant only
-until the access-control work has moved each of them to the role check (KD-034 in `docs/testing/known-defects.md`).
+A role limits what a user may change, and it also decides which tenants the user may open. The entity, schema, publish, deploy, domain-asset, import and glossary actions ask the
+policy before they read or write: the resource must lie in the tenant in view and a role of the user's must cover it (a domain- or product-scoped role judges at that domain or product;
+a viewer reads, an author edits, a steward publishes and deploys, a tenant administrator deletes a domain). The product, event, trait, governance, retention, deployments, admin
+actions, the API routes and the page loaders still check the tenant only until the rest of the access-control work has moved them (KD-034 in `docs/testing/known-defects.md`; the
+deny-by-default test lists each by name).
 
 What to do on any deployment that is not a laptop:
 
