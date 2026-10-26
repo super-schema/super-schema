@@ -32,4 +32,4 @@ export {
 
 export { can, contextRole, effectiveRole, globalRole, grantAllowed, roleAtLeast } from "./policy";
 
-export { canListDomain, canListProduct, productScopesIn, seesWholeDomain } from "./visibility";
+export { canListDomain, canListProduct, productScopesIn, readableScopes, seesWholeDomain, type ReadableScopes } from "./visibility";

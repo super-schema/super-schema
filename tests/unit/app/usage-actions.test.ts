@@ -1,25 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { assign, resetSessionPrincipal } from "../../helpers/access-mocks";
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
   revalidatePath: vi.fn(),
   getActiveTenantId: vi.fn(),
-  resolveCurrentUserId: vi.fn(),
+  findEntity: vi.fn(),
+  findEvent: vi.fn(),
   findUsages: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
+vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma", entity: { findUnique: h.findEntity }, eventSpec: { findUnique: h.findEvent } } }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
-vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
-vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: vi.fn().mockResolvedValue({ success: true, data: "VIEWER" }) }));
 vi.mock("@/services/events/usage.service", () => ({ findUsages: h.findUsages }));
 
 import { listUsagesAction } from "@/app/(dashboard)/schemas/usage-actions";
 import { usageRowList } from "@/lib/events/usage";
 
-const CTX = { userId: "user-1", userRole: "VIEWER", prisma: { tag: "prisma" } };
+const CTX = { userId: "user-1", userRole: "ADMIN", assignments: [assign.global()], prisma: { tag: "prisma", entity: { findUnique: h.findEntity }, eventSpec: { findUnique: h.findEvent } } };
+const SEES = expect.any(Function);
+const PLACE = { tenantId: "tenant-active", domainId: "d1", productId: "p1", product: { domainId: "d1" } };
 const SUBJECT = { kind: "entity", entityId: "e1" } as const;
 const ROWS = [{ id: "r1", fromKind: "EVENT_SPEC" as const, role: "PAYLOAD", isDraft: true, target: "Order v1.0", label: "Event M (draft)", href: "/x" }];
 
@@ -27,7 +30,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.auth.mockResolvedValue({ user: { id: "user-1" } });
   h.getActiveTenantId.mockResolvedValue("tenant-active");
-  h.resolveCurrentUserId.mockResolvedValue("user-1");
+  resetSessionPrincipal();
+  h.findEntity.mockResolvedValue(PLACE);
+  h.findEvent.mockResolvedValue(PLACE);
 });
 
 describe("listUsagesAction", () => {
@@ -40,7 +45,7 @@ describe("listUsagesAction", () => {
   it("scopes the lookup to the server-resolved active tenant and never revalidates (read-only)", async () => {
     h.findUsages.mockResolvedValue({ success: true, data: usageRowList([...ROWS], false) });
     expect(await listUsagesAction(SUBJECT)).toEqual({ success: true, data: { rows: ROWS, truncated: false } });
-    expect(h.findUsages).toHaveBeenCalledWith(SUBJECT, CTX, "tenant-active");
+    expect(h.findUsages).toHaveBeenCalledWith(SUBJECT, CTX, "tenant-active", SEES);
     expect(h.revalidatePath).not.toHaveBeenCalled();
   });
 
@@ -52,7 +57,7 @@ describe("listUsagesAction", () => {
     const wire = JSON.parse(JSON.stringify(result));
     expect(wire).toEqual({ success: true, data: { rows: ROWS, truncated: true } });
     expect(Array.isArray(wire.data)).toBe(false);
-    expect(h.findUsages).toHaveBeenCalledWith({ kind: "event", eventId: "ev1" }, CTX, "tenant-active");
+    expect(h.findUsages).toHaveBeenCalledWith({ kind: "event", eventId: "ev1" }, CTX, "tenant-active", SEES);
   });
 
   it("reports a list that is not truncated as `truncated: false` (also for a plain array without the flag)", async () => {

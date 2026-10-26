@@ -9,6 +9,7 @@
  * They are for READS of the structure only. Writes are judged by `can` over the row (a product-scoped author cannot write at its domain).
  */
 
+import type { ActionId } from "./actions";
 import { can } from "./policy";
 import { isAssignment, type Assignment } from "./scope";
 
@@ -44,4 +45,31 @@ export function canListProduct(assignments: readonly Assignment[], resource: { t
  */
 export function seesWholeDomain(assignments: readonly Assignment[], resource: { tenantId: string; domainId: string }): boolean {
   return can([...assignments], "domain.read", { tenantId: resource.tenantId, domainId: resource.domainId });
+}
+
+/**
+ * Which rows of a TENANT-WIDE list the principal may read for `action`: every row of the tenant (a tenant or global role that reaches the action),
+ * or only the rows under the listed domains and products (the DOMAIN and PRODUCT scopes that reach it). A loader that lists across the tenant
+ * (the external-reference picker, the usage lookup) restricts its query to this instead of filtering after a page was cut. An assignment whose role
+ * is too low for the action contributes nothing; another tenant's assignment contributes nothing.
+ */
+export type ReadableScopes = { all: true } | { all: false; domainIds: string[]; productIds: string[] };
+
+export function readableScopes(assignments: readonly Assignment[], action: ActionId, tenantId: string): ReadableScopes {
+  const domainIds = new Set<string>();
+  const productIds = new Set<string>();
+  if (Array.isArray(assignments)) {
+    for (const entry of assignments) {
+      if (!isAssignment(entry)) continue;
+      const { scope } = entry;
+      if (scope.kind === "GLOBAL" || (scope.kind === "TENANT" && scope.tenantId === tenantId)) {
+        if (can([entry], action, { tenantId })) return { all: true };
+        continue;
+      }
+      if (scope.kind === "TENANT" || scope.tenantId !== tenantId) continue;
+      if (scope.kind === "DOMAIN" && can([entry], action, { tenantId, domainId: scope.domainId })) domainIds.add(scope.domainId);
+      if (scope.kind === "PRODUCT" && can([entry], action, { tenantId, domainId: scope.domainId, productId: scope.productId })) productIds.add(scope.productId);
+    }
+  }
+  return { all: false, domainIds: [...domainIds], productIds: [...productIds] };
 }

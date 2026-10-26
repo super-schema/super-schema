@@ -51,8 +51,14 @@ describe("legacy role-less guard adapters", () => {
     expect(unmarked.map((use) => `${use.file}:${use.line}  ${use.text.slice(0, 100)}`)).toEqual([]);
   });
 
-  it("the scan itself finds the uses (it is not vacuous: what Task 5b has not yet moved is still listed)", () => {
-    expect(adapterUses().length).toBeGreaterThan(5);
+  it("the scan itself recognises an adapter call and a guarded one (it is not vacuous, now that Task 5b moved the callers)", () => {
+    const adapter = (line: string) => ADAPTER_CALL.test(line) && !GUARDED_CALL.test(line);
+    expect(adapter("    if (!(await inActiveTenant(kind, id))) return;")).toBe(true);
+    expect(adapter("  return runMutation(async (ctx) => save(ctx), 'x');")).toBe(true);
+    expect(adapter("  return withOwnedTarget(target, async () => save());")).toBe(true);
+    expect(adapter('  return runMutation({ action: "entity.write", resource }, run);')).toBe(false);
+    expect(adapter('  return withOwnedTarget("event.write", target, run);')).toBe(false);
+    expect(adapterUses().length).toBeGreaterThanOrEqual(0);
   }, 30_000);
 
   it("a marker is only ever on a line that is an adapter use (no stale markers)", () => {

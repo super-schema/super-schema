@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { assign } from "../../../helpers/access-mocks";
-import { canListDomain, canListProduct, productScopesIn, seesWholeDomain, type Assignment } from "@/lib/access";
+import { canListDomain, canListProduct, productScopesIn, readableScopes, seesWholeDomain, type Assignment } from "@/lib/access";
 
 const T = "tenant-1";
 const dom = (domainId: string, tenantId = T) => ({ tenantId, domainId });
@@ -60,5 +60,36 @@ describe("seesWholeDomain and productScopesIn", () => {
     ]);
     expect(seesWholeDomain([assign.domain("VIEWER", T, "d1")], dom("d1"))).toBe(true);
     expect(seesWholeDomain([assign.tenant("VIEWER", T)], dom("d1"))).toBe(true);
+  });
+});
+
+describe("readableScopes: which rows of a tenant-wide list the caller may read", () => {
+  it("a tenant or global role that reaches the action reads the whole tenant", () => {
+    expect(readableScopes([assign.tenant("VIEWER", T)], "event.read", T)).toEqual({ all: true });
+    expect(readableScopes([assign.global()], "event.read", T)).toEqual({ all: true });
+    expect(readableScopes([assign.global()], "event.read", "tenant-2")).toEqual({ all: true });
+  });
+
+  it("a tenant role too low for the action reads nothing at tenant level (and the domain roles decide)", () => {
+    expect(readableScopes([assign.tenant("VIEWER", T)], "event.write", T)).toEqual({ all: false, domainIds: [], productIds: [] });
+    expect(readableScopes([assign.tenant("VIEWER", T), assign.domain("AUTHOR", T, "d1")], "event.write", T)).toEqual({ all: false, domainIds: ["d1"], productIds: [] });
+  });
+
+  it("domain and product roles list their own domains and products, de-duplicated, only in this tenant", () => {
+    const a = [
+      assign.domain("VIEWER", T, "d1"),
+      assign.domain("AUTHOR", T, "d1"),
+      assign.product("VIEWER", T, "d2", "p1"),
+      assign.domain("ADMIN", "tenant-2", "d9"),
+      assign.tenant("ADMIN", "tenant-2"),
+    ];
+    expect(readableScopes(a, "event.read", T)).toEqual({ all: false, domainIds: ["d1"], productIds: ["p1"] });
+  });
+
+  it("roles too low for the action contribute nothing; junk and no assignments read nothing", () => {
+    expect(readableScopes([assign.domain("VIEWER", T, "d1"), assign.product("AUTHOR", T, "d1", "p1")], "event.publish", T)).toEqual({ all: false, domainIds: [], productIds: [] });
+    expect(readableScopes([], "event.read", T)).toEqual({ all: false, domainIds: [], productIds: [] });
+    expect(readableScopes("nope" as never, "event.read", T)).toEqual({ all: false, domainIds: [], productIds: [] });
+    expect(readableScopes([{ role: "ADMIN", scope: { kind: "DOMAIN", tenantId: T } } as unknown as Assignment], "event.read", T)).toEqual({ all: false, domainIds: [], productIds: [] });
   });
 });

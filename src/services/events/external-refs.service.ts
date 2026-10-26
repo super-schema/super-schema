@@ -29,6 +29,19 @@ const notFound = (what: string, id: string) => err({ code: "NOT_FOUND", message:
 /** A version that carries a resolved spec (published since document v2); older versions cannot be referenced. */
 const HAS_RESOLVED_SPEC = { resolvedSpec: { not: Prisma.DbNull } } satisfies Prisma.EventSpecVersionWhereInput;
 
+/**
+ * What a caller whose roles reach only SOME domains and products may read across the tenant: an event is visible only when its own domain or
+ * product is listed. Absent = the whole tenant (a tenant-wide role): the action passes it from the policy (`readableScopes`), the loader only
+ * applies it, in the QUERY (never after a page was cut), so an event outside it reads exactly like a missing one (the same NOT_FOUND).
+ */
+export interface ReadRestriction {
+  domainIds: readonly string[];
+  productIds: readonly string[];
+}
+
+const within = (restrictTo: ReadRestriction | undefined): Prisma.EventSpecWhereInput =>
+  restrictTo ? { OR: [{ domainId: { in: [...restrictTo.domainIds] } }, { productId: { in: [...restrictTo.productIds] } }] } : {};
+
 // ── candidates ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export interface ListExternalEventCandidatesInput {
@@ -39,6 +52,8 @@ export interface ListExternalEventCandidatesInput {
   query?: string;
   /** Default 25, at most 50. */
   limit?: number;
+  /** Only the events under these domains and products (see `ReadRestriction`); absent = every event of the tenant. */
+  restrictTo?: ReadRestriction;
 }
 
 function candidateLimit(raw: unknown): Result<number> {
@@ -71,6 +86,7 @@ export async function listExternalEventCandidates(ctx: ServiceContext, input: Li
         domainId: { not: null },
         productId: { not: null },
         latestVersion: { is: HAS_RESOLVED_SPEC },
+        AND: [within(input.restrictTo)],
         ...(needle && {
           OR: [
             { name: { contains: needle, mode: "insensitive" } },
@@ -102,7 +118,7 @@ export async function listExternalEventCandidates(ctx: ServiceContext, input: Li
 // ── versions of one event ───────────────────────────────────────────────────────────────────────────────────────────────
 
 /** The versions of an event of the tenant that can be referenced (they carry a resolved spec), newest first. */
-export async function listExternalEventVersions(ctx: ServiceContext, input: { tenantId: string; eventId: string }): Promise<Result<ExternalVersionOption[]>> {
+export async function listExternalEventVersions(ctx: ServiceContext, input: { tenantId: string; eventId: string; restrictTo?: ReadRestriction }): Promise<Result<ExternalVersionOption[]>> {
   if (typeof input !== "object" || input === null) return invalid("Input must be an object");
   const tenantId = requireId(input.tenantId, "tenantId");
   if (!tenantId.success) return tenantId;
@@ -111,7 +127,7 @@ export async function listExternalEventVersions(ctx: ServiceContext, input: { te
 
   return guardRead(async () => {
     const event = await ctx.prisma.eventSpec.findFirst({
-      where: { id: eventId.data, tenantId: tenantId.data },
+      where: { id: eventId.data, tenantId: tenantId.data, AND: [within(input.restrictTo)] },
       select: {
         versions: { where: HAS_RESOLVED_SPEC, orderBy: { sequence: "desc" }, select: { id: true, major: true, minor: true, publishedAt: true } },
       },
@@ -127,7 +143,7 @@ export async function listExternalEventVersions(ctx: ServiceContext, input: { te
  * The channels and messages a version offers, from its stored resolved spec. What is malformed in the stored value is skipped;
  * a version without a usable resolved spec offers nothing (empty lists).
  */
-export async function getExternalVersionItems(ctx: ServiceContext, input: { tenantId: string; eventVersionId: string }): Promise<Result<ExternalVersionItems>> {
+export async function getExternalVersionItems(ctx: ServiceContext, input: { tenantId: string; eventVersionId: string; restrictTo?: ReadRestriction }): Promise<Result<ExternalVersionItems>> {
   if (typeof input !== "object" || input === null) return invalid("Input must be an object");
   const tenantId = requireId(input.tenantId, "tenantId");
   if (!tenantId.success) return tenantId;
@@ -136,7 +152,7 @@ export async function getExternalVersionItems(ctx: ServiceContext, input: { tena
 
   return guardRead(async () => {
     const version = await ctx.prisma.eventSpecVersion.findFirst({
-      where: { id: versionId.data, eventSpec: { tenantId: tenantId.data } },
+      where: { id: versionId.data, eventSpec: { tenantId: tenantId.data, AND: [within(input.restrictTo)] } },
       select: { major: true, minor: true, resolvedSpec: true, eventSpec: { select: { name: true } } },
     });
     if (!version) return notFound("Event version", versionId.data);
@@ -173,7 +189,7 @@ function parseRefs(raw: unknown): Result<ExternalRefInput[]> {
  * version that is not in the tenant (unknown or another tenant's) fails the whole call as NOT_FOUND. An event with no recorded
  * latest version counts as being at the referenced version; a latest without a usable resolved spec has none of the items.
  */
-export async function getExternalRefStatuses(ctx: ServiceContext, input: { tenantId: string; refs: ExternalRefInput[] }): Promise<Result<ExternalRefStatus[]>> {
+export async function getExternalRefStatuses(ctx: ServiceContext, input: { tenantId: string; refs: ExternalRefInput[]; restrictTo?: ReadRestriction }): Promise<Result<ExternalRefStatus[]>> {
   if (typeof input !== "object" || input === null) return invalid("Input must be an object");
   const tenantId = requireId(input.tenantId, "tenantId");
   if (!tenantId.success) return tenantId;
@@ -187,7 +203,7 @@ export async function getExternalRefStatuses(ctx: ServiceContext, input: { tenan
 
   return guardRead(async () => {
     const versions = await ctx.prisma.eventSpecVersion.findMany({
-      where: { id: { in: [...refsByVersion.keys()] }, eventSpec: { tenantId: tenantId.data } },
+      where: { id: { in: [...refsByVersion.keys()] }, eventSpec: { tenantId: tenantId.data, AND: [within(input.restrictTo)] } },
       select: {
         id: true, major: true, minor: true,
         eventSpec: { select: { id: true, name: true, latestVersion: { select: { id: true, major: true, minor: true, resolvedSpec: true } } } },

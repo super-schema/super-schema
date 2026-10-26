@@ -1,32 +1,28 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { assign, resetSessionPrincipal } from "../../helpers/access-mocks";
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
   revalidatePath: vi.fn(),
   getActiveTenantId: vi.fn(),
-  resolveCurrentUserId: vi.fn(),
+  findDomain: vi.fn(),
   createTrait: vi.fn(),
   updateTrait: vi.fn(),
   deleteTrait: vi.fn(),
 }));
 
-// The Events actions check their (client-supplied) parent against the active tenant; the real check is covered by
-// tests/unit/app/events-actions-tenant-guard.test.ts. Here every parent is the active tenant's.
-vi.mock("@/lib/action-context", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/action-context")>()),
-  withOwnedTarget: async (_target: unknown, run: () => Promise<unknown>) => run(),
-}));
-vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
+// The real guard runs (the principal is a platform administrator unless a test says otherwise) and every parent is the active tenant's; the
+// role rules are in events-area-access.test.ts, the foreign-tenant ones in events-actions-tenant-guard.test.ts.
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
+vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma", domain: { findUnique: h.findDomain } } }));
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
-vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
-vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: vi.fn().mockResolvedValue({ success: true, data: "AUTHOR" }) }));
 vi.mock("@/services/events/trait.service", () => ({ createTrait: h.createTrait, updateTrait: h.updateTrait, deleteTrait: h.deleteTrait }));
 
 import { createTraitAction, deleteTraitAction, updateTraitAction } from "@/app/(dashboard)/schemas/trait-actions";
 
-const CTX = { userId: "user-1", userRole: "AUTHOR", prisma: { tag: "prisma" } };
+const CTX = { userId: "user-1", userRole: "ADMIN", assignments: [assign.global()], prisma: { tag: "prisma", domain: { findUnique: h.findDomain } } };
 const OK = { success: true, data: { id: "t1" } };
 const FAIL = { success: false, error: { code: "FORBIDDEN", message: "read-only", details: { x: 1 } } };
 
@@ -34,7 +30,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.auth.mockResolvedValue({ user: { id: "user-1" } });
   h.getActiveTenantId.mockResolvedValue("tenant-active");
-  h.resolveCurrentUserId.mockResolvedValue("user-1");
+  resetSessionPrincipal();
+  h.findDomain.mockResolvedValue({ id: "d1", tenantId: "tenant-active" });
 });
 
 describe("trait actions", () => {
@@ -71,12 +68,13 @@ describe("trait actions", () => {
     expect(h.revalidatePath).not.toHaveBeenCalled();
   });
 
-  it("passes a malformed (non-object) target through untouched so the service rejects it instead of the action throwing", async () => {
-    h.createTrait.mockResolvedValue({ success: false, error: { code: "VALIDATION_ERROR", message: "Scope target must be an object" } });
-    const result = await createTraitAction(null as never, { name: "x", kind: "MESSAGE" });
-    expect(result).toEqual({ success: false, error: "Scope target must be an object", code: "VALIDATION_ERROR" });
-    expect(h.createTrait).toHaveBeenCalledWith(null, { name: "x", kind: "MESSAGE" }, CTX);
-    expect(h.getActiveTenantId).not.toHaveBeenCalled();
+  it("answers a malformed target as a missing one, whatever it is, and the service never runs (fail closed)", async () => {
+    h.createTrait.mockResolvedValue(OK);
+    for (const bad of [null, undefined, "x", 5, {}, { level: "DOMAIN" }, { level: "PRODUCT", productId: 5 }, { level: "DOMAIN", domainId: "" }]) {
+      expect(await createTraitAction(bad as never, { name: "x", kind: "MESSAGE" }), JSON.stringify(bad)).toEqual({ success: false, error: "Target not found", code: "NOT_FOUND" });
+    }
+    expect(h.createTrait).not.toHaveBeenCalled();
+    expect(h.findDomain).not.toHaveBeenCalled();
     expect(h.revalidatePath).not.toHaveBeenCalled();
   });
 });

@@ -1,20 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+const PRISMA_MOCK = vi.hoisted(() => ({ tag: "prisma", product: { findUnique: vi.fn() } }));
 const h = vi.hoisted(() => ({
-  auth: vi.fn(), revalidatePath: vi.fn(), resolveCurrentUserId: vi.fn(), withOwnedTarget: vi.fn(),
+  auth: vi.fn(), revalidatePath: vi.fn(), getActiveTenantId: vi.fn(), findProduct: vi.fn(),
   createEvent: vi.fn(), updateEventDocument: vi.fn(), renameEvent: vi.fn(), deleteEvent: vi.fn(),
 }));
-// The real parent check (the client-supplied product must lie in the active tenant) is covered by
-// tests/unit/app/events-actions-tenant-guard.test.ts; here it is a spy that lets every parent through unless a test says otherwise.
-vi.mock("@/lib/action-context", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/action-context")>()),
-  withOwnedTarget: h.withOwnedTarget,
-}));
-vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
+h.findProduct = PRISMA_MOCK.product.findUnique;
+// The real guard runs (the principal is a platform administrator unless a test says otherwise): the client-supplied product must lie in the
+// active tenant. The role rules of these actions are in events-area-access.test.ts, the foreign-tenant ones in events-actions-tenant-guard.test.ts.
+vi.mock("@/lib/db", () => ({ prisma: PRISMA_MOCK }));
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
-vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
-vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: vi.fn().mockResolvedValue({ success: true, data: "AUTHOR" }) }));
 vi.mock("@/services/events/event.service", () => ({
   createEvent: h.createEvent, updateEventDocument: h.updateEventDocument, renameEvent: h.renameEvent, deleteEvent: h.deleteEvent,
 }));
@@ -23,8 +21,9 @@ import {
   createEventAction, deleteEventAction, renameEventAction, updateEventDocumentAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
+import { assign, resetSessionPrincipal } from "../../helpers/access-mocks";
 
-const CTX = { userId: "u1", userRole: "AUTHOR", prisma: { tag: "prisma" } };
+const CTX = { userId: "u1", userRole: "ADMIN", assignments: [assign.global()], prisma: PRISMA_MOCK };
 const OWNER = { level: "PRODUCT", productId: "p1" };
 const DETAIL = { id: "e1", name: "orders" };
 const SERVICE_MOCKS = [h.createEvent, h.updateEventDocument, h.renameEvent, h.deleteEvent];
@@ -39,8 +38,9 @@ const ALL_ACTIONS: Array<[string, () => Promise<unknown>]> = [
 beforeEach(() => {
   vi.clearAllMocks();
   h.auth.mockResolvedValue({ user: { id: "u1" } });
-  h.resolveCurrentUserId.mockResolvedValue("u1");
-  h.withOwnedTarget.mockImplementation(async (_target: unknown, run: () => Promise<unknown>) => run());
+  resetSessionPrincipal();
+  h.getActiveTenantId.mockResolvedValue("t1");
+  h.findProduct.mockResolvedValue({ domainId: "d1", domain: { tenantId: "t1" } });
   for (const fn of SERVICE_MOCKS) fn.mockResolvedValue({ success: true, data: DETAIL });
 });
 
@@ -74,16 +74,15 @@ describe("event actions", () => {
 
   it("checks the client-supplied product against the active tenant before every service call", async () => {
     for (const [, call] of ALL_ACTIONS) {
-      h.withOwnedTarget.mockClear();
+      h.findProduct.mockClear();
       await call();
-      expect(h.withOwnedTarget).toHaveBeenCalledTimes(1);
-      expect(h.withOwnedTarget.mock.calls[0][0]).toEqual(OWNER);
+      expect(h.findProduct).toHaveBeenCalledTimes(1);
+      expect(h.findProduct.mock.calls[0][0]).toMatchObject({ where: { id: "p1" } });
     }
   });
 
   it("never reaches a service, and does not revalidate, when the product is not in the active tenant", async () => {
-    const notFound = { success: false, error: { code: "NOT_FOUND", message: 'Product "p1" not found' } };
-    h.withOwnedTarget.mockResolvedValue(notFound);
+    h.findProduct.mockResolvedValue({ domainId: "d1", domain: { tenantId: "other-tenant" } });
     for (const [, call] of ALL_ACTIONS) {
       expect(await call()).toEqual({ success: false, error: 'Product "p1" not found', code: "NOT_FOUND" });
     }
@@ -128,7 +127,7 @@ describe("event actions", () => {
     h.auth.mockResolvedValue(null);
     for (const [, call] of ALL_ACTIONS) expect(await call()).toMatchObject({ success: false, code: "UNAUTHORIZED" });
     for (const fn of SERVICE_MOCKS) expect(fn).not.toHaveBeenCalled();
-    expect(h.withOwnedTarget).not.toHaveBeenCalled();
+    expect(h.findProduct).not.toHaveBeenCalled();
     expect(h.revalidatePath).not.toHaveBeenCalled();
   });
 
@@ -166,7 +165,7 @@ describe("event actions", () => {
     });
 
     it("turns a throwing ownership check into a generic INTERNAL_ERROR and never reaches a service", async () => {
-      h.withOwnedTarget.mockRejectedValue(new Error(RAW));
+      h.findProduct.mockRejectedValue(new Error(RAW));
       for (const [, call] of ALL_ACTIONS) {
         expect(await call()).toEqual({ success: false, error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" });
       }

@@ -1,21 +1,17 @@
+import { assign, resetSessionPrincipal } from "../../helpers/access-mocks";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
-  auth: vi.fn(), revalidatePath: vi.fn(), resolveCurrentUserId: vi.fn(), withOwnedTarget: vi.fn(), getActiveTenantId: vi.fn(),
+  auth: vi.fn(), revalidatePath: vi.fn(), findProduct: vi.fn(), getActiveTenantId: vi.fn(),
   requireOwnedEvent: vi.fn(), listCandidates: vi.fn(), listVersions: vi.fn(), getItems: vi.fn(), getStatuses: vi.fn(),
 }));
-// The real parent check is covered by tests/unit/app/events-actions-tenant-guard.test.ts; here it is a spy that lets every parent
-// through unless a test says otherwise.
-vi.mock("@/lib/action-context", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/action-context")>()),
-  withOwnedTarget: h.withOwnedTarget,
-}));
-vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
+// The real guard runs (the principal is a platform administrator unless a test says otherwise): the client-supplied product must lie in the
+// active tenant. The role rules of these actions are in events-area-access.test.ts, the foreign-tenant ones in events-actions-tenant-guard.test.ts.
+vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma", product: { findUnique: h.findProduct } } }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
-vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
-vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: vi.fn().mockResolvedValue({ success: true, data: "VIEWER" }) }));
 vi.mock("@/services/events/external-refs.service", () => ({
   listExternalEventCandidates: h.listCandidates, listExternalEventVersions: h.listVersions,
   getExternalVersionItems: h.getItems, getExternalRefStatuses: h.getStatuses,
@@ -30,7 +26,7 @@ import {
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
-const CTX = { userId: "u1", userRole: "VIEWER", prisma: { tag: "prisma" } };
+const CTX = { userId: "u1", userRole: "ADMIN", assignments: [assign.global()], prisma: { tag: "prisma", product: { findUnique: h.findProduct } } };
 const OWNER = { level: "PRODUCT", productId: "p1" };
 const TENANT = "tenant-active";
 const REFS = [{ eventVersionId: "v1", kind: "channel" as const, itemKey: "orders" }];
@@ -46,9 +42,9 @@ const ALL_ACTIONS: Array<[string, () => Promise<unknown>]> = [
 beforeEach(() => {
   vi.clearAllMocks();
   h.auth.mockResolvedValue({ user: { id: "u1" } });
-  h.resolveCurrentUserId.mockResolvedValue("u1");
+  resetSessionPrincipal();
+  h.findProduct.mockResolvedValue({ domainId: "d1", domain: { tenantId: TENANT } });
   h.getActiveTenantId.mockResolvedValue(TENANT);
-  h.withOwnedTarget.mockImplementation(async (_target: unknown, run: () => Promise<unknown>) => run());
   h.requireOwnedEvent.mockResolvedValue({ success: true, data: "e1-owned" });
   for (const fn of SERVICES) fn.mockResolvedValue({ success: true, data: [] });
 });
@@ -82,15 +78,15 @@ describe("external reference read actions", () => {
 
   it("check the client-supplied product against the active tenant before any service call", async () => {
     for (const [, call] of ALL_ACTIONS) {
-      h.withOwnedTarget.mockClear();
+      h.findProduct.mockClear();
       await call();
-      expect(h.withOwnedTarget).toHaveBeenCalledTimes(1);
-      expect(h.withOwnedTarget.mock.calls[0][0]).toEqual(OWNER);
+      expect(h.findProduct).toHaveBeenCalledTimes(1);
+      expect(h.findProduct.mock.calls[0][0]).toMatchObject({ where: { id: "p1" } });
     }
   });
 
   it("never reach a loader when the product is not in the active tenant", async () => {
-    h.withOwnedTarget.mockResolvedValue({ success: false, error: { code: "NOT_FOUND", message: 'Product "p1" not found' } });
+    h.findProduct.mockResolvedValue(null);
     for (const [, call] of ALL_ACTIONS) expect(await call()).toEqual({ success: false, error: 'Product "p1" not found', code: "NOT_FOUND" });
     for (const fn of [...SERVICES, h.requireOwnedEvent]) expect(fn).not.toHaveBeenCalled();
   });
@@ -98,7 +94,7 @@ describe("external reference read actions", () => {
   it("answer UNAUTHORIZED without any lookup when there is no session", async () => {
     h.auth.mockResolvedValue(null);
     for (const [, call] of ALL_ACTIONS) expect(await call()).toMatchObject({ success: false, code: "UNAUTHORIZED" });
-    for (const fn of [...SERVICES, h.requireOwnedEvent, h.withOwnedTarget, h.getActiveTenantId]) expect(fn).not.toHaveBeenCalled();
+    for (const fn of [...SERVICES, h.requireOwnedEvent, h.findProduct, h.getActiveTenantId]) expect(fn).not.toHaveBeenCalled();
   });
 
   it("are read-only: a success never revalidates", async () => {

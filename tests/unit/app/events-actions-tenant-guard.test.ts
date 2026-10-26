@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resetSessionPrincipal } from "../../helpers/access-mocks";
 
 // The Events create / update / delete / preview / emit actions (the self-contained Event, and library traits) take a CLIENT-supplied
 // product (or owner target) and their services only compare the row against that owner, so a foreign product id would be
@@ -10,8 +11,7 @@ const h = vi.hoisted(() => ({
   auth: vi.fn(),
   revalidatePath: vi.fn(),
   getActiveTenantId: vi.fn(),
-  resolveCurrentUserId: vi.fn(),
-  getEffectiveRole: vi.fn(),
+  findEntity: vi.fn(),
   findDomain: vi.fn(),
   findProduct: vi.fn(),
   findTenant: vi.fn(),
@@ -25,13 +25,12 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({
-  prisma: { tag: "prisma", domain: { findUnique: h.findDomain }, product: { findUnique: h.findProduct }, tenant: { findUnique: h.findTenant } },
+  prisma: { tag: "prisma", domain: { findUnique: h.findDomain }, product: { findUnique: h.findProduct }, tenant: { findUnique: h.findTenant }, entity: { findUnique: h.findEntity } },
 }));
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
-vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
-vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: h.getEffectiveRole }));
+vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/services/events/event.service", () => ({
   createEvent: h.createEvent, updateEventDocument: h.updateEventDocument, renameEvent: h.renameEvent, deleteEvent: h.deleteEvent,
 }));
@@ -76,8 +75,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.auth.mockResolvedValue({ user: { id: "user-1" } });
   h.getActiveTenantId.mockResolvedValue(T);
-  h.resolveCurrentUserId.mockResolvedValue("user-1");
-  h.getEffectiveRole.mockResolvedValue({ success: true, data: "AUTHOR" });
+  resetSessionPrincipal();
+  // the entity a message pins: in the active tenant, readable (a platform administrator reads it)
+  h.findEntity.mockImplementation(async () => ({ tenantId: await h.getActiveTenantId(), domainId: "d-own", productId: "p-own", product: { domainId: "d-own" } }));
   // p-own is in a domain of the active tenant, p-foreign in another tenant's, anything else does not exist
   h.findProduct.mockImplementation(async ({ where }: { where: { id: string } }) =>
     where.id === "p-own" ? { id: "p-own", domainId: "d-own", domain: { tenantId: T } }
@@ -171,10 +171,13 @@ describe.each(PRODUCT_CASES)("$label", ({ call, service, mutates }) => {
     spy.mockRestore();
   });
 
-  it("leaves a malformed product id to the service's own validation (no query from the guard, no write reachable)", async () => {
-    service.mockResolvedValue({ success: false, error: { code: "VALIDATION_ERROR", message: "productId must be a non-empty string" } });
-    expect(await call(asAny(5))).toEqual({ success: false, error: "productId must be a non-empty string", code: "VALIDATION_ERROR" });
+  it("answers a malformed product id as a missing product (no query, no write reachable: fail closed)", async () => {
+    service.mockResolvedValue({ success: true, data: { id: "x" } });
+    for (const bad of [5, null, undefined, "", {}]) {
+      expect(await call(asAny(bad)), JSON.stringify(bad)).toEqual({ success: false, error: 'Product "" not found', code: "NOT_FOUND" });
+    }
     expect(h.findProduct).not.toHaveBeenCalled();
+    expect(service).not.toHaveBeenCalled();
   });
 });
 
@@ -221,10 +224,9 @@ describe.each(TRAIT_CASES)("$label", ({ call, service }) => {
     expect(target).toEqual({ level: "TENANT", tenantId: T });
   });
 
-  it("leaves a malformed owner target to the service's own VALIDATION_ERROR (the existing contract)", async () => {
-    service.mockResolvedValue({ success: false, error: { code: "VALIDATION_ERROR", message: "Scope target must be an object" } });
-    expect(await call(asAny(null))).toEqual({ success: false, error: "Scope target must be an object", code: "VALIDATION_ERROR" });
-    expect(service).toHaveBeenCalledTimes(1);
+  it("answers a malformed owner target as a missing one: no query, the service never runs (fail closed)", async () => {
+    expect(await call(asAny(null))).toEqual({ success: false, error: "Target not found", code: "NOT_FOUND" });
+    expect(service).not.toHaveBeenCalled();
     expect(h.findDomain).not.toHaveBeenCalled();
     expect(h.findProduct).not.toHaveBeenCalled();
   });

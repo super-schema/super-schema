@@ -1,37 +1,51 @@
 "use server";
 
-import { getActiveTenantId } from "@/lib/active-tenant";
-import { runMutation, sanitizeActionError, withOwnedTarget } from "@/lib/action-context";
+import { revalidatePath } from "next/cache";
+import { unstable_rethrow } from "next/navigation";
+import { contextOf, guardActiveTenant, guardTarget, sanitizeActionError, toActionResult, unexpectedFailure } from "@/lib/action-context";
 import type { ScopeTarget } from "@/lib/asset-scope";
 import { createTrait, deleteTrait, updateTrait, type TraitInput } from "@/services/events/trait.service";
 import type { TraitDetail } from "@/lib/events/types";
 import type { ActionResult } from "@/types/action-result";
+import type { Result } from "@/types/result";
+import type { ServiceContext } from "@/types/service-context";
 
 /**
- * A TENANT target is always the server-resolved active tenant (same rule as data types). The target comes from the
- * client, so a malformed one (null, wrong shape) is passed through untouched and the service rejects it.
+ * The guard and the revalidation around one trait service call. The owner target is CLIENT-supplied below the tenant level (a domain /
+ * product id) and the service only compares the row against it, so the policy is asked over the OWNER first (`trait.write`, an author's act
+ * over the tenant, the domain or the product the trait lives in): a target of another tenant, one nothing of the caller's covers, a missing
+ * one and a malformed one all answer the NOT_FOUND of an unknown domain / product / target and the service never runs; too low a role is a
+ * generic refusal. A TENANT target is always the server-resolved active tenant (the client's tenant id is never read; same rule as data
+ * types), judged at tenant level: a domain-scoped author cannot make a tenant-wide trait. `sanitizeActionError` keeps raw database text out
+ * of the forms that render the result; the `/schemas` layout is revalidated on success only.
  */
-async function serverTarget(target: ScopeTarget): Promise<ScopeTarget> {
-  const isTenant = typeof target === "object" && target !== null && target.level === "TENANT";
-  return isTenant ? { level: "TENANT", tenantId: await getActiveTenantId() } : target;
+async function runTraitAction<T>(
+  label: string,
+  target: ScopeTarget,
+  run: (owner: ScopeTarget, ctx: ServiceContext) => Promise<Result<T>>
+): Promise<ActionResult<T>> {
+  try {
+    const isTenant = typeof target === "object" && target !== null && target.level === "TENANT";
+    const access = isTenant ? await guardActiveTenant("trait.write", { label: "Tenant" }) : await guardTarget("trait.write", target);
+    if (!access.allowed) return { success: false, ...access.refusal };
+    const owner: ScopeTarget = isTenant ? { level: "TENANT", tenantId: access.resource.tenantId } : target;
+    const result = await sanitizeActionError(run(owner, contextOf(access.principal)), label);
+    if (result.success) revalidatePath("/schemas", "layout");
+    return toActionResult(result, label);
+  } catch (e: unknown) {
+    unstable_rethrow(e);
+    return { success: false, ...unexpectedFailure(label, e) };
+  }
 }
 
-/**
- * `runMutation` (session + `/schemas` layout revalidation on success) around a service call whose ownership check runs before any
- * write. The owner target is CLIENT-supplied below the tenant level (a domain / product id) and the service only compares the row
- * against it, so `withOwnedTarget` first requires a well-formed target to lie in the ACTIVE tenant (a foreign one is the
- * NOT_FOUND of an unknown domain / product and the service never runs; a malformed target is left to the service's own
- * VALIDATION_ERROR). `sanitizeActionError` also covers the tenant lookup above: raw database text never reaches the forms that
- * render the result.
- */
 export async function createTraitAction(target: ScopeTarget, input: TraitInput): Promise<ActionResult<TraitDetail>> {
-  return runMutation((ctx) => sanitizeActionError((async () => { const owner = await serverTarget(target); return withOwnedTarget(owner, async () => createTrait(owner, input, ctx)); })(), "createTraitAction")); // TODO(access-control task 5): runMutation without an action: pass { action, resource } as the first argument
+  return runTraitAction("createTraitAction", target, (owner, ctx) => createTrait(owner, input, ctx));
 }
 
 export async function updateTraitAction(traitId: string, owner: ScopeTarget, input: Omit<TraitInput, "kind">): Promise<ActionResult<TraitDetail>> {
-  return runMutation((ctx) => sanitizeActionError((async () => { const target = await serverTarget(owner); return withOwnedTarget(target, async () => updateTrait(traitId, input, target, ctx)); })(), "updateTraitAction")); // TODO(access-control task 5): runMutation without an action: pass { action, resource } as the first argument
+  return runTraitAction("updateTraitAction", owner, (target, ctx) => updateTrait(traitId, input, target, ctx));
 }
 
 export async function deleteTraitAction(traitId: string, owner: ScopeTarget): Promise<ActionResult<{ id: string }>> {
-  return runMutation((ctx) => sanitizeActionError((async () => { const target = await serverTarget(owner); return withOwnedTarget(target, async () => deleteTrait(traitId, target, ctx)); })(), "deleteTraitAction")); // TODO(access-control task 5): runMutation without an action: pass { action, resource } as the first argument
+  return runTraitAction("deleteTraitAction", owner, (target, ctx) => deleteTrait(traitId, target, ctx));
 }
