@@ -45,6 +45,11 @@ const published = (label: string, hasUnpublishedChanges = false) => ({ ...makeEv
 
 const field = (testId: string) => screen.getByTestId(testId) as HTMLInputElement;
 const button = (testId: string) => screen.getByTestId(testId) as HTMLButtonElement;
+/** Delete lives in the "More actions" menu: open it, then choose Delete. */
+const deleteEvent = () => {
+  fireEvent.click(screen.getByTestId("event-actions"));
+  fireEvent.click(screen.getByTestId("event-delete"));
+};
 const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: { value } });
 const openTab = (name: string) => fireEvent.click(screen.getByRole("tab", { name }));
 const search = () => window.location.search;
@@ -86,11 +91,11 @@ afterEach(() => {
 });
 
 describe("EventPage: the Publish button", () => {
-  it("sits in the header next to Code and Delete", () => {
+  it("sits in the header next to Code and the more-actions menu", () => {
     renderPage();
     const header = publishButton().closest("div")!; // the toolbar: the button's own wrapper is a span
     expect(within(header).getByTestId("event-code-toggle")).toBeDefined();
-    expect(within(header).getByTestId("event-delete")).toBeDefined();
+    expect(within(header).getByTestId("event-actions")).toBeDefined();
     expect(publishButton().textContent).toContain("Publish");
   });
 
@@ -364,14 +369,14 @@ describe("EventPage: delete confirmation", () => {
   it("says only the draft goes for an event that was never published", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     renderPage();
-    fireEvent.click(button("event-delete"));
+    deleteEvent();
     expect(confirm.mock.calls[0][0]).toBe('Delete event "orders"? Its draft is removed with it.');
   });
 
   it("says the published versions go too once the event has one", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     renderPage({ event: published("1.0") });
-    fireEvent.click(button("event-delete"));
+    deleteEvent();
     expect(confirm.mock.calls[0][0]).toBe('Delete event "orders"? Its draft and its published versions are removed with it.');
   });
 
@@ -379,7 +384,7 @@ describe("EventPage: delete confirmation", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     h.remove.mockResolvedValue({ success: false, error: 'Event "orders" is referenced by "billing".', code: "IN_USE", suggestedFix: "Remove those references first." });
     renderPage({ event: published("1.0") });
-    fireEvent.click(button("event-delete"));
+    deleteEvent();
     const error = await screen.findByTestId("event-delete-error");
     expect(error.textContent).toContain('Event "orders" is referenced by "billing".');
     expect(h.push).not.toHaveBeenCalled();

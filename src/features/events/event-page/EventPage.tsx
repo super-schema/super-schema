@@ -8,10 +8,11 @@
 // The AsyncAPI code of the unsaved draft lives in the shell's right Detail Panel (see the "Code panel" block below).
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Check, FileCode2, Loader2, PanelRightClose, PanelRightOpen, Pencil, Trash2, X } from "lucide-react";
+import { Check, FileCode2, Loader2, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   deleteEventAction, previewEventPublishAction, publishEventAction, renameEventAction, updateEventDocumentAction,
@@ -280,12 +281,20 @@ function EventPageBody({ data }: { data: EventPageData }) {
           >
             {isPanelCollapsed ? <PanelRightOpen className="size-4" aria-hidden="true" /> : <PanelRightClose className="size-4" aria-hidden="true" />} Code
           </Button>
-          <Button
-            type="button" variant="outline" onClick={() => { void remove(); }} disabled={deleting} data-testid="event-delete"
-            className="gap-1.5 text-muted-foreground hover:text-destructive"
-          >
-            {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />} Delete
-          </Button>
+          {/* Delete is away from Publish: one stray click next to the primary action must not be able to remove the event. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              type="button" data-testid="event-actions" aria-label="More actions" title="More actions" disabled={deleting}
+              className={buttonVariants({ variant: "outline", size: "icon", className: "text-muted-foreground" })}
+            >
+              {deleting ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <MoreHorizontal aria-hidden="true" className="size-4" />}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-auto min-w-40">
+              <DropdownMenuItem variant="destructive" data-testid="event-delete" onClick={() => { void remove(); }}>
+                <Trash2 aria-hidden="true" /> Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       {deleteError && (

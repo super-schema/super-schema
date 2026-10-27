@@ -58,6 +58,7 @@ const ID = {
   codePanel: "event-code-panel",
   codeStatus: "code-status",
   codeText: "event-code-text",
+  eventActions: "event-actions",
   deleteEvent: "event-delete",
   deleteError: "event-delete-error",
   // The publish dialogs (entity and event share one).
@@ -374,7 +375,8 @@ test.describe("external event references end to end", () => {
     await test.step("A: the delete is refused with the 'referenced by' message naming billing", async () => {
       page.once("dialog", (dialog) => { void dialog.accept(); });
       await page.goto(`${productUrlA(f)}/events/${flow.sourceId}`);
-      await main.getByTestId(ID.deleteEvent).click();
+      await main.getByTestId(ID.eventActions).click();
+      await page.getByTestId(ID.deleteEvent).click();
       const error = main.getByTestId(ID.deleteError);
       await expect(error).toBeVisible({ timeout: 30_000 });
       await expect(error).toContainText("referenced by");
@@ -386,7 +388,8 @@ test.describe("external event references end to end", () => {
     await test.step("B: deleting its own event is allowed", async () => {
       page.once("dialog", (dialog) => { void dialog.accept(); });
       await page.goto(`${productUrlB(f)}/events/${flow.consumerId}`);
-      await main.getByTestId(ID.deleteEvent).click();
+      await main.getByTestId(ID.eventActions).click();
+      await page.getByTestId(ID.deleteEvent).click();
       await expect(page).not.toHaveURL(new RegExp(`/events/${flow.consumerId}`), { timeout: 60_000 });
       await expectNoRawDbText(page);
     });

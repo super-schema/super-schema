@@ -59,6 +59,11 @@ const renderPage = (over: Partial<EventPageData> = {}) => render(<EventPage data
 
 const field = (testId: string) => screen.getByTestId(testId) as HTMLInputElement;
 const button = (testId: string) => screen.getByTestId(testId) as HTMLButtonElement;
+/** Delete lives in the "More actions" menu: open it, then choose Delete. */
+const deleteEvent = () => {
+  fireEvent.click(screen.getByTestId("event-actions"));
+  fireEvent.click(screen.getByTestId("event-delete"));
+};
 const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: { value } });
 const openTab = (name: "Design" | "Docs") => fireEvent.click(screen.getByRole("tab", { name }));
 const isHidden = (testId: string) => screen.getByTestId(testId).hasAttribute("hidden");
@@ -892,11 +897,43 @@ describe("EventPage: rename", () => {
   });
 });
 
+describe("EventPage: the more-actions menu", () => {
+  it("is a button in the header, after Publish and Code, named for what it is", () => {
+    renderPage();
+    const trigger = button("event-actions");
+    expect(trigger.getAttribute("aria-label")).toBe("More actions");
+    expect(trigger.compareDocumentPosition(button("event-code-toggle")) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  });
+
+  it("keeps Delete out of the header until the menu is opened", () => {
+    renderPage();
+    expect(screen.queryByTestId("event-delete")).toBeNull();
+    fireEvent.click(button("event-actions"));
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBe(screen.getByTestId("event-delete"));
+  });
+
+  it("offers only Delete, in the destructive style", () => {
+    renderPage();
+    fireEvent.click(button("event-actions"));
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent?.trim())).toEqual(["Delete"]);
+    expect(screen.getByTestId("event-delete").getAttribute("data-variant")).toBe("destructive");
+  });
+
+  it("closes after Delete is chosen, and does not delete before the confirmation is answered", () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderPage();
+    deleteEvent();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(h.remove).not.toHaveBeenCalled();
+  });
+});
+
 describe("EventPage: delete", () => {
   it("does nothing when the confirmation is declined", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     renderPage();
-    fireEvent.click(button("event-delete"));
+    deleteEvent();
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(confirm.mock.calls[0][0]).toContain('"orders"');
     expect(h.remove).not.toHaveBeenCalled();
@@ -906,7 +943,7 @@ describe("EventPage: delete", () => {
   it("after confirming: deletes, invalidates the explorer tree, then goes to the Events list", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderPage();
-    fireEvent.click(button("event-delete"));
+    deleteEvent();
     await waitFor(() => expect(h.push).toHaveBeenCalledTimes(1));
     expect(h.remove).toHaveBeenCalledWith("ev1", "p1");
     expect(h.invalidate).toHaveBeenCalledTimes(1);
@@ -918,23 +955,23 @@ describe("EventPage: delete", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     h.remove.mockResolvedValue({ success: false, error: 'Event "orders" is referenced by payments/checkout.', code: "IN_USE", suggestedFix: "Remove the external reference first." });
     renderPage();
-    fireEvent.click(button("event-delete"));
+    deleteEvent();
     const error = await screen.findByTestId("event-delete-error");
     expect(error.getAttribute("role")).toBe("alert");
     expect(error.textContent).toContain('Event "orders" is referenced by payments/checkout.');
     expect(error.textContent).toContain("Remove the external reference first.");
     expect(h.push).not.toHaveBeenCalled();
     expect(h.invalidate).not.toHaveBeenCalled();
-    expect(button("event-delete").disabled).toBe(false);
+    expect(button("event-actions").disabled).toBe(false);
   });
 
   it("clears an earlier delete error when the user tries again", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     h.remove.mockResolvedValueOnce({ success: false, error: "Still referenced", code: "IN_USE" });
     renderPage();
-    fireEvent.click(button("event-delete"));
+    deleteEvent();
     await screen.findByTestId("event-delete-error");
-    fireEvent.click(button("event-delete"));
+    deleteEvent();
     await waitFor(() => expect(h.push).toHaveBeenCalledWith(LIST_HREF));
     expect(screen.queryByTestId("event-delete-error")).toBeNull();
   });
@@ -943,7 +980,7 @@ describe("EventPage: delete", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     h.remove.mockRejectedValue(new Error("connect ECONNREFUSED 10.0.0.5:5432"));
     renderPage();
-    fireEvent.click(button("event-delete"));
+    deleteEvent();
     const error = await screen.findByTestId("event-delete-error");
     expect(error.textContent).toContain("Something went wrong");
     expect(error.textContent).not.toContain("ECONNREFUSED");
@@ -955,9 +992,10 @@ describe("EventPage: delete", () => {
     const pending = deferred<unknown>();
     h.remove.mockReturnValue(pending.promise);
     renderPage();
-    fireEvent.click(button("event-delete"));
-    expect(button("event-delete").disabled).toBe(true);
-    fireEvent.click(button("event-delete"));
+    deleteEvent();
+    expect(button("event-actions").disabled).toBe(true);
+    fireEvent.click(button("event-actions"));
+    expect(screen.queryByTestId("event-delete")).toBeNull();
     expect(h.remove).toHaveBeenCalledTimes(1);
     await act(async () => { pending.resolve({ success: true, data: { id: "ev1" } }); });
     expect(h.push).toHaveBeenCalledTimes(1);

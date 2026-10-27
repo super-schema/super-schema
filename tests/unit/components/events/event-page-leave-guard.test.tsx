@@ -51,6 +51,11 @@ const renderPage = (over: Partial<EventPageData> = {}) => render(<EventPage data
 
 const field = (testId: string) => screen.getByTestId(testId) as HTMLInputElement;
 const button = (testId: string) => screen.getByTestId(testId) as HTMLButtonElement;
+/** Delete lives in the "More actions" menu: open it, then choose Delete. */
+const deleteEvent = () => {
+  fireEvent.click(screen.getByTestId("event-actions"));
+  fireEvent.click(screen.getByTestId("event-delete"));
+};
 const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: { value } });
 const editTitle = () => type(field("metadata-title"), "Orders v2");
 const dialog = () => screen.queryByTestId("unsaved-changes-dialog");
@@ -263,7 +268,7 @@ describe("EventPage leave guard: delete", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderPage();
     editTitle();
-    fireEvent.click(button("event-delete"));
+    deleteEvent();
     await waitFor(() => expect(h.push).toHaveBeenCalledWith(LIST_HREF));
     expect(h.push).toHaveBeenCalledTimes(1);
     expect(dialog()).toBeNull();
@@ -277,7 +282,7 @@ describe("EventPage leave guard: delete", () => {
     h.remove.mockResolvedValue({ success: false, error: 'Event "orders" is referenced by payments/checkout.', code: "IN_USE" });
     renderPage();
     editTitle();
-    fireEvent.click(button("event-delete"));
+    deleteEvent();
     await screen.findByTestId("event-delete-error");
     expect(click(eventsCrumb()).prevented).toBe(true);
     expect(dialog()).not.toBeNull();
