@@ -184,7 +184,7 @@ export function OperationsSection({ draft, options, selectedItem, onSelectItem, 
           </div>
         )
       ) : (
-        <div className="grid gap-space-6 md:grid-cols-[14rem_1fr]">
+        <div className="grid gap-space-6 @2xl:grid-cols-[14rem_1fr]">
           <ItemList
             label="Operations" prefix="operation" activeIndex={activeIndex} onSelect={onSelectItem}
             items={operations.map((o, i) => ({

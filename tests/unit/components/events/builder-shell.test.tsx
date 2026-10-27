@@ -113,6 +113,79 @@ describe("EventBuilder: outline", () => {
   });
 });
 
+describe("EventBuilder: layout", () => {
+  const STORAGE_KEY = "events-builder-outline";
+  const root = () => screen.getByTestId("event-builder");
+  // This jsdom environment ships no localStorage; install a Map-backed one (or one that throws, as a browser with blocked storage does).
+  function installStorage(blocked = false) {
+    const store = new Map<string, string>();
+    const guard = <T,>(fn: () => T): T => { if (blocked) throw new Error("blocked"); return fn(); };
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: (key: string) => guard(() => store.get(key) ?? null),
+        setItem: (key: string, value: string) => guard(() => void store.set(key, value)),
+        removeItem: (key: string) => guard(() => void store.delete(key)),
+        clear: () => store.clear(),
+      },
+    });
+  }
+  beforeEach(() => installStorage());
+
+  it("lets the outline be switched between compact and open, and remembers the choice", () => {
+    renderBuilder();
+    // No choice yet: the pane's width decides (CSS only), so the attribute is absent.
+    expect(root().hasAttribute("data-outline")).toBe(false);
+    // jsdom has no layout: an undecided outline counts as compact, so the first click opens it.
+    click("outline-toggle");
+    expect(root().getAttribute("data-outline")).toBe("open");
+    expect(button("outline-toggle").getAttribute("aria-pressed")).toBe("false");
+    click("outline-toggle");
+    expect(root().getAttribute("data-outline")).toBe("compact");
+    expect(button("outline-toggle").getAttribute("aria-pressed")).toBe("true");
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("compact");
+  });
+
+  it("restores the remembered outline choice", () => {
+    localStorage.setItem(STORAGE_KEY, "compact");
+    renderBuilder();
+    expect(root().getAttribute("data-outline")).toBe("compact");
+    expect(button("outline-toggle").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("ignores a remembered value it does not know", () => {
+    localStorage.setItem(STORAGE_KEY, "sideways");
+    renderBuilder();
+    expect(root().hasAttribute("data-outline")).toBe(false);
+  });
+
+  it("still renders and toggles when the browser blocks storage", () => {
+    installStorage(true);
+    renderBuilder();
+    click("outline-toggle");
+    expect(root().getAttribute("data-outline")).toBe("open");
+  });
+
+  it("gives every outline node its label as a title, and keeps the label text in the DOM when compact", () => {
+    localStorage.setItem(STORAGE_KEY, "compact");
+    renderBuilder();
+    const labels: Record<string, string> = {
+      metadata: "Metadata", servers: "Servers", channels: "Channels", messages: "Messages", operations: "Operations",
+      traits: "Message properties", advanced: "Advanced",
+    };
+    for (const [section, label] of Object.entries(labels)) {
+      expect(button(`outline-${section}`).getAttribute("title")).toBe(label);
+      const text = within(button(`outline-${section}`)).getByText(label);
+      expect(text.className).toContain("sr-only");
+    }
+  });
+
+  it("makes the content column a size container, so sections lay out by the pane's width and not the viewport's", () => {
+    renderBuilder({ section: "messages" });
+    expect(screen.getByTestId("builder-content").className).toContain("@container");
+  });
+});
+
 describe("EventBuilder: save bar", () => {
   it("starts clean with Save and Discard disabled", () => {
     renderBuilder();

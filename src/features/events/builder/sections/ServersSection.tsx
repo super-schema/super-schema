@@ -140,7 +140,7 @@ export function ServersSection({ draft, options, selectedItem, onSelectItem }: S
           <Button type="button" onClick={addServer} data-testid="server-empty-add" className="gap-1.5"><Plus className="size-4" /> Add server</Button>
         </div>
       ) : (
-        <div className="grid gap-space-6 md:grid-cols-[14rem_1fr]">
+        <div className="grid gap-space-6 @2xl:grid-cols-[14rem_1fr]">
           <ul aria-label="Servers" className="space-y-space-1">
             {servers.map((s, i) => {
               const isActive = i === activeIndex;

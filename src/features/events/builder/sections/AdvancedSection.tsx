@@ -90,7 +90,7 @@ export function AdvancedSection({ draft, options, selectedItem, onSelectItem }: 
           <Button type="button" onClick={addScheme} data-testid="scheme-empty-add" className="gap-1.5"><Plus className="size-4" /> Add scheme</Button>
         </div>
       ) : (
-        <div className="grid gap-space-6 md:grid-cols-[14rem_1fr]">
+        <div className="grid gap-space-6 @2xl:grid-cols-[14rem_1fr]">
           <ul aria-label="Security schemes" className="space-y-space-1">
             {names.map((name) => {
               const isActive = name === active;

@@ -177,7 +177,7 @@ export function ChannelsSection({ draft, options, selectedItem, onSelectItem }: 
           <Button type="button" onClick={addChannel} data-testid="channel-empty-add" className="gap-space-2"><Plus className="size-4" /> Add channel</Button>
         </div>
       ) : (
-        <div className="grid gap-space-6 md:grid-cols-[14rem_1fr]">
+        <div className="grid gap-space-6 @2xl:grid-cols-[14rem_1fr]">
           <ItemList
             label="Channels" prefix="channel" activeIndex={activeIndex} onSelect={onSelectItem}
             items={channels.map((c, i) => ({

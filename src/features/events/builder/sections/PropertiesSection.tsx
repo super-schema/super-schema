@@ -109,7 +109,7 @@ export function PropertiesSection({ draft, options, selectedItem, onSelectItem }
           </p>
         </div>
       ) : (
-        <div className="grid gap-space-6 md:grid-cols-[14rem_1fr]">
+        <div className="grid gap-space-6 @2xl:grid-cols-[14rem_1fr]">
           <div className="space-y-space-4">
             {grouped.map(({ kind, entries: rows }) => {
               const lower = kind.toLowerCase();

@@ -159,7 +159,7 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
           <Button type="button" onClick={addMessage} data-testid="message-empty-add" className="gap-space-2"><Plus className="size-4" /> Add message</Button>
         </div>
       ) : (
-        <div className="grid gap-space-6 md:grid-cols-[14rem_1fr]">
+        <div className="grid gap-space-6 @2xl:grid-cols-[14rem_1fr]">
           <ItemList
             label="Messages" prefix="message" activeIndex={activeIndex} onSelect={onSelectItem}
             items={messages.map((m, i) => ({

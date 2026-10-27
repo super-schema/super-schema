@@ -3,8 +3,8 @@
 // src/features/events/builder/EventBuilder.tsx
 // The builder shell: outline (left), the selected section's form (middle) and a sticky Save / Discard bar. Sections read and write the
 // document only through `draft` (`draft.update(fn)`), and show their own field errors from `draft.problems` + `draft.serverProblems`.
-import { useMemo, type ComponentType } from "react";
-import { Loader2, Save } from "lucide-react";
+import { useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
+import { Info, Loader2, MessageSquare, Network, PanelLeftClose, PanelLeftOpen, Save, Server, Settings2, Tags, Workflow, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -31,6 +31,52 @@ import type { DraftState } from "./use-event-draft";
 export interface LibraryTraitOption {
   id: string; name: string; kind: "MESSAGE" | "OPERATION"; level?: string;
   spec?: JsonObject; bundled?: boolean; properties?: PropertySummaryRow[];
+}
+
+/** Icons of the outline in its compact (icons only) form. */
+const SECTION_ICONS: Record<BuilderSection, LucideIcon> = {
+  metadata: Info, servers: Server, channels: Network, messages: MessageSquare, operations: Workflow, traits: Tags, advanced: Settings2,
+};
+
+/** `auto`: the pane's width decides (CSS container queries). `open` / `compact`: the user's choice, kept in `localStorage`. */
+type OutlineMode = "auto" | "open" | "compact";
+const OUTLINE_KEY = "events-builder-outline";
+/** The container width (48rem = Tailwind's `@3xl`) from which an undecided outline shows its labels. */
+const OUTLINE_WIDE_PX = 768;
+
+/** Classes per mode. Below `@lg` (32rem) the outline is a scrolling row above the form whatever the mode. Written out, not computed, so Tailwind sees them. */
+const OUTLINE_GRID: Record<OutlineMode, string> = {
+  auto: "grid-cols-1 @lg:grid-cols-[3rem_minmax(0,1fr)] @3xl:grid-cols-[13rem_minmax(0,1fr)]",
+  open: "grid-cols-1 @lg:grid-cols-[13rem_minmax(0,1fr)]",
+  compact: "grid-cols-1 @lg:grid-cols-[3rem_minmax(0,1fr)]",
+};
+/** In the icons-only form a problem badge sits on the icon's corner and the item is centred. */
+const OUTLINE_BADGE: Record<OutlineMode, string> = {
+  auto: "absolute -right-1 -top-1 @max-lg:static @3xl:static",
+  open: "",
+  compact: "absolute -right-1 -top-1 @max-lg:static",
+};
+const OUTLINE_BUTTON: Record<OutlineMode, string> = {
+  auto: "@lg:justify-center @3xl:justify-between",
+  open: "",
+  compact: "@lg:justify-center",
+};
+const OUTLINE_LABEL: Record<OutlineMode, string> = {
+  auto: "sr-only @max-lg:not-sr-only @3xl:not-sr-only",
+  open: "",
+  compact: "sr-only @max-lg:not-sr-only",
+};
+
+const noSubscription = () => () => {};
+const serverOutlineMode = (): OutlineMode => "auto";
+
+function readOutlineMode(): OutlineMode {
+  try {
+    const stored = localStorage.getItem(OUTLINE_KEY);
+    return stored === "open" || stored === "compact" ? stored : "auto";
+  } catch {
+    return "auto";
+  }
 }
 
 export interface BuilderOptions { entityOptions: EntityOption[]; libraryTraits: LibraryTraitOption[] }
@@ -63,6 +109,8 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
   onSectionChange: (section: BuilderSection) => void;
   item: string | null;
   onItemChange: (key: string | null) => void;
+  /** False while the Design tab is hidden: the builder stays mounted (its draft lives here) but must not answer shortcuts. */
+  active?: boolean;
 }) {
   const { doc, problems, serverProblems } = draft;
   const outline = useMemo(() => buildOutline(doc, uniqueProblems(problems.concat(serverProblems))), [doc, problems, serverProblems]);
@@ -70,84 +118,114 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
   const ActiveSection = SECTION_COMPONENTS[section];
   const busy = !draft.dirty || draft.saving;
 
+  // The remembered choice is a client-only value: the server render (and hydration) see `auto`, the client then reads the stored choice.
+  // A choice made on this page wins at once, even where storage is blocked.
+  const stored = useSyncExternalStore(noSubscription, readOutlineMode, serverOutlineMode);
+  const [chosen, setChosen] = useState<OutlineMode | null>(null);
+  const mode = chosen ?? stored;
+  const rootRef = useRef<HTMLDivElement>(null);
+  function toggleOutline() {
+    // An undecided outline shows what its width gives it: from the measured width, the toggle goes to the other form.
+    const wide = (rootRef.current?.offsetWidth ?? 0) >= OUTLINE_WIDE_PX;
+    const showing: OutlineMode = mode === "auto" ? (wide ? "open" : "compact") : mode;
+    const next: OutlineMode = showing === "compact" ? "open" : "compact";
+    setChosen(next);
+    try { localStorage.setItem(OUTLINE_KEY, next); } catch { /* storage blocked: the choice lasts for this page only */ }
+  }
+
   return (
-    <div data-testid="event-builder" className="grid gap-space-6 md:grid-cols-[13rem_minmax(0,1fr)]">
-      <nav aria-label="Event outline" data-testid="builder-outline" className="md:sticky md:top-space-4 md:self-start">
-        <ul className="flex gap-space-1 overflow-x-auto md:flex-col">
-          {outline.map((node) => {
-            const isActive = node.section === section;
-            return (
-              <li key={node.section} className="shrink-0 md:shrink">
-                <button
-                  type="button" data-testid={`outline-${node.section}`} aria-current={isActive ? "true" : undefined}
-                  onClick={() => { onSectionChange(node.section); onItemChange(null); }}
-                  className={cn(
-                    "flex w-full items-center justify-between gap-space-2 rounded-lg px-space-3 py-space-2 text-left text-body-small outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
-                    isActive ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                  )}
-                >
-                  <span>{node.label}</span>
-                  <span className="flex items-center gap-space-2">
-                    {node.count !== null && (
-                      <span data-testid={`outline-count-${node.section}`} className="text-caption text-muted-foreground">{node.count}</span>
-                    )}
-                    {node.problems > 0 && (
-                      <Badge variant="destructive" data-testid={`outline-problems-${node.section}`}>
-                        <span aria-hidden="true">{node.problems}</span>
-                        <span className="sr-only">{node.problems === 1 ? "problem" : "problems"}</span>
-                      </Badge>
-                    )}
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
+    <div ref={rootRef} data-testid="event-builder" data-outline={mode === "auto" ? undefined : mode} className="@container">
+      <div className={cn("grid gap-space-6", OUTLINE_GRID[mode])}>
+        <div className="@lg:sticky @lg:top-space-4 @lg:self-start">
+          <nav aria-label="Event outline" data-testid="builder-outline">
+            <ul className="flex gap-space-1 overflow-x-auto @lg:flex-col">
+              {outline.map((node) => {
+                const isActive = node.section === section;
+                const Icon = SECTION_ICONS[node.section];
+                return (
+                  <li key={node.section} className="shrink-0 @lg:shrink">
+                    <button
+                      type="button" data-testid={`outline-${node.section}`} aria-current={isActive ? "true" : undefined} title={node.label}
+                      onClick={() => { onSectionChange(node.section); onItemChange(null); }}
+                      className={cn(
+                        "relative flex w-full items-center justify-between gap-space-2 rounded-lg px-space-3 py-space-2 text-left text-body-small outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
+                        OUTLINE_BUTTON[mode],
+                        isActive ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                      )}
+                    >
+                      <span className="flex min-w-0 items-center gap-space-2">
+                        <Icon aria-hidden="true" className="size-4 shrink-0" />
+                        <span className={OUTLINE_LABEL[mode]}>{node.label}</span>
+                      </span>
+                      <span className="flex items-center gap-space-2">
+                        {node.count !== null && (
+                          <span data-testid={`outline-count-${node.section}`} className={cn("text-caption text-muted-foreground", OUTLINE_LABEL[mode])}>{node.count}</span>
+                        )}
+                        {node.problems > 0 && (
+                          <Badge variant="destructive" data-testid={`outline-problems-${node.section}`} className={OUTLINE_BADGE[mode]}>
+                            <span aria-hidden="true">{node.problems}</span>
+                            <span className="sr-only">{node.problems === 1 ? "problem" : "problems"}</span>
+                          </Badge>
+                        )}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+          <Button
+            type="button" variant="ghost" size="icon-sm" onClick={toggleOutline} data-testid="outline-toggle"
+            aria-pressed={mode === "compact"} aria-label="Compact outline" title="Compact outline" className="mt-space-2 hidden text-muted-foreground @lg:inline-flex"
+          >
+            {mode === "compact" ? <PanelLeftOpen aria-hidden="true" className="size-4" /> : <PanelLeftClose aria-hidden="true" className="size-4" />}
+          </Button>
+        </div>
 
-      <div className="min-w-0 space-y-space-6">
-        {draft.error && (
-          <div role="alert" data-testid="builder-error" className="space-y-space-2 rounded-lg border border-destructive/30 bg-destructive/5 p-space-3 text-body-small text-destructive">
-            <p>{draft.error}</p>
-            {failed.length > 0 && (
-              <ul className="max-h-48 list-disc space-y-space-1 overflow-y-auto pl-space-4">
-                {failed.map((p) => {
-                  const { section: target, item: targetItem } = locateProblem(doc, p.pointer);
-                  if (target === null) return <li key={`${p.pointer}|${p.message}`}>{`${p.pointer === "" ? "document" : p.pointer}: ${p.message}`}</li>;
-                  const label = `${SECTION_LABELS[target]}${targetItem ? ` · ${targetItem}` : ""}: ${p.message}`;
-                  return (
-                    <li key={`${p.pointer}|${p.message}`}>
-                      <button
-                        type="button" className="text-left underline underline-offset-2 outline-none hover:no-underline focus-visible:ring-3 focus-visible:ring-ring/50"
-                        onClick={() => { onSectionChange(target); onItemChange(targetItem); }}
-                      >{label}</button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        )}
+        <div data-testid="builder-content" className="@container min-w-0 space-y-space-6">
+          {draft.error && (
+            <div role="alert" data-testid="builder-error" className="space-y-space-2 rounded-lg border border-destructive/30 bg-destructive/5 p-space-3 text-body-small text-destructive">
+              <p>{draft.error}</p>
+              {failed.length > 0 && (
+                <ul className="max-h-48 list-disc space-y-space-1 overflow-y-auto pl-space-4">
+                  {failed.map((p) => {
+                    const { section: target, item: targetItem } = locateProblem(doc, p.pointer);
+                    if (target === null) return <li key={`${p.pointer}|${p.message}`}>{`${p.pointer === "" ? "document" : p.pointer}: ${p.message}`}</li>;
+                    const label = `${SECTION_LABELS[target]}${targetItem ? ` · ${targetItem}` : ""}: ${p.message}`;
+                    return (
+                      <li key={`${p.pointer}|${p.message}`}>
+                        <button
+                          type="button" className="text-left underline underline-offset-2 outline-none hover:no-underline focus-visible:ring-3 focus-visible:ring-ring/50"
+                          onClick={() => { onSectionChange(target); onItemChange(targetItem); }}
+                        >{label}</button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
 
-        {ActiveSection ? (
-          <ActiveSection draft={draft} options={options} selectedItem={item} onSelectItem={onItemChange} onSectionChange={onSectionChange} />
-        ) : (
-          <section data-testid="section-placeholder" className="space-y-space-1 rounded-lg border border-dashed border-border p-space-6 text-center">
-            <h2 className="text-heading-3 text-foreground">{SECTION_LABELS[section]}</h2>
-            <p className="text-body-small text-muted-foreground">Coming in the next slice.</p>
-          </section>
-        )}
+          {ActiveSection ? (
+            <ActiveSection draft={draft} options={options} selectedItem={item} onSelectItem={onItemChange} onSectionChange={onSectionChange} />
+          ) : (
+            <section data-testid="section-placeholder" className="space-y-space-1 rounded-lg border border-dashed border-border p-space-6 text-center">
+              <h2 className="text-heading-3 text-foreground">{SECTION_LABELS[section]}</h2>
+              <p className="text-body-small text-muted-foreground">Coming in the next slice.</p>
+            </section>
+          )}
 
-        <div data-testid="builder-bar" className="sticky bottom-0 z-10 flex items-center justify-between gap-space-3 border-t border-border bg-background/95 py-space-3 backdrop-blur">
-          <p role="status" data-testid="builder-status" className="flex items-center gap-space-2 text-body-small text-muted-foreground">
-            {draft.dirty && !draft.saving && <span aria-hidden="true" className="size-2 rounded-full bg-warning" />}
-            {draft.saving ? "Saving…" : draft.dirty ? "Unsaved changes" : "No unsaved changes"}
-          </p>
-          <div className="flex items-center gap-space-2">
-            <Button type="button" variant="outline" onClick={draft.discard} disabled={busy} data-testid="builder-discard">Discard</Button>
-            <Button type="button" onClick={() => { void draft.save(); }} disabled={busy} data-testid="builder-save" className="gap-1.5">
-              {draft.saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Save draft
-            </Button>
+          <div data-testid="builder-bar" className="sticky bottom-0 z-10 flex items-center justify-between gap-space-3 border-t border-border bg-background/95 py-space-3 backdrop-blur">
+            <p role="status" data-testid="builder-status" className="flex items-center gap-space-2 text-body-small text-muted-foreground">
+              {draft.dirty && !draft.saving && <span aria-hidden="true" className="size-2 rounded-full bg-warning" />}
+              {draft.saving ? "Saving…" : draft.dirty ? "Unsaved changes" : "No unsaved changes"}
+            </p>
+            <div className="flex items-center gap-space-2">
+              <Button type="button" variant="outline" onClick={draft.discard} disabled={busy} data-testid="builder-discard">Discard</Button>
+              <Button type="button" onClick={() => { void draft.save(); }} disabled={busy} data-testid="builder-save" className="gap-1.5">
+                {draft.saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Save draft
+              </Button>
+            </div>
           </div>
         </div>
       </div>
