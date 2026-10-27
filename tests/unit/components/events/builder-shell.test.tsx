@@ -251,6 +251,74 @@ describe("EventBuilder: Mod+S", () => {
   });
 });
 
+describe("EventBuilder: jump palette", () => {
+  // cmdk measures its list and scrolls the selected item into view; jsdom has neither.
+  beforeEach(() => {
+    globalThis.ResizeObserver ??= class { observe() { /* no layout */ } unobserve() { /* no layout */ } disconnect() { /* no layout */ } } as unknown as typeof ResizeObserver;
+    Element.prototype.scrollIntoView ??= () => undefined;
+  });
+  const palette = () => screen.findByRole("dialog");
+  const pressJ = (init: KeyboardEventInit = { metaKey: true }) => fireEvent.keyDown(document, { key: "j", ...init });
+
+  it("opens from the Jump to button, which names the shortcut", async () => {
+    renderBuilder();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(button("jump-open").textContent).toContain("Jump to");
+    expect(button("jump-open").textContent).toContain("⌘J");
+    click("jump-open");
+    expect(await palette()).toBeDefined();
+  });
+
+  it("opens and closes with Cmd+J and Ctrl+J, and takes the key from the browser", async () => {
+    renderBuilder();
+    let notPrevented = true;
+    await act(async () => { notPrevented = pressJ({ metaKey: true }); });
+    expect(notPrevented).toBe(false);
+    expect(await palette()).toBeDefined();
+    await act(async () => { pressJ({ ctrlKey: true }); });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("does not answer Mod+J while the Design tab is hidden", async () => {
+    renderBuilder({ active: false });
+    let notPrevented = false;
+    await act(async () => { notPrevented = pressJ(); });
+    expect(notPrevented).toBe(true);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("does not answer Mod+K, which belongs to the app's own palette", async () => {
+    renderBuilder();
+    let notPrevented = false;
+    await act(async () => { notPrevented = fireEvent.keyDown(document, { key: "k", metaKey: true }); });
+    expect(notPrevented).toBe(true);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("jumps to a section, or to an item in a section, and closes", async () => {
+    const { probe } = renderBuilder({ section: "metadata" });
+    click("jump-open");
+    fireEvent.click(within(await palette()).getByText("kafka-dev"));
+    expect(probe.section).toBe("servers");
+    expect(probe.item).toBe("kafka-dev");
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    pressJ();
+    fireEvent.click(within(await palette()).getAllByRole("option").find((o) => o.textContent === "Operations") as HTMLElement);
+    expect(probe.section).toBe("operations");
+    expect(probe.item).toBeNull();
+  });
+
+  it("marks the entries that have problems", async () => {
+    const doc = sampleDocument();
+    doc.servers[1] = { ...doc.servers[1], host: "not a host" };
+    renderBuilder({ doc });
+    click("jump-open");
+    const entry = within(await palette()).getByText("kafka-dev").closest("[role=option]") as HTMLElement;
+    expect(entry.getAttribute("aria-label")).toBe("kafka-dev, 1 problem");
+  });
+});
+
 describe("EventBuilder: problem count", () => {
   it("is absent while the draft has no problems", () => {
     renderBuilder();

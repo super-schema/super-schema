@@ -4,13 +4,15 @@
 // The builder shell: outline (left), the selected section's form (middle) and a sticky Save / Discard bar. Sections read and write the
 // document only through `draft` (`draft.update(fn)`), and show their own field errors from `draft.problems` + `draft.serverProblems`.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
-import { Info, Loader2, MessageSquare, Network, PanelLeftClose, PanelLeftOpen, Save, Server, Settings2, Tags, Workflow, type LucideIcon } from "lucide-react";
+import { Info, Loader2, MessageSquare, Network, PanelLeftClose, PanelLeftOpen, Save, Search, Server, Settings2, Tags, Workflow, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { JsonObject } from "@/lib/event-specs/types";
 import type { PropertySummaryRow } from "@/lib/events/bundled-traits";
 import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
+import { jumpEntries } from "./jump";
+import { JumpPalette } from "./JumpPalette";
 import { buildOutline, SECTION_LABELS } from "./outline";
 import { locateProblem, uniqueProblems } from "./problems";
 import { AdvancedSection } from "./sections/AdvancedSection";
@@ -133,6 +135,20 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [active, dirty, saving, save]);
 
+  // Mod+J opens the jump palette (Mod+K is the app's own palette and is left alone). Like Mod+S it is answered only while the tab shows.
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const jumpList = useMemo(() => jumpEntries(outline), [outline]);
+  useEffect(() => {
+    if (!active) return undefined;
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "j") return;
+      e.preventDefault();
+      setJumpOpen((open) => !open);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [active]);
+
   function goToFirstProblem() {
     const first = allProblems[0];
     if (!first) return;
@@ -199,6 +215,16 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
             </ul>
           </nav>
           <Button
+            type="button" variant="ghost" size="sm" onClick={() => setJumpOpen(true)} data-testid="jump-open" title="Jump to a section or item (⌘J, or Ctrl+J)"
+            className="mt-space-2 w-full justify-center gap-space-2 text-muted-foreground @lg:justify-between"
+          >
+            <span className="flex items-center gap-space-2">
+              <Search aria-hidden="true" className="size-4 shrink-0" />
+              <span className={OUTLINE_LABEL[mode]}>Jump to…</span>
+            </span>
+            <kbd className={cn("rounded border border-border px-1 text-caption", OUTLINE_LABEL[mode])}>⌘J</kbd>
+          </Button>
+          <Button
             type="button" variant="ghost" size="icon-sm" onClick={toggleOutline} data-testid="outline-toggle"
             aria-pressed={mode === "compact"} aria-label="Compact outline" title="Compact outline" className="mt-space-2 hidden text-muted-foreground @lg:inline-flex"
           >
@@ -263,6 +289,10 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
           </div>
         </div>
       </div>
+      <JumpPalette
+        open={jumpOpen} onOpenChange={setJumpOpen} entries={jumpList}
+        onJump={(entry) => { onSectionChange(entry.section); onItemChange(entry.item); }}
+      />
     </div>
   );
 }
