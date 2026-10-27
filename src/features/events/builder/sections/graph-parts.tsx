@@ -5,7 +5,6 @@
 // document helpers (who uses what, allow / disallow a message on a channel, rename with the item kept selected) and the small
 // controls around them (a checklist, the selectable list, a polite notice). ChannelsSection re-exports the ones Operations imports.
 import type { ReactNode } from "react";
-import { cn } from "@/lib/utils";
 import { renameKey, type KeyKind } from "@/lib/events/document/keys";
 import type { DocChannel, DocExternalRef, DocMessage, DocOperation, DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import type { DraftState } from "../use-event-draft";
@@ -199,45 +198,5 @@ export function Notice({ id, children }: { id: string; children: ReactNode }) {
     <p id={id} data-testid={id} role="status" className="rounded-md border border-warning/40 bg-warning/10 px-space-3 py-space-2 text-body-small text-foreground">
       {children}
     </p>
-  );
-}
-
-/**
- * The selectable list at the left of a section: one row per keyed item, a dot for items with problems. Rows have `${prefix}-row-${key}`.
- * A row shows `label` (what the user would call the item) and falls back to the key; `subtitle` goes under it.
- */
-export function ItemList({ label, prefix, items, activeIndex, onSelect }: {
-  label: string; prefix: string; activeIndex: number; onSelect: (key: string) => void;
-  items: Array<{ key: string; subtitle: string; broken: boolean; label?: string }>;
-}) {
-  return (
-    <ul aria-label={label} className="space-y-space-1">
-      {items.map((item, i) => {
-        const isActive = i === activeIndex;
-        return (
-          <li key={`${i}-${item.key}`}>
-            <button
-              type="button" data-testid={`${prefix}-row-${item.key}`} aria-current={isActive ? "true" : undefined}
-              onClick={() => onSelect(item.key)}
-              className={cn(
-                "flex w-full items-center justify-between gap-space-2 rounded-lg px-space-3 py-space-2 text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
-                isActive ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-              )}
-            >
-              <span className="min-w-0">
-                <span className="block truncate text-body-small font-medium">{item.label || item.key || "(no key)"}</span>
-                <span className="block truncate text-caption text-muted-foreground">{item.subtitle}</span>
-              </span>
-              {item.broken && (
-                <>
-                  <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-destructive" />
-                  <span className="sr-only">has problems</span>
-                </>
-              )}
-            </button>
-          </li>
-        );
-      })}
-    </ul>
   );
 }

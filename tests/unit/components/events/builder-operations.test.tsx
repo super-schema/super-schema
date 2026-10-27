@@ -23,6 +23,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** A tab shows the item's label; what the list row printed under it (the subtitle) is in the tab's title: "label — subtitle". */
+const rowTitle = (testId: string) => screen.getByTestId(testId).getAttribute("title") ?? "";
 const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: { value } });
 const click = (testId: string) => fireEvent.click(screen.getByTestId(testId));
 const field = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
@@ -154,13 +156,13 @@ describe("OperationsSection: list, selection and add", () => {
 
   it("shows what each operation does and on which channel in the list", () => {
     renderSection(OperationsSection, { doc: docWithReply() });
-    expect(screen.getByTestId("operation-row-publishOrder").textContent).toContain("orders");
-    expect(screen.getByTestId("operation-row-publishOrder").textContent).toContain("Sends");
+    expect(rowTitle("operation-row-publishOrder")).toContain("orders");
+    expect(rowTitle("operation-row-publishOrder")).toContain("Sends");
     const doc = sampleDocument();
     doc.operations[0] = { ...doc.operations[0], action: "receive" };
     cleanup();
     renderSection(OperationsSection, { doc });
-    expect(screen.getByTestId("operation-row-publishOrder").textContent).toContain("Receives");
+    expect(rowTitle("operation-row-publishOrder")).toContain("Receives");
   });
 });
 
@@ -1033,5 +1035,34 @@ describe("OperationsSection: every AsyncAPI operation property", () => {
     expect(text("operation-externalDocs-url-error")).toBe("url must be an absolute URL");
     expect(box("operation-externalDocs-url").getAttribute("aria-invalid")).toBe("true");
     expect(missing("operation-summary-error")).toBe(true);
+  });
+});
+
+describe("OperationsSection: the item tab strip", () => {
+  it("picks items from a tab strip with the add button pinned beside it, not in the header", () => {
+    const { probe } = renderSection(OperationsSection, { doc: sampleDocument() });
+    const strip = screen.getByRole("tablist", { name: "Operations" });
+    expect(within(strip).getAllByRole("tab").map((t) => t.getAttribute("data-testid"))).toEqual(["operation-row-publishOrder"]);
+    expect(screen.getByTestId("operation-row-publishOrder").getAttribute("aria-current")).toBe("true");
+    const add = screen.getByTestId("operation-add");
+    expect(strip.contains(add)).toBe(false);
+    expect(screen.getAllByRole("button", { name: "Add operation" })).toHaveLength(1);
+    const before = probe.draft.doc.operations.length;
+    fireEvent.click(add);
+    expect(probe.draft.doc.operations).toHaveLength(before + 1);
+    expect(probe.item).toBe(probe.draft.doc.operations[before].key);
+  });
+
+  it("keeps the section description in an info tip beside the heading", () => {
+    renderSection(OperationsSection, { doc: sampleDocument() });
+    const tip = screen.getByTestId("operations-help");
+    expect(tip.hasAttribute("hidden")).toBe(true);
+    expect(tip.textContent).toContain("publish messages");
+    expect(screen.getByTestId("operations-help-button").getAttribute("aria-label")).toBe("About operations");
+  });
+
+  it("puts what the list row used to show under its name in the tab's title", () => {
+    renderSection(OperationsSection, { doc: sampleDocument() });
+    expect(screen.getByTestId("operation-row-publishOrder").getAttribute("title")).toContain("Sends · orders");
   });
 });

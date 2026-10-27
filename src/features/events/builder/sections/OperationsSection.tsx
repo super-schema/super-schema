@@ -26,7 +26,9 @@ import { problemMessage, problemsByField, uniqueProblems } from "../problems";
 import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
 import type { DraftState } from "../use-event-draft";
-import { allMessageKeys, CheckboxGroup, ItemList, Notice, renameAndSelect } from "./ChannelsSection";
+import { allMessageKeys, CheckboxGroup, Notice, renameAndSelect } from "./ChannelsSection";
+import { ItemTabs } from "./ItemTabs";
+import { SectionHeading } from "./SectionHeading";
 import { FormCard, useCardState, type CardState } from "./FormCard";
 import { bindingCount, cardsWithProblems, cardTemplate, mergeValue, pickValue, setFieldCount } from "./form-cards";
 import { OperationPropertiesCard } from "./OperationPropertiesCard";
@@ -161,17 +163,9 @@ export function OperationsSection({ draft, options, selectedItem, onSelectItem, 
 
   return (
     <section aria-labelledby="operations-heading" data-testid="section-operations" className="space-y-space-6">
-      <header className="flex items-start justify-between gap-space-4">
-        <div className="space-y-space-1">
-          <h2 id="operations-heading" className="text-heading-3 text-foreground">Operations</h2>
-          <p className="text-body-small text-muted-foreground">What this service does: publish messages to a channel or consume them from one.</p>
-        </div>
-        {operations.length > 0 && !needsChannel && (
-          <Button type="button" size="sm" variant="outline" onClick={addOperation} data-testid="operation-add" className="gap-space-2">
-            <Plus className="size-4" /> Add operation
-          </Button>
-        )}
-      </header>
+      <SectionHeading section="operations" title="Operations">
+        What this service does: publish messages to a channel or consume them from one.
+      </SectionHeading>
 
       {needsChannel && needsChannelNotice}
 
@@ -184,9 +178,10 @@ export function OperationsSection({ draft, options, selectedItem, onSelectItem, 
           </div>
         )
       ) : (
-        <div className="grid gap-space-6 @2xl:grid-cols-[14rem_1fr]">
-          <ItemList
+        <div className="space-y-space-4">
+          <ItemTabs
             label="Operations" prefix="operation" activeIndex={activeIndex} onSelect={onSelectItem}
+            onAdd={needsChannel ? undefined : addOperation} addLabel="Add operation" addTestId="operation-add"
             items={operations.map((o, i) => ({
               key: o.key, subtitle: `${ACTION_WORDS[o.action] ?? "No action"} · ${o.channelKey || "no channel"}`,
               broken: problemsByField(problems, `/operations/${i}`).length > 0,

@@ -23,6 +23,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** A tab shows the item's label; what the list row printed under it (the subtitle) is in the tab's title: "label — subtitle". */
+const rowTitle = (testId: string) => screen.getByTestId(testId).getAttribute("title") ?? "";
 const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: { value } });
 const click = (testId: string) => fireEvent.click(screen.getByTestId(testId));
 const field = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
@@ -80,15 +82,15 @@ describe("ChannelsSection: list and selection", () => {
     doc.channels[0] = { ...doc.channels[0], title: "Order events" };
     doc.channels[1] = { ...doc.channels[1], address: null };
     renderSection(ChannelsSection, { doc });
-    const first = screen.getByTestId("channel-row-orders").textContent ?? "";
+    const first = rowTitle("channel-row-orders");
     expect(first).toContain("Order events");
     expect(first).toContain("kafka");
     expect(first).not.toContain("orders.v1");
-    expect(screen.getByTestId("channel-row-refunds").textContent).toContain("refunds");
+    expect(rowTitle("channel-row-refunds")).toContain("refunds");
     cleanup();
     renderSection(ChannelsSection);
-    expect(text("channel-row-orders")).toContain("orders.v1");
-    expect(text("channel-row-refunds")).toContain("refunds.v1");
+    expect(rowTitle("channel-row-orders")).toContain("orders.v1");
+    expect(rowTitle("channel-row-refunds")).toContain("refunds.v1");
   });
 
   it("shows the first channel's form and selects another on click", () => {
@@ -1041,5 +1043,34 @@ describe("ChannelsSection: external references", () => {
     click("channel-messages-option-Order-placed");
     expect(probe.draft.doc.channels[0].messageKeys).toEqual(["OrderCreated", "Order-placed"]);
     expect(text("channel-messages-blocked")).toContain('"receivePlaced"');
+  });
+});
+
+describe("ChannelsSection: the item tab strip", () => {
+  it("picks items from a tab strip with the add button pinned beside it, not in the header", () => {
+    const { probe } = renderSection(ChannelsSection, { doc: sampleDocument() });
+    const strip = screen.getByRole("tablist", { name: "Channels" });
+    expect(within(strip).getAllByRole("tab").map((t) => t.getAttribute("data-testid"))).toEqual(["channel-row-orders", "channel-row-refunds"]);
+    expect(screen.getByTestId("channel-row-orders").getAttribute("aria-current")).toBe("true");
+    const add = screen.getByTestId("channel-add");
+    expect(strip.contains(add)).toBe(false);
+    expect(screen.getAllByRole("button", { name: "Add channel" })).toHaveLength(1);
+    const before = probe.draft.doc.channels.length;
+    fireEvent.click(add);
+    expect(probe.draft.doc.channels).toHaveLength(before + 1);
+    expect(probe.item).toBe(probe.draft.doc.channels[before].key);
+  });
+
+  it("keeps the section description in an info tip beside the heading", () => {
+    renderSection(ChannelsSection, { doc: sampleDocument() });
+    const tip = screen.getByTestId("channels-help");
+    expect(tip.hasAttribute("hidden")).toBe(true);
+    expect(tip.textContent).toContain("Topics and queues");
+    expect(screen.getByTestId("channels-help-button").getAttribute("aria-label")).toBe("About channels");
+  });
+
+  it("puts what the list row used to show under its name in the tab's title", () => {
+    renderSection(ChannelsSection, { doc: sampleDocument() });
+    expect(screen.getByTestId("channel-row-orders").getAttribute("title")).toContain("kafka");
   });
 });

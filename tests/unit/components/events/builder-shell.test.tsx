@@ -452,7 +452,7 @@ describe("MetadataSection", () => {
 });
 
 describe("ServersSection", () => {
-  const rowLabel = (key: string) => screen.getByTestId(`server-row-${key}`).textContent ?? "";
+  const rowLabel = (key: string) => screen.getByTestId(`server-row-${key}`).getAttribute("title") ?? "";
 
   it("lists the servers by title (else host) with the protocol under it", () => {
     const doc = sampleDocument();
@@ -970,5 +970,34 @@ describe("KeyInput", () => {
     expect(screen.getByTestId("the-key-error").textContent).toBe("Duplicate server key");
     fireEvent.click(screen.getByText("outside"));
     expect(input().value).toBe("changed-outside");
+  });
+});
+
+describe("ServersSection: the item tab strip", () => {
+  it("picks items from a tab strip with the add button pinned beside it, not in the header", () => {
+    const { probe } = renderBuilder({ section: "servers" });
+    const strip = screen.getByRole("tablist", { name: "Servers" });
+    expect(within(strip).getAllByRole("tab").map((t) => t.getAttribute("data-testid"))).toEqual(["server-row-kafka-prod", "server-row-kafka-dev"]);
+    expect(screen.getByTestId("server-row-kafka-prod").getAttribute("aria-current")).toBe("true");
+    const add = screen.getByTestId("server-add");
+    expect(strip.contains(add)).toBe(false);
+    expect(screen.getAllByRole("button", { name: "Add server" })).toHaveLength(1);
+    const before = probe.draft.doc.servers.length;
+    fireEvent.click(add);
+    expect(probe.draft.doc.servers).toHaveLength(before + 1);
+    expect(probe.item).toBe(probe.draft.doc.servers[before].key);
+  });
+
+  it("keeps the section description in an info tip beside the heading", () => {
+    renderBuilder({ section: "servers" });
+    const tip = screen.getByTestId("servers-help");
+    expect(tip.hasAttribute("hidden")).toBe(true);
+    expect(tip.textContent).toContain("Where the brokers run");
+    expect(screen.getByTestId("servers-help-button").getAttribute("aria-label")).toBe("About servers");
+  });
+
+  it("puts what the list row used to show under its name in the tab's title", () => {
+    renderBuilder({ section: "servers" });
+    expect(screen.getByTestId("server-row-kafka-prod").getAttribute("title")).toContain("kafka");
   });
 });

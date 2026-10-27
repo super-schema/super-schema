@@ -26,13 +26,15 @@ import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
 import type { DraftState } from "../use-event-draft";
 import { ExternalRefsCard } from "./ExternalRefsCard";
+import { ItemTabs } from "./ItemTabs";
+import { SectionHeading } from "./SectionHeading";
 import {
-  aliasPointers, allChannelKeys, blockedText, channelLabel, CheckboxGroup, ItemList, messageLabel, Notice, plural, pointerSegment,
+  aliasPointers, allChannelKeys, blockedText, channelLabel, CheckboxGroup, messageLabel, Notice, plural, pointerSegment,
   renameAndSelect, setMessageAllowed, withoutChannel,
 } from "./graph-parts";
 
 export {
-  allChannelKeys, allMessageKeys, blockedText, CheckboxGroup, ItemList, Notice, operationsUsingMessage, plural, renameAndSelect, setMessageAllowed,
+  allChannelKeys, allMessageKeys, blockedText, CheckboxGroup, Notice, operationsUsingMessage, plural, renameAndSelect, setMessageAllowed,
 } from "./graph-parts";
 export type { CheckOption } from "./graph-parts";
 
@@ -158,17 +160,9 @@ export function ChannelsSection({ draft, options, selectedItem, onSelectItem }: 
 
   return (
     <section aria-labelledby="channels-heading" data-testid="section-channels" className="space-y-space-6">
-      <header className="flex items-start justify-between gap-space-4">
-        <div className="space-y-space-1">
-          <h2 id="channels-heading" className="text-heading-3 text-foreground">Channels</h2>
-          <p className="text-body-small text-muted-foreground">Topics and queues. Each one says where it lives and which messages it carries.</p>
-        </div>
-        {channels.length > 0 && (
-          <Button type="button" size="sm" variant="outline" onClick={addChannel} data-testid="channel-add" className="gap-space-2">
-            <Plus className="size-4" /> Add channel
-          </Button>
-        )}
-      </header>
+      <SectionHeading section="channels" title="Channels">
+        Topics and queues. Each one says where it lives and which messages it carries.
+      </SectionHeading>
 
       {!active ? (
         <div data-testid="channel-empty" className="space-y-space-3 rounded-lg border border-dashed border-border p-space-6 text-center">
@@ -177,9 +171,10 @@ export function ChannelsSection({ draft, options, selectedItem, onSelectItem }: 
           <Button type="button" onClick={addChannel} data-testid="channel-empty-add" className="gap-space-2"><Plus className="size-4" /> Add channel</Button>
         </div>
       ) : (
-        <div className="grid gap-space-6 @2xl:grid-cols-[14rem_1fr]">
-          <ItemList
+        <div className="space-y-space-4">
+          <ItemTabs
             label="Channels" prefix="channel" activeIndex={activeIndex} onSelect={onSelectItem}
+            onAdd={addChannel} addLabel="Add channel" addTestId="channel-add"
             items={channels.map((c, i) => ({
               key: c.key, label: channelLabel(c), subtitle: c.protocol, broken: problemsByField(problems, `/channels/${i}`).length > 0,
             }))}

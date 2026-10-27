@@ -7,7 +7,6 @@
 import { useMemo } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import type { JsonObject } from "@/lib/event-specs/types";
 import { renameKey } from "@/lib/events/document/keys";
 import type { DocServer, EventDocument } from "@/lib/events/document/types";
@@ -18,6 +17,8 @@ import { IdentifierDisclosure } from "../Identifier";
 import { problemMessage, problemsByField, uniqueProblems } from "../problems";
 import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm } from "../template";
+import { ItemTabs } from "./ItemTabs";
+import { SectionHeading } from "./SectionHeading";
 
 const DEFAULT_PROTOCOL = "kafka";
 
@@ -121,17 +122,9 @@ export function ServersSection({ draft, options, selectedItem, onSelectItem }: S
 
   return (
     <section aria-labelledby="servers-heading" data-testid="section-servers" className="space-y-space-6">
-      <header className="flex items-start justify-between gap-space-4">
-        <div className="space-y-space-1">
-          <h2 id="servers-heading" className="text-heading-3 text-foreground">Servers</h2>
-          <p className="text-body-small text-muted-foreground">Where the brokers run. Channels pick the servers they are available on.</p>
-        </div>
-        {servers.length > 0 && (
-          <Button type="button" size="sm" variant="outline" onClick={addServer} data-testid="server-add" className="gap-1.5">
-            <Plus className="size-4" /> Add server
-          </Button>
-        )}
-      </header>
+      <SectionHeading section="servers" title="Servers">
+        Where the brokers run. Channels pick the servers they are available on.
+      </SectionHeading>
 
       {!active ? (
         <div data-testid="server-empty" className="space-y-space-3 rounded-lg border border-dashed border-border p-space-6 text-center">
@@ -140,36 +133,12 @@ export function ServersSection({ draft, options, selectedItem, onSelectItem }: S
           <Button type="button" onClick={addServer} data-testid="server-empty-add" className="gap-1.5"><Plus className="size-4" /> Add server</Button>
         </div>
       ) : (
-        <div className="grid gap-space-6 @2xl:grid-cols-[14rem_1fr]">
-          <ul aria-label="Servers" className="space-y-space-1">
-            {servers.map((s, i) => {
-              const isActive = i === activeIndex;
-              const broken = problemsByField(problems, `/servers/${i}`).length > 0;
-              return (
-                <li key={`${i}-${s.key}`}>
-                  <button
-                    type="button" data-testid={`server-row-${s.key}`} aria-current={isActive ? "true" : undefined}
-                    onClick={() => onSelectItem(s.key)}
-                    className={cn(
-                      "flex w-full items-center justify-between gap-space-2 rounded-lg px-space-3 py-space-2 text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
-                      isActive ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                    )}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-body-small font-medium">{listLabel(s)}</span>
-                      <span className="block truncate text-caption text-muted-foreground">{s.protocol}</span>
-                    </span>
-                    {broken && (
-                      <>
-                        <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-destructive" />
-                        <span className="sr-only">has problems</span>
-                      </>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+        <div className="space-y-space-4">
+          <ItemTabs
+            label="Servers" prefix="server" activeIndex={activeIndex} onSelect={onSelectItem}
+            onAdd={addServer} addLabel="Add server" addTestId="server-add"
+            items={servers.map((s, i) => ({ key: s.key, label: listLabel(s), subtitle: s.protocol, broken: problemsByField(problems, `/servers/${i}`).length > 0 }))}
+          />
 
           <div key={activeIndex} className="max-w-2xl space-y-space-4" data-testid="server-form">
             <div onBlur={(e) => { if (leftForm(e)) nameKeyFromContent(); }} className="space-y-space-4">

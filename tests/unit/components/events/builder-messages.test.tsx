@@ -29,6 +29,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** A tab shows the item's label; what the list row printed under it (the subtitle) is in the tab's title: "label — subtitle". */
+const rowTitle = (testId: string) => screen.getByTestId(testId).getAttribute("title") ?? "";
 const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: { value } });
 const click = (testId: string) => fireEvent.click(screen.getByTestId(testId));
 const field = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
@@ -114,18 +116,18 @@ describe("MessagesSection: list and selection", () => {
     doc.messages[0] = { ...doc.messages[0], name: "order.created", title: "Order created" };
     doc.messages[1] = { ...doc.messages[1], title: "Refund issued" };
     await renderMessages({ doc });
-    const first = text("message-row-OrderCreated") ?? "";
+    const first = rowTitle("message-row-OrderCreated");
     expect(first).toContain("order.created");
     expect(first).not.toContain("Order created");
     expect(first).toContain("OrderCreated");
-    const second = text("message-row-RefundIssued") ?? "";
+    const second = rowTitle("message-row-RefundIssued");
     expect(second).toContain("Refund issued");
     expect(second).toContain("OrderCancelled");
   });
 
   it("falls back to the key when a message has neither name nor title", async () => {
     await renderMessages({ doc: docWithReply() });
-    expect(text("message-row-RefundIssued")).toContain("RefundIssued");
+    expect(rowTitle("message-row-RefundIssued")).toContain("RefundIssued");
   });
 
   it("shows the first message's form and selects another on click", async () => {
@@ -184,7 +186,7 @@ describe("MessagesSection: add message", () => {
     await renderMessages();
     click("message-add");
     expect((field("Payload entity") as unknown as HTMLSelectElement).value).toBe("");
-    expect(text("message-row-message")).toContain("No payload");
+    expect(rowTitle("message-row-message")).toContain("No payload");
     const error = screen.getByTestId("payload-error");
     expect(error.textContent).toBe("entityId is required");
     expect(error.hasAttribute("role")).toBe(false);
@@ -1057,5 +1059,34 @@ describe("MessagesSection: external references", () => {
     await settle();
     expect(screen.getByTestId("external-ref-row-Order-placed")).toBeDefined();
     expect(text("outline-count-messages")).toBe("2");
+  });
+});
+
+describe("MessagesSection: the item tab strip", () => {
+  it("picks items from a tab strip with the add button pinned beside it, not in the header", async () => {
+    const { probe } = await renderMessages();
+    const strip = screen.getByRole("tablist", { name: "Messages" });
+    expect(within(strip).getAllByRole("tab").map((t) => t.getAttribute("data-testid"))).toEqual(["message-row-OrderCreated"]);
+    expect(screen.getByTestId("message-row-OrderCreated").getAttribute("aria-current")).toBe("true");
+    const add = screen.getByTestId("message-add");
+    expect(strip.contains(add)).toBe(false);
+    expect(screen.getAllByRole("button", { name: "Add message" })).toHaveLength(1);
+    const before = probe.draft.doc.messages.length;
+    fireEvent.click(add);
+    expect(probe.draft.doc.messages).toHaveLength(before + 1);
+    expect(probe.item).toBe(probe.draft.doc.messages[before].key);
+  });
+
+  it("keeps the section description in an info tip beside the heading", async () => {
+    await renderMessages();
+    const tip = screen.getByTestId("messages-help");
+    expect(tip.hasAttribute("hidden")).toBe(true);
+    expect(tip.textContent).toContain("What is sent");
+    expect(screen.getByTestId("messages-help-button").getAttribute("aria-label")).toBe("About messages");
+  });
+
+  it("puts what the list row used to show under its name in the tab's title", async () => {
+    await renderMessages();
+    expect(screen.getByTestId("message-row-OrderCreated").getAttribute("title")).toContain("OrderCreated");
   });
 });

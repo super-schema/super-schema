@@ -27,16 +27,18 @@ import { BindingsForm, TemplateForm, type TemplateFormContext } from "../templat
 import type { DraftState } from "../use-event-draft";
 import { usePinJsonSchemaState } from "../use-pin-json-schema";
 import {
-  allMessageKeys, blockedText, channelLabel, CheckboxGroup, ItemList, messageLabel, Notice, plural, renameAndSelect, setMessageAllowed,
+  allMessageKeys, blockedText, channelLabel, CheckboxGroup, messageLabel, Notice, plural, renameAndSelect, setMessageAllowed,
   withoutMessage,
 } from "./graph-parts";
 import { bindingCount, cardsWithProblems, cardTemplate, mergeValue, pickValue, setFieldCount } from "./form-cards";
 import { ExternalRefsCard } from "./ExternalRefsCard";
 import { FormCard, useCardState, type CardState } from "./FormCard";
 import { MessagePropertiesCard } from "./MessagePropertiesCard";
+import { ItemTabs } from "./ItemTabs";
 import { OptionalPin } from "./OptionalPin";
 import { representationNote } from "./representation-note";
 import { RepresentationSelect } from "./RepresentationSelect";
+import { SectionHeading } from "./SectionHeading";
 
 // The picker pulls in a server-action module (versions are loaded through it). Loading it lazily keeps that chain out of every
 // module graph that merely imports the builder, and out of the first paint of the other sections.
@@ -141,17 +143,9 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
 
   return (
     <section aria-labelledby="messages-heading" data-testid="section-messages" className="space-y-space-6">
-      <header className="flex items-start justify-between gap-space-4">
-        <div className="space-y-space-1">
-          <h2 id="messages-heading" className="text-heading-3 text-foreground">Messages</h2>
-          <p className="text-body-small text-muted-foreground">What is sent. Each message carries one entity as its payload and is allowed on one or more channels.</p>
-        </div>
-        {messages.length > 0 && (
-          <Button type="button" size="sm" variant="outline" onClick={addMessage} data-testid="message-add" className="gap-space-2">
-            <Plus className="size-4" /> Add message
-          </Button>
-        )}
-      </header>
+      <SectionHeading section="messages" title="Messages">
+        What is sent. Each message carries one entity as its payload and is allowed on one or more channels.
+      </SectionHeading>
 
       {!active ? (
         <div data-testid="message-empty" className="space-y-space-3 rounded-lg border border-dashed border-border p-space-6 text-center">
@@ -160,9 +154,10 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
           <Button type="button" onClick={addMessage} data-testid="message-empty-add" className="gap-space-2"><Plus className="size-4" /> Add message</Button>
         </div>
       ) : (
-        <div className="grid gap-space-6 @2xl:grid-cols-[14rem_1fr]">
-          <ItemList
+        <div className="space-y-space-4">
+          <ItemTabs
             label="Messages" prefix="message" activeIndex={activeIndex} onSelect={onSelectItem}
+            onAdd={addMessage} addLabel="Add message" addTestId="message-add"
             items={messages.map((m, i) => ({
               key: m.key, label: messageLabel(m), subtitle: (m.payload.entityId && entityName(m.payload)) || "No payload",
               broken: problemsByField(problems, `/messages/${i}`).length > 0,
