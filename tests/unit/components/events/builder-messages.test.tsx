@@ -13,7 +13,9 @@ import { maximalDocument } from "../../lib/events/document/fixtures/maximal-docu
 import { ENTITY_OPTIONS, PIN, renderBuilder, renderSection, sampleDocument } from "./builder-harness";
 
 // The picker's default version loader is a server action: keep it out of the test process.
-const h = vi.hoisted(() => ({ listPinnableVersionsAction: vi.fn(), pinJsonSchemaAction: vi.fn() }));
+const h = vi.hoisted(() => ({ listPinnableVersionsAction: vi.fn(), pinJsonSchemaAction: vi.fn(), toast: vi.fn(), toastDismiss: vi.fn() }));
+// The undo toast of "Remove message": the tests read what it offers and press its action themselves.
+vi.mock("sonner", () => ({ toast: Object.assign(h.toast, { dismiss: h.toastDismiss }) }));
 vi.mock("@/features/events/pin-actions", () => ({ listPinnableVersionsAction: h.listPinnableVersionsAction }));
 // So are the actions the external-reference card uses, and the one that renders an entity's schema (the payload preview asks for it).
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({
@@ -27,6 +29,7 @@ beforeEach(() => {
   resetPinSchemaCache();
   h.listPinnableVersionsAction.mockResolvedValue({ success: true, data: [{ id: "ver-1", label: "1.0" }, { id: "ver-0", label: "0.9" }] });
   h.pinJsonSchemaAction.mockResolvedValue({ success: false, error: "unavailable", code: "UNAVAILABLE" });
+  h.toast.mockImplementation(() => `toast-${h.toast.mock.calls.length}`);
 });
 afterEach(() => {
   cleanup();
@@ -1037,7 +1040,14 @@ describe("MessagesSection: sent on channels", () => {
 });
 
 describe("MessagesSection: remove message", () => {
-  it("removes a message nothing refers to without asking", async () => {
+  /** What the last toast offered: its text and the Undo action. */
+  const lastToast = () => {
+    const [message, options] = h.toast.mock.calls.at(-1) as [string, { action: { label: string; onClick: () => void }; duration: number }];
+    return { message, options };
+  };
+  const undo = () => act(() => { lastToast().options.action.onClick(); });
+
+  it("removes a message nothing refers to, without asking, and offers Undo", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = await renderMessages();
     click("message-add");
@@ -1045,17 +1055,15 @@ describe("MessagesSection: remove message", () => {
     expect(confirm).not.toHaveBeenCalled();
     expect(probe.draft.doc.messages.map((m) => m.key)).toEqual(["OrderCreated"]);
     expect(probe.item).toBeNull();
+    expect(lastToast().message).toBe('Removed "message"');
+    expect(lastToast().options.action.label).toBe("Undo");
   });
 
-  it("asks first when channels or operations use it, then removes every reference", async () => {
+  it("removes a message that channels and operations use, and every reference to it, without asking", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = await renderMessages();
     click("message-remove");
-    expect(confirm).toHaveBeenCalledTimes(1);
-    const question = confirm.mock.calls[0][0];
-    expect(question).toContain('"OrderCreated"');
-    expect(question).toContain("orders");
-    expect(question).toContain("publishOrder");
+    expect(confirm).not.toHaveBeenCalled();
     expect(probe.draft.doc.messages).toEqual([]);
     expect(probe.draft.doc.channels.map((c) => c.messageKeys)).toEqual([[], []]);
     expect(probe.draft.doc.operations[0].messageKeys).toEqual([]);
@@ -1063,8 +1071,16 @@ describe("MessagesSection: remove message", () => {
     expect(screen.getByTestId("message-empty")).toBeDefined();
   });
 
+  it("says in the toast which channels and operations it was taken out of", async () => {
+    await renderMessages();
+    click("message-remove");
+    const { message } = lastToast();
+    expect(message).toContain('"OrderCreated"');
+    expect(message).toContain("1 channel (orders)");
+    expect(message).toContain("1 operation (publishOrder)");
+  });
+
   it("removes the message from an operation's reply as well and keeps the reply's channel", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = await renderMessages({ doc: docWithReply(), item: "RefundIssued" });
     click("message-remove");
     expect(probe.draft.doc.messages.map((m) => m.key)).toEqual(["OrderCreated"]);
@@ -1074,12 +1090,73 @@ describe("MessagesSection: remove message", () => {
     expect(probe.draft.problems).toEqual([]);
   });
 
-  it("changes nothing when the confirmation is declined", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
-    const { probe } = await renderMessages();
+  it("Undo brings back the message and every reference to it, exactly as they were", async () => {
+    const { probe } = await renderMessages({ doc: docWithReply(), item: "RefundIssued" });
     click("message-remove");
-    expect(probe.draft.doc).toEqual(sampleDocument());
-    expect(probe.draft.dirty).toBe(false);
+    expect(probe.draft.doc).not.toEqual(docWithReply());
+    await undo();
+    expect(probe.draft.doc).toEqual(docWithReply());
+    expect(screen.getByTestId("message-row-RefundIssued")).toBeDefined();
+  });
+
+  it("keeps the toast up for a while, so there is time to use it", async () => {
+    await renderMessages();
+    click("message-remove");
+    expect(lastToast().options.duration).toBeGreaterThanOrEqual(6000);
+  });
+
+  it("takes the toast down at the next change to the document, so Undo can never overwrite a later edit", async () => {
+    const { probe } = await renderMessages({ doc: docWithReply() });
+    click("message-remove");
+    const firstId = h.toast.mock.results[0].value;
+    expect(h.toastDismiss).not.toHaveBeenCalled();
+    type(field("Title"), "Edited after removing");
+    expect(h.toastDismiss).toHaveBeenCalledWith(firstId);
+    const edited = probe.draft.doc;
+    await undo();
+    expect(probe.draft.doc).toEqual(edited);
+  });
+
+  it("after two removals Undo brings back only the second, and the first toast is gone", async () => {
+    const { probe } = await renderMessages({ doc: docWithReply() });
+    click("message-remove");
+    const firstId = h.toast.mock.results[0].value;
+    click("message-remove");
+    expect(h.toastDismiss).toHaveBeenCalledWith(firstId);
+    expect(probe.draft.doc.messages).toEqual([]);
+    await undo();
+    expect(probe.draft.doc.messages.map((m) => m.key)).toEqual(["RefundIssued"]);
+  });
+
+  it("takes the toast down when the Messages section goes away", async () => {
+    const { unmount } = await renderMessages();
+    click("message-remove");
+    const id = h.toast.mock.results[0].value;
+    unmount();
+    expect(h.toastDismiss).toHaveBeenCalledWith(id);
+  });
+});
+
+describe("MessagesSection: duplicate message", () => {
+  it("adds a copy, selects it, and puts it on no channel", async () => {
+    const doc = sampleDocument();
+    doc.messages[0] = { ...doc.messages[0], title: "Order created", summary: "An order was created" };
+    const { probe } = await renderMessages({ doc });
+    click("message-duplicate");
+    expect(probe.draft.doc.messages).toHaveLength(2);
+    const copy = probe.draft.doc.messages[1];
+    expect(copy).toEqual({ ...doc.messages[0], key: copy.key });
+    expect(copy.key).not.toBe("OrderCreated");
+    expect(probe.item).toBe(copy.key);
+    expect(probe.draft.doc.channels.every((c) => !c.messageKeys.includes(copy.key))).toBe(true);
+    expect(text("message-sent-on")).toContain("Not sent on any channel");
+  });
+
+  it("is a button next to Remove, in the footer of the form", async () => {
+    await renderMessages();
+    const duplicate = screen.getByTestId("message-duplicate");
+    expect(duplicate.getAttribute("aria-label")).toBe("Duplicate message");
+    expect(duplicate.parentElement).toBe(screen.getByTestId("message-remove").parentElement);
   });
 });
 

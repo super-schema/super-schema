@@ -11,7 +11,7 @@
 // only place it shows. Every edit goes through `draft.update(fn)`.
 // Under the list sits the card of EXTERNAL messages (messages another published event defines and this one uses): `ExternalRefsCard`.
 import { lazy, Suspense, useMemo, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Copy, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { JsonObject, PayloadFormat } from "@/lib/event-specs/types";
 import type { DocMessage, DocumentProblem, EventDocument } from "@/lib/events/document/types";
@@ -29,12 +29,13 @@ import type { DraftState } from "../use-event-draft";
 import { usePinJsonSchemaState } from "../use-pin-json-schema";
 import {
   allMessageKeys, blockedText, channelLabel, CheckboxGroup, messageLabel, Notice, plural, renameAndSelect, setMessageAllowed,
-  withoutMessage,
 } from "./graph-parts";
 import { bindingCount, cardsWithProblems, cardTemplate, mergeValue, pickValue, setFieldCount } from "./form-cards";
 import { ExternalRefsCard } from "./ExternalRefsCard";
 import { MessagePropertiesCard } from "./MessagePropertiesCard";
 import { ItemTabs } from "./ItemTabs";
+import { duplicateMessage, removeMessageAt } from "./message-actions";
+import { useUndoToast } from "./use-undo-toast";
 import { OptionalPin } from "./OptionalPin";
 import { PayloadPreview } from "./PayloadPreview";
 import { PaneRail, usePaneState, type PaneDef, type PaneState } from "./PaneRail";
@@ -135,6 +136,7 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
 
   // The message just added starts with the cursor in its payload picker, on the Payload pane; moving to another message ends that.
   const [addedKey, setAddedKey] = useState<string | null>(null);
+  const offerUndo = useUndoToast(doc);
   function addMessage() {
     // A placeholder key, named from the name or title once the user leaves the form.
     const key = newKey(doc, "message");
@@ -174,7 +176,7 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
           />
           <MessageForm
             key={activeIndex} draft={draft} options={options} index={activeIndex} message={active} problems={problems} context={context}
-            pane={pane} errored={errored} autoFocusPayload={active.key === addedKey} onSelectItem={onSelectItem} onSectionChange={onSectionChange}
+            pane={pane} errored={errored} autoFocusPayload={active.key === addedKey} offerUndo={offerUndo} onSelectItem={onSelectItem} onSectionChange={onSectionChange}
           />
         </div>
       )}
@@ -184,9 +186,9 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
   );
 }
 
-function MessageForm({ draft, options, index, message, problems, context, pane, errored, autoFocusPayload, onSelectItem, onSectionChange }: {
+function MessageForm({ draft, options, index, message, problems, context, pane, errored, autoFocusPayload, offerUndo, onSelectItem, onSectionChange }: {
   draft: DraftState; options: SectionProps["options"]; index: number; message: DocMessage; problems: DocumentProblem[];
-  context: TemplateFormContext; pane: PaneState; errored: ReadonlySet<string>; autoFocusPayload: boolean; onSelectItem: (key: string | null) => void; onSectionChange?: SectionProps["onSectionChange"];
+  context: TemplateFormContext; pane: PaneState; errored: ReadonlySet<string>; autoFocusPayload: boolean; offerUndo: ReturnType<typeof useUndoToast>; onSelectItem: (key: string | null) => void; onSectionChange?: SectionProps["onSectionChange"];
 }) {
   const { doc, update } = draft;
   const [blocked, setBlocked] = useState<string | null>(null);
@@ -273,19 +275,23 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
     const key = message.key;
     const channelsUsing = doc.channels.filter((c) => c.messageKeys.includes(key));
     const operationsUsing = doc.operations.filter((o) => o.messageKeys.includes(key) || (o.reply?.messageKeys ?? []).includes(key));
-    if (channelsUsing.length + operationsUsing.length > 0) {
-      const where = [
-        channelsUsing.length > 0 ? `${plural(channelsUsing.length, "channel")} (${channelsUsing.map((c) => c.key).join(", ")})` : null,
-        operationsUsing.length > 0 ? `${plural(operationsUsing.length, "operation")} (${operationsUsing.map((o) => o.key).join(", ")})` : null,
-      ].filter(Boolean).join(" and ");
-      if (!window.confirm(`Message "${key}" is used by ${where}. Remove it and take it out of ${channelsUsing.length + operationsUsing.length === 1 ? "that item" : "those items"}?`)) return;
-    }
-    update((d) => {
-      const messagesLeft = d.messages.filter((_, i) => i !== index);
-      const stillDefined = messagesLeft.some((m) => m.key === key) || d.externalRefs.some((r) => r.kind === "message" && r.key === key);
-      return stillDefined ? { ...d, messages: messagesLeft } : withoutMessage({ ...d, messages: messagesLeft }, key);
-    });
+    const where = [
+      channelsUsing.length > 0 ? `${plural(channelsUsing.length, "channel")} (${channelsUsing.map((c) => c.key).join(", ")})` : null,
+      operationsUsing.length > 0 ? `${plural(operationsUsing.length, "operation")} (${operationsUsing.map((o) => o.key).join(", ")})` : null,
+    ].filter(Boolean).join(" and ");
+    // No confirmation: the removal is undone from the toast, which restores the document exactly as it was.
+    const before = doc;
+    const after = removeMessageAt(before, index);
+    update(() => after);
     onSelectItem(null);
+    offerUndo(where === "" ? `Removed "${key}"` : `Removed "${key}" and took it out of ${where}`, after, () => update((d) => (d === after ? before : d)));
+  }
+
+  function duplicate() {
+    const copy = duplicateMessage(doc, message.key);
+    if (!copy) return;
+    update(() => copy.doc);
+    onSelectItem(copy.key);
   }
 
   const entityOf = (pin: EntityPin) => options.entityOptions.find((e) => e.id === pin.entityId);
@@ -416,7 +422,10 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
         onRename={(to) => renameAndSelect(draft, "message", message.key, to, onSelectItem)}
       />
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-space-2">
+        <Button type="button" variant="outline" onClick={duplicate} data-testid="message-duplicate" aria-label="Duplicate message" className="gap-space-2 text-muted-foreground">
+          <Copy className="size-4" /> Duplicate
+        </Button>
         <Button type="button" variant="outline" onClick={remove} data-testid="message-remove" className="gap-space-2 text-muted-foreground hover:text-destructive">
           <Trash2 className="size-4" /> Remove message
         </Button>
