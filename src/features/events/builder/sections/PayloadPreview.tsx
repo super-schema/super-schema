@@ -31,7 +31,7 @@ export function PayloadPreview({ schema, loading, entity, hasPayload }: {
       ) : rows.length === 0 ? (
         <p className="text-caption text-muted-foreground">No field preview</p>
       ) : (
-        <ul className="grid gap-x-space-4 gap-y-space-1 text-body-small sm:grid-cols-2">
+        <ul className="grid gap-x-space-4 gap-y-space-1 text-body-small @md:grid-cols-2">
           {rows.map((row) => (
             <li key={row.name} className="flex min-w-0 items-baseline gap-space-2">
               <span className="truncate font-medium text-foreground">{row.name}</span>

@@ -54,6 +54,13 @@ describe("PayloadPreview", () => {
     expect(screen.queryByRole("link", { name: /open entity/i })).toBeNull();
   });
 
+  it("lists the fields in two columns by the width of the pane, not of the window", () => {
+    preview();
+    const list = screen.getByTestId("payload-preview").querySelector("ul") as HTMLElement;
+    expect(list.className).toContain("@md:grid-cols-2");
+    expect(list.className).not.toMatch(/(^|\s)sm:/);
+  });
+
   it("shows nothing for a message without a payload entity", () => {
     preview({ hasPayload: false, entity: undefined, schema: null });
     expect(screen.queryByTestId("payload-preview")).toBeNull();

@@ -8,8 +8,11 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { EventDocument } from "@/lib/events/document/types";
 
-/** How long the toast stays up, in milliseconds: long enough to notice the removal and reach for it. */
-const UNDO_TOAST_MS = 8000;
+/**
+ * How long the toast stays up, in milliseconds: long enough for a keyboard or screen-reader user to find it and press it. It is safe to
+ * leave it up that long: it is taken down by the next change to the document, so Undo can never overwrite anything.
+ */
+const UNDO_TOAST_MS = 20_000;
 
 type Pending = { id: string | number; after: EventDocument };
 

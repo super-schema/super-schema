@@ -35,6 +35,7 @@ import { ExternalRefsCard } from "./ExternalRefsCard";
 import { MessagePropertiesCard } from "./MessagePropertiesCard";
 import { ItemTabs } from "./ItemTabs";
 import { duplicateMessage, removeMessageAt } from "./message-actions";
+import { useAfterDelay } from "./use-after-delay";
 import { useUndoToast } from "./use-undo-toast";
 import { OptionalPin } from "./OptionalPin";
 import { PayloadPreview } from "./PayloadPreview";
@@ -74,6 +75,9 @@ const CARD_POINTERS: Record<string, readonly string[]> = {
   correlation: CORRELATION_KEYS,
   more: MORE_KEYS,
 };
+
+/** How long a message has to stay on screen before its payload preview is requested, in milliseconds. */
+const PREVIEW_DELAY_MS = 300;
 
 /** The pane that shows on first sight, and the panes built up front (the others are built the first time they show). */
 const DEFAULT_PANE = "payload";
@@ -137,6 +141,8 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
   // The message just added starts with the cursor in its payload picker, on the Payload pane; moving to another message ends that.
   const [addedKey, setAddedKey] = useState<string | null>(null);
   const offerUndo = useUndoToast(doc);
+  // Raised when a message is removed: the cursor goes to the strip, since the form it was in is gone.
+  const [stripFocus, setStripFocus] = useState(0);
   function addMessage() {
     // A placeholder key, named from the name or title once the user leaves the form.
     const key = newKey(doc, "message");
@@ -168,7 +174,7 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
         <div className="space-y-space-4">
           <ItemTabs
             label="Messages" prefix="message" activeIndex={activeIndex} onSelect={selectMessage}
-            onAdd={addMessage} addLabel="Add message" addTestId="message-add"
+            onAdd={addMessage} addLabel="Add message" addTestId="message-add" focusSignal={stripFocus}
             items={messages.map((m, i) => ({
               key: m.key, label: messageLabel(m), subtitle: (m.payload.entityId && entityName(m.payload)) || "No payload",
               broken: problemsByField(problems, `/messages/${i}`).length > 0,
@@ -176,7 +182,7 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
           />
           <MessageForm
             key={activeIndex} draft={draft} options={options} index={activeIndex} message={active} problems={problems} context={context}
-            pane={pane} errored={errored} autoFocusPayload={active.key === addedKey} offerUndo={offerUndo} onSelectItem={onSelectItem} onSectionChange={onSectionChange}
+            pane={pane} errored={errored} autoFocusPayload={active.key === addedKey} offerUndo={offerUndo} onRemoved={() => setStripFocus((n) => n + 1)} onSelectItem={onSelectItem} onSectionChange={onSectionChange}
           />
         </div>
       )}
@@ -186,9 +192,9 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
   );
 }
 
-function MessageForm({ draft, options, index, message, problems, context, pane, errored, autoFocusPayload, offerUndo, onSelectItem, onSectionChange }: {
+function MessageForm({ draft, options, index, message, problems, context, pane, errored, autoFocusPayload, offerUndo, onRemoved, onSelectItem, onSectionChange }: {
   draft: DraftState; options: SectionProps["options"]; index: number; message: DocMessage; problems: DocumentProblem[];
-  context: TemplateFormContext; pane: PaneState; errored: ReadonlySet<string>; autoFocusPayload: boolean; offerUndo: ReturnType<typeof useUndoToast>; onSelectItem: (key: string | null) => void; onSectionChange?: SectionProps["onSectionChange"];
+  context: TemplateFormContext; pane: PaneState; errored: ReadonlySet<string>; autoFocusPayload: boolean; offerUndo: ReturnType<typeof useUndoToast>; onRemoved: () => void; onSelectItem: (key: string | null) => void; onSectionChange?: SectionProps["onSectionChange"];
 }) {
   const { doc, update } = draft;
   const [blocked, setBlocked] = useState<string | null>(null);
@@ -199,9 +205,11 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
   // The examples are checked against the schema of the message's own payload / headers entity. The schemas are rendered by the server
   // (the TypeSpec compiler), so they are asked for only while an example is on screen. A pin without a schema is `null`.
   // The payload's schema is also what the Payload pane previews: one request serves both panes.
+  // The preview waits until the user has stopped on the message for a moment: the schema costs the server a compiler run, and a user
+  // arrowing through the strip would otherwise queue one per tab. The examples were asked for by opening them: no wait there.
   const examplesShown = pane.active === "examples" && (message.examples?.length ?? 0) > 0;
-  const previewShown = pane.active === "payload";
-  const payloadSchema = usePinJsonSchemaState(draft.productId, message.payload, examplesShown || previewShown);
+  const previewDue = useAfterDelay(pane.active === "payload", PREVIEW_DELAY_MS);
+  const payloadSchema = usePinJsonSchemaState(draft.productId, message.payload, examplesShown || previewDue);
   const headersSchema = usePinJsonSchemaState(draft.productId, message.headers, examplesShown);
   const exampleContext = useMemo<TemplateFormContext>(
     () => ({
@@ -284,7 +292,12 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
     const after = removeMessageAt(before, index);
     update(() => after);
     onSelectItem(null);
-    offerUndo(where === "" ? `Removed "${key}"` : `Removed "${key}" and took it out of ${where}`, after, () => update((d) => (d === after ? before : d)));
+    onRemoved();
+    // Undo brings the document back and selects the message again (it may be far down a long strip).
+    offerUndo(where === "" ? `Removed "${key}"` : `Removed "${key}" and took it out of ${where}`, after, () => {
+      update((d) => (d === after ? before : d));
+      onSelectItem(key);
+    });
   }
 
   function duplicate() {

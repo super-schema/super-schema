@@ -329,7 +329,7 @@ function OperationForm({ draft, options, index, operation, problems, context, pa
     <>
       <fieldset id="operation-action" data-testid="operation-action" aria-describedby={actionError ? actionErrorId : undefined} className="space-y-space-2">
         <legend className="text-caption text-muted-foreground">Action</legend>
-        <div className="grid gap-space-3 sm:grid-cols-2">
+        <div className="grid gap-space-3 @md:grid-cols-2">
           {ACTIONS.map((a) => {
             const id = `operation-action-${a.value}`;
             const checked = operation.action === a.value;

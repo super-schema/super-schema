@@ -22,12 +22,15 @@ const tabName = (item: ItemTab) => item.label || item.key || "(no key)";
 
 /**
  * `label` names the tab list ("Messages"), `prefix` the test ids (`${prefix}-row-${key}`, `${prefix}-tabs-list`, `${prefix}-tabs-list-panel`).
- * Tabs are keyed by position: two items can share a (broken) key. `onAdd` absent hides the add button; `addDisabled` / `addTitle` are for
+ * Tabs are keyed by position: two items can share a (broken) key, and an item's key changes under the user (a key named on leaving the
+ * form) without the tab, and the focus on it, being thrown away. `onAdd` absent hides the add button; `addDisabled` / `addTitle` are for
  * an add that cannot run yet (an operation needs a channel first).
  */
-export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, addLabel = "Add", addTestId, addDisabled, addTitle }: {
+export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, addLabel = "Add", addTestId, addDisabled, addTitle, focusSignal }: {
   label: string; prefix: string; items: ItemTab[]; activeIndex: number; onSelect: (key: string) => void;
   onAdd?: () => void; addLabel?: string; addTestId?: string; addDisabled?: boolean; addTitle?: string;
+  /** A number the host raises to ask for the cursor to go to the active tab (after the item the user was in is removed). Not acted on at first render. */
+  focusSignal?: number;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const strip = useRef<HTMLDivElement>(null);
@@ -52,6 +55,14 @@ export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, a
     return () => observer.disconnect();
   }, [measure]);
 
+  // The host asks for the cursor on the active tab by raising `focusSignal`.
+  const lastSignal = useRef(focusSignal);
+  useEffect(() => {
+    if (focusSignal === lastSignal.current) return;
+    lastSignal.current = focusSignal;
+    tabs.current[activeIndex]?.focus();
+  }, [focusSignal, activeIndex]);
+
   // The active tab is brought into view, whatever selected it (a click in the search list, the add button, a deep link).
   useEffect(() => {
     tabs.current[activeIndex]?.scrollIntoView?.({ inline: "nearest", block: "nearest" });
@@ -71,7 +82,8 @@ export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, a
   }
 
   const needle = query.trim().toLowerCase();
-  const matches = items.map((item, index) => ({ item, index })).filter(({ item }) => needle === "" || tabName(item).toLowerCase().includes(needle));
+  // A tab shows a name or a title; the key (what problems and links name) is searchable too.
+  const matches = items.map((item, index) => ({ item, index })).filter(({ item }) => needle === "" || `${tabName(item)} ${item.key}`.toLowerCase().includes(needle));
   const edgeButton = "absolute inset-y-0 z-10 flex w-6 items-center justify-center bg-background/90 text-muted-foreground hover:text-foreground";
 
   return (
@@ -88,7 +100,7 @@ export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, a
               const isActive = index === activeIndex;
               return (
                 <button
-                  key={`${index}-${item.key}`} ref={(el) => { tabs.current[index] = el; }} type="button" role="tab"
+                  key={index} ref={(el) => { tabs.current[index] = el; }} type="button" role="tab"
                   data-testid={`${prefix}-row-${item.key}`} aria-selected={isActive} aria-current={isActive ? "true" : undefined}
                   tabIndex={isActive ? 0 : -1} title={`${tabName(item)} — ${item.subtitle}`}
                   onClick={() => onSelect(item.key)} onKeyDown={(e) => onTabKeyDown(e, index)}
@@ -131,6 +143,7 @@ export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, a
                 {matches.map(({ item, index }) => (
                   <CommandItem key={`${index}-${item.key}`} value={`${index}-${item.key}`} onSelect={() => { onSelect(item.key); setListOpen(false); }}>
                     {tabName(item)}
+                    {item.key !== "" && tabName(item) !== item.key && <span className="ml-auto truncate pl-space-2 text-caption text-muted-foreground">{item.key}</span>}
                     {item.broken && <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-destructive" />}
                   </CommandItem>
                 ))}

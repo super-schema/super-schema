@@ -312,6 +312,32 @@ describe("MessagesSection: a new message starts focused", () => {
   });
 });
 
+describe("MessagesSection: the payload request while passing over messages", () => {
+  const sleep = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+
+  it("sends nothing while the user is only passing over a message, and asks once for the one they stop on", async () => {
+    h.pinJsonSchemaAction.mockResolvedValue({ success: true, data: { schema: { properties: { id: { type: "string" } } } } });
+    await renderMessages({ doc: docWithReply() });
+    click("message-row-RefundIssued");
+    click("message-row-OrderCreated");
+    click("message-row-RefundIssued");
+    await act(async () => { await sleep(100); });
+    expect(h.pinJsonSchemaAction).not.toHaveBeenCalled();
+    await act(async () => { await sleep(600); });
+    expect(h.pinJsonSchemaAction).toHaveBeenCalledTimes(1);
+    expect(h.pinJsonSchemaAction).toHaveBeenCalledWith("p1", { entityId: "ent-2", entityVersionId: "ver-2" });
+  });
+
+  it("still asks at once for the examples, which the user asked for by opening them", async () => {
+    const doc = sampleDocument();
+    doc.messages[0] = { ...doc.messages[0], examples: [{ payload: { id: 1 } }] };
+    await renderMessages({ doc });
+    openCard("examples");
+    await act(async () => { await sleep(50); });
+    expect(h.pinJsonSchemaAction).toHaveBeenCalledWith("p1", PIN);
+  });
+});
+
 describe("MessagesSection: payload preview", () => {
   const ORDER_SCHEMA = { type: "object", properties: { orderId: { type: "string" }, quantity: { type: "integer" } }, required: ["orderId"] };
 
@@ -342,7 +368,7 @@ describe("MessagesSection: payload preview", () => {
     expect(isOpen("docs")).toBe(true);
     expect(h.pinJsonSchemaAction).not.toHaveBeenCalled();
     openCard("payload");
-    await act(async () => {});
+    await act(async () => { await new Promise<void>((resolve) => { setTimeout(resolve, 500); }); });
     expect(h.pinJsonSchemaAction).toHaveBeenCalledWith("p1", PIN);
   });
 
@@ -1099,10 +1125,21 @@ describe("MessagesSection: remove message", () => {
     expect(screen.getByTestId("message-row-RefundIssued")).toBeDefined();
   });
 
-  it("keeps the toast up for a while, so there is time to use it", async () => {
+  it("keeps the toast up long enough for a keyboard or screen-reader user to reach it", async () => {
     await renderMessages();
     click("message-remove");
-    expect(lastToast().options.duration).toBeGreaterThanOrEqual(6000);
+    expect(lastToast().options.duration).toBeGreaterThanOrEqual(15_000);
+  });
+
+  it("Undo selects the message it brings back, and Remove moves focus to the strip", async () => {
+    const { probe } = await renderMessages({ doc: docWithReply(), item: "RefundIssued" });
+    click("message-remove");
+    const active = document.activeElement as HTMLElement;
+    expect(active.getAttribute("data-testid")).toMatch(/^message-row-/);
+    expect(active.getAttribute("aria-selected")).toBe("true");
+    expect(probe.item).toBeNull();
+    await undo();
+    expect(probe.item).toBe("RefundIssued");
   });
 
   it("takes the toast down at the next change to the document, so Undo can never overwrite a later edit", async () => {

@@ -123,16 +123,23 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
 
   // Mod+S saves. While the Design tab shows it always takes the key from the browser (a "save page" dialog is never what is meant),
   // and saves when there is something to save and no save is running. While the tab is hidden the builder stays out of it.
+  // The shell has a Mod+S handler of its own that flashes "All changes saved" in the status bar whatever happens, so the builder listens
+  // first (capture phase on the window) and keeps the key to itself, then flashes only when the save went through.
   const { dirty, saving, save } = draft;
   useEffect(() => {
     if (!active) return undefined;
     function onKeyDown(e: KeyboardEvent) {
       if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "s") return;
       e.preventDefault();
-      if (dirty && !saving) void save();
+      e.stopPropagation();
+      if (dirty && !saving) {
+        void save().then((saved) => {
+          if (saved) document.dispatchEvent(new CustomEvent("super-schema:save-flash"));
+        });
+      }
     }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [active, dirty, saving, save]);
 
   // Mod+J opens the jump palette (Mod+K is the app's own palette and is left alone). Like Mod+S it is answered only while the tab shows.
@@ -265,8 +272,8 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
             </section>
           )}
 
-          <div data-testid="builder-bar" className="sticky bottom-0 z-10 flex items-center justify-between gap-space-3 border-t border-border bg-background/95 py-space-3 backdrop-blur">
-            <div className="flex items-center gap-space-3">
+          <div data-testid="builder-bar" className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-x-space-3 gap-y-space-2 border-t border-border bg-background/95 py-space-3 backdrop-blur">
+            <div className="flex flex-wrap items-center gap-x-space-3 gap-y-space-1">
               <p role="status" data-testid="builder-status" className="flex items-center gap-space-2 text-body-small text-muted-foreground">
                 {draft.dirty && !draft.saving && <span aria-hidden="true" className="size-2 rounded-full bg-warning" />}
                 {draft.saving ? "Saving…" : draft.dirty ? "Unsaved changes" : "No unsaved changes"}
@@ -280,7 +287,7 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-space-2">
+            <div className="flex flex-wrap items-center gap-space-2">
               <Button type="button" variant="outline" onClick={draft.discard} disabled={busy} data-testid="builder-discard">Discard</Button>
               <Button type="button" onClick={() => { void draft.save(); }} disabled={busy} data-testid="builder-save" className="gap-1.5">
                 {draft.saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Save draft

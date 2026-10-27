@@ -32,6 +32,26 @@ export type ExternalRefStatuses = ReadonlyMap<string, ExternalRefStatus>;
 const inputOf = (ref: DocExternalRef): ExternalRefInput => ({ eventVersionId: ref.eventVersionId, kind: ref.kind, itemKey: ref.itemKey });
 
 /**
+ * How long a status call may stay unanswered before it is made again, and how many times it is made in all. The app router drops a
+ * Server Action whose call is still in flight when a history change lands (this page rewrites the URL on every section switch): the
+ * call's promise then never settles, and a section opened right after another action would show no status for good.
+ */
+const ANSWER_WAIT_MS = 4000;
+const TRIES = 3;
+const NO_ANSWER = Symbol("no answer");
+
+/** `promise`, or `NO_ANSWER` when it has not settled within `ms`. */
+function answerWithin<T>(promise: Promise<T>, ms: number): Promise<T | typeof NO_ANSWER> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(NO_ANSWER), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error: unknown) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
+/**
  * The status of every referenced version of `refs`, or `null` while it is not known: nothing loaded yet, nothing referenced, or the
  * call failed (any failure, whatever its code). The last answer stays on screen while a new one is on its way, so a badge does not
  * flicker when another reference is added; a version's status never gets stale in a way that matters (published versions are immutable).
@@ -48,8 +68,12 @@ export function useExternalRefStatus(productId: string, refs: readonly DocExtern
       let next: ExternalRefStatuses | null = null;
       try {
         const actions = await externalRefActions();
-        const result = await actions.getExternalRefStatusesAction(productId, inputs);
-        if (result.success) next = new Map(result.data.map((status) => [status.eventVersionId, status]));
+        for (let attempt = 0; attempt < TRIES && !cancelled; attempt += 1) {
+          const result = await answerWithin(actions.getExternalRefStatusesAction(productId, inputs), ANSWER_WAIT_MS);
+          if (result === NO_ANSWER) continue;
+          if (result.success) next = new Map(result.data.map((status) => [status.eventVersionId, status]));
+          break;
+        }
       } catch {
         // unavailable: the references are still listed, just without a status
       }

@@ -1050,6 +1050,15 @@ describe("OperationsSection: every AsyncAPI operation property", () => {
   });
 });
 
+describe("OperationsSection: the action choice in a narrow pane", () => {
+  it("puts the two actions side by side by the width of the pane, not of the window", () => {
+    renderSection(OperationsSection, { doc: sampleDocument() });
+    const grid = screen.getByTestId("operation-action-send").closest("label")!.parentElement as HTMLElement;
+    expect(grid.className).toContain("@md:grid-cols-2");
+    expect(grid.className).not.toMatch(/(^|\s)sm:/);
+  });
+});
+
 describe("OperationsSection: a new operation starts focused", () => {
   it("puts the cursor in the action choice after Add, even from another pane", () => {
     renderSection(OperationsSection, { doc: sampleDocument() });

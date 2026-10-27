@@ -242,6 +242,55 @@ describe("EventBuilder: Mod+S", () => {
     expect(probe.saveDocument).not.toHaveBeenCalled();
   });
 
+  it("keeps the key from the shell's own Mod+S handler, which would flash 'All changes saved' whatever the save does", async () => {
+    const shell = vi.fn();
+    document.addEventListener("keydown", shell);
+    try {
+      renderBuilder();
+      type(field("Title"), "Changed");
+      await act(async () => { press({ metaKey: true }); });
+      expect(shell).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("keydown", shell);
+    }
+  });
+
+  it("leaves the shell's handler alone while the Design tab is hidden", async () => {
+    const shell = vi.fn();
+    document.addEventListener("keydown", shell);
+    try {
+      renderBuilder({ active: false });
+      await act(async () => { press({ metaKey: true }); });
+      expect(shell).toHaveBeenCalledTimes(1);
+    } finally {
+      document.removeEventListener("keydown", shell);
+    }
+  });
+
+  it("flashes 'All changes saved' once the save has succeeded, and not for a refused save or a clean draft", async () => {
+    const flash = vi.fn();
+    document.addEventListener("super-schema:save-flash", flash);
+    try {
+      const refused = vi.fn<SaveDocument>().mockResolvedValue({ success: false, error: "no", code: "VALIDATION_ERROR" });
+      const { probe, unmount } = renderBuilder({ saveDocument: refused });
+      await act(async () => { press({ metaKey: true }); });
+      expect(flash).not.toHaveBeenCalled(); // clean draft
+      type(field("Title"), "Changed");
+      await act(async () => { press({ metaKey: true }); });
+      expect(refused).toHaveBeenCalledTimes(1);
+      expect(flash).not.toHaveBeenCalled(); // refused
+      unmount();
+      const ok = renderBuilder();
+      type(field("Title"), "Changed again");
+      await act(async () => { press({ metaKey: true }); });
+      expect(ok.probe.saveDocument).toHaveBeenCalledTimes(1);
+      expect(flash).toHaveBeenCalledTimes(1);
+      expect(probe).toBeDefined();
+    } finally {
+      document.removeEventListener("super-schema:save-flash", flash);
+    }
+  });
+
   it("stops listening when the builder goes away", async () => {
     const { probe, unmount } = renderBuilder();
     type(field("Title"), "Changed");
@@ -316,6 +365,15 @@ describe("EventBuilder: jump palette", () => {
     click("jump-open");
     const entry = within(await palette()).getByText("kafka-dev").closest("[role=option]") as HTMLElement;
     expect(entry.getAttribute("aria-label")).toBe("kafka-dev, 1 problem");
+  });
+});
+
+describe("EventBuilder: save bar in a narrow pane", () => {
+  it("wraps instead of running past the edge: status, problem count and buttons may take a second line", () => {
+    renderBuilder();
+    const bar = screen.getByTestId("builder-bar");
+    expect(bar.className).toContain("flex-wrap");
+    expect(bar.className).not.toContain("@");
   });
 });
 

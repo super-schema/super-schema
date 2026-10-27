@@ -110,6 +110,53 @@ describe("ItemTabs: broken documents", () => {
   });
 });
 
+describe("ItemTabs: search by key, focus and remounting", () => {
+  it("finds an item by its key even when the tab shows a name or title", async () => {
+    const named = Array.from({ length: 10 }, (_, i) => item(`order-created-${i}`, { label: `Order created ${i}` }));
+    const { onSelect } = setup(named);
+    fireEvent.click(screen.getByTestId("message-tabs-list"));
+    const panel = await screen.findByTestId("message-tabs-list-panel");
+    fireEvent.change(within(panel).getByRole("combobox"), { target: { value: "order-created-4" } });
+    expect(within(panel).getAllByRole("option")).toHaveLength(1);
+    fireEvent.click(within(panel).getByRole("option"));
+    expect(onSelect).toHaveBeenCalledWith("order-created-4");
+  });
+
+  it("shows the key beside the label in the list when they differ, and only the label when they are the same", async () => {
+    setup([item("a-key", { label: "A name" }), item("same"), ...many(5)]);
+    fireEvent.click(screen.getByTestId("message-tabs-list"));
+    const panel = await screen.findByTestId("message-tabs-list-panel");
+    const options = within(panel).getAllByRole("option");
+    expect(options[0].textContent).toContain("A name");
+    expect(options[0].textContent).toContain("a-key");
+    expect(options[1].textContent).toBe("same");
+  });
+
+  it("keeps the same tab element, and its focus, when the item's key changes (a key named on leaving the form)", () => {
+    const onSelect = vi.fn();
+    const props = { label: "Messages", prefix: "message", activeIndex: 0, onSelect } as const;
+    const { rerender } = render(<ItemTabs {...props} items={[item("message"), item("other")]} />);
+    const before = tabs()[0];
+    before.focus();
+    rerender(<ItemTabs {...props} items={[item("Order-created"), item("other")]} />);
+    expect(tabs()[0]).toBe(before);
+    expect(document.activeElement).toBe(before);
+    expect(tabs()[0].getAttribute("data-testid")).toBe("message-row-Order-created");
+  });
+
+  it("moves focus to the active tab when its focusSignal goes up, and not on first render", () => {
+    const props = { label: "Messages", prefix: "message", onSelect: vi.fn() } as const;
+    const items = [item("a"), item("b"), item("c")];
+    const { rerender } = render(<ItemTabs {...props} items={items} activeIndex={1} focusSignal={0} />);
+    expect(document.activeElement).toBe(document.body);
+    rerender(<ItemTabs {...props} items={items} activeIndex={1} focusSignal={1} />);
+    expect(document.activeElement).toBe(tabs()[1]);
+    tabs()[1].blur();
+    rerender(<ItemTabs {...props} items={items} activeIndex={2} focusSignal={1} />);
+    expect(document.activeElement).toBe(document.body);
+  });
+});
+
 describe("ItemTabs: the add button", () => {
   it("is outside the tab list and adds", () => {
     const { onAdd } = setup([item("a")]);
