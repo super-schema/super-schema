@@ -53,6 +53,10 @@ async function settle() {
   await screen.findByLabelText("Payload entity");
   await act(async () => {});
 }
+/** Headers and Message key are `+ Add` links until set: show their pickers (a picker that is on screen already is left alone). */
+const showOptionalPins = () => {
+  for (const id of ["headers-add", "key-pin-add"]) if (screen.queryByTestId(id)) click(id);
+};
 async function renderMessages(opts: Parameters<typeof renderSection>[1] = {}) {
   const rendered = renderSection(MessagesSection, opts);
   await settle();
@@ -239,6 +243,7 @@ describe("MessagesSection: payload, headers and key pins", () => {
   it("headers and key are optional pins: pick one, clear it, the property is removed", async () => {
     const { probe } = await renderMessages();
     expect("headers" in probe.draft.doc.messages[0]).toBe(false);
+    showOptionalPins();
     type(field("Headers entity"), "ent-2");
     expect(probe.draft.doc.messages[0].headers).toEqual({ entityId: "ent-2", entityVersionId: "ver-2" });
     type(field("Message key entity"), "ent-1");
@@ -253,6 +258,7 @@ describe("MessagesSection: payload, headers and key pins", () => {
 
   it("each pin edits only the selected message", async () => {
     const { probe } = await renderMessages({ doc: docWithReply(), item: "RefundIssued" });
+    showOptionalPins();
     type(field("Headers entity"), "ent-1");
     expect(probe.draft.doc.messages[1].headers).toEqual({ entityId: "ent-1", entityVersionId: "ver-1" });
     expect("headers" in probe.draft.doc.messages[0]).toBe(false);
@@ -270,6 +276,64 @@ describe("MessagesSection: payload, headers and key pins", () => {
     expect(text("payload-error")).toBe('"ver-9" is not a published version of OrderCreated');
     expect(field("Title").value).toBe("Changed");
     expect(probe.draft.dirty).toBe(true);
+  });
+});
+
+describe("MessagesSection: optional pins", () => {
+  it("shows Headers and Message key as add links until they are set", async () => {
+    await renderMessages();
+    expect(text("headers-add")).toBe("+ Add headers");
+    expect(text("key-pin-add")).toBe("+ Add message key");
+    expect(missing("headers-picker")).toBe(true);
+    expect(missing("key-pin-picker")).toBe(true);
+    expect(screen.queryByLabelText("Headers entity")).toBeNull();
+  });
+
+  it("shows the picker when its link is clicked, and the link is gone", async () => {
+    await renderMessages();
+    click("headers-add");
+    expect(screen.getByLabelText("Headers entity")).toBeDefined();
+    expect(missing("headers-add")).toBe(true);
+    expect(missing("key-pin-picker")).toBe(true);
+  });
+
+  it("shows the picker at once for a message that has headers or a key", async () => {
+    const doc = sampleDocument();
+    doc.messages[0] = { ...doc.messages[0], headers: { entityId: "ent-2", entityVersionId: "ver-2" } };
+    await renderMessages({ doc });
+    expect(screen.getByLabelText("Headers entity")).toBeDefined();
+    expect(missing("headers-add")).toBe(true);
+    expect(text("key-pin-add")).toBe("+ Add message key");
+  });
+
+  it("shows a pin that holds a problem without a click", async () => {
+    const saveDocument = vi.fn<SaveDocument>().mockResolvedValue({
+      success: false, error: "1 unknown or invalid item", code: "VALIDATION_ERROR",
+      details: { problems: [{ pointer: "/messages/0/keyPin/entityVersionId", message: '"ver-9" is not a published version of OrderCreated' }] },
+    });
+    const { probe } = renderBuilder({ saveDocument, section: "messages" });
+    await settle();
+    type(field("Title"), "Changed");
+    await act(async () => { click("builder-save"); });
+    expect(text("key-pin-error")).toBe('"ver-9" is not a published version of OrderCreated');
+    expect(screen.getByLabelText("Message key entity")).toBeDefined();
+    expect(probe.draft.dirty).toBe(true);
+  });
+
+  it("keeps the picker on screen after the entity is cleared again, until the message changes", async () => {
+    await renderMessages();
+    click("headers-add");
+    type(field("Headers entity"), "ent-2");
+    type(field("Headers entity"), "");
+    expect(screen.getByLabelText("Headers entity")).toBeDefined();
+  });
+
+  it("puts the representation select in one row with the payload picker", async () => {
+    await renderMessages();
+    const row = screen.getByTestId("payload-row");
+    expect(within(row).getByTestId("payload-picker")).toBeDefined();
+    expect(within(row).getByTestId("message-representation")).toBeDefined();
+    expect(within(row).queryByTestId("headers-add")).toBeNull();
   });
 });
 
@@ -529,6 +593,7 @@ describe("MessagesSection: AsyncAPI message properties", () => {
   it("every property of the message template is reachable, including inside the collapsed cards", async () => {
     await renderMessages({ doc: docWithTraits() });
     openAllCards();
+    showOptionalPins();
     const keys = TEMPLATES.message.fields.map((f) => f.key);
     expect(keys).toEqual([
       "name", "title", "summary", "description", "contentType", "payload", "headers", "keyPin", "correlationId", "examples", "tags", "externalDocs",

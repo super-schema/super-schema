@@ -34,6 +34,7 @@ import { bindingCount, cardsWithProblems, cardTemplate, mergeValue, pickValue, s
 import { ExternalRefsCard } from "./ExternalRefsCard";
 import { FormCard, useCardState, type CardState } from "./FormCard";
 import { MessagePropertiesCard } from "./MessagePropertiesCard";
+import { OptionalPin } from "./OptionalPin";
 import { representationNote } from "./representation-note";
 import { RepresentationSelect } from "./RepresentationSelect";
 
@@ -304,25 +305,35 @@ function MessageForm({ draft, options, index, message, problems, context, cards,
       <div onBlur={(e) => { if (leftForm(e)) nameKeyFromContent(); }} className="space-y-space-3">
         {card("payload", "Payload", undefined, (
           <>
-            <PinField
-              id="payload" label="Payload" entities={options.entityOptions} error={errorAt("/payload")}
-              hint="Required. The entity this message carries."
-              value={message.payload.entityId ? message.payload : null}
-              onChange={(pin) => patch((m) => ({ ...m, payload: pin ?? NO_PAYLOAD }))}
-            />
-            <RepresentationSelect
-              id="message-representation" value={message.representation ?? ""} note={note} error={errorAt("/representation")}
-              onChange={setRepresentation}
-            />
-            <PinField
-              id="headers" label="Headers" optional entities={options.entityOptions} error={errorAt("/headers")}
-              value={message.headers ?? null} onChange={(pin) => setOptionalPin("headers", pin)}
-            />
-            <PinField
-              id="key-pin" label="Message key" optional entities={options.entityOptions} error={errorAt("/keyPin")}
-              hint="Optional. The entity describing the record key, for example a Kafka key."
-              value={message.keyPin ?? null} onChange={(pin) => setOptionalPin("keyPin", pin)}
-            />
+            <div data-testid="payload-row" className="flex flex-wrap items-start gap-x-space-4 gap-y-space-3">
+              <div className="min-w-0 flex-1 basis-64">
+                <PinField
+                  id="payload" label="Payload" entities={options.entityOptions} error={errorAt("/payload")}
+                  hint="Required. The entity this message carries."
+                  value={message.payload.entityId ? message.payload : null}
+                  onChange={(pin) => patch((m) => ({ ...m, payload: pin ?? NO_PAYLOAD }))}
+                />
+              </div>
+              <div className="min-w-0 flex-1 basis-48">
+                <RepresentationSelect
+                  id="message-representation" value={message.representation ?? ""} note={note} error={errorAt("/representation")}
+                  onChange={setRepresentation}
+                />
+              </div>
+            </div>
+            <OptionalPin id="headers" addLabel="Add headers" value={message.headers ?? null} error={errorAt("/headers")}>
+              <PinField
+                id="headers" label="Headers" optional entities={options.entityOptions} error={errorAt("/headers")}
+                value={message.headers ?? null} onChange={(pin) => setOptionalPin("headers", pin)}
+              />
+            </OptionalPin>
+            <OptionalPin id="key-pin" addLabel="Add message key" value={message.keyPin ?? null} error={errorAt("/keyPin")}>
+              <PinField
+                id="key-pin" label="Message key" optional entities={options.entityOptions} error={errorAt("/keyPin")}
+                hint="Optional. The entity describing the record key, for example a Kafka key."
+                value={message.keyPin ?? null} onChange={(pin) => setOptionalPin("keyPin", pin)}
+              />
+            </OptionalPin>
           </>
         ))}
 
