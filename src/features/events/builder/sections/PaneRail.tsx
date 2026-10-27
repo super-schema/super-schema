@@ -3,8 +3,8 @@
 // src/features/events/builder/sections/PaneRail.tsx
 // The parts of one item (a message's Payload, Details, Examples, …) as a vertical rail of tabs with ONE part showing, in place of the
 // accordion of stacked cards: the part being worked on gets the whole height. Below `@xl` (36rem) of the form's own width the rail is a
-// row of scrolling pills above the part instead. A part is rendered the first time it is shown (and the ones named in `keepMounted`
-// from the start) and then stays mounted, hidden when another part shows, so what it holds (focus order, a half-typed field's
+// row of scrolling pills above the part instead. A part is rendered the first time it is shown (and the ones named in `keepMounted`,
+// and the ones that hold a problem, from the start) and then stays mounted, hidden when another part shows, so what it holds (focus order, a half-typed field's
 // validation, an editor's state) is not rebuilt on every switch. Which part shows lives in `usePaneState`, kept by the SECTION so the
 // choice survives switching from one item to another.
 import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -55,7 +55,8 @@ export function PaneRail({ idPrefix, panes, active, onSelect, keepMounted = [], 
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [visited, setVisited] = useState<ReadonlySet<string>>(() => new Set(keepMounted));
   if (!visited.has(active)) setVisited(new Set([...visited, active]));
-  const mounted = new Set([...visited, active]);
+  // A pane that holds a problem is built even when it is not showing: its error text must be in the page, and its tab says where to look.
+  const mounted = new Set([...visited, active, ...panes.filter((pane) => pane.broken).map((pane) => pane.id)]);
   const tabId = (id: string) => `${uid}-tab-${id}`;
   const panelId = (id: string) => `${uid}-panel-${id}`;
 

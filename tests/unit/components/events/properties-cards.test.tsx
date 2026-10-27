@@ -388,6 +388,13 @@ describe("MessagePropertiesCard: edit all details", () => {
   });
 });
 
+/** Render the operations section with the Operation properties pane showing (a pane that is not showing is hidden, and role queries skip hidden elements). */
+function renderOperations(opts: Parameters<typeof renderSection>[1]) {
+  const rendered = renderSection(OperationsSection, opts);
+  fireEvent.click(screen.getByTestId("operation-card-properties-toggle"));
+  return rendered;
+}
+
 describe("OperationPropertiesCard", () => {
   const opDoc = (): EventDocument => {
     const doc = baseDoc();
@@ -395,15 +402,15 @@ describe("OperationPropertiesCard", () => {
     return doc;
   };
 
-  it("is the 'Operation properties (Trait)' card, open by default, with its own Add button", () => {
-    renderSection(OperationsSection, { doc: opDoc(), options: OPTIONS });
+  it("is the 'Operation properties (Trait)' pane, with its own Add button", () => {
+    renderOperations({ doc: opDoc(), options: OPTIONS });
     expect(screen.getByTestId("operation-card-properties-toggle").textContent).toContain("Operation properties (Trait)");
-    expect(screen.getByTestId("operation-card-properties-toggle").getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId("operation-card-properties-toggle").getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("operation-prop-add").getAttribute("aria-label")).toBe("Add operation properties");
   });
 
   it("opens the chooser filtered to operations: only operation sets, no Applies to control", async () => {
-    renderSection(OperationsSection, { doc: opDoc(), options: OPTIONS });
+    renderOperations({ doc: opDoc(), options: OPTIONS });
     click("operation-prop-add");
     await screen.findByTestId("trait-chooser");
     expect(missing("trait-chooser-kind")).toBe(true);
@@ -414,7 +421,7 @@ describe("OperationPropertiesCard", () => {
   });
 
   it("adds a library set to THIS operation in one step and shows its metadata read-only", async () => {
-    const { probe } = renderSection(OperationsSection, { doc: opDoc(), options: OPTIONS });
+    const { probe } = renderOperations({ doc: opDoc(), options: OPTIONS });
     await addFromCard("operation", "lib-op-1");
     expect(probe.draft.doc.traits).toEqual([{ key: "Retry-policy", kind: "OPERATION", libraryTraitId: "lib-op-1" }]);
     expect(probe.draft.doc.operations[0].traitKeys).toEqual(["Retry-policy"]);
@@ -430,13 +437,13 @@ describe("OperationPropertiesCard", () => {
   });
 
   it("explains a library set that has no details to show", async () => {
-    renderSection(OperationsSection, { doc: opDoc(), options: { entityOptions: ENTITY_OPTIONS, libraryTraits: [{ ...LIBRARY[4], spec: undefined }] } });
+    renderOperations({ doc: opDoc(), options: { entityOptions: ENTITY_OPTIONS, libraryTraits: [{ ...LIBRARY[4], spec: undefined }] } });
     await addFromCard("operation", "lib-op-2");
     expect(text("operation-prop-Dead-letter-meta-empty")).toContain("Defined in the library at Enterprise");
   });
 
   it("adds a blank operation set, focuses its title and names its key from the title", async () => {
-    const { probe } = renderSection(OperationsSection, { doc: opDoc(), options: OPTIONS });
+    const { probe } = renderOperations({ doc: opDoc(), options: OPTIONS });
     await addFromCard("operation", "new");
     expect(probe.draft.doc.traits).toEqual([{ key: "trait", kind: "OPERATION", spec: {} }]);
     expect(probe.draft.doc.operations[0].traitKeys).toEqual(["trait"]);
@@ -452,7 +459,7 @@ describe("OperationPropertiesCard", () => {
     const doc = opDoc();
     doc.traits = [{ key: "retry", kind: "OPERATION", spec: { title: "Retry" } }];
     doc.operations[0] = { ...doc.operations[0], traitKeys: ["retry"] };
-    const { probe } = renderSection(OperationsSection, { doc, options: OPTIONS });
+    const { probe } = renderOperations({ doc, options: OPTIONS });
     click("operation-prop-toggle-retry");
     type(box("operation-prop-retry-summary"), "Three tries");
     expect((probe.draft.doc.traits[0] as { spec: unknown }).spec).toEqual({ title: "Retry", summary: "Three tries" });
@@ -463,7 +470,7 @@ describe("OperationPropertiesCard", () => {
     const doc = opDoc();
     doc.traits = [{ key: "Retry-policy", kind: "OPERATION", libraryTraitId: "lib-op-1" }];
     doc.operations[0] = { ...doc.operations[0], traitKeys: ["Retry-policy"] };
-    const { probe } = renderSection(OperationsSection, { doc, options: OPTIONS });
+    const { probe } = renderOperations({ doc, options: OPTIONS });
     expect(screen.getByRole("button", { name: "Remove Retry policy from this operation" })).toBeDefined();
     click("operation-prop-remove-Retry-policy");
     expect(probe.draft.doc.traits).toEqual([]);
@@ -474,7 +481,7 @@ describe("OperationPropertiesCard", () => {
   it("shows the parser's problem for a bad reference under the card, and opens it", async () => {
     const doc = opDoc();
     doc.operations[0] = { ...doc.operations[0], traitKeys: ["Gone"] };
-    renderSection(OperationsSection, { doc, options: OPTIONS });
+    renderOperations({ doc, options: OPTIONS });
     expect(text("operation-prop-error")).toContain("Gone");
   });
 });

@@ -33,14 +33,16 @@ const text = (testId: string) => screen.getByTestId(testId).textContent;
 const missing = (testId: string) => screen.queryByTestId(testId) === null;
 const optionValues = (select: HTMLElement) => Array.from(select.querySelectorAll("option")).map((o) => o.getAttribute("value"));
 
-/** The accordion cards of the operation form. */
+/** The panes of the operation form (a rail of tabs, one pane showing). */
 const CARDS = ["basics", "reply", "properties", "details", "bindings", "docs", "security"] as const;
 type Card = (typeof CARDS)[number];
-const isOpen = (card: Card) => screen.getByTestId(`operation-card-${card}-toggle`).getAttribute("aria-expanded") === "true";
-/** Open a card, leaving it alone when it is open already. */
+/** Is this the pane that is showing? */
+const isOpen = (card: Card) => screen.getByTestId(`operation-card-${card}-toggle`).getAttribute("aria-selected") === "true";
+/** Show a pane, leaving it alone when it shows already. A pane, once shown, stays in the DOM (hidden) when another one shows. */
 const openCard = (card: Card) => {
   if (!isOpen(card)) fireEvent.click(screen.getByTestId(`operation-card-${card}-toggle`));
 };
+/** Show every pane in turn, so that all their fields are in the DOM. */
 const openAllCards = () => CARDS.forEach(openCard);
 /** Keys of the checkboxes of a group, in order. */
 const checklist = (groupId: string) =>
@@ -443,19 +445,22 @@ describe("OperationsSection: external references (the card of Channels / Message
 });
 
 describe("OperationsSection: reply", () => {
-  it("is off for an operation without a reply, and its card starts collapsed", () => {
+  it("is off for an operation without a reply, and its pane is not built until it is shown", () => {
     renderSection(OperationsSection);
     expect(isOpen("reply")).toBe(false);
+    expect(missing("operation-reply-toggle")).toBe(true);
     openCard("reply");
     expect(box("operation-reply-toggle").checked).toBe(false);
     expect(missing("operation-reply-channel")).toBe(true);
     expect(missing("operation-reply-messages")).toBe(true);
   });
 
-  it("starts open for an operation that has a reply", () => {
+  it("has its pane built from the start for an operation that has a reply, without showing it", () => {
     renderSection(OperationsSection, { doc: docWithReply(), item: "askRefund" });
-    expect(isOpen("reply")).toBe(true);
+    expect(isOpen("reply")).toBe(false);
     expect(box("operation-reply-toggle").checked).toBe(true);
+    openCard("reply");
+    expect(isOpen("reply")).toBe(true);
   });
 
   it("turning it on adds a reply on another channel when there is one, with no messages yet", () => {
@@ -511,8 +516,9 @@ describe("OperationsSection: reply", () => {
     expect(probe.draft.doc.operations[1].messageKeys).toEqual([]);
   });
 
-  it("turning it off removes the reply entirely, and the card stays open for the next try", () => {
+  it("turning it off removes the reply entirely, and the pane stays showing for the next try", () => {
     const { probe } = renderSection(OperationsSection, { doc: docWithReply(), item: "askRefund" });
+    openCard("reply");
     fireEvent.click(box("operation-reply-toggle"));
     expect("reply" in probe.draft.doc.operations[1]).toBe(false);
     expect(missing("operation-reply-channel")).toBe(true);
@@ -820,19 +826,21 @@ describe("OperationsSection: every AsyncAPI operation property", () => {
     for (const key of keys) expect(screen.queryByTestId(testIdOf[key] ?? `operation-${key}`), `operation.${key}`).not.toBeNull();
   });
 
-  it("keeps Basics, Operation properties (Trait) and Details open and Reply, Bindings, Docs & tags and Security collapsed", () => {
+  it("starts on Basics, builds Operation properties (Trait) and Details up front, and holds Reply, Bindings, Docs & tags and Security back until shown", () => {
     renderSection(OperationsSection);
-    for (const card of ["basics", "properties", "details"] as const) expect(isOpen(card), card).toBe(true);
-    for (const card of ["reply", "bindings", "docs", "security"] as const) expect(isOpen(card), card).toBe(false);
+    expect(isOpen("basics")).toBe(true);
+    for (const card of ["reply", "properties", "details", "bindings", "docs", "security"] as const) expect(isOpen(card), card).toBe(false);
+    for (const card of ["properties", "details"] as const) expect(missing(`operation-card-${card}-body`), card).toBe(false);
+    for (const card of ["reply", "bindings", "docs", "security"] as const) expect(missing(`operation-card-${card}-body`), card).toBe(true);
     for (const key of ["security", "tags", "externalDocs", "bindings"]) expect(missing(`operation-${key}`), key).toBe(true);
     for (const key of ["title", "summary", "description"]) expect(missing(`operation-${key}`)).toBe(false);
     // The template form's own 'More properties' toggle is gone: the cards are the grouping.
     expect(missing("operation-more-toggle")).toBe(true);
   });
 
-  it("titles the cards Basics, Reply, Operation properties (Trait), Details, Bindings, Docs & tags, Security", () => {
+  it("titles the panes Basics, Reply, Operation properties (Trait), Details, Bindings, Docs & tags, Security", () => {
     renderSection(OperationsSection);
-    const titles = within(screen.getByTestId("operation-form")).getAllByRole("heading", { level: 3 }).map((h) => h.textContent?.replace(/\d+\s*set$/, "").trim());
+    const titles = within(screen.getByRole("tablist", { name: "Operation parts" })).getAllByRole("tab").map((t) => t.textContent?.replace(/\d+\s*set$/, "").trim());
     expect(titles).toEqual(["Basics", "Reply", "Operation properties (Trait)", "Details", "Bindings", "Docs & tags", "Security"]);
   });
 
@@ -853,21 +861,25 @@ describe("OperationsSection: every AsyncAPI operation property", () => {
     expect(count("basics")).toBeNull();
   });
 
-  it("keeps a card open or closed while switching to another operation", () => {
+  it("keeps the pane that shows while switching to another operation", () => {
     renderSection(OperationsSection, { doc: docWithReply() });
     openCard("docs");
-    fireEvent.click(screen.getByTestId("operation-card-details-toggle"));
     click("operation-row-askRefund");
     expect(isOpen("docs")).toBe(true);
     expect(isOpen("details")).toBe(false);
-    // Reply has no choice of its own: it follows the operation.
-    expect(isOpen("reply")).toBe(true);
     click("operation-row-publishOrder");
     expect(isOpen("docs")).toBe(true);
-    expect(isOpen("reply")).toBe(false);
   });
 
-  it("opens the card that holds a problem when the document reports one", () => {
+  it("shows the Reply pane when the reply holds a problem", () => {
+    const doc = docWithReply();
+    doc.operations[1] = { ...doc.operations[1], reply: { channelKey: "ghost", messageKeys: [] } };
+    renderSection(OperationsSection, { doc, item: "askRefund" });
+    expect(isOpen("reply")).toBe(true);
+    expect(isOpen("basics")).toBe(false);
+  });
+
+  it("shows the pane that holds a problem when the document reports one", () => {
     const doc = sampleDocument();
     doc.operations[0] = { ...doc.operations[0], externalDocs: { url: "nope" } };
     renderSection(OperationsSection, { doc });

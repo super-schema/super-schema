@@ -28,6 +28,15 @@ describe("usePaneState", () => {
     expect(result.current.active).toBe("details");
   });
 
+  it("goes back to a pane whose problem went away and then came back", () => {
+    const { result, rerender } = renderHook(({ errored }) => usePaneState("payload", errored), { initialProps: { errored: new Set(["bindings"]) } });
+    act(() => result.current.select("details"));
+    rerender({ errored: new Set<string>() });
+    expect(result.current.active).toBe("details");
+    rerender({ errored: new Set(["bindings"]) });
+    expect(result.current.active).toBe("bindings");
+  });
+
   it("goes to a pane that holds a problem from the first render", () => {
     const { result } = renderHook(() => usePaneState("payload", new Set(["docs"])));
     expect(result.current.active).toBe("docs");
@@ -86,8 +95,14 @@ describe("PaneRail", () => {
     render(<Rail keepMounted={["details"]} />);
     expect(screen.getByText("payload body")).toBeDefined();
     expect(screen.getByTestId("x-card-details-body")).toBeDefined();
-    expect(screen.queryByTestId("x-card-examples-body")).toBeNull();
     expect(screen.queryByTestId("x-card-more-body")).toBeNull();
+  });
+
+  it("builds a pane that holds a problem even though it was never shown, hidden, so its error is in the page", () => {
+    render(<Rail />);
+    const body = screen.getByTestId("x-card-examples-body");
+    expect(body.hasAttribute("hidden")).toBe(true);
+    expect(within(body).getByText("examples body")).toBeDefined();
   });
 
   it("shows the selected pane, hides the one left, and keeps what the left pane held", () => {
