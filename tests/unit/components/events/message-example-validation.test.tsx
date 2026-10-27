@@ -91,14 +91,14 @@ function documentWith(examples: DocMessageExample[] | undefined, headers?: Entit
   return doc;
 }
 
-/** The accordion cards load their pickers lazily: wait for them to settle before the test acts. */
+/** The panes of the message form load their pickers lazily: wait for them to settle before the test acts. */
 async function renderMessages(doc: EventDocument, open = true) {
   const rendered = renderSection(MessagesSection, { doc });
   await screen.findByLabelText("Payload entity");
   await act(async () => {});
-  // An example with neither headers nor payload (just added) is a problem of the document, and a card that holds a problem opens by itself.
+  // An example with neither headers nor payload (just added) is a problem of the document, and a pane that holds a problem shows by itself.
   const toggle = screen.getByTestId("message-card-examples-toggle");
-  if (open && toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
+  if (open && toggle.getAttribute("aria-selected") !== "true") fireEvent.click(toggle);
   return rendered;
 }
 

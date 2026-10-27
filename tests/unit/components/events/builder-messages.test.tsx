@@ -40,14 +40,16 @@ const text = (testId: string) => screen.getByTestId(testId).textContent;
 const missing = (testId: string) => screen.queryByTestId(testId) === null;
 const optionValues = (el: HTMLElement) => Array.from(el.querySelectorAll("option")).map((o) => o.getAttribute("value"));
 
-/** The accordion cards of the message form. */
+/** The panes of the message form (a rail of tabs, one pane showing). */
 const CARDS = ["payload", "properties", "details", "channels", "examples", "bindings", "docs", "correlation", "more"] as const;
 type Card = (typeof CARDS)[number];
-const isOpen = (card: Card) => screen.getByTestId(`message-card-${card}-toggle`).getAttribute("aria-expanded") === "true";
-/** Open a card (a collapsed one starts closed), leaving it alone when it is open already. */
+/** Is this the pane that is showing? */
+const isOpen = (card: Card) => screen.getByTestId(`message-card-${card}-toggle`).getAttribute("aria-selected") === "true";
+/** Show a pane, leaving it alone when it shows already. A pane, once shown, stays in the DOM (hidden) when another one shows. */
 const openCard = (card: Card) => {
   if (!isOpen(card)) fireEvent.click(screen.getByTestId(`message-card-${card}-toggle`));
 };
+/** Show every pane in turn, so that all their fields are in the DOM. */
 const openAllCards = () => CARDS.forEach(openCard);
 
 /** The pickers are loaded lazily and fetch versions on mount: wait for both to settle before the test acts. */
@@ -545,10 +547,11 @@ describe("MessagesSection: AsyncAPI message properties", () => {
     expect("examples" in probe.draft.doc.messages[0]).toBe(false);
   });
 
-  it("keeps examples, bindings, docs & tags, the correlation id and 'More' in cards that start collapsed, and the rest open", async () => {
+  it("starts on the Payload pane, and holds examples, bindings, docs & tags, the correlation id and 'More' back until they are shown", async () => {
     await renderMessages({ doc: docWithTraits() });
-    for (const card of ["payload", "properties", "details", "channels"] as const) expect(isOpen(card), card).toBe(true);
-    for (const card of ["examples", "bindings", "docs", "correlation", "more"] as const) expect(isOpen(card), card).toBe(false);
+    expect(isOpen("payload")).toBe(true);
+    for (const card of ["properties", "details", "channels", "examples", "bindings", "docs", "correlation", "more"] as const) expect(isOpen(card), card).toBe(false);
+    for (const card of ["examples", "bindings", "docs", "correlation", "more"] as const) expect(missing(`message-card-${card}-body`), card).toBe(true);
     for (const key of ["examples", "tags", "externalDocs", "deprecated", "correlationId"]) expect(missing(`message-${key}`) && missing(`message-${key}-location`), key).toBe(true);
     expect(missing("message-bindings")).toBe(true);
     // The old 'More properties' toggle of the template form is gone: the cards are the grouping.
@@ -610,25 +613,25 @@ describe("MessagesSection: AsyncAPI message properties", () => {
   });
 });
 
-describe("MessagesSection: accordion cards", () => {
-  it("shows the cards in the order Payload, Message properties (Trait), Details, Sent on channels, Examples, Bindings, Docs & tags, Correlation id, More", async () => {
+describe("MessagesSection: pane rail", () => {
+  it("lists the panes in the order Payload, Message properties (Trait), Details, Sent on channels, Examples, Bindings, Docs & tags, Correlation id, More", async () => {
     await renderMessages();
-    const titles = within(screen.getByTestId("message-form")).getAllByRole("heading", { level: 3 }).map((h) => h.textContent?.replace(/\d+\s*set$/, "").trim());
+    const titles = within(screen.getByRole("tablist", { name: "Message parts" })).getAllByRole("tab").map((t) => t.textContent?.replace(/\d+\s*set$/, "").trim());
     expect(titles).toEqual([
       "Payload", "Message properties (Trait)", "Details", "Sent on channels", "Examples", "Bindings", "Docs & tags", "Correlation id", "More",
     ]);
   });
 
-  it("opens and closes a card from its heading button, with aria-expanded and aria-controls", async () => {
+  it("shows a pane from its tab, with aria-selected and aria-controls, and hides the one it replaces", async () => {
     await renderMessages();
     const toggle = screen.getByTestId("message-card-examples-toggle");
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.getAttribute("aria-selected")).toBe("false");
     expect(missing("message-card-examples-body")).toBe(true);
     fireEvent.click(toggle);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-selected")).toBe("true");
     expect(toggle.getAttribute("aria-controls")).toBe(screen.getByTestId("message-card-examples-body").id);
-    fireEvent.click(toggle);
-    expect(missing("message-card-examples-body")).toBe(true);
+    expect(screen.getByTestId("message-card-examples-body").hasAttribute("hidden")).toBe(false);
+    expect(screen.getByTestId("message-card-payload-body").hasAttribute("hidden")).toBe(true);
   });
 
   it("counts the fields set in each card: examples, bindings (protocols), docs & tags, correlation id, deprecated, details and channels", async () => {
@@ -658,10 +661,9 @@ describe("MessagesSection: accordion cards", () => {
     expect(screen.getByTestId("message-card-docs-count").textContent).toBe("2");
   });
 
-  it("keeps a card open or closed while switching to another message, and while switching back", async () => {
+  it("keeps the pane that shows while switching to another message, and while switching back", async () => {
     await renderMessages({ doc: docWithReply() });
     openCard("examples");
-    fireEvent.click(screen.getByTestId("message-card-details-toggle"));
     click("message-row-RefundIssued");
     expect(isOpen("examples")).toBe(true);
     expect(isOpen("details")).toBe(false);
@@ -670,19 +672,19 @@ describe("MessagesSection: accordion cards", () => {
     expect(isOpen("details")).toBe(false);
   });
 
-  it("opens the card that holds a problem, once, and lets the user close it again", async () => {
+  it("lets the user leave a pane that holds a problem, and does not pull the user back to it", async () => {
     await renderMessages();
-    expect(isOpen("docs")).toBe(false);
     openCard("docs");
     type(box("message-externalDocs-url"), "not a url");
-    fireEvent.click(screen.getByTestId("message-card-docs-toggle"));
-    expect(isOpen("docs")).toBe(false);
-    openCard("correlation");
-    type(box("message-correlationId-location"), "bad");
-    expect(isOpen("correlation")).toBe(true);
+    expect(text("message-externalDocs-url-error")).toBeTruthy();
+    openCard("payload");
+    expect(isOpen("payload")).toBe(true);
+    type(field("Payload version"), "");
+    expect(isOpen("payload")).toBe(true);
+    expect(screen.getByTestId("message-card-docs-toggle").textContent).toContain("has problems");
   });
 
-  it("opens a collapsed card by itself when a failed save reports a problem inside it", async () => {
+  it("shows a pane by itself when a failed save reports a problem inside it", async () => {
     const saveDocument = vi.fn<SaveDocument>().mockResolvedValue({
       success: false, error: "1 problem(s) in the event document", code: "VALIDATION_ERROR",
       details: { problems: [{ pointer: "/messages/0/examples/0/payload", message: "payload is not valid" }] },
@@ -715,11 +717,40 @@ describe("MessagesSection: accordion cards", () => {
   });
 });
 
-describe("MessagesSection: Sent on channels card", () => {
-  it("is open by default and counts the channels", async () => {
+describe("MessagesSection: Sent on channels pane", () => {
+  it("lists the channels and counts the ones the message is on", async () => {
     await renderMessages();
-    expect(isOpen("channels")).toBe(true);
+    openCard("channels");
     expect(screen.getByTestId("message-channels-option-orders")).toBeDefined();
+    expect(text("message-card-channels-count")).toBe("1");
+  });
+});
+
+describe("MessagesSection: the sent-on summary", () => {
+  it("names the channels the message is on, and a chip shows the Sent on channels pane", async () => {
+    await renderMessages();
+    expect(text("message-sent-on")).toContain("orders.v1");
+    expect(missing("message-sent-on-choose")).toBe(true);
+    expect(isOpen("channels")).toBe(false);
+    click("message-sent-on-chip-orders");
+    expect(isOpen("channels")).toBe(true);
+  });
+
+  it("says so when the message is on no channel, and offers to choose one", async () => {
+    const doc = docWithReply();
+    doc.channels[1].messageKeys = [];
+    await renderMessages({ doc, item: "RefundIssued" });
+    expect(text("message-sent-on")).toContain("Not sent on any channel");
+    click("message-sent-on-choose");
+    expect(isOpen("channels")).toBe(true);
+  });
+
+  it("follows the message: another message shows its own channels", async () => {
+    await renderMessages({ doc: docWithReply() });
+    expect(text("message-sent-on")).toContain("orders.v1");
+    click("message-row-RefundIssued");
+    expect(text("message-sent-on")).toContain("refunds.v1");
+    expect(text("message-sent-on")).not.toContain("orders.v1");
   });
 });
 
@@ -1010,7 +1041,8 @@ describe("MessagesSection: field errors", () => {
     });
     renderBuilder({ saveDocument, section: "messages" });
     await settle();
-    fireEvent.click(screen.getByTestId("message-card-properties-toggle"));
+    openCard("properties");
+    openCard("payload");
     expect(isOpen("properties")).toBe(false);
     type(field("Title"), "Changed");
     await act(async () => { click("builder-save"); });

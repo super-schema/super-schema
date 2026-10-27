@@ -1,15 +1,16 @@
 "use client";
 
 // src/features/events/builder/sections/MessagesSection.tsx
-// Messages: a list on the left and, on the right, the message as accordion cards so the form is not one long wall of fields:
-//   open:       Payload (entity + version, payload representation, headers, message key) · Message properties (Trait) · Details (name, title,
-//               summary, description, content type) · Sent on channels
-//   collapsed:  Examples · Bindings · Docs & tags · Correlation id · More
-// Every card with something in it shows how many fields are set; the open / closed choice is kept while switching from one message to another,
-// and a card that holds a problem opens by itself. The key is generated: a placeholder until the user leaves the form, then named from the
-// name or title; the "Identifier" below the cards is the only place it shows. Every edit goes through `draft.update(fn)`.
+// Messages: a tab strip of the messages (`ItemTabs`) and, under it, the message as a rail of panes (`PaneRail`) so the form is not one long
+// wall of fields and the pane being worked on gets the whole height:
+//   Payload (entity + version, payload representation, headers, message key) · Message properties (Trait) · Details (name, title,
+//   summary, description, content type) · Sent on channels · Examples · Bindings · Docs & tags · Correlation id · More
+// Above the rail one line says which channels the message is sent on. Every pane with something in it shows how many fields are set; the
+// pane that shows is kept while switching from one message to another, and a pane that holds a problem shows by itself. The key is
+// generated: a placeholder until the user leaves the form, then named from the name or title; the "Identifier" below the rail is the
+// only place it shows. Every edit goes through `draft.update(fn)`.
 // Under the list sits the card of EXTERNAL messages (messages another published event defines and this one uses): `ExternalRefsCard`.
-import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { JsonObject, PayloadFormat } from "@/lib/event-specs/types";
@@ -32,10 +33,10 @@ import {
 } from "./graph-parts";
 import { bindingCount, cardsWithProblems, cardTemplate, mergeValue, pickValue, setFieldCount } from "./form-cards";
 import { ExternalRefsCard } from "./ExternalRefsCard";
-import { FormCard, useCardState, type CardState } from "./FormCard";
 import { MessagePropertiesCard } from "./MessagePropertiesCard";
 import { ItemTabs } from "./ItemTabs";
 import { OptionalPin } from "./OptionalPin";
+import { PaneRail, usePaneState, type PaneDef, type PaneState } from "./PaneRail";
 import { representationNote } from "./representation-note";
 import { RepresentationSelect } from "./RepresentationSelect";
 import { SectionHeading } from "./SectionHeading";
@@ -60,7 +61,7 @@ const DOCS_KEYS = ["tags", "externalDocs"] as const;
 const CORRELATION_KEYS = ["correlationId"] as const;
 const MORE_KEYS = ["deprecated"] as const;
 
-/** Which part of the message each card draws, for opening the card that holds a problem. */
+/** Which part of the message each pane draws, for showing the pane that holds a problem. */
 const CARD_POINTERS: Record<string, readonly string[]> = {
   payload: ["payload", "representation", "headers", "keyPin"],
   properties: ["traitKeys"],
@@ -72,10 +73,9 @@ const CARD_POINTERS: Record<string, readonly string[]> = {
   more: MORE_KEYS,
 };
 
-/** Open on first sight; the rest start closed. */
-const CARD_DEFAULTS: Record<string, boolean> = {
-  payload: true, properties: true, details: true, channels: true, examples: false, bindings: false, docs: false, correlation: false, more: false,
-};
+/** The pane that shows on first sight, and the panes built up front (the others are built the first time they show). */
+const DEFAULT_PANE = "payload";
+const KEEP_MOUNTED = ["payload", "properties", "details", "channels"] as const;
 
 function toFormValue(m: DocMessage): Record<string, unknown> {
   const source = m as unknown as Record<string, unknown>;
@@ -128,9 +128,9 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
   const selected = selectedItem === null ? -1 : messages.findIndex((m) => m.key === selectedItem);
   const activeIndex = selected >= 0 ? selected : messages.length > 0 ? 0 : -1;
   const active = activeIndex >= 0 ? messages[activeIndex] : null;
-  // Which cards are open lives here, not in the form: the form is rebuilt for every message, the choice must survive.
+  // Which pane shows lives here, not in the form: the form is rebuilt for every message, the choice must survive.
   const errored = useMemo(() => cardsWithProblems(problems, `/messages/${activeIndex}`, CARD_POINTERS), [problems, activeIndex]);
-  const cards = useCardState(CARD_DEFAULTS, errored);
+  const pane = usePaneState(DEFAULT_PANE, errored);
 
   function addMessage() {
     // A placeholder key, named from the name or title once the user leaves the form.
@@ -165,7 +165,7 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
           />
           <MessageForm
             key={activeIndex} draft={draft} options={options} index={activeIndex} message={active} problems={problems} context={context}
-            cards={cards} onSelectItem={onSelectItem} onSectionChange={onSectionChange}
+            pane={pane} errored={errored} onSelectItem={onSelectItem} onSectionChange={onSectionChange}
           />
         </div>
       )}
@@ -175,9 +175,9 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
   );
 }
 
-function MessageForm({ draft, options, index, message, problems, context, cards, onSelectItem, onSectionChange }: {
+function MessageForm({ draft, options, index, message, problems, context, pane, errored, onSelectItem, onSectionChange }: {
   draft: DraftState; options: SectionProps["options"]; index: number; message: DocMessage; problems: DocumentProblem[];
-  context: TemplateFormContext; cards: CardState; onSelectItem: (key: string | null) => void; onSectionChange?: SectionProps["onSectionChange"];
+  context: TemplateFormContext; pane: PaneState; errored: ReadonlySet<string>; onSelectItem: (key: string | null) => void; onSectionChange?: SectionProps["onSectionChange"];
 }) {
   const { doc, update } = draft;
   const [blocked, setBlocked] = useState<string | null>(null);
@@ -187,7 +187,7 @@ function MessageForm({ draft, options, index, message, problems, context, cards,
   const note = useMemo(() => representationNote(doc, message.key, options.entityOptions), [doc, message.key, options.entityOptions]);
   // The examples are checked against the schema of the message's own payload / headers entity. The schemas are rendered by the server
   // (the TypeSpec compiler), so they are asked for only while an example is on screen. A pin without a schema is `null`.
-  const examplesShown = cards.isOpen("examples") && (message.examples?.length ?? 0) > 0;
+  const examplesShown = pane.active === "examples" && (message.examples?.length ?? 0) > 0;
   const payloadSchema = usePinJsonSchemaState(draft.productId, message.payload, examplesShown);
   const headersSchema = usePinJsonSchemaState(draft.productId, message.headers, examplesShown);
   const exampleContext = useMemo<TemplateFormContext>(
@@ -277,11 +277,12 @@ function MessageForm({ draft, options, index, message, problems, context, cards,
     onSelectItem(null);
   }
 
-  const sentOn = doc.channels.filter((c) => c.messageKeys.includes(message.key)).map((c) => c.key);
-  const carrier = doc.channels.find((c) => c.messageKeys.includes(message.key));
+  const sentOnChannels = doc.channels.filter((c) => c.messageKeys.includes(message.key));
+  const sentOn = sentOnChannels.map((c) => c.key);
+  const carrier = sentOnChannels[0];
   const formValue = toFormValue(message);
 
-  /** A template form for the fields of one card: it sees only its own keys and its edits are merged back into the message. */
+  /** A template form for the fields of one pane: it sees only its own keys and its edits are merged back into the message. */
   const cardForm = (keys: readonly string[], formContext: TemplateFormContext = context) => (
     <TemplateForm
       template={cardTemplate(template, keys)} value={pickValue(formValue, keys)} idPrefix="message" errors={problems} errorPrefix={prefix}
@@ -289,84 +290,109 @@ function MessageForm({ draft, options, index, message, problems, context, cards,
       onChange={(next) => patch((m) => applyFormValue(m, mergeValue(toFormValue(m), keys, next)))}
     />
   );
-  const card = (id: string, title: string, count: number | undefined, body: ReactNode) => (
-    <FormCard testId={`message-card-${id}`} title={title} count={count} open={cards.isOpen(id)} onOpenChange={(open) => cards.setOpen(id, open)}>
-      {body}
-    </FormCard>
+
+  const payloadBody = (
+    <>
+      <div data-testid="payload-row" className="flex flex-wrap items-start gap-x-space-4 gap-y-space-3">
+        <div className="min-w-0 flex-1 basis-64">
+          <PinField
+            id="payload" label="Payload" entities={options.entityOptions} error={errorAt("/payload")}
+            hint="Required. The entity this message carries."
+            value={message.payload.entityId ? message.payload : null}
+            onChange={(pin) => patch((m) => ({ ...m, payload: pin ?? NO_PAYLOAD }))}
+          />
+        </div>
+        <div className="min-w-0 flex-1 basis-48">
+          <RepresentationSelect
+            id="message-representation" value={message.representation ?? ""} note={note} error={errorAt("/representation")}
+            onChange={setRepresentation}
+          />
+        </div>
+      </div>
+      <OptionalPin id="headers" addLabel="Add headers" value={message.headers ?? null} error={errorAt("/headers")}>
+        <PinField
+          id="headers" label="Headers" optional entities={options.entityOptions} error={errorAt("/headers")}
+          value={message.headers ?? null} onChange={(pin) => setOptionalPin("headers", pin)}
+        />
+      </OptionalPin>
+      <OptionalPin id="key-pin" addLabel="Add message key" value={message.keyPin ?? null} error={errorAt("/keyPin")}>
+        <PinField
+          id="key-pin" label="Message key" optional entities={options.entityOptions} error={errorAt("/keyPin")}
+          hint="Optional. The entity describing the record key, for example a Kafka key."
+          value={message.keyPin ?? null} onChange={(pin) => setOptionalPin("keyPin", pin)}
+        />
+      </OptionalPin>
+    </>
   );
 
+  const channelsBody = (
+    <>
+      <CheckboxGroup
+        id="message-channels" label="Sent on channels" checked={sentOn} onToggle={toggleChannel}
+        options={doc.channels.map((c) => ({ value: c.key, label: channelLabel(c) }))}
+        empty="No channels yet. Add a channel first, then choose it here."
+        hint="Operations can only use a message on the channels that allow it."
+      />
+      {blocked && <Notice id="message-channels-blocked">{blocked}</Notice>}
+    </>
+  );
+
+  const panes: PaneDef[] = [
+    { id: "payload", title: "Payload", body: payloadBody },
+    {
+      id: "properties", title: messagePropertiesTitle(), count: message.traitKeys.length,
+      body: (
+        <MessagePropertiesCard
+          draft={draft} options={options} message={message} index={index} problems={problems}
+          onSectionChange={onSectionChange} onSelectItem={onSelectItem}
+        />
+      ),
+    },
+    { id: "details", title: "Details", count: setFieldCount(template, DETAILS_KEYS, formValue), body: cardForm(DETAILS_KEYS) },
+    { id: "channels", title: "Sent on channels", count: sentOn.length, body: channelsBody },
+    { id: "examples", title: "Examples", count: message.examples?.length ?? 0, body: cardForm(EXAMPLES_KEYS, exampleContext) },
+    {
+      id: "bindings", title: "Bindings", count: bindingCount(message.bindings),
+      body: (
+        <BindingsForm
+          target="message" suggestedProtocol={carrier?.protocol} value={message.bindings ?? {}} idPrefix="message-bindings"
+          errors={problems} errorPrefix={`${prefix}/bindings`} onChange={setBindings}
+        />
+      ),
+    },
+    { id: "docs", title: "Docs & tags", count: (message.tags?.length ?? 0) + (message.externalDocs ? 1 : 0), body: cardForm(DOCS_KEYS) },
+    { id: "correlation", title: "Correlation id", count: message.correlationId ? 1 : 0, body: cardForm(CORRELATION_KEYS) },
+    { id: "more", title: "More", count: setFieldCount(template, MORE_KEYS, formValue), body: cardForm(MORE_KEYS) },
+  ].map((p) => ({ ...p, broken: errored.has(p.id) }));
+
   return (
-    <div className="max-w-2xl space-y-space-4" data-testid="message-form">
-      <div onBlur={(e) => { if (leftForm(e)) nameKeyFromContent(); }} className="space-y-space-3">
-        {card("payload", "Payload", undefined, (
+    <div className="max-w-4xl space-y-space-4" data-testid="message-form">
+      <div data-testid="message-sent-on" className="flex flex-wrap items-center gap-space-2 text-body-small">
+        {sentOnChannels.length > 0 ? (
           <>
-            <div data-testid="payload-row" className="flex flex-wrap items-start gap-x-space-4 gap-y-space-3">
-              <div className="min-w-0 flex-1 basis-64">
-                <PinField
-                  id="payload" label="Payload" entities={options.entityOptions} error={errorAt("/payload")}
-                  hint="Required. The entity this message carries."
-                  value={message.payload.entityId ? message.payload : null}
-                  onChange={(pin) => patch((m) => ({ ...m, payload: pin ?? NO_PAYLOAD }))}
-                />
-              </div>
-              <div className="min-w-0 flex-1 basis-48">
-                <RepresentationSelect
-                  id="message-representation" value={message.representation ?? ""} note={note} error={errorAt("/representation")}
-                  onChange={setRepresentation}
-                />
-              </div>
-            </div>
-            <OptionalPin id="headers" addLabel="Add headers" value={message.headers ?? null} error={errorAt("/headers")}>
-              <PinField
-                id="headers" label="Headers" optional entities={options.entityOptions} error={errorAt("/headers")}
-                value={message.headers ?? null} onChange={(pin) => setOptionalPin("headers", pin)}
-              />
-            </OptionalPin>
-            <OptionalPin id="key-pin" addLabel="Add message key" value={message.keyPin ?? null} error={errorAt("/keyPin")}>
-              <PinField
-                id="key-pin" label="Message key" optional entities={options.entityOptions} error={errorAt("/keyPin")}
-                hint="Optional. The entity describing the record key, for example a Kafka key."
-                value={message.keyPin ?? null} onChange={(pin) => setOptionalPin("keyPin", pin)}
-              />
-            </OptionalPin>
+            <span className="text-muted-foreground">Sent on</span>
+            {sentOnChannels.map((c) => (
+              <button
+                key={c.key} type="button" data-testid={`message-sent-on-chip-${c.key}`} onClick={() => pane.select("channels")}
+                title="Change the channels this message is sent on"
+                className="rounded-full border border-border bg-muted/40 px-space-2 py-0.5 text-caption text-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                {channelLabel(c)}
+              </button>
+            ))}
           </>
-        ))}
-
-        {card("properties", messagePropertiesTitle(), message.traitKeys.length, (
-          <MessagePropertiesCard
-            draft={draft} options={options} message={message} index={index} problems={problems}
-            onSectionChange={onSectionChange} onSelectItem={onSelectItem}
-          />
-        ))}
-
-        {card("details", "Details", setFieldCount(template, DETAILS_KEYS, formValue), cardForm(DETAILS_KEYS))}
-
-        {card("channels", "Sent on channels", sentOn.length, (
+        ) : (
           <>
-            <CheckboxGroup
-              id="message-channels" label="Sent on channels" checked={sentOn} onToggle={toggleChannel}
-              options={doc.channels.map((c) => ({ value: c.key, label: channelLabel(c) }))}
-              empty="No channels yet. Add a channel first, then choose it here."
-              hint="Operations can only use a message on the channels that allow it."
-            />
-            {blocked && <Notice id="message-channels-blocked">{blocked}</Notice>}
+            <span className="text-muted-foreground">Not sent on any channel</span>
+            <Button type="button" variant="link" size="sm" data-testid="message-sent-on-choose" onClick={() => pane.select("channels")} className="h-auto p-0">
+              Choose channels
+            </Button>
           </>
-        ))}
+        )}
+      </div>
 
-        {card("examples", "Examples", message.examples?.length ?? 0, cardForm(EXAMPLES_KEYS, exampleContext))}
-
-        {card("bindings", "Bindings", bindingCount(message.bindings), (
-          <BindingsForm
-            target="message" suggestedProtocol={carrier?.protocol} value={message.bindings ?? {}} idPrefix="message-bindings"
-            errors={problems} errorPrefix={`${prefix}/bindings`} onChange={setBindings}
-          />
-        ))}
-
-        {card("docs", "Docs & tags", (message.tags?.length ?? 0) + (message.externalDocs ? 1 : 0), cardForm(DOCS_KEYS))}
-
-        {card("correlation", "Correlation id", message.correlationId ? 1 : 0, cardForm(CORRELATION_KEYS))}
-
-        {card("more", "More", setFieldCount(template, MORE_KEYS, formValue), cardForm(MORE_KEYS))}
+      <div onBlur={(e) => { if (leftForm(e)) nameKeyFromContent(); }}>
+        <PaneRail idPrefix="message-card" label="Message parts" panes={panes} active={pane.active} onSelect={pane.select} keepMounted={KEEP_MOUNTED} />
       </div>
 
       <IdentifierDisclosure
