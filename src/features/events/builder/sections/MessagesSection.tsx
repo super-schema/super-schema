@@ -36,6 +36,7 @@ import { ExternalRefsCard } from "./ExternalRefsCard";
 import { MessagePropertiesCard } from "./MessagePropertiesCard";
 import { ItemTabs } from "./ItemTabs";
 import { OptionalPin } from "./OptionalPin";
+import { PayloadPreview } from "./PayloadPreview";
 import { PaneRail, usePaneState, type PaneDef, type PaneState } from "./PaneRail";
 import { representationNote } from "./representation-note";
 import { RepresentationSelect } from "./RepresentationSelect";
@@ -277,6 +278,7 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
     onSelectItem(null);
   }
 
+  const entityOf = (pin: EntityPin) => options.entityOptions.find((e) => e.id === pin.entityId);
   const sentOnChannels = doc.channels.filter((c) => c.messageKeys.includes(message.key));
   const sentOn = sentOnChannels.map((c) => c.key);
   const carrier = sentOnChannels[0];
@@ -309,6 +311,10 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
           />
         </div>
       </div>
+      <PayloadPreview
+        productId={draft.productId} pin={message.payload.entityId ? message.payload : null}
+        entity={entityOf(message.payload)} enabled={pane.active === "payload"}
+      />
       <OptionalPin id="headers" addLabel="Add headers" value={message.headers ?? null} error={errorAt("/headers")}>
         <PinField
           id="headers" label="Headers" optional entities={options.entityOptions} error={errorAt("/headers")}

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SECTION_COMPONENTS } from "@/features/events/builder/EventBuilder";
 import { MessagesSection } from "@/features/events/builder/sections/MessagesSection";
 import type { SaveDocument } from "@/features/events/builder/use-event-draft";
+import { resetPinSchemaCache } from "@/features/events/builder/use-pin-json-schema";
 import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { emptyEventDocument, type EventDocument } from "@/lib/events/document/types";
@@ -12,17 +13,20 @@ import { maximalDocument } from "../../lib/events/document/fixtures/maximal-docu
 import { ENTITY_OPTIONS, PIN, renderBuilder, renderSection, sampleDocument } from "./builder-harness";
 
 // The picker's default version loader is a server action: keep it out of the test process.
-const h = vi.hoisted(() => ({ listPinnableVersionsAction: vi.fn() }));
+const h = vi.hoisted(() => ({ listPinnableVersionsAction: vi.fn(), pinJsonSchemaAction: vi.fn() }));
 vi.mock("@/features/events/pin-actions", () => ({ listPinnableVersionsAction: h.listPinnableVersionsAction }));
-// So are the actions the external-reference card uses.
+// So are the actions the external-reference card uses, and the one that renders an entity's schema (the payload preview asks for it).
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({
   getExternalRefStatusesAction: () => Promise.resolve({ success: false, error: "unavailable" }),
   getExternalVersionItemsAction: () => Promise.resolve({ success: false, error: "unavailable" }),
+  pinJsonSchemaAction: h.pinJsonSchemaAction,
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetPinSchemaCache();
   h.listPinnableVersionsAction.mockResolvedValue({ success: true, data: [{ id: "ver-1", label: "1.0" }, { id: "ver-0", label: "0.9" }] });
+  h.pinJsonSchemaAction.mockResolvedValue({ success: false, error: "unavailable", code: "UNAVAILABLE" });
 });
 afterEach(() => {
   cleanup();
@@ -280,6 +284,47 @@ describe("MessagesSection: payload, headers and key pins", () => {
     expect(text("payload-error")).toBe('"ver-9" is not a published version of OrderCreated');
     expect(field("Title").value).toBe("Changed");
     expect(probe.draft.dirty).toBe(true);
+  });
+});
+
+describe("MessagesSection: payload preview", () => {
+  const ORDER_SCHEMA = { type: "object", properties: { orderId: { type: "string" }, quantity: { type: "integer" } }, required: ["orderId"] };
+
+  it("shows the fields of the chosen payload entity under the picker, with a link to the entity", async () => {
+    h.pinJsonSchemaAction.mockResolvedValue({ success: true, data: { schema: ORDER_SCHEMA } });
+    await renderMessages();
+    await screen.findByTestId("payload-preview-required-orderId");
+    const preview = screen.getByTestId("payload-preview");
+    expect(within(preview).getByText("quantity")).toBeDefined();
+    expect(within(preview).getByRole("link", { name: /open entity/i }).getAttribute("href")).toBe("/schemas/payments/checkout/ordercreated");
+    expect(h.pinJsonSchemaAction).toHaveBeenCalledWith("p1", PIN);
+  });
+
+  it("follows the entity: choosing another payload shows that entity's fields", async () => {
+    h.pinJsonSchemaAction.mockImplementation((_product: string, pin: { entityId: string }) =>
+      Promise.resolve({ success: true, data: { schema: { properties: pin.entityId === "ent-1" ? { orderId: { type: "string" } } : { reason: { type: "string" } } } } }));
+    await renderMessages();
+    await screen.findByText("orderId");
+    type(field("Payload entity"), "ent-2");
+    await screen.findByText("reason");
+    expect(screen.queryByText("orderId")).toBeNull();
+  });
+
+  it("asks for the schema only once the Payload pane shows", async () => {
+    const doc = sampleDocument();
+    doc.messages[0] = { ...doc.messages[0], externalDocs: { url: "not a url" } };
+    await renderMessages({ doc });
+    expect(isOpen("docs")).toBe(true);
+    expect(h.pinJsonSchemaAction).not.toHaveBeenCalled();
+    openCard("payload");
+    await act(async () => {});
+    expect(h.pinJsonSchemaAction).toHaveBeenCalledWith("p1", PIN);
+  });
+
+  it("shows no preview for a message that has no payload entity yet", async () => {
+    await renderMessages();
+    click("message-add");
+    expect(missing("payload-preview")).toBe(true);
   });
 });
 
