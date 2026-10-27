@@ -2,21 +2,19 @@
 
 // src/features/events/builder/sections/PayloadPreview.tsx
 // Under the payload picker: the fields of the entity the message carries (name, type, a mark on the required ones) and a link to the
-// entity, so choosing a payload is not choosing a name blind. The fields come from the entity's JSON Schema, which the server renders with
-// the TypeSpec compiler (seconds): it is asked for only while `enabled` (the Payload pane is showing), and a published version's schema is
-// kept for the page session (`usePinJsonSchemaState`). No schema, or a schema without fields, says so in one line.
+// entity, so choosing a payload is not choosing a name blind. Presentational: the schema (rendered by the server with the TypeSpec compiler,
+// which takes seconds) is asked for by the message form, which shares one request between this preview and the Examples pane. No schema, or
+// a schema without fields, says so in one line.
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
-import type { EntityPin } from "@/lib/events/types";
-import { usePinJsonSchemaState } from "../use-pin-json-schema";
 import { summarizeSchemaFields } from "./schema-fields";
 
-export function PayloadPreview({ productId, pin, entity, enabled }: {
-  productId: string; pin: EntityPin | null; entity: EntityOption | undefined; enabled: boolean;
+/** `schema` is null while loading, when it could not be loaded, and when the message has no payload entity (`hasPayload` false: nothing shows). */
+export function PayloadPreview({ schema, loading, entity, hasPayload }: {
+  schema: Record<string, unknown> | null; loading: boolean; entity: EntityOption | undefined; hasPayload: boolean;
 }) {
-  const { schema, loading } = usePinJsonSchemaState(productId, pin, enabled);
-  if (!enabled || !pin?.entityId) return null;
+  if (!hasPayload) return null;
   const { rows, more } = summarizeSchemaFields(schema);
   return (
     <div data-testid="payload-preview" className="space-y-space-2 rounded-lg border border-border bg-muted/30 p-space-3">

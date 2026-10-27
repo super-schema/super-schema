@@ -174,15 +174,31 @@ describe("an example payload against the schema of the message's payload entity"
     expect(h.pinJsonSchemaAction.mock.calls.map(([, pin]) => (pin as EntityPin).entityId).sort()).toEqual(["ent-1", "ent-2"]);
   });
 
-  it("asks nothing while the Examples card is closed or the message has no example (rendering a schema runs the TypeSpec compiler)", async () => {
-    const closed = await renderMessages(documentWith([{ payload: { orderId: 5 } }]), false);
+  it("asks nothing while neither the Payload pane nor the Examples pane shows (rendering a schema runs the TypeSpec compiler)", async () => {
+    // A problem in the Docs pane makes it the one that shows from the start.
+    const withProblem = (doc: EventDocument) => {
+      doc.messages[0] = { ...doc.messages[0], externalDocs: { url: "not a url" } };
+      return doc;
+    };
+    const closed = await renderMessages(withProblem(documentWith([{ payload: { orderId: 5 } }])), false);
+    expect(screen.getByTestId("message-card-docs-toggle").getAttribute("aria-selected")).toBe("true");
     await act(async () => { await sleep(100); });
     expect(h.pinJsonSchemaAction).not.toHaveBeenCalled();
     closed.unmount();
 
-    await renderMessages(documentWith(undefined));
+    await renderMessages(withProblem(documentWith(undefined)), false);
     await act(async () => { await sleep(100); });
     expect(h.pinJsonSchemaAction).not.toHaveBeenCalled();
+  });
+
+  it("asks once for a schema that the Payload pane and the Examples pane both need", async () => {
+    serve({ "ent-1": ok(ORDER) });
+    await renderMessages(documentWith([{ payload: { orderId: 5 } }]));
+    await editorOf("payload");
+    fireEvent.click(screen.getByTestId("message-card-payload-toggle"));
+    fireEvent.click(screen.getByTestId("message-card-examples-toggle"));
+    await act(async () => { await sleep(100); });
+    expect(h.pinJsonSchemaAction.mock.calls.filter(([, pin]) => (pin as EntityPin).entityId === "ent-1")).toHaveLength(1);
   });
 
   it("asks nothing for a message that has no payload entity yet", async () => {

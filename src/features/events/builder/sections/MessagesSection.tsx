@@ -188,8 +188,10 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
   const note = useMemo(() => representationNote(doc, message.key, options.entityOptions), [doc, message.key, options.entityOptions]);
   // The examples are checked against the schema of the message's own payload / headers entity. The schemas are rendered by the server
   // (the TypeSpec compiler), so they are asked for only while an example is on screen. A pin without a schema is `null`.
+  // The payload's schema is also what the Payload pane previews: one request serves both panes.
   const examplesShown = pane.active === "examples" && (message.examples?.length ?? 0) > 0;
-  const payloadSchema = usePinJsonSchemaState(draft.productId, message.payload, examplesShown);
+  const previewShown = pane.active === "payload";
+  const payloadSchema = usePinJsonSchemaState(draft.productId, message.payload, examplesShown || previewShown);
   const headersSchema = usePinJsonSchemaState(draft.productId, message.headers, examplesShown);
   const exampleContext = useMemo<TemplateFormContext>(
     () => ({
@@ -312,8 +314,7 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
         </div>
       </div>
       <PayloadPreview
-        productId={draft.productId} pin={message.payload.entityId ? message.payload : null}
-        entity={entityOf(message.payload)} enabled={pane.active === "payload"}
+        schema={payloadSchema.schema} loading={payloadSchema.loading} entity={entityOf(message.payload)} hasPayload={message.payload.entityId !== ""}
       />
       <OptionalPin id="headers" addLabel="Add headers" value={message.headers ?? null} error={errorAt("/headers")}>
         <PinField
