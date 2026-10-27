@@ -52,6 +52,7 @@ const ID = {
   messageKey: "message-key",
   messageKeyValue: "message-key-value",
   messageTitle: "message-title",
+  messagePane: (pane: "payload" | "details" | "channels") => `message-card-${pane}-toggle`,
   messageChannelOption: (channelKey: string) => `message-channels-option-${channelKey}`,
   payloadPicker: "payload-picker", // EntityPinPicker's own `${id}-picker` fieldset (id="payload")
   operationKey: "operation-key",
@@ -150,9 +151,13 @@ async function addMessage(page: Page, title: string, payloadEntityName: string, 
   const main = centerPanel(page);
   await main.getByTestId(ID.outline("messages")).click();
   await main.getByRole("button", { name: "Add message" }).click();
+  // The message form is a rail of panes, one showing: a new message starts on Payload; the title is under Details, the channels under Sent on channels.
+  await main.getByTestId(ID.messagePane("details")).click();
   const titleInput = main.getByTestId(ID.messageTitle);
   await titleInput.fill(title);
+  await main.getByTestId(ID.messagePane("payload")).click();
   await main.getByTestId(ID.payloadPicker).getByLabel("Payload entity").selectOption({ label: payloadEntityName });
+  await main.getByTestId(ID.messagePane("channels")).click();
   await main.getByTestId(ID.messageChannelOption(channelKey)).check();
   await leaveForm(page);
   return readKey(main, ID.messageKeyValue, "message");

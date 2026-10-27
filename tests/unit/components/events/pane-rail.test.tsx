@@ -149,6 +149,13 @@ describe("PaneRail", () => {
     expect(tab("payload").getAttribute("aria-selected")).toBe("true");
   });
 
+  it("lets a long title wrap inside the rail instead of running into the pane, and keeps it on one line in the pills", () => {
+    render(<Rail />);
+    const title = screen.getByText("Details");
+    expect(title.className).toContain("whitespace-nowrap");
+    expect(title.className).toContain("@xl:whitespace-normal");
+  });
+
   it("lays out as pills below a container width and as a rail above it", () => {
     render(<Rail />);
     const wrapper = screen.getByTestId("x-card-rail");

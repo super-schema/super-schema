@@ -46,6 +46,7 @@ const ID = {
   channelServerOption: (serverKey: string) => `channel-servers-option-${serverKey}`,
   channelMessageOption: (key: string) => `channel-messages-option-${key}`,
   messageTitle: "message-title",
+  messagePane: (pane: "payload" | "details" | "channels") => `message-card-${pane}-toggle`,
   messageKeyValue: "message-key-value",
   messageChannelOption: (channelKey: string) => `message-channels-option-${channelKey}`,
   payloadPicker: "payload-picker",
@@ -154,8 +155,12 @@ async function addMessage(page: Page, title: string, payloadEntityName: string, 
   const main = centerPanel(page);
   await main.getByTestId(ID.outline("messages")).click();
   await main.getByRole("button", { name: "Add message" }).click();
+  // The message form is a rail of panes, one showing: a new message starts on Payload; the title is under Details, the channels under Sent on channels.
+  await main.getByTestId(ID.messagePane("details")).click();
   await main.getByTestId(ID.messageTitle).fill(title);
+  await main.getByTestId(ID.messagePane("payload")).click();
   await main.getByTestId(ID.payloadPicker).getByLabel("Payload entity").selectOption({ label: payloadEntityName });
+  await main.getByTestId(ID.messagePane("channels")).click();
   await main.getByTestId(ID.messageChannelOption(channelKey)).check();
   await leaveForm(page);
   return readKey(main, ID.messageKeyValue, "message");
@@ -340,6 +345,7 @@ test.describe("external event references end to end", () => {
     await test.step("A: edit the message title, Save, publish as a major (the user raises the bump)", async () => {
       await page.goto(`${productUrlA(f)}/events/${flow.sourceId}`);
       await main.getByTestId(ID.outline("messages")).click();
+      await main.getByTestId(ID.messagePane("details")).click();
       await main.getByTestId(ID.messageTitle).fill(`${flow.sourceMessageTitle} (revised)`);
       await saveDraft(page);
       await publishEvent(page, { major: true });

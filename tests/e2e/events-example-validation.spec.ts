@@ -24,6 +24,8 @@ import { centerPanel, createEventFromMenu, productUrlOf } from "./helpers/event-
 const ID = {
   outlineMessages: "outline-messages",
   messageTitle: "message-title",
+  detailsPane: "message-card-details-toggle",
+  payloadPane: "message-card-payload-toggle",
   payloadPicker: "payload-picker", // EntityPinPicker's own `${id}-picker` fieldset (id="payload")
   examplesToggle: "message-card-examples-toggle",
   addExample: "message-examples-add",
@@ -118,7 +120,10 @@ test.describe("message examples against their payload schema", () => {
       await createEventFromMenu(page, productUrlOf(f), unique("example-events-"));
       await main.getByTestId(ID.outlineMessages).click();
       await main.getByRole("button", { name: "Add message" }).click();
+      // The message form is a rail of panes, one showing: the title is under Details, the payload picker on Payload.
+      await main.getByTestId(ID.detailsPane).click();
       await main.getByTestId(ID.messageTitle).fill("Order created");
+      await main.getByTestId(ID.payloadPane).click();
       await main.getByTestId(ID.payloadPicker).getByLabel("Payload entity").selectOption({ label: entity.name });
     });
 

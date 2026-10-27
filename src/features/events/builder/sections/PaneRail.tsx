@@ -86,7 +86,7 @@ export function PaneRail({ idPrefix, panes, active, onSelect, keepMounted = [], 
                   isActive ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                 )}
               >
-                <span className="whitespace-nowrap">{pane.title}</span>
+                <span className="whitespace-nowrap @xl:whitespace-normal">{pane.title}</span>
                 {pane.count !== undefined && pane.count > 0 && (
                   <Badge variant="secondary">
                     <span aria-hidden="true" data-testid={`${idPrefix}-${pane.id}-count`}>{pane.count}</span>
