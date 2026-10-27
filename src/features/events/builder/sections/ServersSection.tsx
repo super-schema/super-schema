@@ -4,7 +4,7 @@
 // Servers: a list on the left, and on the right the AsyncAPI server object as a template form (host and protocol first, then
 // everything else the spec defines under "More properties") plus protocol bindings. The key is generated: it starts as a placeholder
 // and is named from the title or host once the user leaves the form; the "Identifier" below the form is the only place it shows.
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { JsonObject } from "@/lib/event-specs/types";
@@ -17,6 +17,7 @@ import { IdentifierDisclosure } from "../Identifier";
 import { problemMessage, problemsByField, uniqueProblems } from "../problems";
 import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm } from "../template";
+import { useFocusOnAdd } from "./focus-on-add";
 import { ItemTabs } from "./ItemTabs";
 import { SectionHeading } from "./SectionHeading";
 
@@ -66,10 +67,14 @@ export function ServersSection({ draft, options, selectedItem, onSelectItem }: S
     update((d) => ({ ...d, servers: d.servers.map((s, i) => (i === activeIndex ? change(s) : s)) }));
   }
 
+  // The server just added starts with the cursor in its host field; moving to another server ends that.
+  const [addedKey, setAddedKey] = useState<string | null>(null);
+  useFocusOnAdd(addedKey, active?.key ?? null, "server-host");
   function addServer() {
     // A blank server, like before: the protocol has a default, the host is the user's to fill. Saving is never blocked by it.
     const key = newKey(doc, "server");
     update((d) => ({ ...d, servers: [...d.servers, { key, protocol: DEFAULT_PROTOCOL, host: "" }] }));
+    setAddedKey(key);
     onSelectItem(key);
   }
 
@@ -135,7 +140,7 @@ export function ServersSection({ draft, options, selectedItem, onSelectItem }: S
       ) : (
         <div className="space-y-space-4">
           <ItemTabs
-            label="Servers" prefix="server" activeIndex={activeIndex} onSelect={onSelectItem}
+            label="Servers" prefix="server" activeIndex={activeIndex} onSelect={(key) => { setAddedKey(null); onSelectItem(key); }}
             onAdd={addServer} addLabel="Add server" addTestId="server-add"
             items={servers.map((s, i) => ({ key: s.key, label: listLabel(s), subtitle: s.protocol, broken: problemsByField(problems, `/servers/${i}`).length > 0 }))}
           />

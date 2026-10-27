@@ -230,7 +230,7 @@ function EventPageBody({ data }: { data: EventPageData }) {
   }
 
   return (
-    <div data-testid="event-page" className="animate-auth-fade-up space-y-space-6">
+    <div data-testid="event-page" className="animate-auth-fade-up space-y-space-4">
       <EventBreadcrumb crumbs={crumbs} />
 
       <div className="flex flex-wrap items-start justify-between gap-space-3">
@@ -307,7 +307,7 @@ function EventPageBody({ data }: { data: EventPageData }) {
 
       {/* Every panel exists so every tab's aria-controls resolves. Design is never unmounted (unsaved edits live in its draft); the other tabs' content is. */}
       <div role="tabpanel" id={panelDomId("design")} aria-labelledby={tabDomId("design")} data-testid="event-panel-design" hidden={tab !== "design"}>
-        <EventBuilder draft={draft} options={builderOptions} section={section} onSectionChange={setSection} item={item} onItemChange={setItem} />
+        <EventBuilder draft={draft} options={builderOptions} section={section} onSectionChange={setSection} item={item} onItemChange={setItem} active={tab === "design"} />
       </div>
       <div role="tabpanel" id={panelDomId("docs")} aria-labelledby={tabDomId("docs")} data-testid="event-panel-docs" hidden={tab !== "docs"}>
         {tab === "docs" && (

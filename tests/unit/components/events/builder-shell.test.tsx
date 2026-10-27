@@ -26,6 +26,7 @@ const button = (testId: string) => screen.getByTestId(testId) as HTMLButtonEleme
 const box = (testId: string) => screen.getByTestId(testId) as HTMLInputElement;
 const field = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
 const status = () => screen.getByTestId("builder-status").textContent;
+const text = (testId: string) => screen.getByTestId(testId).textContent;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -183,6 +184,99 @@ describe("EventBuilder: layout", () => {
   it("makes the content column a size container, so sections lay out by the pane's width and not the viewport's", () => {
     renderBuilder({ section: "messages" });
     expect(screen.getByTestId("builder-content").className).toContain("@container");
+  });
+});
+
+describe("EventBuilder: Mod+S", () => {
+  const press = (init: KeyboardEventInit) => fireEvent.keyDown(document, { key: "s", ...init });
+
+  it("saves a dirty draft with Cmd+S and Ctrl+S, and takes the key from the browser", async () => {
+    const { probe } = renderBuilder();
+    type(field("Title"), "Changed");
+    let notPrevented = true;
+    await act(async () => { notPrevented = press({ metaKey: true }); });
+    expect(notPrevented).toBe(false);
+    expect(probe.saveDocument).toHaveBeenCalledTimes(1);
+    type(field("Title"), "Changed again");
+    await act(async () => { press({ ctrlKey: true }); });
+    expect(probe.saveDocument).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not save a clean draft, and still keeps the browser's save-page dialog away", async () => {
+    const { probe } = renderBuilder();
+    let notPrevented = true;
+    await act(async () => { notPrevented = press({ metaKey: true }); });
+    expect(notPrevented).toBe(false);
+    expect(probe.saveDocument).not.toHaveBeenCalled();
+  });
+
+  it("does not start a second save while one is running", async () => {
+    const pending = deferred<ActionResult<EventDetail>>();
+    const saveDocument = vi.fn<SaveDocument>().mockReturnValue(pending.promise);
+    renderBuilder({ saveDocument });
+    type(field("Title"), "Changed");
+    await act(async () => { press({ metaKey: true }); });
+    await act(async () => { press({ metaKey: true }); });
+    expect(saveDocument).toHaveBeenCalledTimes(1);
+    await act(async () => { pending.resolve({ success: true, data: makeEvent() }); });
+  });
+
+  it("answers nothing while the Design tab is hidden, and leaves the key to the browser", async () => {
+    const { probe } = renderBuilder({ active: false });
+    type(field("Title"), "Changed");
+    let notPrevented = false;
+    await act(async () => { notPrevented = press({ metaKey: true }); });
+    expect(notPrevented).toBe(true);
+    expect(probe.saveDocument).not.toHaveBeenCalled();
+  });
+
+  it("ignores S with Shift or Alt, and other keys with the modifier", async () => {
+    const { probe } = renderBuilder();
+    type(field("Title"), "Changed");
+    await act(async () => {
+      press({ metaKey: true, shiftKey: true });
+      press({ metaKey: true, altKey: true });
+      fireEvent.keyDown(document, { key: "k", metaKey: true });
+      fireEvent.keyDown(document, { key: "s" });
+    });
+    expect(probe.saveDocument).not.toHaveBeenCalled();
+  });
+
+  it("stops listening when the builder goes away", async () => {
+    const { probe, unmount } = renderBuilder();
+    type(field("Title"), "Changed");
+    unmount();
+    await act(async () => { press({ metaKey: true }); });
+    expect(probe.saveDocument).not.toHaveBeenCalled();
+  });
+});
+
+describe("EventBuilder: problem count", () => {
+  it("is absent while the draft has no problems", () => {
+    renderBuilder();
+    expect(screen.queryByTestId("builder-problems")).toBeNull();
+  });
+
+  it("counts the problems in the save bar, and a click goes to the first one", () => {
+    const doc = sampleDocument();
+    doc.servers[1] = { ...doc.servers[1], host: "not a host" };
+    doc.channels[0] = { ...doc.channels[0], serverKeys: ["kafka-gone"] };
+    const { probe } = renderBuilder({ doc, section: "metadata" });
+    const problems = probe.draft.problems.length;
+    expect(problems).toBeGreaterThan(1);
+    expect(text("builder-problems")).toBe(`${problems} problems`);
+    click("builder-problems");
+    const first = probe.draft.problems[0].pointer;
+    expect(first.startsWith("/servers/1") || first.startsWith("/channels/0")).toBe(true);
+    expect(probe.section).toBe(first.startsWith("/servers/1") ? "servers" : "channels");
+    expect(probe.item).toBe(first.startsWith("/servers/1") ? "kafka-dev" : "orders");
+  });
+
+  it("says '1 problem' for one", () => {
+    const doc = sampleDocument();
+    doc.servers[1] = { ...doc.servers[1], host: "not a host" };
+    renderBuilder({ doc });
+    expect(text("builder-problems")).toBe("1 problem");
   });
 });
 
@@ -970,6 +1064,14 @@ describe("KeyInput", () => {
     expect(screen.getByTestId("the-key-error").textContent).toBe("Duplicate server key");
     fireEvent.click(screen.getByText("outside"));
     expect(input().value).toBe("changed-outside");
+  });
+});
+
+describe("ServersSection: a new server starts focused", () => {
+  it("puts the cursor in the host field after Add", () => {
+    renderBuilder({ section: "servers" });
+    click("server-add");
+    expect(document.activeElement).toBe(field("Host"));
   });
 });
 

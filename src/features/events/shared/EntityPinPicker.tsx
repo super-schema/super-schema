@@ -42,7 +42,7 @@ const selectClass = "rounded-md border border-border bg-background px-space-2 py
  * a stable function (module-level or memoized).
  */
 export function EntityPinPicker({
-  id, label, entities, value, onChange, optional = false, hint, loadVersions = defaultLoadVersions, disabled,
+  id, label, entities, value, onChange, optional = false, hint, loadVersions = defaultLoadVersions, disabled, autoFocus,
 }: {
   id: string;
   label: string;
@@ -53,6 +53,8 @@ export function EntityPinPicker({
   hint?: string;
   loadVersions?: (entityId: string) => Promise<VersionOption[]>;
   disabled?: boolean;
+  /** Focus the entity select when the picker appears (a new message starts there). */
+  autoFocus?: boolean;
 }) {
   const entityId = value?.entityId ?? null;
   const [loaded, setLoaded] = useState<LoadedVersions | null>(null);
@@ -95,6 +97,7 @@ export function EntityPinPicker({
           className={selectClass}
           value={entityId ?? ""}
           disabled={disabled}
+          autoFocus={autoFocus}
           onChange={(e) => {
             const next = entities.find((x) => x.id === e.target.value);
             onChange(next ? { entityId: next.id, entityVersionId: next.latestVersionId } : null);

@@ -1046,6 +1046,14 @@ describe("ChannelsSection: external references", () => {
   });
 });
 
+describe("ChannelsSection: a new channel starts focused", () => {
+  it("puts the cursor in the first field after Add", () => {
+    renderSection(ChannelsSection, { doc: sampleDocument() });
+    fireEvent.click(screen.getByTestId("channel-add"));
+    expect(document.activeElement).toBe(field("Address"));
+  });
+});
+
 describe("ChannelsSection: the item tab strip", () => {
   it("picks items from a tab strip with the add button pinned beside it, not in the header", () => {
     const { probe } = renderSection(ChannelsSection, { doc: sampleDocument() });

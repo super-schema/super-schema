@@ -26,6 +26,7 @@ import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
 import type { DraftState } from "../use-event-draft";
 import { ExternalRefsCard } from "./ExternalRefsCard";
+import { useFocusOnAdd } from "./focus-on-add";
 import { ItemTabs } from "./ItemTabs";
 import { SectionHeading } from "./SectionHeading";
 import {
@@ -150,11 +151,15 @@ export function ChannelsSection({ draft, options, selectedItem, onSelectItem }: 
   const activeIndex = selected >= 0 ? selected : channels.length > 0 ? 0 : -1;
   const active = activeIndex >= 0 ? channels[activeIndex] : null;
 
+  // The channel just added starts with the cursor in its first field; moving to another channel ends that.
+  const [addedKey, setAddedKey] = useState<string | null>(null);
+  useFocusOnAdd(addedKey, active?.key ?? null, "channel-address");
   function addChannel() {
     // A placeholder key, named from the title or address once the user leaves the form. The protocol follows the first server.
     const key = newKey(doc, "channel");
     const protocol = doc.servers[0]?.protocol || DEFAULT_PROTOCOL;
     update((d) => ({ ...d, channels: [...d.channels, { key, address: null, protocol, serverKeys: [], messageKeys: [] }] }));
+    setAddedKey(key);
     onSelectItem(key);
   }
 
@@ -173,7 +178,7 @@ export function ChannelsSection({ draft, options, selectedItem, onSelectItem }: 
       ) : (
         <div className="space-y-space-4">
           <ItemTabs
-            label="Channels" prefix="channel" activeIndex={activeIndex} onSelect={onSelectItem}
+            label="Channels" prefix="channel" activeIndex={activeIndex} onSelect={(key) => { setAddedKey(null); onSelectItem(key); }}
             onAdd={addChannel} addLabel="Add channel" addTestId="channel-add"
             items={channels.map((c, i) => ({
               key: c.key, label: channelLabel(c), subtitle: c.protocol, broken: problemsByField(problems, `/channels/${i}`).length > 0,

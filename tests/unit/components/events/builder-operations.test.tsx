@@ -1050,6 +1050,16 @@ describe("OperationsSection: every AsyncAPI operation property", () => {
   });
 });
 
+describe("OperationsSection: a new operation starts focused", () => {
+  it("puts the cursor in the action choice after Add, even from another pane", () => {
+    renderSection(OperationsSection, { doc: sampleDocument() });
+    openCard("docs");
+    click("operation-add");
+    expect(isOpen("basics")).toBe(true);
+    expect(document.activeElement).toBe(box("operation-action-send"));
+  });
+});
+
 describe("OperationsSection: the item tab strip", () => {
   it("picks items from a tab strip with the add button pinned beside it, not in the header", () => {
     const { probe } = renderSection(OperationsSection, { doc: sampleDocument() });

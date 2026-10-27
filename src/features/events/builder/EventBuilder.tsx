@@ -3,7 +3,7 @@
 // src/features/events/builder/EventBuilder.tsx
 // The builder shell: outline (left), the selected section's form (middle) and a sticky Save / Discard bar. Sections read and write the
 // document only through `draft` (`draft.update(fn)`), and show their own field errors from `draft.problems` + `draft.serverProblems`.
-import { useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
 import { Info, Loader2, MessageSquare, Network, PanelLeftClose, PanelLeftOpen, Save, Server, Settings2, Tags, Workflow, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -102,7 +102,7 @@ export const SECTION_COMPONENTS: Partial<Record<BuilderSection, ComponentType<Se
   advanced: AdvancedSection,
 };
 
-export function EventBuilder({ draft, options, section, onSectionChange, item, onItemChange }: {
+export function EventBuilder({ draft, options, section, onSectionChange, item, onItemChange, active = true }: {
   draft: DraftState;
   options: BuilderOptions;
   section: BuilderSection;
@@ -117,6 +117,30 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
   const failed = useMemo(() => uniqueProblems(serverProblems), [serverProblems]);
   const ActiveSection = SECTION_COMPONENTS[section];
   const busy = !draft.dirty || draft.saving;
+  const allProblems = useMemo(() => uniqueProblems(problems.concat(serverProblems)), [problems, serverProblems]);
+
+  // Mod+S saves. While the Design tab shows it always takes the key from the browser (a "save page" dialog is never what is meant),
+  // and saves when there is something to save and no save is running. While the tab is hidden the builder stays out of it.
+  const { dirty, saving, save } = draft;
+  useEffect(() => {
+    if (!active) return undefined;
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "s") return;
+      e.preventDefault();
+      if (dirty && !saving) void save();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [active, dirty, saving, save]);
+
+  function goToFirstProblem() {
+    const first = allProblems[0];
+    if (!first) return;
+    const { section: target, item: targetItem } = locateProblem(doc, first.pointer);
+    if (target === null) return;
+    onSectionChange(target);
+    onItemChange(targetItem);
+  }
 
   // The remembered choice is a client-only value: the server render (and hydration) see `auto`, the client then reads the stored choice.
   // A choice made on this page wins at once, even where storage is blocked.
@@ -216,10 +240,20 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
           )}
 
           <div data-testid="builder-bar" className="sticky bottom-0 z-10 flex items-center justify-between gap-space-3 border-t border-border bg-background/95 py-space-3 backdrop-blur">
-            <p role="status" data-testid="builder-status" className="flex items-center gap-space-2 text-body-small text-muted-foreground">
-              {draft.dirty && !draft.saving && <span aria-hidden="true" className="size-2 rounded-full bg-warning" />}
-              {draft.saving ? "Saving…" : draft.dirty ? "Unsaved changes" : "No unsaved changes"}
-            </p>
+            <div className="flex items-center gap-space-3">
+              <p role="status" data-testid="builder-status" className="flex items-center gap-space-2 text-body-small text-muted-foreground">
+                {draft.dirty && !draft.saving && <span aria-hidden="true" className="size-2 rounded-full bg-warning" />}
+                {draft.saving ? "Saving…" : draft.dirty ? "Unsaved changes" : "No unsaved changes"}
+              </p>
+              {allProblems.length > 0 && (
+                <button
+                  type="button" data-testid="builder-problems" onClick={goToFirstProblem} title="Go to the first problem"
+                  className="rounded-md text-body-small text-destructive underline underline-offset-2 outline-none hover:no-underline focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  {allProblems.length === 1 ? "1 problem" : `${allProblems.length} problems`}
+                </button>
+              )}
+            </div>
             <div className="flex items-center gap-space-2">
               <Button type="button" variant="outline" onClick={draft.discard} disabled={busy} data-testid="builder-discard">Discard</Button>
               <Button type="button" onClick={() => { void draft.save(); }} disabled={busy} data-testid="builder-save" className="gap-1.5">

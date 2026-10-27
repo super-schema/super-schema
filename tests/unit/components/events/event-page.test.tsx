@@ -84,6 +84,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("EventPage: Mod+S", () => {
+  it("saves while the Design tab shows, and not while another tab does", async () => {
+    renderPage();
+    type(field("metadata-title"), "Edited title");
+    openTab("Docs");
+    await act(async () => { fireEvent.keyDown(document, { key: "s", metaKey: true }); });
+    expect(h.update).not.toHaveBeenCalled();
+    openTab("Design");
+    await act(async () => { fireEvent.keyDown(document, { key: "s", metaKey: true }); });
+    expect(h.update).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("EventPage: header", () => {
   it("shows the event name as the page heading, with the breadcrumb", () => {
     renderPage();

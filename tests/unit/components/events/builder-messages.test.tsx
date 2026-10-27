@@ -287,6 +287,28 @@ describe("MessagesSection: payload, headers and key pins", () => {
   });
 });
 
+describe("MessagesSection: a new message starts focused", () => {
+  it("puts the cursor in the Payload entity select after Add, even from another pane", async () => {
+    await renderMessages();
+    openCard("examples");
+    click("message-add");
+    expect(isOpen("payload")).toBe(true);
+    await screen.findByLabelText("Payload entity");
+    expect(document.activeElement).toBe(field("Payload entity"));
+  });
+
+  it("does not take the cursor back when the user returns to a message that was added earlier", async () => {
+    await renderMessages();
+    click("message-add");
+    await screen.findByLabelText("Payload entity");
+    click("message-row-OrderCreated");
+    (document.activeElement as HTMLElement | null)?.blur();
+    click("message-row-message");
+    await screen.findByLabelText("Payload entity");
+    expect(document.activeElement).not.toBe(field("Payload entity"));
+  });
+});
+
 describe("MessagesSection: payload preview", () => {
   const ORDER_SCHEMA = { type: "object", properties: { orderId: { type: "string" }, quantity: { type: "integer" } }, required: ["orderId"] };
 

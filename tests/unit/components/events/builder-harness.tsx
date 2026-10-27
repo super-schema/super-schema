@@ -59,6 +59,8 @@ interface HarnessOptions {
   /** Defaults to a save that succeeds and returns the event. */
   saveDocument?: Mock<SaveDocument>;
   onSaved?: (detail: EventDetail) => void;
+  /** Passed to `EventBuilder` (false: the Design tab is hidden). Defaults to the builder's own default. */
+  active?: boolean;
 }
 
 function useHarnessState(opts: HarnessOptions, saveDocument: Mock<SaveDocument>) {
@@ -95,7 +97,10 @@ export function renderBuilder(opts: HarnessOptions = {}) {
     const h = useHarnessState(opts, probe.saveDocument);
     useEffect(() => { Object.assign(probe, { draft: h.draft, section: h.section, item: h.item }); });
     return (
-      <EventBuilder draft={h.draft} options={h.options} section={h.section} onSectionChange={h.setSection} item={h.item} onItemChange={h.setItem} />
+      <EventBuilder
+        draft={h.draft} options={h.options} section={h.section} onSectionChange={h.setSection} item={h.item} onItemChange={h.setItem}
+        active={opts.active}
+      />
     );
   }
   return { probe, ...render(<Host />) };

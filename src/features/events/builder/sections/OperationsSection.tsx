@@ -26,6 +26,7 @@ import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
 import type { DraftState } from "../use-event-draft";
 import { allMessageKeys, CheckboxGroup, Notice, renameAndSelect } from "./ChannelsSection";
+import { useFocusOnAdd } from "./focus-on-add";
 import { ItemTabs } from "./ItemTabs";
 import { PaneRail, usePaneState, type PaneDef, type PaneState } from "./PaneRail";
 import { SectionHeading } from "./SectionHeading";
@@ -136,11 +137,16 @@ export function OperationsSection({ draft, options, selectedItem, onSelectItem, 
   const errored = cardsWithProblems(problems, `/operations/${activeIndex}`, CARD_POINTERS);
   const pane = usePaneState(DEFAULT_PANE, errored);
 
+  // The operation just added starts with the cursor in its action choice, on the Basics pane; moving to another operation ends that.
+  const [addedKey, setAddedKey] = useState<string | null>(null);
+  useFocusOnAdd(addedKey, active?.key ?? null, "operation-action-send");
   function addOperation() {
     if (needsChannel) return;
     const key = newKey(doc, "operation");
     const channelKey = choices[0].key;
     update((d) => ({ ...d, operations: [...d.operations, { key, action: "send", channelKey, messageKeys: [], traitKeys: [] }] }));
+    setAddedKey(key);
+    pane.select("basics");
     onSelectItem(key);
   }
 
@@ -178,7 +184,7 @@ export function OperationsSection({ draft, options, selectedItem, onSelectItem, 
       ) : (
         <div className="space-y-space-4">
           <ItemTabs
-            label="Operations" prefix="operation" activeIndex={activeIndex} onSelect={onSelectItem}
+            label="Operations" prefix="operation" activeIndex={activeIndex} onSelect={(key) => { setAddedKey(null); onSelectItem(key); }}
             onAdd={needsChannel ? undefined : addOperation} addLabel="Add operation" addTestId="operation-add"
             items={operations.map((o, i) => ({
               key: o.key, subtitle: `${ACTION_WORDS[o.action] ?? "No action"} · ${o.channelKey || "no channel"}`,

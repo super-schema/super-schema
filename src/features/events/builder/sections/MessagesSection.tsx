@@ -104,15 +104,15 @@ function templateFor(defaultContentType: string | undefined): ObjectTemplate {
 }
 
 /** An entity + version picker with its error underneath, linked to it with `aria-describedby` on the wrapping group. */
-function PinField({ id, label, hint, optional, entities, value, onChange, error }: {
+function PinField({ id, label, hint, optional, entities, value, onChange, error, autoFocus }: {
   id: string; label: string; hint?: string; optional?: boolean; entities: EntityOption[]; value: EntityPin | null;
-  onChange: (pin: EntityPin | null) => void; error?: string;
+  onChange: (pin: EntityPin | null) => void; error?: string; autoFocus?: boolean;
 }) {
   const errorId = `${id}-error`;
   return (
     <div role="group" data-testid={`${id}-group`} aria-describedby={error ? errorId : undefined} className="space-y-space-1">
       <Suspense fallback={<p data-testid={`${id}-loading`} className="text-caption text-muted-foreground">{label}: loading…</p>}>
-        <EntityPinPicker id={id} label={label} hint={hint} optional={optional} entities={entities} value={value} onChange={onChange} />
+        <EntityPinPicker id={id} label={label} hint={hint} optional={optional} entities={entities} value={value} onChange={onChange} autoFocus={autoFocus} />
       </Suspense>
       {error && <p id={errorId} data-testid={errorId} className="text-body-small text-destructive">{error}</p>}
     </div>
@@ -133,12 +133,20 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
   const errored = useMemo(() => cardsWithProblems(problems, `/messages/${activeIndex}`, CARD_POINTERS), [problems, activeIndex]);
   const pane = usePaneState(DEFAULT_PANE, errored);
 
+  // The message just added starts with the cursor in its payload picker, on the Payload pane; moving to another message ends that.
+  const [addedKey, setAddedKey] = useState<string | null>(null);
   function addMessage() {
     // A placeholder key, named from the name or title once the user leaves the form.
     const key = newKey(doc, "message");
     update((d) => ({ ...d, messages: [...d.messages, { key, payload: NO_PAYLOAD, traitKeys: [] }] }));
+    setAddedKey(key);
+    pane.select("payload");
     onSelectItem(key);
   }
+  const selectMessage = (key: string) => {
+    setAddedKey(null);
+    onSelectItem(key);
+  };
 
   const entityName = (pin: EntityPin) => options.entityOptions.find((e) => e.id === pin.entityId)?.name;
 
@@ -157,7 +165,7 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
       ) : (
         <div className="space-y-space-4">
           <ItemTabs
-            label="Messages" prefix="message" activeIndex={activeIndex} onSelect={onSelectItem}
+            label="Messages" prefix="message" activeIndex={activeIndex} onSelect={selectMessage}
             onAdd={addMessage} addLabel="Add message" addTestId="message-add"
             items={messages.map((m, i) => ({
               key: m.key, label: messageLabel(m), subtitle: (m.payload.entityId && entityName(m.payload)) || "No payload",
@@ -166,7 +174,7 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
           />
           <MessageForm
             key={activeIndex} draft={draft} options={options} index={activeIndex} message={active} problems={problems} context={context}
-            pane={pane} errored={errored} onSelectItem={onSelectItem} onSectionChange={onSectionChange}
+            pane={pane} errored={errored} autoFocusPayload={active.key === addedKey} onSelectItem={onSelectItem} onSectionChange={onSectionChange}
           />
         </div>
       )}
@@ -176,9 +184,9 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
   );
 }
 
-function MessageForm({ draft, options, index, message, problems, context, pane, errored, onSelectItem, onSectionChange }: {
+function MessageForm({ draft, options, index, message, problems, context, pane, errored, autoFocusPayload, onSelectItem, onSectionChange }: {
   draft: DraftState; options: SectionProps["options"]; index: number; message: DocMessage; problems: DocumentProblem[];
-  context: TemplateFormContext; pane: PaneState; errored: ReadonlySet<string>; onSelectItem: (key: string | null) => void; onSectionChange?: SectionProps["onSectionChange"];
+  context: TemplateFormContext; pane: PaneState; errored: ReadonlySet<string>; autoFocusPayload: boolean; onSelectItem: (key: string | null) => void; onSectionChange?: SectionProps["onSectionChange"];
 }) {
   const { doc, update } = draft;
   const [blocked, setBlocked] = useState<string | null>(null);
@@ -300,7 +308,7 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
       <div data-testid="payload-row" className="flex flex-wrap items-start gap-x-space-4 gap-y-space-3">
         <div className="min-w-0 flex-1 basis-64">
           <PinField
-            id="payload" label="Payload" entities={options.entityOptions} error={errorAt("/payload")}
+            id="payload" label="Payload" entities={options.entityOptions} error={errorAt("/payload")} autoFocus={autoFocusPayload}
             hint="Required. The entity this message carries."
             value={message.payload.entityId ? message.payload : null}
             onChange={(pin) => patch((m) => ({ ...m, payload: pin ?? NO_PAYLOAD }))}
