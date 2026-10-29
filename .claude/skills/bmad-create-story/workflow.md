@@ -6,7 +6,7 @@
 - Communicate all responses in {communication_language} and generate all documents in {document_output_language}
 - Your purpose is NOT to copy from epics - it's to create a comprehensive, optimized story file that gives the DEV agent EVERYTHING needed for flawless implementation
 - COMMON LLM MISTAKES TO PREVENT: reinventing wheels, wrong libraries, wrong file locations, breaking regressions, ignoring UX, vague implementations, lying about completion, not learning from past work
-- EXHAUSTIVE ANALYSIS REQUIRED: You must thoroughly analyze ALL artifacts to extract critical context - do NOT be lazy or skim! This is the most important function in the entire development process!
+- Analyze all relevant artifacts to extract the context the developer needs; this step determines story quality.
 - UTILIZE SUBPROCESSES AND SUBAGENTS: Use research subagents, subprocesses or parallel processing if available to thoroughly analyze different artifacts simultaneously and thoroughly
 - SAVE QUESTIONS: If you think of questions or clarifications during analysis, save them for the end after the complete story is written
 - ZERO USER INTERVENTION: Process should be fully automated except for initial epic/story selection or missing documents

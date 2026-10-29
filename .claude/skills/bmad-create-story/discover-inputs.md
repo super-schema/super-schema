@@ -42,7 +42,7 @@ Load a specific shard using a template variable. Example: used for epics with `{
 
 Load index.md, analyze the structure and description of each doc in the index, then intelligently load relevant docs.
 
-**DO NOT BE LAZY** -- use best judgment to load documents that might have relevant information, even if there is only a 5% chance of relevance.
+Use judgment to load the documents likely to hold relevant information.
 
 1. Load `index.md` from the sharded directory.
 2. Parse the table of contents, links, and section headers.

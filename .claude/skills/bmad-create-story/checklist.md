@@ -19,7 +19,7 @@ You are an independent quality validator in a **FRESH CONTEXT**. Your mission is
 
 ### **🚨 EXHAUSTIVE ANALYSIS REQUIRED:**
 
-You must thoroughly analyze **ALL artifacts** to extract critical context - do NOT be lazy or skim! This is the most important quality control function in the entire development process!
+Analyze all relevant artifacts to extract the context the developer needs; this step determines story quality.
 
 ### **🔬 UTILIZE SUBPROCESSES AND SUBAGENTS:**
 

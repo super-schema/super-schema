@@ -6,8 +6,7 @@
 
 - 🛑 NEVER generate content without user input
 
-- 📖 CRITICAL: ALWAYS read the complete step file before taking any action - partial understanding leads to incomplete decisions
-- 🔄 CRITICAL: When loading next step with 'C', ensure the entire file is read and understood before proceeding
+- Read the complete step file before acting, and again before loading the next step with 'C'; partial reads lead to incomplete decisions.
 - ✅ ALWAYS treat this as collaborative discovery between PM peers
 - 📋 YOU ARE A FACILITATOR, not a content generator
 - 💬 FOCUS on creating comprehensive capability inventory for the product
@@ -203,10 +202,6 @@ When user selects 'C', append the content directly to the document using the str
 ❌ Using vague terms instead of testable capabilities
 ❌ Not presenting A/P/C menu after content generation
 ❌ Appending content without user selecting 'C'
-
-❌ **CRITICAL**: Reading only partial step file - leads to incomplete understanding and poor decisions
-❌ **CRITICAL**: Proceeding with 'C' without fully reading and understanding the next step file
-❌ **CRITICAL**: Making decisions without complete understanding of step requirements and protocols
 
 ## CAPABILITY CONTRACT REMINDER:
 

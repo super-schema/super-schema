@@ -7,9 +7,9 @@
 - **Graph size:** 15470 nodes, 133140 edges
 - **Breakdown:** 89 builtins, 306 columns, 4 config_keys, 105 contracts, 54 docs, 770 files, 2390 functions, 17 generic_params, 52 images, 1862 imports, 387 interfaces, 3823 locals, 238 methods, 4 migrations, 1318 modules, 1685 params, 2 resources, 35 tables, 4 todos, 366 types, 2034 variables
 
-## MANDATORY: Use Gortex MCP tools instead of Read/Grep/Glob
+## Use Gortex graph tools instead of Read/Grep/Glob
 
-Gortex is running as an MCP server. You **MUST** prefer graph queries over file reads on every task in this repo — `search_symbols`, `find_usages`, `get_symbol_source`, `get_editing_context`, `smart_context`, `edit_symbol` / `edit_file` / `rename_symbol` / `batch_edit`. Hook posture is configurable; follow every Gortex hook instruction even when `Read` / `Grep` / `Glob` remain callable. The full per-tool catalog loads via `tools/list` — not restated here.
+Gortex is running as an MCP server. Prefer graph queries over file reads on every task in this repo — `search_symbols`, `find_usages`, `get_symbol_source`, `get_editing_context`, `smart_context`, `edit_symbol` / `edit_file` / `rename_symbol` / `batch_edit`. Hook posture is configurable; follow every Gortex hook instruction even when `Read` / `Grep` / `Glob` remain callable. The full per-tool catalog loads via `tools/list` — not restated here.
 
 ### Calibration: the graph narrows scope, source confirms behavior
 
@@ -19,7 +19,7 @@ Be especially deliberate with **behavior-critical code** — database migrations
 
 ## Required workflow (every task on this repo)
 
-These are not suggestions — run each step at the trigger.
+Run each step at its trigger.
 
 1. Confirm the daemon is up with `index_health` (cheap liveness + scope). Call `graph_stats` only when you actually need node/edge counts or `per_repo` orientation — it returns a large payload and can block during warmup.
 2. If `total_nodes` is 0, **call** `index_repository` with `"."` before anything else.
@@ -31,6 +31,10 @@ These are not suggestions — run each step at the trigger.
 8. Verify with the project's real build/test. Reserve `check_guards` for guard-relevant changes and `get_test_targets` to find the tests covering a substantive change — not mechanically after every edit.
 
 <!-- gortex:communities:end -->
+
+## Code-graph tool priority
+
+Gortex is the preferred code-graph tool. When its MCP tools are missing or the server won't connect, use graft (`graft ask "<task>" --source`, `graft grep`, `graft callers`, see `AGENTS.md`) and keep working; don't stop or report a blocker. If graft is unavailable too, use Read/Grep/Glob. This overrides the global "report an integration failure and stop" rule for this repo.
 
 ## Database (dual provider)
 

@@ -1,5 +1,5 @@
 # generated: 2026-04-03
-# last_updated: 2026-04-07
+# last_updated: 2026-10-13
 # project: super-schema
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-03
-last_updated: 2026-04-07
+last_updated: 2026-10-13
 project: super-schema
 project_key: NOKEY
 tracking_system: file-system
@@ -172,15 +172,17 @@ development_status:
   # in architecture.md / prd.md same date. Everything else in this file was
   # planned against the superseded Prisma-row-canonical design — see Story
   # 12.8 for which existing docs need reconciliation.
+  # Status corrected 2026-10-13 — this block had never been updated past its
+  # original ready-for-dev scaffolding despite 6 of 8 stories landing.
   epic-12: in-progress
-  12-1-governance-decorator-package-completion: ready-for-dev
-  12-2-real-compiler-service: ready-for-dev
-  12-3-prisma-schema-migration-typespec-source: ready-for-dev
-  12-4-surgical-field-edit-save-path: ready-for-dev
-  12-5-typespec-source-view-and-edit: ready-for-dev
-  12-6-emitter-migration: ready-for-dev
-  12-7-one-time-data-migration: ready-for-dev
-  12-8-reconcile-stale-implementation-artifacts: ready-for-dev
+  12-1-governance-decorator-package-completion: done
+  12-2-real-compiler-service: review              # functionally delivered (actions.ts calls compileTypeSpecWithGovernance directly) but NOT via the ICompilerService interface the AC specifies — MockCompilerService remains its only implementation. Test coverage partial: 4 governance-extraction tests exist, not the full valid/syntax-error/type-error/each-lint-rule/warnings-only matrix the AC lists.
+  12-3-prisma-schema-migration-typespec-source: review  # typespec_source column + derived-projection fields table both real and in use. Two AC items not done: EmissionTargetStatus.formatOptions column still exists (app code reading/writing it removed 2026-10-12, column itself not dropped); entity_versions.typespec_source_snapshot was never added.
+  12-4-surgical-field-edit-save-path: done
+  12-5-typespec-source-view-and-edit: done
+  12-6-emitter-migration: done                    # @typespec/avro + @typespec/java-pojo real packages, native src/emitters/{avro,openapi} retired, verified live against the real dev DB 2026-10-12/13
+  12-7-one-time-data-migration: ready-for-dev      # not started — only lazy per-entity generation exists (TypeSpec Source tab generates on first view); no batch job, no round-trip verification pass, no idempotent re-run, no failure-flagging
+  12-8-reconcile-stale-implementation-artifacts: done  # verified 2026-10-13 against the story's own AC — all 8 named docs carry the reconciliation note
   epic-12-retrospective: optional
 
 # ---------------------------------------------------------------------------

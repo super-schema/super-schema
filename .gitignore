@@ -69,3 +69,6 @@ next-env.d.ts
 # the browser suite's saved admin login (tests/e2e/auth.setup.ts): rewritten by every run, never committed
 /playwright/.auth/
 
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
