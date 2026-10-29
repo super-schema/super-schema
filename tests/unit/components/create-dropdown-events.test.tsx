@@ -77,7 +77,7 @@ describe("CreateDropdown: optional items", () => {
     openMenu();
     const menu = screen.getByRole("menu");
     const children = Array.from(menu.children).map((c) => c.getAttribute("role") === "separator" ? "separator" : c.textContent);
-    expect(children).toEqual([ENTITY, DATA_TYPE, API, "separator", EVENT]);
+    expect(children).toEqual([ENTITY, DATA_TYPE, API, EVENT]);
   });
 });
 

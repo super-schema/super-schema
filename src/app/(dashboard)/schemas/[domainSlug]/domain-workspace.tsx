@@ -70,9 +70,9 @@ const PANEL_DOM_ID = "product-tabpanel";
 
 const domainTabs: { icon: React.ComponentType<{ className?: string }>; label: string; id: DomainTab }[] = [
   { icon: Database, label: "Entities", id: "entities" },
-  { icon: Hash, label: "Data Types", id: "data-types" },
-  { icon: Globe, label: "APIs", id: "apis" },
   { icon: Radio, label: "Events", id: "events" },
+  { icon: Globe, label: "APIs", id: "apis" },
+  { icon: Hash, label: "Data Types", id: "data-types" },
 ];
 
 interface EntityData {
@@ -230,7 +230,7 @@ export function DomainWorkspace({
   const viewMode = useSyncExternalStore(
     subscribeToViewMode,
     getViewModeSnapshot,
-    () => "tile"
+    (): "tile" | "list" => "tile"
   );
   const [showCreate, setShowCreate] = useState(false);
 
@@ -603,6 +603,7 @@ export function DomainWorkspace({
           domainSlug={domainSlug}
           productSlug={productSlug}
           items={events ?? []}
+          viewMode={viewMode}
           onCreate={() => setNewEventOpen(true)}
         />
       )}

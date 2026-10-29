@@ -115,10 +115,12 @@ describe("loadEventsList", () => {
     expect(byId.get(busy.id)).toEqual({
       id: busy.id, name: busy.name, specType: "asyncapi@3.0", versionLabel: null, hasUnpublishedChanges: true,
       channels: 2, messages: 3, operations: 1, href: `${base}/${busy.id}`,
+      description: expect.any(String), topics: expect.any(Array), payloads: expect.any(Array),
     });
     expect(byId.get(quiet.id)).toEqual({
       id: quiet.id, name: quiet.name, specType: "asyncapi@3.0", versionLabel: null, hasUnpublishedChanges: true,
       channels: 0, messages: 0, operations: 0, href: `${base}/${quiet.id}`,
+      description: expect.any(String), topics: [], payloads: [],
     });
   });
 

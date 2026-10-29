@@ -499,10 +499,12 @@ describe("DomainWorkspace — Events tab and New Event", () => {
     {
       id: "ev1", name: "orders", specType: "asyncapi@3.0", versionLabel: "1.2", hasUnpublishedChanges: true,
       channels: 2, messages: 3, operations: 1, href: assetHref({ kind: "event", id: "ev1", domainSlug: "payments", productSlug: "checkout" }),
+      description: "", topics: [], payloads: [],
     },
     {
       id: "ev2", name: "refunds", specType: "asyncapi@3.0", versionLabel: null, hasUnpublishedChanges: true,
       channels: 0, messages: 0, operations: 0, href: assetHref({ kind: "event", id: "ev2", domainSlug: "payments", productSlug: "checkout" }),
+      description: "", topics: [], payloads: [],
     },
   ];
   const EVENTS_LIST_HREF = assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" });
@@ -688,7 +690,7 @@ describe("product tab bar accessibility", () => {
     renderWorkspace();
     const list = screen.getByRole("tablist", { name: "Checkout sections" });
     const tabs = within(list).getAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["Entities", "Data Types", "APIs", "Events"]);
+    expect(tabs.map((t) => t.textContent)).toEqual(["Entities", "Events", "APIs", "Data Types"]);
     const selected = tabs.filter((t) => t.getAttribute("aria-selected") === "true");
     expect(selected.map((t) => t.textContent)).toEqual(["APIs"]);
     expect(tabs.map((t) => t.getAttribute("tabindex"))).toEqual(["-1", "-1", "0", "-1"]);
@@ -707,20 +709,20 @@ describe("product tab bar accessibility", () => {
       screen.getAllByRole("tab").find((t) => t.getAttribute("aria-selected") === "true")!.textContent;
 
     fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "ArrowRight" });
-    expect(selectedLabel()).toBe("Data Types");
-    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=data-types");
-    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Data Types" }));
-
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Data Types" }), { key: "ArrowLeft" });
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "ArrowLeft" });
     expect(selectedLabel()).toBe("Events");
     expect(replaceState).toHaveBeenLastCalledWith(null, "", assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" }));
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Events" }));
 
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Events" }), { key: "Home" });
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Events" }), { key: "ArrowLeft" });
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "ArrowLeft" });
+    expect(selectedLabel()).toBe("Data Types");
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=data-types");
+
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Data Types" }), { key: "Home" });
     expect(selectedLabel()).toBe("Entities");
     fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "End" });
-    expect(selectedLabel()).toBe("Events");
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Events" }), { key: "ArrowRight" });
+    expect(selectedLabel()).toBe("Data Types");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Data Types" }), { key: "ArrowRight" });
     expect(selectedLabel()).toBe("Entities");
 
     // Other keys leave the selection alone.

@@ -118,7 +118,6 @@ export function CreateDropdown({
           {renderItem(entityItem)}
           {renderItem(customDataTypeItem)}
           {apiItem && renderItem(apiItem)}
-          {eventItems.length > 0 && <div role="separator" className="my-1 border-t border-border" />}
           {eventItems.map(renderItem)}
         </div>
       )}

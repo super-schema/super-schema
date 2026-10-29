@@ -17,11 +17,11 @@ const eventHref = (id: string) => assetHref({ kind: "event", id, ...at });
 function item(over: Partial<EventListItem> & { id: string; name: string }): EventListItem {
   return {
     specType: "asyncapi@3.0", versionLabel: null, hasUnpublishedChanges: true,
-    channels: 0, messages: 0, operations: 0, href: eventHref(over.id), ...over,
+    channels: 0, messages: 0, operations: 0, href: eventHref(over.id), description: "", topics: [], payloads: [], ...over,
   };
 }
 
-const ORDERS = item({ id: "ev1", name: "orders", versionLabel: "1.2", hasUnpublishedChanges: true, channels: 2, messages: 3, operations: 1 });
+const ORDERS = item({ id: "ev1", name: "orders", versionLabel: "1.2", hasUnpublishedChanges: true, channels: 2, messages: 3, operations: 1, description: "Order lifecycle", topics: [{ protocol: "kafka", address: "orders.created" }, { protocol: "kafka", address: "orders.paid" }], payloads: [{ name: "Order", href: "/schemas/payments/checkout/entities/order" }] });
 const PAYMENTS = item({ id: "ev2", name: "payments", versionLabel: "2.0", hasUnpublishedChanges: false, channels: 1, messages: 1, operations: 2 });
 const DRAFT_ONLY = item({ id: "ev3", name: "refunds", versionLabel: null, hasUnpublishedChanges: true });
 
@@ -79,11 +79,18 @@ describe("EventsList: rows", () => {
     expect(within(row("ev2")).queryByTestId("event-row-ev2-draft")).toBeNull();
   });
 
-  it("shows the channel, message and operation counts, singular where it is one", () => {
+  it("shows description, the first topic with +N for the rest, and payload entity links", () => {
     renderList();
-    expect(within(row("ev1")).getByTestId("event-row-ev1-counts").textContent).toBe("2 channels · 3 messages · 1 operation");
-    expect(within(row("ev2")).getByTestId("event-row-ev2-counts").textContent).toBe("1 channel · 1 message · 2 operations");
-    expect(within(row("ev3")).getByTestId("event-row-ev3-counts").textContent).toBe("0 channels · 0 messages · 0 operations");
+    const r = row("ev1");
+    expect(within(r).getByTestId("event-row-ev1-description").textContent).toBe("Order lifecycle");
+    expect(within(r).getByTestId("event-row-ev1-topic").textContent).toBe("kafkaorders.created+1");
+    expect(within(r).getByRole("link", { name: "Order" }).getAttribute("href")).toBe("/schemas/payments/checkout/entities/order");
+    expect(within(row("ev3")).getByText("No topic")).toBeDefined();
+  });
+
+  it("renders the same event info in list view", () => {
+    renderList({ viewMode: "list" });
+    expect(within(row("ev1")).getByTestId("event-row-ev1-topic").textContent).toBe("kafkaorders.created+1");
   });
 
   it("does not show the empty state or open a dialog when there are events", () => {
