@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, configure } from "@testing-library/react";
 import { SchemaWorkbench } from "@/components/custom/SchemaWorkbench";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
+
+// The first live check loads the importers on demand; under a loaded machine that can outlast the 1s default.
+configure({ asyncUtilTimeout: 5000 });
 
 const importAction = vi.hoisted(() => vi.fn());
 const control = vi.hoisted(() => ({ reject: false }));
@@ -56,6 +59,14 @@ function setup(props: Partial<React.ComponentProps<typeof SchemaWorkbench>> = {}
 const input = () => screen.getByTestId("workbench-url-input") as HTMLInputElement;
 const button = () => screen.getByTestId("workbench-url-fetch-button") as HTMLButtonElement;
 const type = (v: string) => fireEvent.change(input(), { target: { value: v } });
+
+// An imported schema (the Detail Panel with its baseline) comes from a file now: pasting only checks and commits.
+async function loadViaFile() {
+  fireEvent.click(screen.getByTestId("workbench-mode-drop"));
+  const file = new File(['{"type":"record","name":"C","fields":[{"name":"id","type":"long"}]}'], "c.avsc", { type: "text/plain" });
+  fireEvent.change(screen.getByTestId("workbench-file-input"), { target: { files: [file] } });
+  await waitFor(() => expect((screen.getByTestId("detail-panel-textarea") as HTMLTextAreaElement).value).not.toBe(""));
+}
 
 describe("SchemaWorkbench - From URL mode", () => {
   it("shows the URL input, helper note and a labeled field after switching mode", () => {
@@ -170,12 +181,7 @@ describe("SchemaWorkbench - From URL mode", () => {
     let resolve!: (v: unknown) => void;
     importAction.mockReturnValue(new Promise((r) => (resolve = r)));
     const { onImportResult } = setup();
-    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
-    fireEvent.change(screen.getByTestId("workbench-paste-textarea"), {
-      target: { value: '{"type":"record","name":"C","fields":[{"name":"id","type":"long"}]}' },
-    });
-    fireEvent.click(screen.getByTestId("workbench-load-button"));
-    await waitFor(() => expect((screen.getByTestId("detail-panel-textarea") as HTMLTextAreaElement).value).not.toBe(""));
+    await loadViaFile();
     fireEvent.click(screen.getByRole("button", { name: "From URL" }));
     type(GOOD);
     fireEvent.click(button());
@@ -189,12 +195,7 @@ describe("SchemaWorkbench - From URL mode", () => {
     let resolve!: (v: unknown) => void;
     importAction.mockReturnValue(new Promise((r) => (resolve = r)));
     const utils = setup();
-    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
-    fireEvent.change(screen.getByTestId("workbench-paste-textarea"), {
-      target: { value: '{"type":"record","name":"C","fields":[{"name":"id","type":"long"}]}' },
-    });
-    fireEvent.click(screen.getByTestId("workbench-load-button"));
-    await waitFor(() => expect((screen.getByTestId("detail-panel-textarea") as HTMLTextAreaElement).value).not.toBe(""));
+    await loadViaFile();
     fireEvent.click(screen.getByRole("button", { name: "From URL" }));
     type(GOOD);
     fireEvent.click(button());

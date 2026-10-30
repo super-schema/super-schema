@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { AlertCircle, AlertTriangle, ArrowLeft, FileCode, Upload } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowLeft, CheckCircle2, FileCode, Upload } from "lucide-react";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import { cn } from "@/lib/utils";
 import { VISUAL_FORMATS } from "@/components/custom/VisualSchemaBuilder/registry";
@@ -18,6 +18,7 @@ import {
   workbenchReducer,
 } from "@/lib/schema-workbench/workbench-state";
 import { editorKindFor, sameKind, type EditorKind } from "@/lib/schema-workbench/editor-kind";
+import { checkSchemaText, type SchemaTextCheck } from "@/lib/schema-workbench/check-schema-text";
 import { JsonEditor } from "@/features/events/builder/template/controls/JsonEditor";
 import { DetailPanel } from "./DetailPanel";
 import { HighlightedTextarea } from "./HighlightedTextarea";
@@ -41,6 +42,7 @@ function urlProblem(url: string): string | null {
 
 const ACCEPT = ".tsp,.avsc,.avro,.json,.yaml,.yml,.sql,.ddl,.proto";
 const PARSE_DEBOUNCE_MS = 300;
+const CHECK_DEBOUNCE_MS = 400;
 
 const PASTE_PLACEHOLDER = `Paste your schema content here...
 
@@ -55,8 +57,8 @@ Example (Avro):
 }`;
 
 const MODES: { id: Mode; label: string }[] = [
-  { id: "drop", label: "Drop file" },
   { id: "paste", label: "Paste" },
+  { id: "drop", label: "Drop file" },
   { id: "url", label: "From URL" },
   { id: "form", label: "Build form" },
 ];
@@ -69,6 +71,8 @@ export interface SchemaWorkbenchProps {
   onImportResult?: (result: TypeSpecImportResult) => void;
   /** The domain a URL import is for (the server judges `import.run` there); `null` for the tenant itself (an Enterprise entity). */
   importDomainId?: string | null;
+  /** False where the import creates a single entity (Enterprise level): the paste check then rejects multi-asset, TypeSpec and OpenAPI text up front. Default true. */
+  allowMultiAsset?: boolean;
   referenceTargets?: { id?: string; name: string }[];
   error?: string | null;
   isLoading?: boolean;
@@ -81,17 +85,23 @@ export function SchemaWorkbench({
   onBack,
   onImportResult,
   importDomainId = null,
+  allowMultiAsset = true,
   referenceTargets = [],
   error,
   isLoading = false,
   detectedFormat,
 }: SchemaWorkbenchProps) {
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState);
-  const [mode, setMode] = useState<Mode>("drop");
+  const [mode, setMode] = useState<Mode>("paste");
   const [formFormat, setFormFormat] = useState<WorkbenchFormat>("json-schema");
   const [pasteText, setPasteText] = useState("");
   const [pasteKindState, setPasteKindState] = useState<EditorKind>(() => editorKindFor(null, ""));
   const [refocusPaste, setRefocusPaste] = useState(false);
+  // The live "is the pasted text loadable?" answer; `checking` while the debounced check of the latest text runs.
+  const [pasteCheck, setPasteCheck] = useState<SchemaTextCheck | { status: "checking" }>({ status: "empty" });
+  const checkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Bumped per edit: a late answer for older text is ignored.
+  const checkRun = useRef(0);
   const [isDragging, setIsDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [importNotice, setImportNotice] = useState<string | null>(null);
@@ -119,12 +129,14 @@ export function SchemaWorkbench({
   useEffect(
     () => () => {
       urlRun.current += 1;
+      checkRun.current += 1;
       if (parseTimer.current) clearTimeout(parseTimer.current);
+      if (checkTimer.current) clearTimeout(checkTimer.current);
     },
     []
   );
 
-  // ── Import (drop / paste) ───────────────────────────────────────────
+  // ── Import (drop) ───────────────────────────────────────────
 
   const loadImport = useCallback(async (text: string, filename?: string) => {
     // Replacing the loaded schema abandons a running URL fetch: its late result must not overwrite this one.
@@ -160,6 +172,19 @@ export function SchemaWorkbench({
     (next: string) => {
       const fromEmpty = pasteText === "" && next !== "";
       setPasteText(next);
+      // Check the text a moment after the last edit: no Load button, the answer just appears.
+      const run = ++checkRun.current;
+      if (checkTimer.current) clearTimeout(checkTimer.current);
+      if (next.trim() === "") {
+        setPasteCheck({ status: "empty" });
+      } else {
+        setPasteCheck({ status: "checking" });
+        checkTimer.current = setTimeout(() => {
+          void checkSchemaText(next, { allowMultiAsset }).then((result) => {
+            if (run === checkRun.current) setPasteCheck(result);
+          });
+        }, CHECK_DEBOUNCE_MS);
+      }
       if (!fromEmpty) {
         setRefocusPaste(false);
         return;
@@ -171,7 +196,7 @@ export function SchemaWorkbench({
         setRefocusPaste(true);
       }
     },
-    [pasteText, pasteKindState]
+    [pasteText, pasteKindState, allowMultiAsset]
   );
 
   /** Focus left the paste box: now it is safe to follow the text. */
@@ -301,6 +326,9 @@ export function SchemaWorkbench({
     setNotice(null);
     setImportNotice(null);
     setPasteText("");
+    checkRun.current += 1;
+    if (checkTimer.current) clearTimeout(checkTimer.current);
+    setPasteCheck({ status: "empty" });
     setPasteKindState(editorKindFor(null, ""));
     setRefocusPaste(false);
     setPending(null);
@@ -367,11 +395,15 @@ export function SchemaWorkbench({
 
   // ── Commit ──────────────────────────────────────────────────────────
 
-  const canCommit = state.currentText.trim() !== "" && !isLoading;
+  // Paste mode commits the pasted text itself, once the live check says it loads; the other modes commit what they loaded or built.
+  const pasting = mode === "paste";
+  const canCommit = pasting ? pasteCheck.status === "valid" && !isLoading : state.currentText.trim() !== "" && !isLoading;
 
   function commit() {
     if (!canCommit) return;
-    if (state.origin === "form") {
+    if (pasting) {
+      onCommit(pasteText, undefined);
+    } else if (state.origin === "form") {
       onCommit(state.currentText, state.format ?? undefined);
     } else {
       onCommit(state.currentText, undefined, state.filename);
@@ -381,7 +413,7 @@ export function SchemaWorkbench({
   const activeFormat = VISUAL_FORMATS.find((f) => f.id === formFormat) ?? VISUAL_FORMATS[0];
   const Editor = activeFormat.Editor;
   const shownFormat = state.detectedFormat ?? detectedFormat ?? null;
-  // Paste mode: the format is not known until "Load schema", so the editor follows what the pasted text looks like.
+  // Paste mode: the format is not known, so the editor follows what the pasted text looks like.
   // The kind is decided once, not per keystroke (a flip swaps the component and loses focus, caret and undo history). It is
   // re-evaluated when the box goes from empty to filled (a paste; the new editor is then focused), when focus leaves the box,
   // and on start over.
@@ -400,9 +432,9 @@ export function SchemaWorkbench({
       <div>
         <h3 className="text-heading-2 text-foreground mb-space-2">Import or Build Schema</h3>
         <p className="text-body-small text-muted-foreground">
-          Drop a schema file, paste one, or build it field by field. The Detail Panel shows the
-          schema and is editable. Form-built schemas stay in sync both ways; imported ones show
-          your edits in red.
+          Paste a schema and it is checked as you type; when it loads, review and import it. Or drop
+          a file, or build it field by field. The Detail Panel shows a dropped or built schema and is
+          editable. Form-built schemas stay in sync both ways; imported ones show your edits in red.
         </p>
       </div>
 
@@ -462,10 +494,10 @@ export function SchemaWorkbench({
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-space-4">
+      <div className={cn("grid grid-cols-1 gap-space-4", !pasting && "lg:grid-cols-2")}>
         {/* Input column */}
         <div className="min-w-0 flex flex-col gap-space-3">
-          {state.origin === "imported" && mode !== "form" && (
+          {state.origin === "imported" && mode !== "form" && !pasting && (
             <div
               data-testid="workbench-import-summary"
               className="flex flex-wrap items-center gap-space-2 text-caption text-muted-foreground"
@@ -496,7 +528,7 @@ export function SchemaWorkbench({
               </button>
             </div>
           )}
-          {importNotice && mode !== "form" && (
+          {importNotice && mode !== "form" && !pasting && (
             <div className="flex items-start gap-space-2 text-caption text-yellow-700 dark:text-yellow-400">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
               {importNotice}
@@ -561,7 +593,7 @@ export function SchemaWorkbench({
                     onChange={handlePasteChange}
                     language={pasteKind.language}
                     placeholder={PASTE_PLACEHOLDER}
-                    height={256}
+                    height={320}
                     autoFocus={refocusPaste}
                   />
                 ) : (
@@ -572,20 +604,12 @@ export function SchemaWorkbench({
                     onChange={handlePasteChange}
                     highlight={pasteKind.highlight}
                     placeholder={PASTE_PLACEHOLDER}
-                    className="h-64"
+                    className="h-80"
                     autoFocus={refocusPaste}
                   />
                 )}
               </div>
-              <button
-                type="button"
-                data-testid="workbench-load-button"
-                disabled={!pasteText.trim()}
-                onClick={() => requestLoad(() => void loadImport(pasteText))}
-                className="self-start px-4 py-1.5 rounded-lg text-body-small bg-muted hover:bg-accent text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Load schema
-              </button>
+              <PasteCheckStatus check={pasteCheck} />
             </>
           )}
 
@@ -675,7 +699,8 @@ export function SchemaWorkbench({
           )}
         </div>
 
-        {/* Detail panel column */}
+        {/* Detail panel column: a pasted schema is edited in the paste box itself, so there is none in paste mode. */}
+        {!pasting && (
         <div className="min-w-0 flex flex-col gap-space-2 lg:sticky lg:top-space-2 self-start w-full">
           <DetailPanel
             value={state.currentText}
@@ -701,6 +726,7 @@ export function SchemaWorkbench({
             </div>
           )}
         </div>
+        )}
       </div>
 
       <div className="flex justify-end">
@@ -714,6 +740,45 @@ export function SchemaWorkbench({
           {isLoading ? "Parsing..." : "Review & Import"}
         </button>
       </div>
+    </div>
+  );
+}
+
+/** The answer under the paste box: whether the text loads, what it holds, or why it does not. One live region for every state, so a change is announced. */
+function PasteCheckStatus({ check }: { check: SchemaTextCheck | { status: "checking" } }) {
+  let tone = "text-muted-foreground text-caption";
+  let content: React.ReactNode = "Paste a schema (Avro, BigQuery DDL, Protobuf, JSON Schema, OpenAPI or TypeSpec) to check it.";
+  if (check.status === "checking") {
+    content = "Checking…";
+  } else if (check.status === "invalid") {
+    tone = "text-destructive text-body-small";
+    content = (
+      <span className="flex items-start gap-space-2">
+        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+        <span>Cannot load this schema: {check.message}</span>
+      </span>
+    );
+  } else if (check.status === "valid") {
+    tone = "text-success text-body-small";
+    content = (
+      <span className="flex items-start gap-space-2">
+        <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+        <span>
+          Loads: {check.summary}
+          {check.warnings > 0 ? ` (${check.warnings} warning${check.warnings === 1 ? "" : "s"} on review)` : ""}
+        </span>
+      </span>
+    );
+  }
+  return (
+    <div
+      data-testid="workbench-paste-status"
+      data-state={check.status === "empty" ? undefined : check.status}
+      role="status"
+      aria-live="polite"
+      className={tone}
+    >
+      {content}
     </div>
   );
 }

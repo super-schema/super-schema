@@ -85,6 +85,9 @@ function getConfidenceBadge(confidence?: number) {
   );
 }
 
+/** An import with at most this many fields opens with all of the imported details expanded. */
+const AUTO_EXPAND_DETAILS_UP_TO = 12;
+
 export function FieldPreview({
   entityName,
   entityDescription,
@@ -102,9 +105,18 @@ export function FieldPreview({
 }: FieldPreviewProps) {
   const nameInputId = useId();
   const descriptionInputId = useId();
-  const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
+  // A small import opens with every field's imported details showing: the review is where the user checks what came in.
+  const [expandedFields, setExpandedFields] = useState<Set<string>>(
+    () => new Set(fields.length <= AUTO_EXPAND_DETAILS_UP_TO ? fields.filter((f) => f.parsed).map((f) => f.tempId) : [])
+  );
+  const importedFields = fields.filter((f) => f.parsed);
+  const allExpanded = importedFields.length > 0 && importedFields.every((f) => expandedFields.has(f.tempId));
   const needsName = fallbackName !== undefined && entityName.trim() === fallbackName;
   const entityNames = useMemo(() => new Set([importedEntity?.name ?? entityName]), [importedEntity?.name, entityName]);
+
+  function toggleExpandAll() {
+    setExpandedFields(allExpanded ? new Set() : new Set(importedFields.map((f) => f.tempId)));
+  }
 
   function toggleExpand(tempId: string) {
     setExpandedFields((prev) => {
@@ -217,6 +229,19 @@ export function FieldPreview({
               {warning}
             </p>
           ))}
+        </div>
+      )}
+
+      {importedFields.length > 0 && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={toggleExpandAll}
+            data-testid="wizard-toggle-details"
+            className="text-caption text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {allExpanded ? "Collapse all imported details" : "Expand all imported details"}
+          </button>
         </div>
       )}
 

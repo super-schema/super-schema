@@ -14,9 +14,6 @@ import {
   Radio,
   Trash2,
   Tag,
-  FileText,
-  Sparkles,
-  FilePlus2,
   Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -40,7 +37,7 @@ import { getTypeInfo } from "@/lib/data-types";
 import { createEntityWithFieldsAction, deleteEntityAction, type CreateFieldInput } from "./actions";
 import { CreateDropdown } from "./components/CreateDropdown";
 import { DomainTypesTab, type DomainTypeCreateIntent, type InheritedDataTypes, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
-import { DomainApisTab, type InheritedServices, type ServiceData } from "./components/DomainApisTab";
+import { DomainApisTab, type DomainApiCreateIntent, type InheritedServices, type ServiceData } from "./components/DomainApisTab";
 import { ProductContacts, type ProductContactsValue } from "./components/ProductContacts";
 import { EditProductContactsDialog } from "./components/EditProductContactsDialog";
 import { EventsList } from "@/features/events/workspace/EventsList";
@@ -248,6 +245,7 @@ export function DomainWorkspace({
   }, [router, newEntityHref]);
 
   const [typeCreateIntent, setTypeCreateIntent] = useState<DomainTypeCreateIntent | null>(null);
+  const [apiCreateIntent, setApiCreateIntent] = useState<DomainApiCreateIntent | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
   const [isDeletingEntity, setIsDeletingEntity] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -525,7 +523,7 @@ export function DomainWorkspace({
           <CreateDropdown
             onNewEntity={() => router.push(newEntityHref)}
             onNewCustomDataType={() => { selectTab("data-types"); setTypeCreateIntent("choose"); }}
-            onNewApi={() => selectTab("apis")}
+            onNewApi={() => { selectTab("apis"); setApiCreateIntent("new"); }}
             onNewEvent={() => setNewEventOpen(true)}
           />
         </div>
@@ -593,6 +591,8 @@ export function DomainWorkspace({
           services={services}
           entities={entities.map((e) => ({ id: e.id, name: e.name }))}
           inherited={inheritedServices}
+          createIntent={apiCreateIntent}
+          onCreateIntentConsumed={() => setApiCreateIntent(null)}
         />
       )}
 
@@ -880,46 +880,13 @@ export function DomainWorkspace({
             Create your first entity
           </h2>
           <p className="text-body text-muted-foreground mb-space-6 max-w-md">
-            Define a logical entity in <strong>{domainName}</strong> to start building your schema. Choose how you want to get started:
+            Define a logical entity in <strong>{domainName}</strong> to start building your schema.
           </p>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-space-4 w-full max-w-2xl">
-            {/* Standards Template */}
-            <button
-              onClick={() => router.push(assetHref({ kind: "newEntity", domainSlug, productSlug }, { query: { template: "standards" } }))}
-              className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
-            >
-              <FileText className="w-8 h-8 text-primary mb-space-3 group-hover:scale-110 transition-transform" />
-              <h3 className="text-body font-medium text-foreground mb-space-1">Standards Template</h3>
-              <p className="text-caption text-muted-foreground">
-                Start from a pre-built template with common fields and best practices.
-              </p>
-            </button>
-
-            {/* Describe with AI */}
-            <button
-              onClick={() => router.push(assetHref({ kind: "newEntity", domainSlug, productSlug }, { query: { mode: "ai" } }))}
-              className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
-            >
-              <Sparkles className="w-8 h-8 text-warning mb-space-3 group-hover:scale-110 transition-transform" />
-              <h3 className="text-body font-medium text-foreground mb-space-1">Describe with AI</h3>
-              <p className="text-caption text-muted-foreground">
-                Describe your entity in plain language and let AI generate the schema.
-              </p>
-            </button>
-
-            {/* Start Blank */}
-            <button
-              onClick={() => router.push(newEntityHref)}
-              data-testid="entity-empty-start-blank"
-              className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
-            >
-              <FilePlus2 className="w-8 h-8 text-muted-foreground mb-space-3 group-hover:text-foreground group-hover:scale-110 transition-all" />
-              <h3 className="text-body font-medium text-foreground mb-space-1">Start Blank</h3>
-              <p className="text-caption text-muted-foreground">
-                Create an empty entity and add fields manually from scratch.
-              </p>
-            </button>
-          </div>
+          {/* The same flow as the header's New Entity: the Create New Entity page offers every way to start. */}
+          <Button onClick={() => router.push(newEntityHref)} className="gap-2" data-testid="entity-empty-create">
+            <Plus className="w-4 h-4" aria-hidden="true" />
+            New Entity
+          </Button>
         </div>
       ) : viewMode === "tile" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-space-4">

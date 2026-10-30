@@ -59,7 +59,7 @@ const ID = {
   deleteProductCancel: "delete-product-cancel",
   entityCard: "entity-card",
   entityCardDelete: "entity-card-delete",
-  emptyStartBlank: "entity-empty-start-blank",
+  emptyCreate: "entity-empty-create",
   deleteEntityDialog: "delete-entity-dialog",
   deleteEntityConfirm: "delete-entity-confirm",
   deleteEntityCancel: "delete-entity-cancel",
@@ -251,8 +251,8 @@ test.describe("create a domain, a product and an entity", () => {
 
     // 3. The entity: "Start Blank" of the empty product leads to the wizard; the entity is created with its one field.
     await expect(main.getByRole("heading", { name: "Create your first entity" })).toBeVisible();
-    await waitForHydration(main.getByTestId(ID.emptyStartBlank));
-    await main.getByTestId(ID.emptyStartBlank).click();
+    await waitForHydration(main.getByTestId(ID.emptyCreate));
+    await main.getByTestId(ID.emptyCreate).click();
     await expect(page).toHaveURL((url) => url.pathname === `${productPath}/new`);
     await expect(main.getByRole("heading", { name: "Create New Entity" })).toBeVisible();
     await waitForHydration(main.getByTestId(ID.methodBlank));

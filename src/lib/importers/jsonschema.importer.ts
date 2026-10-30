@@ -111,7 +111,8 @@ const KNOWN_SCHEMA_KEYWORDS = new Set([
  * Standard JSON Schema (2020-12 / draft-07) keywords the importer recognizes but maps to nothing in the IR. They are
  * listed in `ignoredKeywords` (not used by the app) + a warning, AND kept verbatim in `extensions` so a re-export loses
  * nothing. Keywords the importer consumes in any path (type, format, enum, const, constraints, ...) are never in this
- * set. (`default` is not consumed anywhere, so it is listed and preserved too.)
+ * set. (`default` is not consumed anywhere, so it is listed and preserved too.) `example` (singular) is an OpenAPI 3.0 keyword, not
+ * JSON Schema: it is an unknown key, kept verbatim as an extension like any other vendor key.
  */
 const IGNORED_SCHEMA_KEYWORDS = new Set([
   "not", "if", "then", "else", "dependentRequired", "dependentSchemas", "dependencies",
@@ -120,7 +121,7 @@ const IGNORED_SCHEMA_KEYWORDS = new Set([
   "additionalProperties", "additionalItems", "contains", "minContains", "maxContains", "prefixItems",
   "multipleOf", "uniqueItems", "minProperties", "maxProperties",
   "contentEncoding", "contentMediaType", "contentSchema", "readOnly", "writeOnly",
-  "examples", "example", "$comment", "$anchor", "$vocabulary", "default",
+  "examples", "$comment", "$anchor", "$vocabulary", "default",
 ]);
 
 /** Read by the importer on an entity node (names it) but unused on a field node, where it is listed as ignored and preserved. */
@@ -1539,13 +1540,17 @@ const NESTED_CONFLICTS = new WeakMap<object, string[]>();
 /** What was folded onto a field from the schemas below it (`x-visibility found on items of R.links was kept on the field`), reported under the same cap. */
 const NESTED_NOTES = new WeakMap<object, string[]>();
 
+/** The document's dialect (`$schema`) and identity (`$id`, which also names an untitled root): metadata on an entity, still listed and preserved, never a warning. */
+const DOCUMENT_IDENTITY_KEYWORDS: ReadonlySet<string> = new Set(["$schema", "$id"]);
+
 /** One warning per distinct (keyword, entity/field) pair, capped; the overflow is counted in a final warning. */
 function ignoredKeywordWarnings(entities: ParsedEntity[]): string[] {
   const out: string[] = [];
   let total = 0;
-  const add = (subject: string, keywords: string[] | undefined): void => {
+  const add = (subject: string, keywords: string[] | undefined, quiet?: ReadonlySet<string>): void => {
     for (const keyword of keywords ?? []) {
       if (keyword === "title") continue; // a per-field title is noise against the warning cap; still listed + preserved
+      if (quiet?.has(keyword)) continue;
       total += 1;
       if (out.length < MAX_IGNORED_WARNINGS) {
         out.push(`${subject}: JSON Schema keyword \`${keyword}\` is not supported and was ignored`);
@@ -1553,7 +1558,7 @@ function ignoredKeywordWarnings(entities: ParsedEntity[]): string[] {
     }
   };
   for (const entity of entities) {
-    add(`Entity \`${entity.name}\``, entity.ignoredKeywords);
+    add(`Entity \`${entity.name}\``, entity.ignoredKeywords, DOCUMENT_IDENTITY_KEYWORDS);
     for (const field of entity.fields) {
       add(`Field \`${entity.name}.${field.name}\``, field.ignoredKeywords);
       for (const keyword of NESTED_CONFLICTS.get(field) ?? []) {
@@ -2096,7 +2101,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
   breakInheritanceCycles(entities, warnings);
   warnings.push(...ignoredKeywordWarnings(entities));
   // The dialect and nested definitions of a definition that is no entity / enum (an inline definition or a shared union) belong to no asset:
-  // reported, not carried.
+  // reported, not carried (the one place `$schema` is dropped, so the one place it warns).
   for (const def of definitions.values()) {
     if (def.kind !== "inline" && def.kind !== "union") continue;
     for (const key of ["$schema", "$defs", "definitions"] as const) {

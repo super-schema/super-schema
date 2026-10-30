@@ -37,7 +37,6 @@ const STANDARD_UNSUPPORTED: Record<string, unknown> = {
   readOnly: true,
   writeOnly: true,
   examples: ["a"],
-  example: "a",
   $comment: "note",
   $anchor: "anc",
   default: "x",
@@ -155,6 +154,27 @@ describe("JSON Schema importer: ignoredKeywords", () => {
     expect(d.entities[0].fields.every((f) => f.ignoredKeywords === undefined)).toBe(true);
     expect(d.entities[0].fields[0].extensions).toMatchObject({ "x-custom": 1, unknownThing: 2 });
     expect(d.warnings.filter((w) => w.includes("not supported"))).toEqual([]);
+  });
+
+  it("treats `example` (OpenAPI, not JSON Schema) as an unknown key: kept verbatim, no ignored-keyword entry, no warning", () => {
+    const d = data({ title: "T", type: "object", properties: { a: { type: "string", example: "CA" } } });
+    const field = d.entities[0].fields[0];
+    expect(field.ignoredKeywords).toBeUndefined();
+    expect(field.extensions).toEqual({ example: "CA" });
+    expect(d.warnings.filter((w) => w.includes("`example`"))).toEqual([]);
+  });
+
+  it("does not warn about a root `$schema` / `$id` (dialect + identity), and names an untitled root from the `$id` file name", () => {
+    const d = data({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      $id: "https://example.com/schemas/PlaceOfBirth.json",
+      type: "object",
+      properties: { a: { type: "string" } },
+    });
+    expect(d.entities[0].name).toBe("PlaceOfBirth");
+    expect(d.entities[0].ignoredKeywords).toEqual(["$schema", "$id"]);
+    expect(d.entities[0].extensions).toMatchObject({ $schema: "https://json-schema.org/draft/2020-12/schema" });
+    expect(d.warnings.filter((w) => w.includes("`$schema`") || w.includes("`$id`"))).toEqual([]);
   });
 
   it("reports a property-level title (unused) but not the root title (the entity name)", () => {

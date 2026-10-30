@@ -2,7 +2,7 @@
 // The paste box and the Detail Panel render through JsonEditor (JSON / YAML) or a coloured textarea (Protobuf, TypeSpec, SQL).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useEffect } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, configure } from "@testing-library/react";
 
 const h = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>>, mounts: { json: 0, overlay: 0 } }));
 vi.mock("@/features/events/builder/template/controls/JsonEditor", async (importOriginal) => {
@@ -36,6 +36,9 @@ import { DetailPanel, boundedDiff, MAX_DIFF_CHARS } from "@/components/custom/Sc
 import { HighlightedTextarea, MAX_HIGHLIGHT_CHARS, renderStats } from "@/components/custom/SchemaWorkbench/HighlightedTextarea";
 import { diffLines } from "@/lib/schema-workbench/line-diff";
 import { editorKindFor } from "@/lib/schema-workbench/editor-kind";
+
+// The first live check loads the importers on demand; under a loaded machine that can outlast the 1s default.
+configure({ asyncUtilTimeout: 5000 });
 
 afterEach(() => {
   cleanup();
@@ -81,7 +84,7 @@ describe("paste box", () => {
     expect(area.tagName).toBe("TEXTAREA"); // jsdom fallback
     expect(area.value).toBe(JSON_TEXT);
     expect(area.getAttribute("aria-label")).toBe("Paste your schema content");
-    expect(last("workbench-paste-textarea")).toMatchObject({ language: "json", height: 256 });
+    expect(last("workbench-paste-textarea")).toMatchObject({ language: "json", height: 320 });
   });
 
   it("follows the pasted text: YAML switches the language", () => {
@@ -100,10 +103,28 @@ describe("paste box", () => {
     expect(screen.queryByTestId("workbench-paste-textarea-editor")).toBeNull();
   });
 
-  it("loads the pasted text with the Load button as before", async () => {
-    paste(JSON_TEXT);
-    fireEvent.click(screen.getByTestId("workbench-load-button"));
-    await waitFor(() => expect((screen.getByTestId("detail-panel-textarea") as HTMLTextAreaElement).value).toBe(JSON_TEXT));
+  it("has no Load button or Detail Panel: a live check answers instead, and Review & Import commits the text", async () => {
+    const onCommit = vi.fn();
+    render(<SchemaWorkbench onCommit={onCommit} onBack={vi.fn()} />);
+    fireEvent.change(screen.getByTestId("workbench-paste-textarea"), { target: { value: JSON_TEXT } });
+    expect(screen.queryByTestId("workbench-load-button")).toBeNull();
+    expect(screen.queryByTestId("detail-panel-textarea")).toBeNull();
+    expect(screen.getByTestId("workbench-paste-status").getAttribute("data-state")).toBe("checking");
+    expect((screen.getByTestId("workbench-review-button") as HTMLButtonElement).disabled).toBe(true);
+    await waitFor(() => expect(screen.getByTestId("workbench-paste-status").getAttribute("data-state")).toBe("valid"), { timeout: 5000 });
+    expect(screen.getByTestId("workbench-paste-status").textContent).toMatch(/^Loads: /);
+    expect(screen.queryByTestId("detail-panel-textarea")).toBeNull(); // pasting never loads the Detail Panel
+    const review = screen.getByTestId("workbench-review-button") as HTMLButtonElement;
+    expect(review.disabled).toBe(false);
+    fireEvent.click(review);
+    expect(onCommit).toHaveBeenCalledWith(JSON_TEXT, undefined);
+  });
+
+  it("flags text that cannot load and keeps Review & Import disabled", async () => {
+    paste("{ not json");
+    await waitFor(() => expect(screen.getByTestId("workbench-paste-status").getAttribute("data-state")).toBe("invalid"), { timeout: 5000 });
+    expect(screen.getByTestId("workbench-paste-status").textContent).toMatch(/^Cannot load this schema: /);
+    expect((screen.getByTestId("workbench-review-button") as HTMLButtonElement).disabled).toBe(true);
   });
 });
 

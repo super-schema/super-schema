@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within, fireEvent } from "@testing-library/react";
 import {
   ParsedFieldDetails,
+  ParsedFieldSummaryBadges,
   ParsedEntityDetails,
   MAX_VALUE_CHARS,
   MOUNT_DETAILS_ONLY_WHEN_EXPANDED_ABOVE,
@@ -332,5 +333,57 @@ describe("large imports stay bounded", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show details of Big.f7", hidden: true }));
     expect(document.querySelectorAll('[data-testid^="parsed-field-details-"]').length).toBe(1);
     expect(screen.getByTestId("parsed-field-details-f7").hasAttribute("hidden")).toBe(false);
+  });
+});
+
+describe("ParsedFieldSummaryBadges: the imported facts show on the row", () => {
+  const FIELD: ParsedField = {
+    name: "country_code",
+    type: "string",
+    originalType: "string",
+    nullable: true,
+    confidence: "high",
+    format: "iso-country",
+    constraints: [
+      { type: "minLength", value: 2 },
+      { type: "maxLength", value: 2 },
+      { type: "pattern", value: "^[A-Z]{2}$" },
+    ],
+    classification: "class4",
+    governance: { dataClass: "class4", dataCategory: "Intrinsic" },
+    extensions: { example: "US" },
+    enumValues: ["US", "CA"],
+    deprecated: true,
+  };
+
+  it("lists constraints, format, enum, data category and deprecation as chips; data class is not repeated next to the same classification", () => {
+    render(<ParsedFieldSummaryBadges field={FIELD} />);
+    const chips = screen.getAllByTestId("parsed-field-chip").map((c) => c.textContent);
+    expect(chips).toEqual([
+      "min length 2",
+      "max length 2",
+      "pattern ^[A-Z]{2}$",
+      "format iso-country",
+      "enum (2)",
+      "category Intrinsic",
+      "deprecated",
+    ]);
+    expect(screen.getByText("class4")).toBeDefined(); // the classification badge, once
+    expect(screen.getByText("1 preserved").getAttribute("title")).toBe("Kept as-is: example");
+  });
+
+  it("shows a data class that differs from the classification, and clips a long pattern with the full text in the title", () => {
+    const long = "^" + "a".repeat(60) + "$";
+    render(<ParsedFieldSummaryBadges field={{ ...FIELD, classification: "PII", governance: { dataClass: "class3" }, constraints: [{ type: "pattern", value: long }] }} />);
+    const chips = screen.getAllByTestId("parsed-field-chip");
+    expect(chips.map((c) => c.textContent)).toContain("data class class3");
+    const pattern = chips.find((c) => c.textContent?.startsWith("pattern"))!;
+    expect(pattern.textContent!.endsWith("…")).toBe(true);
+    expect(pattern.getAttribute("title")).toBe(`pattern: ${long}`);
+  });
+
+  it("renders no chips for a field with nothing imported beyond its type", () => {
+    render(<ParsedFieldSummaryBadges field={{ name: "a", type: "string", originalType: "string", nullable: true, confidence: "high" }} />);
+    expect(screen.queryAllByTestId("parsed-field-chip")).toEqual([]);
   });
 });

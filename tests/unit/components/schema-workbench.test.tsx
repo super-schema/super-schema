@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, configure } from "@testing-library/react";
 import { SchemaWorkbench } from "@/components/custom/SchemaWorkbench";
+
+// The first live check loads the importers on demand; under a loaded machine that can outlast the 1s default.
+configure({ asyncUtilTimeout: 5000 });
 
 afterEach(() => {
   cleanup();
@@ -24,25 +27,146 @@ function panel() {
   return screen.getByTestId("detail-panel-textarea") as HTMLTextAreaElement;
 }
 
-async function pasteLoad(text: string) {
-  fireEvent.click(screen.getByRole("button", { name: "Paste" }));
-  fireEvent.change(screen.getByTestId("workbench-paste-textarea"), { target: { value: text } });
-  fireEvent.click(screen.getByTestId("workbench-load-button"));
+// Paste mode is the default and has no Detail Panel; an editable imported schema comes from a file (Drop file mode).
+function chooseFile(text: string, name = "x.json") {
+  fireEvent.click(screen.getByTestId("workbench-mode-drop"));
+  fireEvent.change(screen.getByTestId("workbench-file-input"), { target: { files: [new File([text], name)] } });
+}
+
+async function fileLoad(text: string, name = "x.json") {
+  chooseFile(text, name);
   await waitFor(() => expect(panel().value).toBe(text));
 }
+
+const pasteBox = () => screen.getByTestId("workbench-paste-textarea");
+const pasteStatus = () => screen.getByTestId("workbench-paste-status");
+const reviewButton = () => screen.getByTestId("workbench-review-button") as HTMLButtonElement;
+
+describe("SchemaWorkbench — paste mode", () => {
+  it("opens on Paste, tabs in order, with no Load button and no Detail Panel", () => {
+    // The From URL tab only exists when the host can take an import result.
+    setup({ onImportResult: vi.fn() });
+    const tabs = ["paste", "drop", "url", "form"].map((id) => screen.getByTestId(`workbench-mode-${id}`));
+    expect(tabs.map((t) => t.textContent)).toEqual(["Paste", "Drop file", "From URL", "Build form"]);
+    expect(tabs[0].compareDocumentPosition(tabs[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tabs[2].compareDocumentPosition(tabs[3]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tabs[0].getAttribute("aria-pressed")).toBe("true");
+    expect(tabs[1].getAttribute("aria-pressed")).toBe("false");
+    expect(pasteBox()).toBeDefined();
+    expect(screen.queryByTestId("workbench-load-button")).toBeNull();
+    expect(screen.queryByTestId("detail-panel-textarea")).toBeNull();
+    expect(screen.queryByTestId("workbench-dropzone")).toBeNull();
+  });
+
+  it("shows a hint without a state while empty, and Review & Import is disabled", () => {
+    setup();
+    expect(pasteStatus().getAttribute("data-state")).toBeNull();
+    expect(reviewButton().disabled).toBe(true);
+  });
+
+  it("checks the text after the debounce: Checking, then Loads with a summary", async () => {
+    setup();
+    fireEvent.change(pasteBox(), { target: { value: AVRO } });
+    expect(pasteStatus().getAttribute("data-state")).toBe("checking");
+    expect(pasteStatus().textContent).toContain("Checking");
+    expect(reviewButton().disabled).toBe(true);
+
+    await waitFor(() => expect(pasteStatus().getAttribute("data-state")).toBe("valid"));
+    expect(pasteStatus().textContent).toBe("Loads: Avro, entity Customer with 1 field");
+    expect(reviewButton().disabled).toBe(false);
+  });
+
+  it("explains why text cannot load and keeps Review & Import disabled", async () => {
+    setup();
+    fireEvent.change(pasteBox(), { target: { value: "{ not json" } });
+    await waitFor(() => expect(pasteStatus().getAttribute("data-state")).toBe("invalid"));
+    expect(pasteStatus().textContent).toMatch(/^Cannot load this schema: .+/);
+    expect(reviewButton().disabled).toBe(true);
+  });
+
+  it("flips from valid to invalid when the text is edited", async () => {
+    setup();
+    fireEvent.change(pasteBox(), { target: { value: AVRO } });
+    await waitFor(() => expect(pasteStatus().getAttribute("data-state")).toBe("valid"));
+
+    fireEvent.change(pasteBox(), { target: { value: AVRO.slice(0, -4) } });
+    expect(pasteStatus().getAttribute("data-state")).toBe("checking");
+    expect(reviewButton().disabled).toBe(true);
+    await waitFor(() => expect(pasteStatus().getAttribute("data-state")).toBe("invalid"));
+    expect(reviewButton().disabled).toBe(true);
+  });
+
+  it("only the latest edit's answer applies", async () => {
+    setup();
+    fireEvent.change(pasteBox(), { target: { value: "{ not json" } });
+    fireEvent.change(pasteBox(), { target: { value: AVRO } });
+    await waitFor(() => expect(pasteStatus().getAttribute("data-state")).toBe("valid"));
+    expect(pasteStatus().textContent).toMatch(/^Loads: Avro/);
+  });
+
+  it("clearing the box returns to the empty hint", async () => {
+    setup();
+    fireEvent.change(pasteBox(), { target: { value: AVRO } });
+    await waitFor(() => expect(pasteStatus().getAttribute("data-state")).toBe("valid"));
+    fireEvent.change(pasteBox(), { target: { value: "" } });
+    expect(pasteStatus().getAttribute("data-state")).toBeNull();
+    expect(reviewButton().disabled).toBe(true);
+  });
+
+  it("Review & Import commits the pasted text with no filename or format", async () => {
+    const { onCommit } = setup();
+    fireEvent.change(pasteBox(), { target: { value: AVRO } });
+    await waitFor(() => expect(reviewButton().disabled).toBe(false));
+    fireEvent.click(reviewButton());
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(onCommit).toHaveBeenCalledWith(AVRO, undefined);
+  });
+
+  it("does not commit while the wizard is loading, even for loadable text", async () => {
+    const { onCommit } = setup({ isLoading: true });
+    fireEvent.change(pasteBox(), { target: { value: AVRO } });
+    await waitFor(() => expect(pasteStatus().getAttribute("data-state")).toBe("valid"));
+    expect(reviewButton().disabled).toBe(true);
+    fireEvent.click(reviewButton());
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("only recognises TypeSpec, deferring the compile to Review", async () => {
+    const { onCommit } = setup();
+    const tsp = 'import "@typespec/http";\n\nmodel Customer {\n  id: int64;\n  name: string;\n}\n';
+    fireEvent.change(pasteBox(), { target: { value: tsp } });
+    await waitFor(() => expect(pasteStatus().getAttribute("data-state")).toBe("valid"));
+    expect(pasteStatus().textContent).toBe("Loads: TypeSpec document, compiled when you review");
+    fireEvent.click(reviewButton());
+    expect(onCommit).toHaveBeenCalledWith(tsp, undefined);
+  });
+
+  it("pasting does not load an import: no summary, no Detail Panel", async () => {
+    setup();
+    fireEvent.change(pasteBox(), { target: { value: AVRO } });
+    await waitFor(() => expect(pasteStatus().getAttribute("data-state")).toBe("valid"));
+    expect(screen.queryByTestId("workbench-import-summary")).toBeNull();
+    expect(screen.queryByTestId("detail-panel-textarea")).toBeNull();
+    // Nothing was imported, so a later switch to Build form has nothing to discard.
+    fireEvent.click(screen.getByTestId("workbench-mode-form"));
+    expect(screen.queryByTestId("workbench-discard-confirm")).toBeNull();
+    expect(screen.getByTestId("jsonschema-visual-editor")).toBeDefined();
+  });
+});
 
 describe("SchemaWorkbench — imported origin", () => {
   it("loads a dropped file into the Detail Panel", async () => {
     setup();
+    fireEvent.click(screen.getByTestId("workbench-mode-drop"));
     const file = new File([AVRO], "customer.avsc", { type: "application/json" });
     fireEvent.drop(screen.getByTestId("workbench-dropzone"), { dataTransfer: { files: [file] } });
     await waitFor(() => expect(panel().value).toBe(AVRO));
     expect(screen.getByTestId("workbench-import-summary").textContent).toContain("customer.avsc");
   });
 
-  it("loads pasted text and highlights edited lines in red", async () => {
+  it("loads a chosen file and highlights edited lines in red", async () => {
     setup();
-    await pasteLoad(AVRO);
+    await fileLoad(AVRO);
     const editor = () => screen.getByTestId("detail-panel-textarea-editor");
     expect(editor().getAttribute("data-changed-count")).toBe("0");
 
@@ -55,7 +179,7 @@ describe("SchemaWorkbench — imported origin", () => {
 
   it("resets to the original text", async () => {
     setup();
-    await pasteLoad(AVRO);
+    await fileLoad(AVRO);
     fireEvent.change(panel(), { target: { value: "edited" } });
     fireEvent.click(screen.getByRole("button", { name: "Reset to original" }));
     expect(panel().value).toBe(AVRO);
@@ -63,16 +187,16 @@ describe("SchemaWorkbench — imported origin", () => {
 
   it("commits the edited text and lets the wizard re-detect the format", async () => {
     const { onCommit } = setup();
-    await pasteLoad(AVRO);
+    await fileLoad(AVRO);
     const edited = AVRO.replace("Customer", "Client");
     fireEvent.change(panel(), { target: { value: edited } });
     fireEvent.click(screen.getByTestId("workbench-review-button"));
-    expect(onCommit).toHaveBeenCalledWith(edited, undefined, undefined);
+    expect(onCommit).toHaveBeenCalledWith(edited, undefined, "x.json");
   });
 
   it("does not sync an imported schema into the form", async () => {
     setup();
-    await pasteLoad(AVRO);
+    await fileLoad(AVRO);
     fireEvent.change(panel(), { target: { value: AVRO.replace("Customer", "Client") } });
     expect(screen.queryByTestId("avro-visual-editor")).toBeNull();
     expect(screen.queryByTestId("workbench-unmappable")).toBeNull();
@@ -80,7 +204,7 @@ describe("SchemaWorkbench — imported origin", () => {
 
   it("asks before discarding an import for the form, and keeps it on cancel", async () => {
     setup();
-    await pasteLoad(AVRO);
+    await fileLoad(AVRO);
     fireEvent.click(screen.getByRole("button", { name: "Build form" }));
     expect(screen.getByTestId("workbench-discard-confirm")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -283,6 +407,7 @@ describe("SchemaWorkbench — sync guard regressions", () => {
 describe("SchemaWorkbench — import affordances", () => {
   it("accepts the supported schema file types", () => {
     setup();
+    fireEvent.click(screen.getByTestId("workbench-mode-drop"));
     const input = screen.getByTestId("workbench-file-input") as HTMLInputElement;
     expect(input.accept.split(",").sort()).toEqual(
       [".avro", ".avsc", ".ddl", ".json", ".proto", ".sql", ".tsp", ".yaml", ".yml"].sort()
@@ -291,6 +416,7 @@ describe("SchemaWorkbench — import affordances", () => {
 
   it("loads a file chosen with the browse input", async () => {
     setup();
+    fireEvent.click(screen.getByTestId("workbench-mode-drop"));
     const file = new File([AVRO], "picked.avsc");
     fireEvent.change(screen.getByTestId("workbench-file-input"), { target: { files: [file] } });
     await waitFor(() => expect(panel().value).toBe(AVRO));
@@ -299,6 +425,7 @@ describe("SchemaWorkbench — import affordances", () => {
 
   it("passes the dropped file's name to onCommit", async () => {
     const { onCommit } = setup();
+    fireEvent.click(screen.getByTestId("workbench-mode-drop"));
     const file = new File([AVRO], "customer.avsc");
     fireEvent.drop(screen.getByTestId("workbench-dropzone"), { dataTransfer: { files: [file] } });
     await waitFor(() => expect(panel().value).toBe(AVRO));
@@ -308,7 +435,7 @@ describe("SchemaWorkbench — import affordances", () => {
 
   it("Start over clears the import and the panel", async () => {
     setup();
-    await pasteLoad(AVRO);
+    await fileLoad(AVRO);
     fireEvent.click(screen.getByRole("button", { name: "Start over" }));
     expect(panel().value).toBe("");
     expect(screen.queryByTestId("workbench-import-summary")).toBeNull();
@@ -317,7 +444,7 @@ describe("SchemaWorkbench — import affordances", () => {
 
   it("marks where a baseline line was removed", async () => {
     setup();
-    await pasteLoad(AVRO);
+    await fileLoad(AVRO);
     const lines = AVRO.split("\n");
     fireEvent.change(panel(), { target: { value: [...lines.slice(0, 2), ...lines.slice(3)].join("\n") } });
     expect(screen.getByTestId("detail-panel-textarea-editor").getAttribute("data-removed-count")).toBe("1");
@@ -332,17 +459,12 @@ describe("SchemaWorkbench — confirms before discarding work", () => {
     fireEvent.click(screen.getByRole("button", { name: "Build form" }));
     fireEvent.change(screen.getByPlaceholderText("propertyName"), { target: { value: "email" } });
   }
-  function pasteIntoTextarea(text: string) {
-    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
-    fireEvent.change(screen.getByTestId("workbench-paste-textarea"), { target: { value: text } });
-    fireEvent.click(screen.getByTestId("workbench-load-button"));
-  }
 
-  it("asks before loading pasted text over a built form; Cancel keeps the form", () => {
+  it("asks before loading a file over a built form; Cancel keeps the form", () => {
     setup();
     buildEmailForm();
     const built = panel().value;
-    pasteIntoTextarea(AVRO);
+    chooseFile(AVRO);
 
     expect(confirmBox()?.textContent).toMatch(/discards the form you built/);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -350,10 +472,10 @@ describe("SchemaWorkbench — confirms before discarding work", () => {
     expect(panel().value).toBe(built);
   });
 
-  it("loads the pasted text once the discard is confirmed", async () => {
+  it("loads the file once the discard is confirmed", async () => {
     setup();
     buildEmailForm();
-    pasteIntoTextarea(AVRO);
+    chooseFile(AVRO);
     fireEvent.click(screen.getByRole("button", { name: "Discard & load" }));
     await waitFor(() => expect(panel().value).toBe(AVRO));
     expect(screen.queryByTestId("jsonschema-visual-editor")).toBeNull();
@@ -376,19 +498,19 @@ describe("SchemaWorkbench — confirms before discarding work", () => {
 
   it("asks before replacing an imported schema the user has edited", async () => {
     setup();
-    await pasteLoad(AVRO);
+    await fileLoad(AVRO);
     fireEvent.change(panel(), { target: { value: AVRO.replace("Customer", "Client") } });
-    pasteIntoTextarea(AVRO);
+    chooseFile(AVRO);
     expect(confirmBox()?.textContent).toMatch(/discards your edits/);
   });
 
   it("does not ask when replacing an untouched import, or when nothing is loaded", async () => {
     setup();
-    pasteIntoTextarea(AVRO);
+    chooseFile(AVRO);
     expect(confirmBox()).toBeNull();
     await waitFor(() => expect(panel().value).toBe(AVRO));
 
-    pasteIntoTextarea(AVRO.replace("Customer", "Other"));
+    chooseFile(AVRO.replace("Customer", "Other"));
     expect(confirmBox()).toBeNull();
     await waitFor(() => expect(panel().value).toContain("Other"));
   });

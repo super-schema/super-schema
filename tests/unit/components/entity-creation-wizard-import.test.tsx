@@ -72,9 +72,10 @@ async function pasteAndParse(content: string) {
   fireEvent.change(screen.getByTestId("workbench-paste-textarea"), {
     target: { value: content },
   });
-  fireEvent.click(screen.getByTestId("workbench-load-button"));
-  await waitFor(() =>
-    expect((screen.getByTestId("detail-panel-textarea") as HTMLTextAreaElement).value).toBe(content)
+  // No Load button: the live check (debounced) says the text loads, then Review & Import is enabled.
+  await waitFor(
+    () => expect(screen.getByTestId("workbench-paste-status").getAttribute("data-state")).toBe("valid"),
+    { timeout: 5000 }
   );
   fireEvent.click(screen.getByTestId("workbench-review-button"));
 }
@@ -228,16 +229,34 @@ describe("EntityCreationWizard — multi-entity import", () => {
     expect(input.extensions).toEqual({ "x-team": "iot" });
   });
 
-  it("explains that multi-entity imports go into a product at the Enterprise level", async () => {
+  it("tells, before Review, that multi-entity imports go into a product at the Enterprise level, and keeps Review disabled", async () => {
     render(<EntityCreationWizard target={{ level: "TENANT", tenantId: "tenant-1" }} />);
-    await pasteAndParse(ORDER_PROTO);
+    fireEvent.click(screen.getByRole("button", { name: /Import or Build Schema/ }));
+    fireEvent.change(screen.getByTestId("workbench-paste-textarea"), { target: { value: ORDER_PROTO } });
 
-    expect(
-      await screen.findByText(
-        /^Multi-entity imports go into a product — at Enterprise level an import creates one entity\./
-      )
-    ).toBeDefined();
-    expect(screen.getByText(/defines 6 assets/)).toBeDefined();
+    await waitFor(() => expect(screen.getByTestId("workbench-paste-status").getAttribute("data-state")).toBe("invalid"), { timeout: 5000 });
+    const status = screen.getByTestId("workbench-paste-status").textContent ?? "";
+    expect(status).toMatch(/Multi-entity imports go into a product — at Enterprise level an import creates one entity\./);
+    expect(status).toMatch(/defines 6 assets/);
+    expect((screen.getByTestId("workbench-review-button") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId("typespec-import-review")).toBeNull();
+  });
+});
+
+describe("EntityCreationWizard — pasted text that cannot load", () => {
+  it("says the text cannot load and keeps Review & Import disabled, so the wizard is never reached", async () => {
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    fireEvent.click(screen.getByRole("button", { name: /Import or Build Schema/ }));
+    fireEvent.change(screen.getByTestId("workbench-paste-textarea"), { target: { value: "this is not a schema" } });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("workbench-paste-status").getAttribute("data-state")).toBe("invalid")
+    );
+    expect(screen.getByTestId("workbench-paste-status").textContent).toMatch(/^Cannot load this schema: /);
+    const review = screen.getByTestId("workbench-review-button") as HTMLButtonElement;
+    expect(review.disabled).toBe(true);
+    fireEvent.click(review);
+    expect(importSchemaAssets).not.toHaveBeenCalledWith("this is not a schema", expect.anything());
     expect(screen.queryByTestId("typespec-import-review")).toBeNull();
   });
 });

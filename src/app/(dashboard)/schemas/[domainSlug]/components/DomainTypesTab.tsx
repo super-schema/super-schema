@@ -267,6 +267,17 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
             </div>
           )}
 
+          {/* Nothing yet: the same New Custom Data Type flow as the header menu (pick Enum / Scalar / Union). */}
+          {sharedEnums.length + customScalars.length + unionTypes.length === 0 && !showKindChooser && (
+            <div data-testid="data-types-empty" className="flex flex-col items-center justify-center py-8 text-center">
+              <p className="text-body-small text-muted-foreground mb-space-3">No custom data types yet</p>
+              <Button className="gap-1.5" onClick={() => setShowKindChooser(true)} data-testid="data-types-empty-create">
+                <Plus className="w-4 h-4" aria-hidden="true" />
+                New Custom Data Type
+              </Button>
+            </div>
+          )}
+
           {/* Enums */}
           {activeSubTab === "enums" && (
             <div className="space-y-space-2">

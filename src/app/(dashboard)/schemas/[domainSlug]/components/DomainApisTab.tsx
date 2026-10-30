@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { ChevronDown, ChevronRight, Globe, Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -65,6 +65,9 @@ export interface InheritedServices {
   services: ServiceData[];
 }
 
+/** What the parent asks the tab to open: the New Service form ("New API" in the header menu). */
+export type DomainApiCreateIntent = "new";
+
 interface DomainApisTabProps {
   domainId: string;
   /** Level new services are created at (domain page, product page, ...). */
@@ -72,6 +75,8 @@ interface DomainApisTabProps {
   services: ServiceData[];
   entities: { id: string; name: string }[];
   inherited?: InheritedServices[];
+  createIntent?: DomainApiCreateIntent | null;
+  onCreateIntentConsumed?: () => void;
 }
 
 /** Name of the level a target creates at; labels the non-entity service group. */
@@ -99,7 +104,7 @@ const METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"];
 // Component
 // ---------------------------------------------------------------------------
 
-export function DomainApisTab({ domainId, target, services, entities, inherited }: DomainApisTabProps) {
+export function DomainApisTab({ domainId, target, services, entities, inherited, createIntent, onCreateIntentConsumed }: DomainApisTabProps) {
   const [expandedService, setExpandedService] = useState<string | null>(null);
   const [expandedOp, setExpandedOp] = useState<string | null>(null);
   const [isAddingService, setIsAddingService] = useState(false);
@@ -107,6 +112,13 @@ export function DomainApisTab({ domainId, target, services, entities, inherited 
   const [isPending, startTransition] = useTransition();
   // The explorer tree's APIs counts come from /api/domains-tree, not revalidatePath.
   const invalidateDomainsTree = useInvalidateDomainsTree();
+
+  // "New API" in the header menu opens the same New Service form as this tab's own button.
+  useEffect(() => {
+    if (!createIntent) return;
+    setIsAddingService(true);
+    onCreateIntentConsumed?.();
+  }, [createIntent, onCreateIntentConsumed]);
 
   // New service form state
   const [newServiceName, setNewServiceName] = useState("");
@@ -263,6 +275,10 @@ export function DomainApisTab({ domainId, target, services, entities, inherited 
           <p className="text-caption mt-1">
             Import an OpenAPI or TypeSpec file, or create a service to get started.
           </p>
+          <Button className="gap-1.5 mt-space-4" onClick={() => setIsAddingService(true)} data-testid="apis-empty-create">
+            <Plus className="w-4 h-4" aria-hidden="true" />
+            New API
+          </Button>
         </div>
       ) : (
         serviceGroups.map(({ title, services: groupedServices }) => (

@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { unique } from "./unique";
-import { fillWorkbenchPaste, expectDetailPanelText } from "./workbench";
+import { expectPasteStatus, fillWorkbenchPaste } from "./workbench";
 import { SCHEMA_TARGETS_FOR_TESTS } from "./targets";
 import { previewSignature, readPreviewFrom, settlePreview, type PreviewSource } from "./preview-text";
 import { artifactProblems } from "./artifact-text";
@@ -51,20 +51,19 @@ export async function createUiWorkspace(page: Page, prefix: string): Promise<{ d
   return { domain, productUrl };
 }
 
-/** Open the workbench Paste tab of the product's new-entity page. */
+/** Open the workbench of the product's new-entity page (it opens on the Paste tab). */
 export async function openWorkbench(page: Page, productUrl: string): Promise<void> {
   await page.goto(`${productUrl.replace(/\/+$/, "")}/new`);
   await expect(page.getByRole("heading", { name: /create new entity/i })).toBeVisible();
   await page.getByRole("button", { name: /import or build schema/i }).first().click();
 }
 
-/** Paste `text`, Load, then open the review screen. */
+/** Paste `text`, wait for the live check to say it loads, then open the review screen (Paste is the workbench's default tab; there is no Load button). */
 export async function pasteAndReview(page: Page, productUrl: string, text: string): Promise<void> {
   await openWorkbench(page, productUrl);
   await page.getByRole("button", { name: "Paste", exact: true }).click();
   await fillWorkbenchPaste(page, text);
-  await page.getByTestId("workbench-load-button").click();
-  await expectDetailPanelText(page, text);
+  await expectPasteStatus(page, "valid");
   await page.getByTestId("workbench-review-button").click();
 }
 
@@ -74,6 +73,7 @@ export async function pasteAndReview(page: Page, productUrl: string, text: strin
  */
 export async function dropFileAndReview(page: Page, productUrl: string, filePath: string): Promise<string> {
   await openWorkbench(page, productUrl);
+  await page.getByTestId("workbench-mode-drop").click();
   const zone = page.getByTestId("workbench-dropzone");
   await expect(zone).toBeVisible();
   const content = readFileSync(filePath, "utf8");
@@ -97,6 +97,7 @@ export async function dropFileAndReview(page: Page, productUrl: string, filePath
 /** Drop mode of the workbench, by browsing: the file is chosen in the zone's own file input (what a click on the zone opens), then the review screen is opened. */
 export async function chooseFileAndReview(page: Page, productUrl: string, filePath: string): Promise<string> {
   await openWorkbench(page, productUrl);
+  await page.getByTestId("workbench-mode-drop").click();
   await expect(page.getByTestId("workbench-dropzone")).toBeVisible();
   await page.getByTestId("workbench-file-input").setInputFiles(filePath);
   const summary = page.getByTestId("workbench-import-summary");

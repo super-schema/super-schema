@@ -36,8 +36,8 @@ describe("the root entity", () => {
     expect(entity("R").extensions).toEqual({ $schema: "https://json-schema.org/draft/2020-12/schema", $id: "https://example.com/schemas/r.json" });
     expect(entity("R").ignoredKeywords).toEqual(["$schema", "$id"]);
     expect(entity("R").deprecated).toBe(true);
-    expect(doc.warnings).toContain("Entity `R`: JSON Schema keyword `$schema` is not supported and was ignored");
-    expect(doc.warnings).toContain("Entity `R`: JSON Schema keyword `$id` is not supported and was ignored");
+    // dialect + identity are metadata: kept and listed, never a warning
+    expect(doc.warnings.some((w) => w.startsWith("Entity `R`") && (w.includes("`$schema`") || w.includes("`$id`")))).toBe(false);
   });
 });
 
@@ -45,8 +45,7 @@ describe("a definition's entity", () => {
   it("keeps $schema, a title that says more than the name, vendor keys; is deprecated; its $id is the resource id its $refs use", () => {
     expect(entity("Child").extensions).toEqual({ "x-c": 1, $schema: "http://json-schema.org/draft-07/schema#", title: "A child" });
     expect(entity("Child").deprecated).toBe(true);
-    expect(doc.warnings).toContain("Entity `Child`: JSON Schema keyword `$schema` is not supported and was ignored");
-    expect(doc.warnings.some((w) => w.startsWith("Entity `Child`") && w.includes("$id"))).toBe(false);
+    expect(doc.warnings.some((w) => w.startsWith("Entity `Child`") && (w.includes("`$schema`") || w.includes("$id")))).toBe(false);
   });
 
   it("a title equal to the name adds nothing; nothing special: nothing kept", () => {

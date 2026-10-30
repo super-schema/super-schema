@@ -127,4 +127,39 @@ describe("FieldPreview", () => {
     expect((screen.getByLabelText("Entity Name") as HTMLInputElement).value).toBe("Customer");
     expect(screen.getByLabelText("Description")).toBeDefined();
   });
+
+  describe("imported details", () => {
+    const parsed = (name: string) => ({ name, type: "string", originalType: "string", nullable: true, confidence: "high" as const, constraints: [{ type: "maxLength" as const, value: 300 }] });
+    const imported = (count: number): PreviewField[] =>
+      Array.from({ length: count }, (_, i) => ({ tempId: `t${i}`, name: `f${i}`, type: "string", classification: null, description: "", parsed: parsed(`f${i}`) }));
+    const renderWith = (fields: PreviewField[]) =>
+      render(
+        <FieldPreview entityName="E" entityDescription="" fields={fields} onFieldsChange={vi.fn()} onEntityNameChange={vi.fn()} onEntityDescriptionChange={vi.fn()} onBack={vi.fn()} onConfirm={vi.fn()} />
+      );
+
+    it("a small import opens with every field's details showing, its facts as chips on the row, and one toggle to collapse them all", () => {
+      renderWith(imported(2));
+      expect(screen.getAllByText("max length 300")).toHaveLength(2); // the chips
+      for (const toggle of screen.getAllByRole("button", { name: /import details of/ })) expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(document.querySelectorAll('[data-testid^="parsed-field-details-"]:not([hidden])')).toHaveLength(2);
+      fireEvent.click(screen.getByTestId("wizard-toggle-details"));
+      for (const toggle of screen.getAllByRole("button", { name: /import details of/ })) expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(screen.getByTestId("wizard-toggle-details").textContent).toBe("Expand all imported details");
+      fireEvent.click(screen.getByTestId("wizard-toggle-details"));
+      expect(document.querySelectorAll('[data-testid^="parsed-field-details-"]:not([hidden])')).toHaveLength(2);
+    });
+
+    it("a large import opens collapsed (chips still show) and Expand all opens every field", () => {
+      renderWith(imported(13));
+      for (const toggle of screen.getAllByRole("button", { name: /import details of/ })) expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(screen.getAllByText("max length 300")).toHaveLength(13);
+      fireEvent.click(screen.getByTestId("wizard-toggle-details"));
+      for (const toggle of screen.getAllByRole("button", { name: /import details of/ })) expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("has no toggle when nothing was imported (fields added by hand)", () => {
+      render(<FieldPreviewHarness />);
+      expect(screen.queryByTestId("wizard-toggle-details")).toBeNull();
+    });
+  });
 });

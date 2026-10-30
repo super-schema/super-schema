@@ -375,11 +375,24 @@ describe("DomainWorkspace — New menu", () => {
     );
   });
 
-  it("New API opens the APIs tab", () => {
+  it("New API opens the APIs tab with the New Service form open", () => {
     nav.search = "";
     renderWorkspace();
     fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New API/ }));
     expect(screen.getByTestId("domain-apis-tab")).toBeDefined();
+    expect(screen.getByText("New API Service")).toBeDefined();
+  });
+
+  it("the empty APIs and Data Types tabs carry the same create flow as the menu", () => {
+    nav.search = "tab=apis";
+    renderWorkspace({ services: [] });
+    fireEvent.click(screen.getByTestId("apis-empty-create"));
+    expect(screen.getByText("New API Service")).toBeDefined();
+    cleanup();
+    nav.search = "tab=data-types";
+    renderWorkspace({ sharedEnums: [], customScalars: [], unionTypes: [] });
+    fireEvent.click(screen.getByTestId("data-types-empty-create"));
+    expect(within(screen.getByTestId("type-kind-chooser")).getByRole("button", { name: "Enum" })).toBeDefined();
   });
 });
 
@@ -670,11 +683,12 @@ describe("DomainWorkspace — canonical links", () => {
     expect(nav.push).toHaveBeenCalledWith("/schemas/payments/checkout/order");
   });
 
-  it("empty-state start options route through assetHref", () => {
+  it("the empty Entities state is one New Entity button, the same flow as the header's, routed through assetHref", () => {
     nav.search = "";
     renderWorkspace({ entities: [] });
-    fireEvent.click(screen.getByText(/Standards/i));
-    expect(nav.push).toHaveBeenCalledWith("/schemas/payments/checkout/new?template=standards");
+    expect(screen.queryByText(/Standards Template/i)).toBeNull();
+    fireEvent.click(screen.getByTestId("entity-empty-create"));
+    expect(nav.push).toHaveBeenCalledWith("/schemas/payments/checkout/new");
   });
 
   it("labels the breadcrumb landmark", () => {

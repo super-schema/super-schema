@@ -207,7 +207,33 @@ const CONSTRAINT_LABEL: Record<string, string> = {
   maxItems: "max items",
 };
 
-/** Compact badges for a collapsed field's summary row: nothing here is the only place a fact appears. */
+const MAX_CHIP_VALUE_CHARS = 28;
+
+/** The imported facts a reviewer looks for first, as short `label value` chips (the full list is in the field's details). */
+function importedFactChips(field: ParsedField): { key: string; text: string; title?: string }[] {
+  const chips: { key: string; text: string; title?: string }[] = [];
+  const clip = (value: string) => (value.length > MAX_CHIP_VALUE_CHARS ? `${value.slice(0, MAX_CHIP_VALUE_CHARS)}…` : value);
+  for (const c of field.constraints ?? []) {
+    const label = CONSTRAINT_LABEL[c.type] ?? c.type;
+    const value = String(c.value);
+    chips.push({ key: `constraint:${c.type}`, text: `${label} ${clip(value)}`, title: `${label}: ${value}` });
+  }
+  if (field.minValueExclusive !== undefined) chips.push({ key: "exclusiveMin", text: `exclusive min ${field.minValueExclusive}` });
+  if (field.maxValueExclusive !== undefined) chips.push({ key: "exclusiveMax", text: `exclusive max ${field.maxValueExclusive}` });
+  if (field.format) chips.push({ key: "format", text: `format ${clip(field.format)}`, title: `format: ${field.format}` });
+  if (field.enumValues && field.enumValues.length > 0) {
+    chips.push({ key: "enum", text: `enum (${field.enumValues.length})`, title: `enum: ${field.enumValues.join(", ")}` });
+  }
+  if (field.governance?.dataClass && field.governance.dataClass !== field.classification) {
+    chips.push({ key: "dataClass", text: `data class ${field.governance.dataClass}` });
+  }
+  if (field.governance?.dataCategory) chips.push({ key: "dataCategory", text: `category ${field.governance.dataCategory}` });
+  if (field.deprecated) chips.push({ key: "deprecated", text: "deprecated" });
+  if (field.secret) chips.push({ key: "secret", text: "secret" });
+  return chips;
+}
+
+/** Compact badges for a field's summary row: nothing here is the only place a fact appears. */
 export const ParsedFieldSummaryBadges = memo(function ParsedFieldSummaryBadges({
   field,
   entityNames,
@@ -216,7 +242,8 @@ export const ParsedFieldSummaryBadges = memo(function ParsedFieldSummaryBadges({
   entityNames?: ReadonlySet<string>;
 }) {
   const dangling = danglingReferenceOf(field, entityNames);
-  const preserved = Object.keys(field.extensions ?? {}).length;
+  const preservedKeys = Object.keys(field.extensions ?? {});
+  const preserved = preservedKeys.length;
   const ignored = field.ignoredKeywords?.length ?? 0;
   return (
     <>
@@ -240,13 +267,18 @@ export const ParsedFieldSummaryBadges = memo(function ParsedFieldSummaryBadges({
           ({field.precision},{field.scale ?? 0})
         </Badge>
       )}
+      {importedFactChips(field).map((chip) => (
+        <Badge key={chip.key} variant="secondary" className="text-[9px] h-3.5 font-mono" title={chip.title} data-testid="parsed-field-chip">
+          {chip.text}
+        </Badge>
+      ))}
       {dangling && (
         <Badge variant="outline" className="text-[9px] h-3.5 border-warning/40 text-warning">
           dangling ref
         </Badge>
       )}
       {preserved > 0 && (
-        <Badge variant="outline" className="text-[9px] h-3.5 border-info/40 text-info">
+        <Badge variant="outline" className="text-[9px] h-3.5 border-info/40 text-info" title={`Kept as-is: ${preservedKeys.join(", ")}`}>
           {preserved} preserved
         </Badge>
       )}

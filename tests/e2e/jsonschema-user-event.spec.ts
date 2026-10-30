@@ -13,7 +13,7 @@
  */
 
 import { test, expect, unique } from "./helpers/fixtures";
-import { expectDetailPanelText, fillWorkbenchPaste } from "./helpers/workbench";
+import { expectPasteStatus, fillWorkbenchPaste } from "./helpers/workbench";
 import { deleteDomainsByName, disconnectDb } from "./helpers/db";
 import { createDomain, createProduct } from "./helpers/lifecycle";
 
@@ -73,14 +73,13 @@ test.describe("JSON Schema import: user event, end to end", () => {
     await createDomain(page, domain);
     const productUrl = await createProduct(page, domain, product);
 
-    // 1. Workbench: paste, load, review.
+    // 1. Workbench: paste, the live check says it loads, review.
     await page.goto(`${productUrl.replace(/\/+$/, "")}/new`);
     await expect(page.getByRole("heading", { name: /create new entity/i })).toBeVisible();
     await page.getByRole("button", { name: /import or build schema/i }).first().click();
     await page.getByRole("button", { name: "Paste", exact: true }).click();
     await fillWorkbenchPaste(page, USER_EVENT);
-    await page.getByTestId("workbench-load-button").click();
-    await expectDetailPanelText(page, USER_EVENT);
+    await expectPasteStatus(page, "valid");
     await page.getByTestId("workbench-review-button").click();
 
     // 2. Single-entity review: the name prompt blocks Create while the placeholder name stands.
@@ -146,8 +145,7 @@ test.describe("JSON Schema import: user event, end to end", () => {
     await page.getByRole("button", { name: /import or build schema/i }).first().click();
     await page.getByRole("button", { name: "Paste", exact: true }).click();
     await fillWorkbenchPaste(page, USER_EVENT);
-    await page.getByTestId("workbench-load-button").click();
-    await expectDetailPanelText(page, USER_EVENT);
+    await expectPasteStatus(page, "valid");
     await page.getByTestId("workbench-review-button").click();
     await page.getByPlaceholder("EntityName").fill("UserEvent");
     await page.getByRole("button", { name: /create entity/i }).click();

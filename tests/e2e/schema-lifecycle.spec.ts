@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test, expect, unique } from "./helpers/fixtures";
-import { expectDetailPanelText, fillWorkbenchPaste } from "./helpers/workbench";
+import { expectPasteStatus, fillWorkbenchPaste } from "./helpers/workbench";
 import { deleteDomainsByName, disconnectDb } from "./helpers/db";
 import { createDomain, createProduct } from "./helpers/lifecycle";
 
@@ -38,13 +38,12 @@ async function importEntityFromTsp(page: import("@playwright/test").Page, produc
   await expect(page.getByRole("heading", { name: /create new entity/i })).toBeVisible();
   // ...and the transient duplicate must settle to exactly one rendered copy.
   await expect(page.getByText(/create new entity/i)).toHaveCount(1);
-  // Unified workbench: card → Paste → Load schema → Review & Import. The Detail
-  // Panel textarea is separate from the paste textarea, so target by test id.
+  // Unified workbench: card → Paste (the default tab) → live check says it loads → Review & Import.
+  // There is no Load button and no Detail Panel in Paste mode.
   await page.getByRole("button", { name: /import or build schema/i }).first().click();
   await page.getByRole("button", { name: "Paste", exact: true }).click();
   await fillWorkbenchPaste(page, tsp);
-  await page.getByTestId("workbench-load-button").click();
-  await expectDetailPanelText(page, tsp);
+  await expectPasteStatus(page, "valid");
   await page.getByTestId("workbench-review-button").click();
   // TypeSpec imports go to the multi-model review screen.
   await expect(page.getByText(/AllTypes/i).first()).toBeVisible();

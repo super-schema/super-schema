@@ -1,7 +1,7 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
 /**
- * Schema Workbench editors. The paste box and the Detail Panel are a `JsonEditor` (CodeMirror: a contenteditable) for JSON/YAML text,
+ * Schema Workbench editors. The paste box (and the Detail Panel of the Drop file / Build form modes) is a `JsonEditor` (CodeMirror: a contenteditable) for JSON/YAML text,
  * or a plain textarea for Protobuf / TypeSpec / SQL, and a textarea while CodeMirror loads. `#<test id>` is the editable node in every
  * one of those states (a textarea's id, or CodeMirror's content element's id); `getByTestId` would hit the host div instead.
  */
@@ -48,7 +48,17 @@ export async function fillWorkbenchPaste(page: Page, text: string): Promise<void
   await expectWorkbenchText(page, PASTE_ID, text);
 }
 
-/** Assert the Detail Panel shows `text`. */
+/**
+ * Wait for the paste box's live check to settle on `state` (the check runs 400 ms after the last edit), and resolve to the status element.
+ * `valid` is what enables Review & Import in Paste mode; `invalid` is a rejection ("Cannot load this schema: ...").
+ */
+export async function expectPasteStatus(page: Page, state: "valid" | "invalid"): Promise<Locator> {
+  const status = page.locator(`[data-testid="workbench-paste-status"][data-state="${state}"]`);
+  await expect(status).toBeVisible({ timeout: 15_000 });
+  return status;
+}
+
+/** Assert the Detail Panel shows `text` (Drop file and Build form modes; Paste mode has no Detail Panel). */
 export async function expectDetailPanelText(page: Page, text: string): Promise<void> {
   await expectWorkbenchText(page, PANEL_ID, text);
 }

@@ -36,7 +36,7 @@ import {
   openWorkbench,
   pasteAndReview,
 } from "./helpers/lifecycle";
-import { fillWorkbenchPaste } from "./helpers/workbench";
+import { expectPasteStatus, fillWorkbenchPaste } from "./helpers/workbench";
 import { pg } from "./helpers/db";
 import { saveTypeSpecSource, readTypeSpecSource, openEditor } from "./helpers/lifecycle";
 
@@ -74,7 +74,6 @@ const ID = {
   nlDescription: "nl-description",
   nlGenerate: "nl-generate",
   modePaste: "workbench-mode-paste",
-  loadButton: "workbench-load-button",
   reviewButton: "workbench-review-button",
   wizardError: "wizard-error",
 } as const;
@@ -467,7 +466,7 @@ test.describe("importers", () => {
     await expect(main.getByTestId(ID.creationMethod("standards"))).toBeVisible();
   });
 
-  test("text that is no schema at all: the workbench says the format could not be detected, and the review is refused with a message", { tag: ["@regression"] }, async ({
+  test("text that is no schema at all: the paste check says it cannot be loaded, and Review & Import stays disabled", { tag: ["@regression"] }, async ({
     authedPage: page,
     workspace,
   }) => {
@@ -475,10 +474,10 @@ test.describe("importers", () => {
     await openWorkbench(page, workspace.productUrl);
     await main.getByTestId(ID.modePaste).click();
     await fillWorkbenchPaste(page, "this is not a schema, just a sentence");
-    await main.getByTestId(ID.loadButton).click();
-    await expect(main.getByText("Could not detect the schema format. You can still edit the text, but import may fail.")).toBeVisible();
-    await main.getByTestId(ID.reviewButton).click();
-    await expect(main.getByText(/Could not detect schema format\. Ensure the content matches Avro, BigQuery DDL, Protobuf, JSON Schema, or TypeSpec\./)).toBeVisible();
+    const status = await expectPasteStatus(page, "invalid");
+    await expect(status).toContainText(/Cannot load this schema: .*(detect|format)/i);
+    // No Load button to bypass the check: the review cannot be opened for text that does not load.
+    await expect(main.getByTestId(ID.reviewButton)).toBeDisabled();
     // Nothing was created: no review screen, still on the new-entity page.
     await expect(main.getByTestId(ID.entityDetails)).toHaveCount(0);
     await expect(main.getByTestId(ID.multiReview)).toHaveCount(0);
