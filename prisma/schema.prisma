@@ -911,6 +911,23 @@ model EmitterConfig {
 }
 
 // ============================================================
+// AI Configuration (platform singleton)
+// ============================================================
+
+// The admin's override of the AI provider settings (`resolveAiConfig`, src/services/ai-config.service.ts). One row, id "default"; a null field
+// falls back to the environment. The API key is NEVER stored here: it is read from AI_API_KEY only.
+model AiConfig {
+  id        String   @id
+  provider  String?
+  baseUrl   String?
+  model     String?
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+
+  @@map("ai_config")
+}
+
+// ============================================================
 // Emission Tracking
 // ============================================================
 

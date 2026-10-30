@@ -2,6 +2,10 @@
  * Unit tests for AI Import Enhancement Service — Story 11.4
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
+
+// The AI configuration is read through prisma: no stored row here, so these tests run with the environment's (unset) configuration.
+vi.mock("@/lib/db", () => ({ prisma: { aiConfig: { findUnique: vi.fn(async () => null) } } }));
+
 import {
   buildImportPrompt,
   mergeAiWithDeterministic,

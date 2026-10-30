@@ -37,6 +37,9 @@ const DEVELOPER = {
   AUTH_SECRET: "dev-auth-secret",
   AI_PROVIDER: "ollama",
   AI_BASE_URL: "http://dev-ai:11434",
+  AI_API_KEY: "dev-ai-key",
+  OLLAMA_HOST: "dev-ollama:11434",
+  OPENAI_BASE_URL: "http://dev-vllm:8000/v1",
   AUTH_PROVIDER_OKTA_CLIENT_ID: "dev-okta-id",
   API_KEY: "dev-api-key",
   DATABASE_URL: "postgresql://dev:devpass@db.internal:5432/devdb",
@@ -52,13 +55,14 @@ describe("the groups", () => {
   it("pin the blanked names: a name is added or removed on purpose, with a reason in scripts/e2e-env.mjs", () => {
     expect([...HERMETIC_BLANKED_NAMES].sort()).toEqual(
       [
-        "AI_BASE_URL", "AI_MODEL", "AI_PROVIDER",
+        "AI_API_KEY", "AI_BASE_URL", "AI_MODEL", "AI_PROVIDER",
         "API_KEY_ROLE", "API_KEY_TENANT_ID",
         "ASYNCAPI_PARSER_BREAKER_MS", "ASYNCAPI_PARSER_IN_PROCESS", "ASYNCAPI_PARSER_MAX_MESSAGE_BYTES", "ASYNCAPI_PARSER_PARSE_TIMEOUT_MS", "ASYNCAPI_PARSER_REBUILD_BACKOFF_MS",
         "ASYNCAPI_PARSER_START_TIMEOUT_MS", "ASYNCAPI_PARSER_VALIDATE_TIMEOUT_MS", "ASYNCAPI_PARSER_WORKER", "ASYNCAPI_PARSER_WORKERS",
         "AUTH_REDIRECT_PROXY_URL", "AUTH_SECRET_1", "AUTH_SECRET_2", "AUTH_SECRET_3",
         "BOOTSTRAP_ADMIN_EMAIL", "BOOTSTRAP_ADMIN_PASSWORD",
         "DIRECT_URL",
+        "OLLAMA_HOST", "OPENAI_BASE_URL",
         "AUTH_PROVIDERS", ...providerEnvNames(),
         "HEALTH_DB_DEGRADED_MS", "HEALTH_DB_TIMEOUT_MS",
         "PGAPPNAME", "PGCONNECT_TIMEOUT", "PGDATABASE", "PGHOST", "PGHOSTADDR", "PGOPTIONS", "PGPASSFILE", "PGPASSWORD", "PGPORT", "PGSERVICE",
@@ -239,7 +243,7 @@ describe("a fake developer environment never reaches a child", () => {
   });
 
   it("the developer's feature toggles and secrets are empty strings, not missing (a missing name is filled in by a .env)", () => {
-    for (const name of ["AI_PROVIDER", "AI_BASE_URL", "AUTH_PROVIDERS", "AUTH_PROVIDER_OKTA_CLIENT_ID", "PGPASSWORD", "SCHEMA_IMPORT_GIT_MODE", "ASYNCAPI_PARSER_IN_PROCESS"]) {
+    for (const name of ["AI_PROVIDER", "AI_BASE_URL", "AI_API_KEY", "OLLAMA_HOST", "OPENAI_BASE_URL", "AUTH_PROVIDERS", "AUTH_PROVIDER_OKTA_CLIENT_ID", "PGPASSWORD", "SCHEMA_IMPORT_GIT_MODE", "ASYNCAPI_PARSER_IN_PROCESS"]) {
       expect(app[name], name).toBe("");
     }
     for (const name of HERMETIC_BLANKED_NAMES) expect(app[name], name).toBe("");
@@ -255,7 +259,7 @@ describe("a fake developer environment never reaches a child", () => {
 
   it("nothing of the developer's values is left in any child's environment", () => {
     const text = JSON.stringify({ app, phases });
-    for (const value of ["dev-auth-secret", "dev-okta-id", "dev-api-key", "devpass", "db.internal", "dev-ai", "dev@example.com", "localhost:3000"]) {
+    for (const value of ["dev-auth-secret", "dev-okta-id", "dev-api-key", "devpass", "db.internal", "dev-ai", "dev-ai-key", "dev-ollama", "dev-vllm", "dev@example.com", "localhost:3000"]) {
       expect(text, value).not.toContain(value);
     }
   });
@@ -263,6 +267,9 @@ describe("a fake developer environment never reaches a child", () => {
   it("the browser run drops what it must not inherit, blanks nothing (it loads no .env; a blank TEST_EMAIL would be the login \"\")", () => {
     expect(phases.TEST_EMAIL).toBeUndefined();
     expect(phases.AI_PROVIDER).toBeUndefined();
+    expect(phases.AI_API_KEY).toBeUndefined();
+    expect(phases.OLLAMA_HOST).toBeUndefined();
+    expect(phases.OPENAI_BASE_URL).toBeUndefined();
     expect(phases.PGPASSWORD).toBeUndefined();
     expect(phases.E2E_BASE_URL).toBe(RUN.baseUrl);
     expect(phases.E2E_OUTPUT_ROOT).toBe("/out");
@@ -442,7 +449,7 @@ describe("the app does not read a name that no group accounts for", () => {
 
   it("finds the names it is meant to find (the scan itself is not empty)", () => {
     const all = new Set(files.flatMap((file) => namesRead(readFileSync(file, "utf8"))));
-    for (const name of ["DATABASE_URL", "AUTH_PROVIDERS", "AI_PROVIDER", "API_KEY", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_CLASSIFICATION_VALUE_MAP", "ASYNCAPI_PARSER_WORKER", "ASYNCAPI_PARSER_PARSE_TIMEOUT_MS", "NEXT_PUBLIC_APP_URL"]) {
+    for (const name of ["DATABASE_URL", "AUTH_PROVIDERS", "AI_PROVIDER", "AI_API_KEY", "OLLAMA_HOST", "API_KEY", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_CLASSIFICATION_VALUE_MAP", "ASYNCAPI_PARSER_WORKER", "ASYNCAPI_PARSER_PARSE_TIMEOUT_MS", "NEXT_PUBLIC_APP_URL"]) {
       expect(all.has(name), name).toBe(true);
     }
   }, 60_000);

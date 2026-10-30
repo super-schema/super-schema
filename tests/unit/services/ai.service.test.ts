@@ -2,6 +2,11 @@
  * Unit tests for AI Service — Stories 11.1 and 11.3
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// The configuration is stored in the `ai_config` row and read through prisma: no row here, so the environment decides.
+const h = vi.hoisted(() => ({ findUnique: vi.fn<(args?: unknown) => Promise<unknown>>(async () => null) }));
+vi.mock("@/lib/db", () => ({ prisma: { aiConfig: { findUnique: h.findUnique } } }));
+
 import {
   buildEntityPrompt,
   buildFieldSuggestionsPrompt,
@@ -25,68 +30,114 @@ describe("AI Service", () => {
   describe("isAiConfigured", () => {
     const originalEnv = { ...process.env };
 
+    beforeEach(() => {
+      for (const key of ["AI_PROVIDER", "AI_BASE_URL", "AI_MODEL", "AI_API_KEY", "OLLAMA_HOST", "OPENAI_BASE_URL"]) delete process.env[key];
+      h.findUnique.mockResolvedValue(null);
+    });
+
     afterEach(() => {
       process.env = { ...originalEnv };
     });
 
-    it("returns false when env vars are not set", () => {
-      delete process.env.AI_PROVIDER;
-      delete process.env.AI_BASE_URL;
-      expect(isAiConfigured()).toBe(false);
+    it("resolves to false when nothing is configured", async () => {
+      expect(await isAiConfigured()).toBe(false);
     });
 
-    it("returns false when only AI_PROVIDER is set", () => {
+    it("resolves to false when only AI_PROVIDER is set", async () => {
       process.env.AI_PROVIDER = "ollama";
-      delete process.env.AI_BASE_URL;
-      expect(isAiConfigured()).toBe(false);
+      expect(await isAiConfigured()).toBe(false);
     });
 
-    it("returns false when only AI_BASE_URL is set", () => {
-      delete process.env.AI_PROVIDER;
+    it("resolves to false when only AI_BASE_URL is set", async () => {
       process.env.AI_BASE_URL = "http://localhost:11434";
-      expect(isAiConfigured()).toBe(false);
+      expect(await isAiConfigured()).toBe(false);
     });
 
-    it("returns true when both AI_PROVIDER and AI_BASE_URL are set", () => {
+    it("resolves to true when AI_PROVIDER and AI_BASE_URL are set", async () => {
       process.env.AI_PROVIDER = "ollama";
       process.env.AI_BASE_URL = "http://localhost:11434";
-      expect(isAiConfigured()).toBe(true);
+      expect(await isAiConfigured()).toBe(true);
+    });
+
+    it("resolves to true when only the stored override (Admin > AI) configures a provider", async () => {
+      h.findUnique.mockResolvedValue({ id: "default", provider: "vllm", baseUrl: "http://gpu:8000", model: null, updatedBy: null, updatedAt: new Date() });
+      expect(await isAiConfigured()).toBe(true);
+    });
+
+    it("resolves to true from the standard OLLAMA_HOST name", async () => {
+      process.env.AI_PROVIDER = "ollama";
+      process.env.OLLAMA_HOST = "localhost:11434";
+      expect(await isAiConfigured()).toBe(true);
     });
   });
 
   // ── createAiClient ───────────────────────────────────────────────────
 
   describe("createAiClient", () => {
-    const originalEnv = { ...process.env };
-
-    afterEach(() => {
-      process.env = { ...originalEnv };
+    const config = (provider: "ollama" | "vllm", apiKey: string | null = null) => ({
+      provider,
+      baseUrl: provider === "ollama" ? "http://localhost:11434" : "http://localhost:8000",
+      model: "llama3",
+      apiKey,
+      source: "env" as const,
     });
 
-    it("returns null when env vars are not set", () => {
-      delete process.env.AI_PROVIDER;
-      delete process.env.AI_BASE_URL;
-      expect(createAiClient()).toBeNull();
+    it("returns null when there is no configuration", () => {
+      expect(createAiClient(null)).toBeNull();
     });
 
     it("returns OllamaClient for provider 'ollama'", () => {
-      process.env.AI_PROVIDER = "ollama";
-      process.env.AI_BASE_URL = "http://localhost:11434";
-      const client = createAiClient();
+      const client = createAiClient(config("ollama"));
       expect(client).toBeInstanceOf(OllamaClient);
     });
 
     it("returns VllmClient for provider 'vllm'", () => {
-      process.env.AI_PROVIDER = "vllm";
-      process.env.AI_BASE_URL = "http://localhost:8000";
-      const client = createAiClient();
+      const client = createAiClient(config("vllm"));
       expect(client).toBeInstanceOf(VllmClient);
     });
 
-    it("returns null for unknown provider", () => {
-      process.env.AI_PROVIDER = "unknown-provider";
-      process.env.AI_BASE_URL = "http://localhost:1234";
-      expect(createAiClient()).toBeNull();
+    it("returns null for a provider it does not know", () => {
+      const unknown = { ...config("ollama"), provider: "unknown-provider" as "ollama" };
+      expect(createAiClient(unknown)).toBeNull();
+    });
+
+    it("reads nothing from the environment: the same config gives the same client whatever AI_* holds", () => {
+      const original = process.env.AI_PROVIDER;
+      process.env.AI_PROVIDER = "vllm";
+      try {
+        expect(createAiClient(config("ollama"))).toBeInstanceOf(OllamaClient);
+      } finally {
+        if (original === undefined) delete process.env.AI_PROVIDER;
+        else process.env.AI_PROVIDER = original;
+      }
+    });
+  });
+
+  // ── Bearer key on the wire ───────────────────────────────────────────
+
+  describe("the API key (AI_API_KEY) on completion requests", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("sends 'Authorization: Bearer <key>' when a key is configured", async () => {
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ response: "ok" }), { status: 200 }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await new OllamaClient("http://localhost:11434", "llama3", "sk-abc").complete("hi");
+
+      const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+      expect((init.headers as Record<string, string>).Authorization).toBe("Bearer sk-abc");
+    });
+
+    it("sends no Authorization header when no key is configured", async () => {
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ choices: [{ text: "ok" }] }), { status: 200 }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await new VllmClient("http://localhost:8000", "qwen", null).complete("hi");
+
+      const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+      expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
     });
   });
 
@@ -419,8 +470,14 @@ describe("AI Service", () => {
   describe("generateEntityFromDescription", () => {
     const originalEnv = { ...process.env };
 
+    beforeEach(() => {
+      for (const key of ["AI_PROVIDER", "AI_BASE_URL", "AI_MODEL", "AI_API_KEY", "OLLAMA_HOST", "OPENAI_BASE_URL"]) delete process.env[key];
+      h.findUnique.mockResolvedValue(null);
+    });
+
     afterEach(() => {
       process.env = { ...originalEnv };
+      vi.unstubAllGlobals();
     });
 
     it("returns error when AI is not configured", async () => {
@@ -435,7 +492,22 @@ describe("AI Service", () => {
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe("AI_NOT_CONFIGURED");
+        expect(result.error.suggestedFix).toContain("Admin > AI");
       }
+    });
+
+    it("calls the provider the stored override names, with the environment's key", async () => {
+      h.findUnique.mockResolvedValue({ id: "default", provider: "vllm", baseUrl: "http://gpu:8000/v1", model: "qwen", updatedBy: null, updatedAt: new Date() });
+      process.env.AI_API_KEY = "sk-wire";
+      const entity = { entityName: "Customer", fields: [{ name: "id", type: "string", confidence: 0.9 }] };
+      const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({ choices: [{ text: JSON.stringify(entity) }] }), { status: 200 }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await generateEntityFromDescription("A customer entity", { domainName: "test", existingEntityNames: [] });
+
+      expect(fetchMock.mock.calls[0][0]).toBe("http://gpu:8000/v1/completions");
+      expect((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].headers).toMatchObject({ Authorization: "Bearer sk-wire" });
+      expect(result).toMatchObject({ success: true, data: { entityName: "Customer" } });
     });
   });
 });

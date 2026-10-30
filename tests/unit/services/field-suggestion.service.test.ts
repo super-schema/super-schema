@@ -7,12 +7,15 @@ import {
   getPatternBasedSuggestions,
 } from "@/services/field-suggestion.service";
 
+// The AI configuration is read through prisma; the AI service is mocked below, so this only keeps the real module from opening a database.
+vi.mock("@/lib/db", () => ({ prisma: { aiConfig: { findUnique: vi.fn(async () => null) } } }));
+
 // Mock the AI service to avoid real LLM calls
 vi.mock("@/services/ai.service", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
-    isAiConfigured: vi.fn(() => false),
+    isAiConfigured: vi.fn(async () => false),
     generateFieldSuggestions: vi.fn(async () => ({
       success: false,
       error: { code: "AI_NOT_CONFIGURED", message: "Not configured" },

@@ -160,6 +160,9 @@ export const ACTIONS = freezeTable({
   "git.manage": { minRole: "ADMIN", level: "global" },
   // classification taxonomy: createClassification, updateClassification, deleteClassification [none: global]
   "classification.manage": { minRole: "ADMIN", level: "global" },
+  // AI provider settings: getAiSettings, updateAiSettings, testAiConnection (ai-config.service; the stored provider, base URL and model that every
+  // AI call reads) [none: global]
+  "ai.manage": { minRole: "ADMIN", level: "global" },
   // tenant creation (a platform task; there is no tenant creation action yet: `npm run tenant:create`) [none: global]
   "tenant.create": { minRole: "ADMIN", level: "global" },
   // global type-mapping override: createTypeMappingOverride (scope global), createGlobalOverride, createOverride without an entity, deleteOverride of a

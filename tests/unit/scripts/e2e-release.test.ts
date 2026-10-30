@@ -47,6 +47,9 @@ const DEVELOPER = {
   PORT: "3000",
   SCHEMA_IMPORT_GIT_MODE: "any",
   AI_PROVIDER: "ollama",
+  AI_API_KEY: "dev-ai-key",
+  OLLAMA_HOST: "dev-ollama:11434",
+  OPENAI_BASE_URL: "http://dev-vllm:8000/v1",
   AUTH_PROVIDER_OKTA_CLIENT_ID: "dev-okta-id",
   API_KEY: "dev-api-key",
   DIRECT_URL: "postgresql://dev:devpass@db.internal:5432/direct",
@@ -246,11 +249,11 @@ describe("planRun: the environment of every child", () => {
 
   it("defines the developer's feature toggles and secrets as empty strings for the children that load a .env, and leaves them out of the browser run", () => {
     for (const env of [p.env.app, p.env.db]) {
-      for (const name of ["AUTH_PROVIDERS", "AUTH_PROVIDER_OKTA_CLIENT_ID", "AI_PROVIDER", "DIRECT_URL", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_IMPORT_GIT_SCOPES", "PGHOST", "PGPASSWORD"]) {
+      for (const name of ["AUTH_PROVIDERS", "AUTH_PROVIDER_OKTA_CLIENT_ID", "AI_PROVIDER", "AI_API_KEY", "OLLAMA_HOST", "OPENAI_BASE_URL", "DIRECT_URL", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_IMPORT_GIT_SCOPES", "PGHOST", "PGPASSWORD"]) {
         expect(env[name], name).toBe("");
       }
     }
-    for (const name of ["AUTH_PROVIDERS", "AUTH_PROVIDER_OKTA_CLIENT_ID", "AI_PROVIDER", "API_KEY", "DIRECT_URL", "PGHOST", "PGPASSWORD", "AUTH_URL", "AUTH_SECRET"]) {
+    for (const name of ["AUTH_PROVIDERS", "AUTH_PROVIDER_OKTA_CLIENT_ID", "AI_PROVIDER", "AI_API_KEY", "OLLAMA_HOST", "OPENAI_BASE_URL", "API_KEY", "DIRECT_URL", "PGHOST", "PGPASSWORD", "AUTH_URL", "AUTH_SECRET"]) {
       expect(p.env.phases[name], name).toBeUndefined();
     }
   });

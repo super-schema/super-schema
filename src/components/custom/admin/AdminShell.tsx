@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Users, Globe, Zap, Activity, Tags, Settings, ShieldOff } from "lucide-react";
+import { Users, Globe, Zap, Activity, Tags, Settings, ShieldOff, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AdminCapabilities } from "@/lib/access/capabilities";
 
-type TabId = "settings" | "users" | "domains" | "emitters" | "health" | "classifications";
+type TabId = "settings" | "users" | "domains" | "emitters" | "health" | "classifications" | "ai";
 
 /**
  * The tabs of the Admin area, each with the capability that lets a person use it (`null`: every signed-in person, personal settings). The capabilities are
@@ -19,6 +19,7 @@ const ADMIN_TABS: ReadonlyArray<{ id: TabId; label: string; icon: typeof Users; 
   { id: "emitters", label: "Emitters", icon: Zap, href: "/admin/emitters", needs: "emitters" },
   { id: "health", label: "Health", icon: Activity, href: "/admin/health", needs: "health" },
   { id: "classifications", label: "Classifications", icon: Tags, href: "/admin/classifications", needs: "classifications" },
+  { id: "ai", label: "AI", icon: Sparkles, href: "/admin/ai", needs: "ai" },
 ];
 
 /** The tab a path belongs to, whether or not the person may use it (an unknown path under /admin is the Users tab, as it always was). */

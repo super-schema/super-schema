@@ -35,7 +35,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   signInAs(principalOf([assign.tenant("AUTHOR", "tenant-a")]));
   mocks.getActiveTenantId.mockResolvedValue("tenant-a");
-  mocks.isAiConfigured.mockReturnValue(true);
+  mocks.isAiConfigured.mockResolvedValue(true);
   mocks.generate.mockResolvedValue({ success: true, data: { name: "Order", fields: [] } });
 });
 
@@ -86,7 +86,7 @@ describe("POST /api/ai/generate-entity", () => {
   });
 
   it("still answers 503 when the AI is not configured, before it looks at any domain", async () => {
-    mocks.isAiConfigured.mockReturnValue(false);
+    mocks.isAiConfigured.mockResolvedValue(false);
 
     const response = await POST(request(BODY));
 

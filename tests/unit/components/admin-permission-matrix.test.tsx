@@ -39,7 +39,7 @@ import AdminUsersPage from "@/app/(dashboard)/admin/page";
 const T = "t1";
 type Persona = { who: string; assignments: Assignment[]; scopes: typeof GLOBAL_ADMIN_SCOPES | null; sees: "users" | "no-permission"; tabs: string[] };
 const PERSONAS: Persona[] = [
-  { who: "a platform administrator", assignments: [assign.global()], scopes: GLOBAL_ADMIN_SCOPES, sees: "users", tabs: ["settings", "users", "domains", "emitters", "health", "classifications"] },
+  { who: "a platform administrator", assignments: [assign.global()], scopes: GLOBAL_ADMIN_SCOPES, sees: "users", tabs: ["settings", "users", "domains", "emitters", "health", "classifications", "ai"] },
   { who: "a tenant administrator", assignments: [assign.tenant("ADMIN", T)], scopes: TENANT_ADMIN_SCOPES, sees: "users", tabs: ["settings", "users", "domains"] },
   { who: "a domain-scoped administrator", assignments: [assign.domain("ADMIN", T, "dom-a")], scopes: null, sees: "no-permission", tabs: ["settings"] },
   { who: "an AUTHOR", assignments: [assign.tenant("AUTHOR", T)], scopes: null, sees: "no-permission", tabs: ["settings"] },

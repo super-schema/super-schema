@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { ArrowLeft, Wand2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -9,6 +10,8 @@ interface NaturalLanguageInputProps {
   onBack: () => void;
   isLoading?: boolean;
   isAiConfigured?: boolean;
+  /** The person may set the AI provider: the notice points them at Admin > AI instead of at their administrator. */
+  canManageAi?: boolean;
   error?: string | null;
 }
 
@@ -17,6 +20,7 @@ export function NaturalLanguageInput({
   onBack,
   isLoading = false,
   isAiConfigured = false,
+  canManageAi = false,
   error,
 }: NaturalLanguageInputProps) {
   const [description, setDescription] = useState("");
@@ -50,7 +54,17 @@ export function NaturalLanguageInput({
             </p>
             <p className="text-caption text-muted-foreground mt-1">
               Natural language entity generation requires a local LLM backend (Ollama or vLLM).
-              Set the AI_PROVIDER and AI_BASE_URL environment variables to enable this feature.
+              {canManageAi ? (
+                <>
+                  {" "}Set a provider in{" "}
+                  <Link href="/admin/ai" data-testid="nl-ai-settings-link" className="text-primary underline-offset-4 hover:underline">
+                    Admin &gt; AI
+                  </Link>
+                  , or set the AI_PROVIDER and AI_BASE_URL environment variables on the server.
+                </>
+              ) : (
+                <> Ask your administrator to enable it.</>
+              )}{" "}
               You can still use other creation methods.
             </p>
           </div>

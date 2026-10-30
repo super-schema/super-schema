@@ -14,6 +14,7 @@ import {
   type EntitySuggestion,
   type FieldSuggestion,
 } from "@/types/schemas/ai";
+import { resolveAiConfig, type ResolvedAiConfig } from "@/services/ai-config.service";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -55,17 +56,26 @@ export const CLASSIFICATION_OPTIONS = [
 
 // ── AI Client Implementations ──────────────────────────────────────────
 
+/** The headers of a completion request: the bearer key only when one is configured (AI_API_KEY; a local server usually needs none). */
+function requestHeaders(apiKey: string | null): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+  };
+}
+
 export class OllamaClient implements AiClient {
   constructor(
     private baseUrl: string,
-    private model: string
+    private model: string,
+    private apiKey: string | null = null
   ) {}
 
   async complete(prompt: string, options?: AiOptions): Promise<Result<string>> {
     try {
       const response = await fetch(`${this.baseUrl}/api/generate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: requestHeaders(this.apiKey),
         body: JSON.stringify({
           model: this.model,
           prompt,
@@ -93,7 +103,7 @@ export class OllamaClient implements AiClient {
         code: "AI_CONNECTION_ERROR",
         message: `Failed to connect to Ollama: ${e instanceof Error ? e.message : String(e)}`,
         suggestedFix:
-          "Ensure the Ollama server is running at the configured AI_BASE_URL.",
+          "Ensure the Ollama server is running at the configured base URL (Admin > AI, or AI_BASE_URL).",
       });
     }
   }
@@ -102,14 +112,15 @@ export class OllamaClient implements AiClient {
 export class VllmClient implements AiClient {
   constructor(
     private baseUrl: string,
-    private model: string
+    private model: string,
+    private apiKey: string | null = null
   ) {}
 
   async complete(prompt: string, options?: AiOptions): Promise<Result<string>> {
     try {
       const response = await fetch(`${this.baseUrl}/v1/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: requestHeaders(this.apiKey),
         body: JSON.stringify({
           model: this.model,
           prompt,
@@ -137,7 +148,7 @@ export class VllmClient implements AiClient {
         code: "AI_CONNECTION_ERROR",
         message: `Failed to connect to vLLM: ${e instanceof Error ? e.message : String(e)}`,
         suggestedFix:
-          "Ensure the vLLM server is running at the configured AI_BASE_URL.",
+          "Ensure the vLLM server is running at the configured base URL (Admin > AI, or AI_BASE_URL).",
       });
     }
   }
@@ -145,20 +156,17 @@ export class VllmClient implements AiClient {
 
 // ── Factory ────────────────────────────────────────────────────────────
 
-export function createAiClient(): AiClient | null {
-  const provider = process.env.AI_PROVIDER;
-  const baseUrl = process.env.AI_BASE_URL;
-  const model = process.env.AI_MODEL ?? "llama3";
-
-  if (!provider || !baseUrl) {
+/** The client for a resolved configuration (see `resolveAiConfig`), or null when there is none. Pure: it reads nothing from the environment. */
+export function createAiClient(config: ResolvedAiConfig | null): AiClient | null {
+  if (!config) {
     return null;
   }
 
-  switch (provider.toLowerCase()) {
+  switch (config.provider) {
     case "ollama":
-      return new OllamaClient(baseUrl, model);
+      return new OllamaClient(config.baseUrl, config.model, config.apiKey);
     case "vllm":
-      return new VllmClient(baseUrl, model);
+      return new VllmClient(config.baseUrl, config.model, config.apiKey);
     default:
       return null;
   }
@@ -166,8 +174,9 @@ export function createAiClient(): AiClient | null {
 
 // ── Configuration Check ────────────────────────────────────────────────
 
-export function isAiConfigured(): boolean {
-  return Boolean(process.env.AI_PROVIDER && process.env.AI_BASE_URL);
+/** True when an AI provider is configured (stored in Admin > AI, or by the environment). */
+export async function isAiConfigured(): Promise<boolean> {
+  return (await resolveAiConfig()) !== null;
 }
 
 // ── Prompt Builders ────────────────────────────────────────────────────
@@ -409,14 +418,14 @@ export async function generateEntityFromDescription(
   description: string,
   domainContext: DomainContext
 ): Promise<Result<EntitySuggestion>> {
-  const client = createAiClient();
+  const client = createAiClient(await resolveAiConfig());
   if (!client) {
     return err({
       code: "AI_NOT_CONFIGURED",
       message:
         "AI assistance is not configured. Contact your administrator to set up a local LLM.",
       suggestedFix:
-        "Set AI_PROVIDER and AI_BASE_URL environment variables to enable AI features.",
+        "Set a provider in Admin > AI settings, or set the AI_PROVIDER and AI_BASE_URL environment variables to enable AI features.",
     });
   }
 
@@ -439,11 +448,13 @@ export async function generateFieldSuggestions(
   domainContext: DomainContext,
   description?: string
 ): Promise<Result<FieldSuggestion[]>> {
-  const client = createAiClient();
+  const client = createAiClient(await resolveAiConfig());
   if (!client) {
     return err({
       code: "AI_NOT_CONFIGURED",
       message: "AI is not configured for field suggestions.",
+      suggestedFix:
+        "Set a provider in Admin > AI settings, or set the AI_PROVIDER and AI_BASE_URL environment variables.",
     });
   }
 

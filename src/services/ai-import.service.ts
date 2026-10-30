@@ -8,7 +8,6 @@
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import {
-  isAiConfigured,
   createAiClient,
   extractJsonFromResponse,
   normalizeType,
@@ -17,6 +16,7 @@ import {
   CLASSIFICATION_OPTIONS,
 } from "@/services/ai.service";
 import type { DomainContext } from "@/services/ai.service";
+import { resolveAiConfig } from "@/services/ai-config.service";
 import type {
   ParsedField,
   EnhancedFieldMapping,
@@ -303,10 +303,10 @@ export async function enhanceImportWithAi(
   domainContext: DomainContext,
   options?: { withAiEnhancement?: boolean }
 ): Promise<Result<EnhancedImportResult>> {
-  const useAi =
-    options?.withAiEnhancement !== false && isAiConfigured();
+  // One resolution of the configuration serves both the check and the client.
+  const config = options?.withAiEnhancement !== false ? await resolveAiConfig() : null;
 
-  if (!useAi) {
+  if (!config) {
     // Fall back to rule-based enhancement
     const enhanced = applyRuleBasedEnhancement(parsedFields);
     const overallQualityScore = calculateOverallQualityScore(enhanced);
@@ -314,7 +314,7 @@ export async function enhanceImportWithAi(
   }
 
   // Try AI enhancement
-  const client = createAiClient();
+  const client = createAiClient(config);
   if (!client) {
     const enhanced = applyRuleBasedEnhancement(parsedFields);
     const overallQualityScore = calculateOverallQualityScore(enhanced);

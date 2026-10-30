@@ -14,11 +14,11 @@ import { GenerateEntityInputSchema } from "@/types/schemas/ai";
 export const POST = withApiAuth(
   "ai.generate",
   async (req, api) => {
-    if (!isAiConfigured()) {
+    if (!(await isAiConfigured())) {
       return NextResponse.json(
         {
           error:
-            "AI generation is not configured on this server. Set AI_PROVIDER and AI_BASE_URL, or create the entity manually.",
+            "AI generation is not configured on this server. Set a provider in Admin > AI, or set AI_PROVIDER and AI_BASE_URL, or create the entity manually.",
         },
         { status: 503 }
       );

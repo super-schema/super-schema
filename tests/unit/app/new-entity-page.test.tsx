@@ -33,7 +33,7 @@ vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).principalModule);
 
 vi.mock("@/services/ai.service", () => ({
-  isAiConfigured: vi.fn(() => false),
+  isAiConfigured: vi.fn(async () => false),
 }));
 
 vi.mock("next/navigation", () => ({

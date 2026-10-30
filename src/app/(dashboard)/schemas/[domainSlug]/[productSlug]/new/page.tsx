@@ -42,7 +42,9 @@ export default async function NewEntityPage({ params }: Props) {
     orderBy: { name: "asc" },
   });
 
-  const aiConfigured = isAiConfigured();
+  const aiConfigured = await isAiConfigured();
+  // Whether the banner may point at Admin > AI: setting the provider is a platform administrator's act (`ai.manage`), a place-less one.
+  const canManageAi = can(assignments, "ai.manage", { tenantId: "-" });
 
   return (
     <div className="animate-auth-fade-up">
@@ -80,6 +82,7 @@ export default async function NewEntityPage({ params }: Props) {
           productSlug,
         }}
         isAiConfigured={aiConfigured}
+        canManageAi={canManageAi}
         referenceTargets={referenceTargets}
       />
     </div>

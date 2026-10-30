@@ -50,6 +50,8 @@ export type AdminCapabilities = {
   health: boolean;
   /** The classification taxonomy (`classification.manage`). */
   classifications: boolean;
+  /** AI provider settings (`ai.manage`: a platform administrator). */
+  ai: boolean;
   /** Git configuration and export (`git.manage`; no tab is mounted for it yet). */
   git: boolean;
   /** Tenants (`tenant.create`; creating a tenant is a platform task, `npm run tenant:create`, and no tab is mounted for it yet). */
@@ -64,6 +66,7 @@ export const NO_ADMIN_CAPABILITIES: AdminCapabilities = Object.freeze({
   emitters: false,
   health: false,
   classifications: false,
+  ai: false,
   git: false,
   tenants: false,
 });
@@ -83,9 +86,10 @@ export function adminCapabilities(assignments: Assignment[], tenantId: string | 
   const emitters = can(assignments, "emitter.manage", NO_PLACE);
   const health = can(assignments, "platform.admin", NO_PLACE);
   const classifications = can(assignments, "classification.manage", NO_PLACE);
+  const ai = can(assignments, "ai.manage", NO_PLACE);
   const git = can(assignments, "git.manage", NO_PLACE);
   const tenants = can(assignments, "tenant.create", NO_PLACE);
-  return { area: users || domains || emitters || health || classifications || git || tenants, users, domains, emitters, health, classifications, git, tenants };
+  return { area: users || domains || emitters || health || classifications || ai || git || tenants, users, domains, emitters, health, classifications, ai, git, tenants };
 }
 
 /** The capabilities `assignments` give over the entity at `resource` (its tenant, domain and product). */

@@ -238,7 +238,7 @@ export async function getFieldSuggestions(
   }
 
   // ── Source 2: AI suggestions (if configured) ──
-  if (isAiConfigured()) {
+  if (await isAiConfigured()) {
     const aiResult = await aiGenerateFieldSuggestions(
       entityName,
       domainContext,

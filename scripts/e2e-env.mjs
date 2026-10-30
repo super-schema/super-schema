@@ -119,10 +119,14 @@ export const HERMETIC_BLANKED_NAMES = Object.freeze([
   "AUTH_SECRET_1",
   "AUTH_SECRET_2",
   "AUTH_SECRET_3",
-  // src/services/ai.service.ts: the AI assistant (without a provider and a base URL there is no client)
+  // src/services/ai-config.service.ts: the AI assistant (without a provider and a base URL there is no client). AI_API_KEY is its bearer key; OLLAMA_HOST
+  // and OPENAI_BASE_URL are the standard names it falls back to when AI_BASE_URL is unset. A developer's own AI server must not configure the run
   "AI_PROVIDER",
   "AI_BASE_URL",
   "AI_MODEL",
+  "AI_API_KEY",
+  "OLLAMA_HOST",
+  "OPENAI_BASE_URL",
   // prisma: other connection strings
   "DIRECT_URL",
   "SHADOW_DATABASE_URL",

@@ -68,7 +68,7 @@ describe("a signed-in user with no role at all", () => {
     for (const action of ACTION_IDS) {
       const result = await authorize(action, PRODUCT_IN_A);
       if (action === "notification.own" || action === "profile.own") continue;
-      if (["platform.admin", "emitter.manage", "git.manage", "classification.manage", "tenant.create", "typemapping.global"].includes(action)) continue; // global level: no resource to hide
+      if (["platform.admin", "emitter.manage", "git.manage", "classification.manage", "ai.manage", "tenant.create", "typemapping.global"].includes(action)) continue; // global level: no resource to hide
       expect(result, action).toEqual({ success: false, error: missing });
     }
     for (const resource of [DOM_A, DOM_B, TENANT_LEVEL, FOREIGN, { tenantId: "no-such-tenant" }]) {
@@ -83,7 +83,7 @@ describe("a signed-in user with no role at all", () => {
   });
 
   it("is refused the platform actions with a generic FORBIDDEN (they have no resource to hide)", async () => {
-    for (const action of ["platform.admin", "emitter.manage", "git.manage", "classification.manage", "tenant.create", "typemapping.global"] as const) {
+    for (const action of ["platform.admin", "emitter.manage", "git.manage", "classification.manage", "ai.manage", "tenant.create", "typemapping.global"] as const) {
       expect(await authorize(action, TENANT_LEVEL), action).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
     }
   });

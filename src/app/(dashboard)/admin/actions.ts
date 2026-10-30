@@ -20,6 +20,7 @@ import {
   updateEmitterConfig,
 } from "@/services/emitter-config.service";
 import type { UpdateEmitterConfigInput } from "@/types/schemas/emitter-config";
+import { getAiSettings, testAiConnection, updateAiSettings } from "@/services/ai-config.service";
 import {
   getDomainsAdmin,
   createDomainAdmin,
@@ -211,6 +212,36 @@ export async function updateEmitterConfigAction(input: UpdateEmitterConfigInput)
   const result = await updateEmitterConfig(input, access.ctx);
   if (!result.success) return { error: result.error.message };
   revalidateSchemas();
+  return { success: true as const, data: result.data };
+}
+
+/** The fields of the AI form as typed: the service validates them (an empty string is "not set"). */
+type AiSettingsFormInput = { provider?: string | null; baseUrl?: string | null; model?: string | null };
+
+/** The AI provider settings (Admin > AI): a platform administrator's (`ai.manage`). The view never carries the API key. */
+export async function getAiSettingsAction() {
+  const access = await gate("ai.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await getAiSettings(access.ctx);
+  if (!result.success) return { error: result.error.message };
+  return { success: true as const, data: result.data };
+}
+
+export async function updateAiSettingsAction(input: AiSettingsFormInput) {
+  const access = await gate("ai.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await updateAiSettings(input, access.ctx);
+  if (!result.success) return { error: result.error.message };
+  revalidateSchemas();
+  return { success: true as const, data: result.data };
+}
+
+/** Tests the values in the form (not yet saved), or the saved configuration when they are empty. */
+export async function testAiConnectionAction(input: AiSettingsFormInput) {
+  const access = await gate("ai.manage");
+  if (!access.ok) return { error: access.error };
+  const result = await testAiConnection(input, access.ctx);
+  if (!result.success) return { error: result.error.message };
   return { success: true as const, data: result.data };
 }
 

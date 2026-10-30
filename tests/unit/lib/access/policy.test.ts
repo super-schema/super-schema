@@ -148,6 +148,7 @@ const EXPECTED_ACTIONS: ReadonlyArray<readonly [string, Role | null, Level]> = [
   ["emitter.manage", "ADMIN", "global"],
   ["git.manage", "ADMIN", "global"],
   ["classification.manage", "ADMIN", "global"],
+  ["ai.manage", "ADMIN", "global"],
   ["tenant.create", "ADMIN", "global"],
   // A global override reaches every tenant (no tenant column): ADMIN at the platform, not the STEWARD of the design table (Task 5b ruling)
   ["typemapping.global", "ADMIN", "global"],
@@ -209,7 +210,7 @@ describe("ACTIONS (the action table, single source)", () => {
       expect(spec[id], id).toEqual({ minRole: "ADMIN", level: "tenant" });
     }
     // platform items (emitter configs, health, git configuration, classification taxonomy, tenant creation): global ADMIN
-    for (const id of ["emitter.manage", "platform.admin", "git.manage", "classification.manage", "tenant.create"]) {
+    for (const id of ["emitter.manage", "platform.admin", "git.manage", "classification.manage", "ai.manage", "tenant.create"]) {
       expect(spec[id], id).toEqual({ minRole: "ADMIN", level: "global" });
     }
     // notifications and the user's own profile: any active principal

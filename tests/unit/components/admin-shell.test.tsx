@@ -19,7 +19,7 @@ import { AdminShell, allowedTabs, tabOfPath } from "@/components/custom/admin/Ad
 
 const T = "tenant-1";
 const PERSONAS: Array<[string, Assignment[], string[]]> = [
-  ["a platform administrator", [assign.global()], ["settings", "users", "domains", "emitters", "health", "classifications"]],
+  ["a platform administrator", [assign.global()], ["settings", "users", "domains", "emitters", "health", "classifications", "ai"]],
   ["a tenant administrator of the tenant in view", [assign.tenant("ADMIN", T)], ["settings", "users", "domains"]],
   ["a domain-scoped administrator", [assign.domain("ADMIN", T, "dom-a")], ["settings"]],
   ["an AUTHOR", [assign.tenant("AUTHOR", T)], ["settings"]],
@@ -48,7 +48,7 @@ describe("the tabs are the ones the person may use", () => {
 
   it("the platform-only tabs (emitters, health, classifications) are absent, not disabled, for a tenant administrator", () => {
     renderShell([assign.tenant("ADMIN", T)], "/admin");
-    for (const id of ["emitters", "health", "classifications"]) expect(screen.queryByTestId(`admin-tab-${id}`)).toBeNull();
+    for (const id of ["emitters", "health", "classifications", "ai"]) expect(screen.queryByTestId(`admin-tab-${id}`)).toBeNull();
   });
 
   it("marks the tab of the page the person is on, and routes a click to the tab's address", () => {
@@ -99,7 +99,7 @@ describe("tab bookkeeping", () => {
   });
 
   it("allowedTabs follows the capabilities and keeps the order of the tab bar", () => {
-    expect(allowedTabs(adminCapabilities([assign.global()], T)).map((tab) => tab.id)).toEqual(["settings", "users", "domains", "emitters", "health", "classifications"]);
+    expect(allowedTabs(adminCapabilities([assign.global()], T)).map((tab) => tab.id)).toEqual(["settings", "users", "domains", "emitters", "health", "classifications", "ai"]);
     expect(allowedTabs(adminCapabilities([], T)).map((tab) => tab.id)).toEqual(["settings"]);
   });
 });

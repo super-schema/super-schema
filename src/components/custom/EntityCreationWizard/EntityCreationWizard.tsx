@@ -16,6 +16,7 @@ import { buildImportAssetsPayload, decimalFacts } from "@/lib/importers/import-p
 import { sanitizeImportedText } from "@/lib/importers/text-safety";
 import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
 import { IMPORTED_ENTITY_FALLBACK_NAME } from "@/lib/importers/types";
+import { NEEDS_DOMAIN_MESSAGE, multiAssetNeedsProductMessage } from "@/lib/schema-workbench/check-schema-text";
 import type { ImportFormat, ParsedEntity } from "@/lib/importers/types";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import {
@@ -76,6 +77,8 @@ const TENANT_HIDDEN_METHODS: readonly CreationMethod[] = ["natural-language"];
 interface EntityCreationWizardProps {
   target: EntityWizardTarget;
   isAiConfigured?: boolean;
+  /** The person may set the AI provider (Admin > AI): the "AI not configured" notice then says where. */
+  canManageAi?: boolean;
   /** Existing entities in the domain, offered as $ref targets in the visual builder. */
   referenceTargets?: { id?: string; name: string }[];
 }
@@ -88,6 +91,7 @@ function makeTempId() {
 export function EntityCreationWizard({
   target,
   isAiConfigured = false,
+  canManageAi = false,
   referenceTargets = [],
 }: EntityCreationWizardProps) {
   const router = useRouter();
@@ -239,9 +243,7 @@ export function EntityCreationWizard({
         // TypeSpec / OpenAPI: compiled with the real @typespec/compiler (server actions).
         if (resolvedFormat === "typespec" || resolvedFormat === "openapi") {
           if (!product) {
-            setError(
-              "TypeSpec and OpenAPI documents can define several assets and need a domain. Import this one from a domain or product page."
-            );
+            setError(NEEDS_DOMAIN_MESSAGE);
             return;
           }
           const tsResult =
@@ -268,11 +270,7 @@ export function EntityCreationWizard({
         if (result.data.kind === "multi") {
           const assets = result.data.result;
           if (!product) {
-            const count =
-              assets.models.length + assets.sharedEnums.length + assets.customScalars.length;
-            setError(
-              `Multi-entity imports go into a product — at Enterprise level an import creates one entity. This schema defines ${count} assets (${assets.models.map((m) => m.name).join(", ")}).`
-            );
+            setError(multiAssetNeedsProductMessage(assets));
             return;
           }
           setTypeSpecResult(assets);
@@ -539,6 +537,7 @@ export function EntityCreationWizard({
             onBack={goToSelectMethod}
             isLoading={isLoading}
             isAiConfigured={isAiConfigured}
+            canManageAi={canManageAi}
             error={error}
           />
         )}
@@ -549,6 +548,7 @@ export function EntityCreationWizard({
             onBack={goToSelectMethod}
             onImportResult={handleUrlImportResult}
             importDomainId={importDomainId}
+            allowMultiAsset={!!product}
             referenceTargets={referenceTargets}
             error={error}
             isLoading={isLoading}
