@@ -37,6 +37,8 @@ function looksLikeJsonSchema(parsed: Record<string, unknown>): boolean {
     schemaUrl.includes("json-schema.org") ||
       (parsed.type === "object" && parsed.properties) ||
       (parsed.properties && typeof parsed.properties === "object") ||
+      // A root enum: `{ "type": "string", "enum": [...] }` (an Avro enum is `"type": "enum"`, a primitive Avro schema has no `enum`).
+      ((parsed.type === "string" || parsed.type === "integer" || parsed.type === "number") && Array.isArray(parsed.enum)) ||
       parsed.$defs ||
       parsed.definitions
   );

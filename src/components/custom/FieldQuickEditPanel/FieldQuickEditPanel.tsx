@@ -3,15 +3,17 @@
 import {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   useCallback,
-  useMemo,
+  type MutableRefObject,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
 import { ChevronDown, Loader2, AlertCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { getTypeInfo } from "@/lib/data-types";
 import {
@@ -68,11 +70,37 @@ interface FieldQuickEditPanelProps {
   isReadOnly?: boolean;
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
+  onSavingChange?: (saving: boolean) => void;
+  fieldSaveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
+  /** Direct reset for a discard the workspace has already confirmed. */
+  fieldDiscardRef?: MutableRefObject<(() => void) | null>;
   /**
    * The entities of the tenant a reference can point at (with their domain and product). When given, choosing the `reference` type asks
    * for the target; the pick is saved with the panel's Save as a fully qualified reference. Without it `reference` is a plain type change.
    */
   referenceTargets?: PickableEntity[];
+}
+
+function fieldForm(field: FieldData) {
+  const ts = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
+  return {
+    localName: field.name, localType: field.type, localNullable: field.nullable,
+    localIsKey: field.isKey, localDescription: field.description,
+    localClassification: field.classification, localFieldNumber: field.fieldNumber,
+    localSecret: !!ts.identity?.secret, localFormat: ts.identity?.format ?? "",
+    localDefaultValue: ts.identity?.defaultValue != null ? String(ts.identity.defaultValue) : "",
+    localSummary: ts.documentation?.summary ?? "", typespec: ts, localReference: null as ReferencePick | null,
+  };
+}
+
+/** Adopt refreshed values for untouched controls, including independent nested decorator controls. */
+function mergeUntouchedControls(previous: unknown, current: unknown, incoming: unknown): unknown {
+  if (JSON.stringify(current) === JSON.stringify(previous)) return incoming;
+  const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
+  if (!record(current) || !record(incoming) || (previous !== undefined && !record(previous))) return current;
+  const before = (previous ?? {}) as Record<string, unknown>;
+  const keys = new Set([...Object.keys(before), ...Object.keys(current), ...Object.keys(incoming)]);
+  return Object.fromEntries([...keys].map((key) => [key, mergeUntouchedControls(before[key], current[key], incoming[key])]).filter(([, value]) => value !== undefined));
 }
 
 /** How a person reads what a reference field points at: `domain / product / entity`, or the name of a name-only reference. */
@@ -181,6 +209,9 @@ export function FieldQuickEditPanel({
   isReadOnly = false,
   onUpdateField,
   onDirtyChange,
+  onSavingChange,
+  fieldSaveRef,
+  fieldDiscardRef,
   referenceTargets,
 }: FieldQuickEditPanelProps) {
   const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0]));
@@ -212,181 +243,205 @@ export function FieldQuickEditPanel({
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [justSaved, setJustSaved] = useState(false);
 
-  // Current values ref to avoid stale closures in doSave
-  const currentRef = useRef({
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const discardCancelRef = useRef<HTMLButtonElement>(null);
+  const inFlightSave = useRef<Promise<boolean> | null>(null);
+  const editRevision = useRef(0);
+  const mountGeneration = useRef<object | null>(null);
+  const notificationsRef = useRef({ onDirtyChange, onSavingChange });
+  useLayoutEffect(() => {
+    notificationsRef.current = { onDirtyChange, onSavingChange };
+  }, [onDirtyChange, onSavingChange]);
+  useLayoutEffect(() => {
+    const generation = {};
+    mountGeneration.current = generation;
+    return () => {
+      if (mountGeneration.current !== generation) return;
+      mountGeneration.current = null;
+      if (inFlightSave.current) {
+        inFlightSave.current = null;
+        notificationsRef.current.onSavingChange?.(false);
+      }
+    };
+  }, []);
+  useLayoutEffect(() => {
+    onSavingChange?.(inFlightSave.current !== null);
+  }, [onSavingChange]);
+
+  // A successful save establishes a local baseline immediately; fresh server props may arrive later.
+  const form = {
     localName, localType, localNullable, localIsKey, localDescription,
     localClassification, localFieldNumber, localSecret, localFormat,
     localDefaultValue, localSummary, typespec, localReference,
-  });
-
-  useEffect(() => {
-    currentRef.current = {
-      localName, localType, localNullable, localIsKey, localDescription,
-      localClassification, localFieldNumber, localSecret, localFormat,
-      localDefaultValue, localSummary, typespec, localReference,
-    };
-  });
-
-  // Dirty detection — compare local state to original field prop
-  const isDirty = useMemo(() => {
-    const origTs = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
-    if (localName !== field.name) return true;
-    if (localType !== field.type) return true;
-    if (localNullable !== field.nullable) return true;
-    if (localIsKey !== field.isKey) return true;
-    if (localDescription !== field.description) return true;
-    if (localClassification !== field.classification) return true;
-    if (localFieldNumber !== field.fieldNumber) return true;
-    if (localSecret !== !!origTs.identity?.secret) return true;
-    if (localFormat !== (origTs.identity?.format ?? "")) return true;
-    const origDefault = origTs.identity?.defaultValue != null ? String(origTs.identity.defaultValue) : "";
-    if (localDefaultValue !== origDefault) return true;
-    if (localSummary !== (origTs.documentation?.summary ?? "")) return true;
-    if (localReference !== null) return true;
-    if (JSON.stringify(typespec) !== JSON.stringify(origTs)) return true;
-    return false;
-  }, [
-    localName, localType, localNullable, localIsKey, localDescription,
-    localClassification, localFieldNumber, localSecret, localFormat,
-    localDefaultValue, localSummary, typespec, localReference, field,
-  ]);
-
-  // Notify parent of dirty state changes
-  const prevDirtyRef = useRef(isDirty);
-  useEffect(() => {
-    if (prevDirtyRef.current !== isDirty) {
-      prevDirtyRef.current = isDirty;
-      onDirtyChange?.(isDirty);
-    }
-  }, [isDirty, onDirtyChange]);
-
-  // Reset on field switch
-  useEffect(() => {
-    setLocalName(field.name);
-    setLocalType(field.type);
-    setLocalNullable(field.nullable);
-    setLocalIsKey(field.isKey);
-    setLocalDescription(field.description);
-    setLocalClassification(field.classification);
-    setLocalFieldNumber(field.fieldNumber);
-    setLocalReference(null);
-
-    const ts = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
-    setTypespec(ts);
-    setLocalSecret(!!ts.identity?.secret);
-    setLocalFormat(ts.identity?.format ?? "");
-    setLocalDefaultValue(ts.identity?.defaultValue != null ? String(ts.identity.defaultValue) : "");
-    setLocalSummary(ts.documentation?.summary ?? "");
-
-    setSaveStatus("idle");
-    setJustSaved(false);
-  }, [field.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // The same field changed underneath the panel (an inline rename in the field list, a TypeSpec sync): the panel must follow it, or
-  // it would show the old values as "Unsaved changes" and a Save would write them back over the change. Local state only: the
-  // save flash and status belong to the panel's own save, whose result arrives through these same props.
-  const persistedSignature = JSON.stringify([
-    field.name, field.type, field.nullable, field.isKey, field.description, field.classification, field.fieldNumber, field.decorators,
-  ]);
-  const seenSignature = useRef(persistedSignature);
-  useEffect(() => {
-    if (seenSignature.current === persistedSignature) return;
-    seenSignature.current = persistedSignature;
-    setLocalName(field.name);
-    setLocalType(field.type);
-    setLocalNullable(field.nullable);
-    setLocalIsKey(field.isKey);
-    setLocalDescription(field.description);
-    setLocalClassification(field.classification);
-    setLocalFieldNumber(field.fieldNumber);
-    setLocalReference(null);
-    const ts = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
-    setTypespec(ts);
-    setLocalSecret(!!ts.identity?.secret);
-    setLocalFormat(ts.identity?.format ?? "");
-    setLocalDefaultValue(ts.identity?.defaultValue != null ? String(ts.identity.defaultValue) : "");
-    setLocalSummary(ts.documentation?.summary ?? "");
-  }, [persistedSignature]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Discard: reset all local state to field prop values
-  const handleDiscard = useCallback(() => {
-    setLocalName(field.name);
-    setLocalType(field.type);
-    setLocalNullable(field.nullable);
-    setLocalIsKey(field.isKey);
-    setLocalDescription(field.description);
-    setLocalClassification(field.classification);
-    setLocalFieldNumber(field.fieldNumber);
-    setLocalReference(null);
-
-    const ts = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
-    setTypespec(ts);
-    setLocalSecret(!!ts.identity?.secret);
-    setLocalFormat(ts.identity?.format ?? "");
-    setLocalDefaultValue(ts.identity?.defaultValue != null ? String(ts.identity.defaultValue) : "");
-    setLocalSummary(ts.documentation?.summary ?? "");
-
-    setSaveStatus("idle");
-  }, [field]);
-
-  // Save function — called directly (no debounce)
-  const doSave = useCallback(async () => {
-    setSaveStatus("saving");
-
-    const c = currentRef.current;
-
-    // Merge header identity fields back into typespec
-    const mergedTypespec = { ...c.typespec };
-    const identity = { ...(mergedTypespec.identity ?? {}) };
-    if (c.localSecret) identity.secret = true; else delete identity.secret;
-    if (c.localFormat) identity.format = c.localFormat; else identity.format = null;
-    if (c.localDefaultValue) identity.defaultValue = c.localDefaultValue; else delete identity.defaultValue;
-    mergedTypespec.identity = identity;
-
-    const documentation = { ...(mergedTypespec.documentation ?? {}) };
-    if (c.localSummary) documentation.summary = c.localSummary; else delete documentation.summary;
-    mergedTypespec.documentation = documentation;
-
-    let decorators: Record<string, unknown> = { ...field.decorators, typespec: mergedTypespec };
-    // The target picked for a reference goes in qualified (and the pin of a previous target out); a field that is no longer a reference
-    // (or an array / map of them) is saved without the reference it had (the server drops it as well).
-    if (c.localType === "reference" && c.localReference) decorators = applyReferencePick(decorators, c.localReference);
-    if (!holdsEntityReference(c.localType, decorators)) decorators = withoutReferenceKeys(decorators);
-
-    try {
-      await onUpdateField(field.id, {
-        name: c.localName,
-        type: c.localType,
-        nullable: c.localNullable,
-        isKey: c.localIsKey,
-        description: c.localDescription,
-        classification: c.localClassification,
-        fieldNumber: c.localFieldNumber,
-        decorators,
-      });
-      setSaveStatus("idle");
-      setJustSaved(true);
-    } catch {
-      setSaveStatus("error");
-    }
-  }, [field.id, field.decorators, onUpdateField]);
-
-  // Expose save/discard for keyboard shortcuts via ref-stable callbacks
-  const saveRef = useRef(doSave);
-  saveRef.current = doSave;
-  const discardRef = useRef(handleDiscard);
-  discardRef.current = handleDiscard;
+  };
+  const [savedForm, setSavedForm] = useState(form);
+  const currentRef = useRef(form);
+  const savedFormRef = useRef(savedForm);
+  const latestPersistedRef = useRef(fieldForm(field));
+  const isDirty = JSON.stringify(form) !== JSON.stringify(savedForm);
   const isDirtyRef = useRef(isDirty);
-  isDirtyRef.current = isDirty;
+  useLayoutEffect(() => {
+    currentRef.current = form;
+    savedFormRef.current = savedForm;
+    latestPersistedRef.current = fieldForm(field);
+    isDirtyRef.current = isDirty;
+  });
+
+  const needsProtection = isDirty || saveStatus === "saving";
+  const prevDirtyRef = useRef(needsProtection);
+  useLayoutEffect(() => {
+    if (prevDirtyRef.current !== needsProtection) {
+      prevDirtyRef.current = needsProtection;
+      onDirtyChange?.(needsProtection);
+    }
+  }, [needsProtection, onDirtyChange]);
+
+  const applyForm = useCallback((next: typeof form) => {
+    setLocalName(next.localName);
+    setLocalType(next.localType);
+    setLocalNullable(next.localNullable);
+    setLocalIsKey(next.localIsKey);
+    setLocalDescription(next.localDescription);
+    setLocalClassification(next.localClassification);
+    setLocalFieldNumber(next.localFieldNumber);
+    setLocalSecret(next.localSecret);
+    setLocalFormat(next.localFormat);
+    setLocalDefaultValue(next.localDefaultValue);
+    setLocalSummary(next.localSummary);
+    setTypespec(next.typespec);
+    setLocalReference(next.localReference);
+  }, []);
+
+  const resetForm = useCallback((next: typeof form) => {
+    applyForm(next);
+    setSavedForm(next);
+    setSaveStatus("idle");
+    setSaveError(null);
+    setJustSaved(false);
+  }, [applyForm]);
+
+  const persistedSignature = JSON.stringify([
+    field.id, field.name, field.type, field.nullable, field.isKey, field.description,
+    field.classification, field.fieldNumber, field.decorators,
+  ]);
+  const [seenPersisted, setSeenPersisted] = useState({ signature: persistedSignature, fieldId: field.id });
+  // Adjust local state once when server props change, before committing the next render.
+  if (seenPersisted.signature !== persistedSignature) {
+    const changedField = seenPersisted.fieldId !== field.id;
+    setSeenPersisted({ signature: persistedSignature, fieldId: field.id });
+    const next = fieldForm(field);
+    // Observe a response once, but never overwrite newer local edits with its older values.
+    if (!changedField && (isDirty || saveStatus === "saving")) {
+      applyForm(mergeUntouchedControls(savedForm, form, next) as typeof form);
+      if (saveStatus !== "saving") setSavedForm(next);
+    } else {
+      resetForm(next);
+    }
+  }
+
+  // The workspace calls this directly only after its own discard confirmation.
+  const handleDiscard = useCallback(() => {
+    if (inFlightSave.current || !mountGeneration.current) return;
+    resetForm(savedFormRef.current);
+    prevDirtyRef.current = false;
+    onDirtyChange?.(false);
+  }, [resetForm, onDirtyChange]);
+
+  // Save requests from the footer, shortcuts and navigation guard share one in-flight write.
+  const doSave = useCallback((): Promise<boolean> => {
+    if (!mountGeneration.current) return Promise.resolve(false);
+    if (inFlightSave.current) return inFlightSave.current;
+    if (isReadOnly) return Promise.resolve(false);
+    if (!isDirtyRef.current) return Promise.resolve(true);
+    const generation = mountGeneration.current;
+    const submittedRevision = editRevision.current;
+    const previousBaseline = savedFormRef.current;
+    const c = currentRef.current;
+    setSaveStatus("saving");
+    setSaveError(null);
+    setDiscardOpen(false);
+    prevDirtyRef.current = true;
+    notificationsRef.current.onDirtyChange?.(true);
+    notificationsRef.current.onSavingChange?.(true);
+
+    const pending = (async () => {
+      try {
+        const mergedTypespec = { ...c.typespec };
+        const identity = { ...(mergedTypespec.identity ?? {}) };
+        if (c.localSecret) identity.secret = true; else delete identity.secret;
+        if (c.localFormat) identity.format = c.localFormat; else identity.format = null;
+        if (c.localDefaultValue) identity.defaultValue = c.localDefaultValue; else delete identity.defaultValue;
+        mergedTypespec.identity = identity;
+
+        const documentation = { ...(mergedTypespec.documentation ?? {}) };
+        if (c.localSummary) documentation.summary = c.localSummary; else delete documentation.summary;
+        mergedTypespec.documentation = documentation;
+
+        let decorators: Record<string, unknown> = { ...field.decorators, typespec: mergedTypespec };
+        if (c.localType === "reference" && c.localReference) decorators = applyReferencePick(decorators, c.localReference);
+        if (!holdsEntityReference(c.localType, decorators)) decorators = withoutReferenceKeys(decorators);
+
+        await onUpdateField(field.id, {
+          name: c.localName, type: c.localType, nullable: c.localNullable,
+          isKey: c.localIsKey, description: c.localDescription,
+          classification: c.localClassification, fieldNumber: c.localFieldNumber, decorators,
+        });
+        if (mountGeneration.current !== generation) return false;
+        const allEditsSaved = editRevision.current === submittedRevision;
+        const persistedBaseline = mergeUntouchedControls(previousBaseline, c, latestPersistedRef.current) as typeof form;
+        setSavedForm(allEditsSaved ? currentRef.current : persistedBaseline);
+        setSaveStatus("idle");
+        setJustSaved(allEditsSaved);
+        if (allEditsSaved) {
+          prevDirtyRef.current = false;
+          notificationsRef.current.onDirtyChange?.(false);
+        }
+        // A newer edit still needs saving: the navigation guard must keep this panel open.
+        return allEditsSaved;
+      } catch (error) {
+        if (mountGeneration.current !== generation) return false;
+        setSaveStatus("error");
+        setSaveError(error instanceof Error ? error.message : "Save failed. Please try again.");
+        return false;
+      }
+    })();
+    inFlightSave.current = pending;
+    void pending.then(() => {
+      if (mountGeneration.current !== generation || inFlightSave.current !== pending) return;
+      inFlightSave.current = null;
+      notificationsRef.current.onSavingChange?.(false);
+    });
+    return pending;
+  }, [field.id, field.decorators, isReadOnly, onUpdateField]);
+
+  const saveRef = useRef(doSave);
+  const discardRef = useRef(handleDiscard);
+  useLayoutEffect(() => {
+    saveRef.current = doSave;
+    discardRef.current = handleDiscard;
+  }, [doSave, handleDiscard]);
+  useEffect(() => {
+    const save = () => saveRef.current();
+    const discard = () => discardRef.current();
+    if (fieldSaveRef) fieldSaveRef.current = save;
+    if (fieldDiscardRef) fieldDiscardRef.current = discard;
+    return () => {
+      if (fieldSaveRef?.current === save) fieldSaveRef.current = null;
+      if (fieldDiscardRef?.current === discard) fieldDiscardRef.current = null;
+    };
+  }, [fieldSaveRef, fieldDiscardRef]);
 
   // Typespec sub-object change handler (from studio panels)
   function handleTypespecChange(key: keyof TypeSpecDecorators, value: unknown) {
+    editRevision.current += 1;
     setTypespec((prev) => ({ ...prev, [key]: value }));
     setJustSaved(false);
   }
 
   // Header field change handler — only updates local state (no scheduleSave)
   function handleHeaderChange(sectionField: string, value: unknown) {
+    editRevision.current += 1;
     setJustSaved(false); // new change invalidates saved state
     switch (sectionField) {
       case "name": setLocalName(value as string); break;
@@ -426,6 +481,7 @@ export function FieldQuickEditPanel({
                 <Input
                   autoFocus
                   value={localName}
+                  aria-label="Field name"
                   onChange={(e) => handleHeaderChange("name", e.target.value)}
                   onBlur={() => setEditingName(false)}
                   onKeyDown={(e) => {
@@ -460,6 +516,7 @@ export function FieldQuickEditPanel({
                 <textarea
                   autoFocus
                   value={localDescription}
+                  aria-label="Field description"
                   onChange={(e) => handleHeaderChange("description", e.target.value)}
                   onBlur={() => setEditingDescription(false)}
                   onKeyDown={(e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -491,6 +548,7 @@ export function FieldQuickEditPanel({
             <InspectorRow label="Summary" align="center">
               <Input
                 value={localSummary}
+                aria-label="Summary"
                 onChange={(e) => handleHeaderChange("summary", e.target.value)}
                 placeholder="Brief one-line summary"
                 className="h-9 text-sm"
@@ -500,12 +558,7 @@ export function FieldQuickEditPanel({
 
             <InspectorRow label="Data Type" align="center">
               <div
-                className={cn(
-                  "grid gap-2",
-                  STRING_TYPES.has(localType)
-                    ? "grid-cols-[minmax(0,1fr)_132px]"
-                    : "grid-cols-1"
-                )}
+                className="grid grid-cols-1 gap-2"
               >
                 <TypePicker
                   value={localType}
@@ -515,6 +568,7 @@ export function FieldQuickEditPanel({
                   onComplexTypeConfig={
                     referenceTargets
                       ? (_type, config) => {
+                          editRevision.current += 1;
                           setJustSaved(false);
                           // The same target picked again writes the decorators the field already has (and the saved field would not change
                           // either, so nothing would ever clear a pending pick): that is no change at all.
@@ -554,6 +608,7 @@ export function FieldQuickEditPanel({
             <InspectorRow label="Default" align="center">
               <Input
                 value={localDefaultValue}
+                aria-label="Default value"
                 onChange={(e) => handleHeaderChange("defaultValue", e.target.value)}
                 placeholder={
                   typeCategory === "Number"
@@ -576,13 +631,15 @@ export function FieldQuickEditPanel({
           <div key={label} className="border-b border-border/30">
             <button
               onClick={() => toggleSection(idx)}
+              aria-expanded={expandedSections.has(idx)}
+              aria-controls={`field-section-${field.id}-${idx}`}
               className="flex items-center justify-between w-full px-space-4 py-space-3 text-[13px] font-semibold tracking-[0.08em] text-foreground/80 hover:text-foreground transition-colors"
             >
               {label}
               <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expandedSections.has(idx) ? "" : "-rotate-90"}`} />
             </button>
             {expandedSections.has(idx) && (
-              <div className="px-space-4 pb-space-4">
+              <div id={`field-section-${field.id}-${idx}`} className="px-space-4 pb-space-4">
                 {/* 0: Properties — Optional, Secret, Key with descriptions */}
                 {idx === 0 && (
                   <div className="overflow-hidden rounded-xl border border-border/40 bg-muted/15 divide-y divide-border/35">
@@ -696,7 +753,7 @@ export function FieldQuickEditPanel({
                   <GovernancePanel
                     governance={typespec.governance ?? {}}
                     fieldClassification={localClassification}
-                    onClassificationChange={(c) => { setLocalClassification(c); }}
+                    onClassificationChange={(c) => { editRevision.current += 1; setLocalClassification(c); setJustSaved(false); }}
                     onChange={(g) => handleTypespecChange("governance", g)}
                   />
                 )}
@@ -716,24 +773,24 @@ export function FieldQuickEditPanel({
       {/* Footer — Save/Discard when dirty, error indicator */}
       <div className="border-t border-border/50 px-space-4 py-space-2">
         {saveStatus === "error" && (
-          <span className="flex items-center gap-1 text-body-small text-destructive mb-1">
-            <AlertCircle className="w-3 h-3" />
-            Save failed — try again
+          <span role="alert" className="flex items-center gap-1 text-body-small text-destructive mb-1">
+            <AlertCircle aria-hidden="true" className="w-3 h-3" />
+            {saveError ?? "Save failed. Please try again."}
           </span>
         )}
         {saveStatus === "saving" && (
-          <span className="flex items-center gap-1 text-body-small text-muted-foreground animate-pulse">
+          <span role="status" className="flex items-center gap-1 text-body-small text-muted-foreground animate-pulse">
             <Loader2 className="w-3 h-3 animate-spin" />
             Saving&hellip;
           </span>
         )}
-        {isDirty && !justSaved && saveStatus === "idle" && !isReadOnly && (
+        {isDirty && !justSaved && saveStatus !== "saving" && !isReadOnly && (
           <div className="flex items-center gap-2">
             <span className="text-body-small text-warning flex-1">Unsaved changes</span>
             <Button
               variant="ghost"
               size="sm"
-              onClick={handleDiscard}
+              onClick={() => setDiscardOpen(true)}
               className="h-8 text-body-small"
               data-testid="field-discard-btn"
             >
@@ -745,11 +802,32 @@ export function FieldQuickEditPanel({
               className="h-8 text-body-small"
               data-testid="field-save-btn"
             >
-              Save
+              {saveStatus === "error" ? "Retry save" : "Save"}
             </Button>
           </div>
         )}
       </div>
+      <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
+        <DialogContent initialFocus={discardCancelRef}>
+          <DialogHeader>
+            <DialogTitle>Discard field edits?</DialogTitle>
+            <DialogDescription>
+              Your unsaved changes to this field will be lost. The saved draft will remain unchanged.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button ref={discardCancelRef} variant="outline" onClick={() => setDiscardOpen(false)}>
+              Keep editing
+            </Button>
+            <Button variant="destructive" disabled={saveStatus === "saving"} data-testid="field-confirm-discard" onClick={() => {
+              handleDiscard();
+              setDiscardOpen(false);
+            }}>
+              Discard changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -191,7 +191,7 @@ add(js("empty-object", "empty object", { title: "Empty", type: "object" }, ["emp
 add(js("empty-properties", "empty properties", { title: "EmptyProps", type: "object", properties: {} }, ["empty"], { importError: /no properties to import/ }));
 add(js("boolean-schema-true", "boolean schema true as a property", { title: "BoolSchema", ...obj(withKey({ anything: true, nothing: false }), { required: ["id"] }) }, ["boolean-schema"]));
 add(js("root-primitive", "root is a primitive", { title: "RootString", type: "string", minLength: 3 }, ["root"], { importError: /no properties to import/ }));
-add(js("root-array", "root is an array", { title: "RootArray", type: "array", items: obj(withKey({ a: { type: "string" } })) }, ["root", "array"], { importError: /Array-root JSON Schemas are not supported/ }));
+add(js("root-array", "root is an array of numbers (an array of objects or string enums imports through its items)", { title: "RootArray", type: "array", items: { type: "integer" } }, ["root", "array"], { importError: /Array-root JSON Schemas are not supported/ }));
 add(js("root-boolean-true", "root is the boolean schema true", "true", ["root", "boolean-schema"], { importError: /Expected a JSON Schema object/ }));
 
 // ── 14. metadata everywhere ─────────────────────────────────────────────────

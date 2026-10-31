@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type MutableRefObject } from "react";
+import { useEffect, type MutableRefObject } from "react";
 import { FieldQuickEditPanel } from "@/components/custom/FieldQuickEditPanel";
 import { TypeSpecPreview } from "@/components/custom/TypeSpecPreview";
 import { useRightPanelContent } from "@/hooks/useRightPanelContent";
@@ -38,7 +38,8 @@ interface RightPanelRouterProps {
   existingFields?: ExistingFieldSummary[];
   onTypeSpecApplied?: () => void;
   onDirtyChange?: (dirty: boolean) => void;
-  fieldSaveRef?: MutableRefObject<(() => void) | null>;
+  onSavingChange?: (saving: boolean) => void;
+  fieldSaveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
   fieldDiscardRef?: MutableRefObject<(() => void) | null>;
   /** The entities a reference can point at (with domain / product), for the selected-field panel's type picker. */
   referenceTargets?: PickableEntity[];
@@ -46,7 +47,7 @@ interface RightPanelRouterProps {
 
 const TABS: { id: RightPanelTab; label: string }[] = [
   { id: "field-edit", label: "Field Edit" },
-  { id: "typespec-preview", label: "TypeSpec" },
+  { id: "typespec-preview", label: "Preview" },
 ];
 
 export function RightPanelRouter({
@@ -62,15 +63,12 @@ export function RightPanelRouter({
   existingFields,
   onTypeSpecApplied,
   onDirtyChange,
+  onSavingChange,
   fieldSaveRef,
   fieldDiscardRef,
   referenceTargets,
 }: RightPanelRouterProps) {
   const { setContent: setRightPanelContent } = useRightPanelContent();
-
-  // Internal ref to hold the FieldQuickEditPanel's save/discard functions
-  const internalSaveRef = useRef<(() => void) | null>(null);
-  const internalDiscardRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const rightPanelTabBar = (
@@ -107,6 +105,9 @@ export function RightPanelRouter({
             isReadOnly={isReadOnly}
             onUpdateField={onUpdateField}
             onDirtyChange={onDirtyChange}
+            onSavingChange={onSavingChange}
+            fieldSaveRef={fieldSaveRef}
+            fieldDiscardRef={fieldDiscardRef}
             referenceTargets={referenceTargets}
           />
         );
@@ -156,6 +157,9 @@ export function RightPanelRouter({
     existingFields,
     onTypeSpecApplied,
     onDirtyChange,
+    onSavingChange,
+    fieldSaveRef,
+    fieldDiscardRef,
     referenceTargets,
   ]);
 

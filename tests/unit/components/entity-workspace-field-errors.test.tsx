@@ -17,6 +17,7 @@ const MESSAGE = '"hasOwnProperty" is a reserved name: AsyncAPI documents cannot 
 const mocks = vi.hoisted(() => ({ addField: vi.fn(), updateField: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }));
 vi.mock("@/hooks/useDomainsTree", () => ({ useInvalidateDomainsTree: () => vi.fn() }));

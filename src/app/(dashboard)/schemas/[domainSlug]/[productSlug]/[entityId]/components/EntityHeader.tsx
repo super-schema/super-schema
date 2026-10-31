@@ -170,9 +170,9 @@ export function EntityHeader({
       </nav>
 
       {/* Header row (name + status + version + toolbar) */}
-      <div className="flex items-center justify-between mb-space-4">
-        <div className="flex items-center gap-space-3">
-        <h1 className="text-display text-foreground font-mono">{entity.name}</h1>
+      <div className="mb-space-4 flex flex-wrap items-start justify-between gap-space-3">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-space-3">
+        <h1 className="min-w-0 max-w-full break-all text-display text-foreground font-mono">{entity.name}</h1>
         <span className={`w-2.5 h-2.5 rounded-full ${currentStatus.dotColor}`} />
 
         {/* Status dropdown */}
@@ -230,7 +230,7 @@ export function EntityHeader({
         )}
         </div>
 
-        <div className="flex items-center gap-space-2">
+        <div className="flex flex-wrap items-center gap-space-2">
           {onPublish && (
             <Button size="sm" onClick={onPublish} className="gap-1.5" data-testid="publish-entity-button">
               <Upload className="w-3.5 h-3.5" />

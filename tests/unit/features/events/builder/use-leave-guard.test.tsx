@@ -19,8 +19,8 @@ import { canNavigate } from "@/lib/navigation/before-navigate";
 const HERE = "/schemas/payments/checkout/events/ev1";
 const OTHER = "/schemas/payments";
 
-function setup(dirty: boolean) {
-  return renderHook(({ dirty: d }) => useLeaveGuard(d), { initialProps: { dirty } });
+function setup(dirty: boolean, queryKey?: string) {
+  return renderHook(({ dirty: d }) => useLeaveGuard(d, { queryKey }), { initialProps: { dirty } });
 }
 
 /** `prevented` is read after the guard's capture listener ran and before this swallows jsdom's "navigation not implemented". */
@@ -101,6 +101,34 @@ afterEach(() => {
   document.body.innerHTML = "";
   Reflect.deleteProperty(window, "navigation");
   vi.restoreAllMocks();
+});
+
+describe("useLeaveGuard: opted-in view query protection", () => {
+  it("cancels tab traversal before history moves; Stay preserves the entry and proceed replays its delta", () => {
+    const nav = installNavigation();
+    window.history.replaceState(null, "", `${HERE}?tab=editor&keep=1`);
+    const replace = vi.spyOn(window.history, "replaceState");
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => {});
+    const { result } = setup(true, "tab");
+    const destination = `${HERE}?tab=schemas&keep=1`;
+    expect(navigate(nav, { type: "traverse", to: destination, index: 3, sameDocument: true }).defaultPrevented).toBe(true);
+    act(() => result.current.pending?.stay());
+    expect(window.location.search).toBe("?tab=editor&keep=1");
+    expect(replace).not.toHaveBeenCalled();
+    expect(go).not.toHaveBeenCalled();
+    navigate(nav, { type: "traverse", to: destination, index: 3, sameDocument: true });
+    act(() => result.current.pending?.proceed());
+    expect(go).toHaveBeenCalledExactlyOnceWith(-1);
+  });
+  it("guards a different tab link but allows unrelated query changes in the same view", () => {
+    installNavigation();
+    window.history.replaceState(null, "", `${HERE}?tab=editor`);
+    const { result } = setup(true, "tab");
+    expect(click(link(`${HERE}?tab=editor&keep=1`).a).prevented).toBe(false);
+    expect(result.current.pending).toBeNull();
+    expect(click(link(`${HERE}?tab=schemas`).a).prevented).toBe(true);
+    expect(result.current.pending?.destination).toBe(`${HERE}?tab=schemas`);
+  });
 });
 
 describe("useLeaveGuard: link clicks (every browser)", () => {

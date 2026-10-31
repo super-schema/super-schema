@@ -5,7 +5,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
   EntityWorkspace,
   type EntityWorkspaceProps,
@@ -14,6 +14,7 @@ import {
 const mocks = vi.hoisted(() => ({ push: vi.fn(), invalidate: vi.fn(), deleteEntity: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: mocks.push, replace: vi.fn(), refresh: vi.fn() }),
 }));
 vi.mock("@/hooks/useDomainsTree", () => ({ useInvalidateDomainsTree: () => mocks.invalidate }));
@@ -86,8 +87,38 @@ describe("EntityWorkspace delete refreshes the explorer", () => {
     const dialog = openDeleteDialog();
     fireEvent.click(dialog.querySelector("button:last-of-type") as HTMLButtonElement);
     await waitFor(() => expect(mocks.deleteEntity).toHaveBeenCalledWith("ent-1"));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Entity is in use"));
+    expect(screen.getByRole("dialog")).toBeTruthy();
     expect(mocks.invalidate).not.toHaveBeenCalled();
     expect(mocks.push).not.toHaveBeenCalled();
+  });
+
+  it("focuses Cancel and restores the invoking control after Escape", async () => {
+    render(<EntityWorkspace {...props} />);
+    const trigger = screen.getByTitle("Delete entity");
+    trigger.focus();
+    fireEvent.click(trigger);
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
+    fireEvent.keyDown(cancel, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(mocks.deleteEntity).not.toHaveBeenCalled();
+  });
+
+  it("keeps a running deletion modal and permits retry after refusal", async () => {
+    let finish!: (result: { error: string }) => void;
+    mocks.deleteEntity.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; })).mockResolvedValueOnce({ success: true });
+    openDeleteDialog();
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(mocks.deleteEntity).toHaveBeenCalledTimes(1));
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => finish({ error: "Entity is in use" }));
+    expect(screen.getByRole("alert").textContent).toContain("Entity is in use");
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(mocks.invalidate).toHaveBeenCalledTimes(1));
+    expect(mocks.deleteEntity).toHaveBeenCalledTimes(2);
   });
 });

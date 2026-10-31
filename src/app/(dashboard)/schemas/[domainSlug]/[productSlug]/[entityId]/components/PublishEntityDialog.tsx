@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { AlertTriangle, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -147,6 +148,16 @@ export function PublishEntityForm({
         </div>
       )}
 
+      <section aria-label="Publication impact" data-testid="publish-impact" className="flex flex-col gap-space-2 rounded-lg border border-border p-space-3">
+        <h3 className="text-body-small font-medium">What this publish changes</h3>
+        <p className="text-body-small text-muted-foreground">
+          {preview.isFirstPublish
+            ? `Creates the first published contract for ${entityName}.`
+            : `Creates v${targetLabel} from the saved draft${bump === "MAJOR" ? " as a major version" : " as a minor version"}.`}
+        </p>
+        <p className="text-caption text-muted-foreground">Existing published versions remain unchanged. Review consumers before adopting the new version.</p>
+      </section>
+
       <label className="block">
         <span className="mb-1 block text-caption text-muted-foreground">Change summary (optional)</span>
         <Textarea
@@ -197,6 +208,9 @@ export function PublishEntityForm({
 }
 
 interface PublishEntityDialogProps {
+  /** Entity publishes may include authorized existing consumers in the impact preview. */
+  consumerPreview?: ReactNode;
+  onRetry?: () => void;
   open: boolean;
   entityName: string;
   /** Overrides the default explanation (entity wording) — used by message and event spec publishes. */
@@ -218,6 +232,8 @@ interface PublishEntityDialogProps {
 }
 
 export function PublishEntityDialog({
+  consumerPreview,
+  onRetry,
   open,
   entityName,
   description,
@@ -240,7 +256,7 @@ export function PublishEntityDialog({
         if (!isPublishing) onOpenChange(next);
       }}
     >
-      <DialogContent showCloseButton={!isPublishing} className="bg-background sm:max-w-md" data-testid="publish-dialog">
+      <DialogContent showCloseButton={!isPublishing} className={cn("max-h-[85dvh] overflow-y-auto", consumerPreview ? "sm:max-w-2xl" : "sm:max-w-md")} data-testid="publish-dialog">
         <DialogHeader>
           <DialogTitle className="text-heading-3 text-foreground">Publish {entityName}</DialogTitle>
           <DialogDescription className="text-body-small text-muted-foreground">
@@ -248,9 +264,10 @@ export function PublishEntityDialog({
           </DialogDescription>
         </DialogHeader>
         {loadError ? (
-          <p role="alert" className="text-body-small text-destructive">
-            {loadError}
-          </p>
+          <div className="flex flex-col items-start gap-space-2">
+            <p role="alert" className="text-body-small text-destructive">{loadError}</p>
+            {onRetry && <Button type="button" variant="outline" size="sm" onClick={onRetry} disabled={isPublishing}>Retry publish preview</Button>}
+          </div>
         ) : preview === null ? (
           <p className="flex items-center gap-2 text-body-small text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> Checking changes…
@@ -267,6 +284,12 @@ export function PublishEntityDialog({
             onCancel={() => onOpenChange(false)}
             onConfirm={onConfirm}
           />
+        )}
+        {consumerPreview && preview !== null && !loadError && (
+          <section data-testid="publish-consumers" className="flex flex-col gap-space-2 border-t border-border pt-space-4">
+            {consumerPreview}
+            <p className="text-caption text-muted-foreground">Publishing does not update existing consumers. Pinned versions stay fixed until their references are explicitly updated.</p>
+          </section>
         )}
         {nested}
       </DialogContent>

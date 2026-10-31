@@ -6,7 +6,8 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { FieldQuickEditPanel } from "@/components/custom/FieldQuickEditPanel";
 import type { PickableEntity } from "@/lib/references/entity-reference";
 
@@ -46,10 +47,14 @@ beforeAll(() => {
   };
   Element.prototype.scrollIntoView ??= () => {};
 });
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  onUpdateField.mockReset();
+  onUpdateField.mockResolvedValue(undefined);
+});
 afterEach(cleanup);
 
-function mount(field: typeof STRING_FIELD | typeof REFERENCE_FIELD, referenceTargets: PickableEntity[] | null = TARGETS) {
+function mount(field: typeof STRING_FIELD | typeof REFERENCE_FIELD, referenceTargets: PickableEntity[] | null = TARGETS, overrides: Partial<ComponentProps<typeof FieldQuickEditPanel>> = {}) {
   return render(
     <FieldQuickEditPanel
       field={field}
@@ -57,6 +62,7 @@ function mount(field: typeof STRING_FIELD | typeof REFERENCE_FIELD, referenceTar
       domainSlug="payments"
       onUpdateField={onUpdateField as never}
       referenceTargets={referenceTargets ?? undefined}
+      {...overrides}
     />,
   );
 }
@@ -71,6 +77,204 @@ const save = async () => {
   return onUpdateField.mock.calls[0][1] as { type: string; decorators: Record<string, unknown> };
 };
 const referenceKeys = (d: Record<string, unknown>) => Object.keys(d).filter((k) => k.startsWith("referenced"));
+
+describe("selected-field editing safety", () => {
+  const editDescription = (value: string) => {
+    if (!screen.queryByLabelText("Field description")) fireEvent.click(screen.getByText("Add description..."));
+    fireEvent.change(screen.getByLabelText("Field description"), { target: { value } });
+  };
+
+  it("registers save/discard handlers and releases them when the panel unmounts", () => {
+    const saveRef = { current: null as (() => Promise<boolean>) | null };
+    const discardRef = { current: null as (() => void) | null };
+    const { unmount } = mount(STRING_FIELD, TARGETS, { fieldSaveRef: saveRef, fieldDiscardRef: discardRef });
+    expect(saveRef.current).toBeTypeOf("function");
+    expect(discardRef.current).toBeTypeOf("function");
+    unmount();
+    expect(saveRef.current).toBeNull();
+    expect(discardRef.current).toBeNull();
+  });
+
+  it("keeps rejected edits dirty and offers a working retry before server props refresh", async () => {
+    const saveRef = { current: null as (() => Promise<boolean>) | null };
+    const onDirtyChange = vi.fn();
+    onUpdateField.mockRejectedValueOnce(new Error("Write rejected"));
+    mount(STRING_FIELD, TARGETS, { fieldSaveRef: saveRef, onDirtyChange });
+    editDescription("unsaved description");
+    let result: boolean | undefined;
+    await act(async () => { result = await saveRef.current!(); });
+    expect(result).toBe(false);
+    expect(screen.getByRole("alert").textContent).toContain("Write rejected");
+    expect(screen.getByRole("button", { name: "Retry save" })).toBeDefined();
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    await act(async () => { result = await saveRef.current!(); });
+    expect(result).toBe(true);
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    expect(screen.queryByTestId("field-save-btn")).toBeNull();
+    expect(onUpdateField).toHaveBeenCalledTimes(2);
+  });
+
+  it("coalesces simultaneous shortcut and navigation saves into one write", async () => {
+    let resolve!: () => void;
+    onUpdateField.mockImplementationOnce(() => new Promise<void>((done) => { resolve = done; }));
+    const saveRef = { current: null as (() => Promise<boolean>) | null };
+    mount(STRING_FIELD, TARGETS, { fieldSaveRef: saveRef });
+    editDescription("one write");
+    let first!: Promise<boolean>;
+    let second!: Promise<boolean>;
+    act(() => {
+      first = saveRef.current!();
+      second = saveRef.current!();
+    });
+    expect(onUpdateField).toHaveBeenCalledTimes(1);
+    expect(first).toBe(second);
+    let results: boolean[] = [];
+    await act(async () => { resolve(); results = await Promise.all([first, second]); });
+    expect(results).toEqual([true, true]);
+  });
+
+  it("keeps newer input when an older save response refreshes props and refuses to leave", async () => {
+    let resolve!: () => void;
+    onUpdateField.mockImplementationOnce(() => new Promise<void>((done) => { resolve = done; }));
+    const saveRef = { current: null as (() => Promise<boolean>) | null };
+    const onDirtyChange = vi.fn();
+    const { rerender } = mount(STRING_FIELD, TARGETS, { fieldSaveRef: saveRef, onDirtyChange });
+    editDescription("submitted description");
+    let pending!: Promise<boolean>;
+    act(() => { pending = saveRef.current!(); });
+    editDescription("newer description");
+    rerender(<FieldQuickEditPanel field={{ ...STRING_FIELD, description: "submitted description" }} entityId="ent-1" domainSlug="payments" onUpdateField={onUpdateField as never} fieldSaveRef={saveRef} onDirtyChange={onDirtyChange} />);
+    let result: boolean | undefined;
+    await act(async () => { resolve(); result = await pending; });
+    expect(result).toBe(false);
+    expect((screen.getByLabelText("Field description") as HTMLTextAreaElement).value).toBe("newer description");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    await act(async () => { result = await saveRef.current!(); });
+    expect(result).toBe(true);
+    expect((screen.getByLabelText("Field description") as HTMLTextAreaElement).value).toBe("newer description");
+    expect(onUpdateField.mock.calls[1][1]).toMatchObject({ description: "newer description" });
+  });
+
+  it("preserves a refreshed inline rename while saving a different local control", async () => {
+    const saveRef = { current: null as (() => Promise<boolean>) | null };
+    const { rerender } = mount(STRING_FIELD, TARGETS, { fieldSaveRef: saveRef });
+    editDescription("my local description");
+    rerender(<FieldQuickEditPanel field={{ ...STRING_FIELD, name: "renamedShipTo" }} entityId="ent-1" domainSlug="payments" onUpdateField={onUpdateField as never} fieldSaveRef={saveRef} />);
+    expect(screen.getByText("renamedShipTo")).toBeDefined();
+    await act(async () => { await saveRef.current!(); });
+    expect(onUpdateField.mock.calls[0][1]).toMatchObject({ name: "renamedShipTo", description: "my local description" });
+  });
+
+  it("merges independent nested decorator controls from a same-field refresh", async () => {
+    const saveRef = { current: null as (() => Promise<boolean>) | null };
+    const { rerender } = mount(STRING_FIELD, TARGETS, { fieldSaveRef: saveRef });
+    fireEvent.click(screen.getByRole("button", { name: "Constraints" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^Partition/ }));
+    const incoming = { ...STRING_FIELD, decorators: { keep: "me", typespec: { governance: { operationalHints: { index: true } } } } };
+    rerender(<FieldQuickEditPanel field={incoming} entityId="ent-1" domainSlug="payments" onUpdateField={onUpdateField as never} fieldSaveRef={saveRef} />);
+    await act(async () => { await saveRef.current!(); });
+    expect(onUpdateField.mock.calls[0][1]).toMatchObject({ decorators: { typespec: { governance: { operationalHints: { partition: true, index: true } } } } });
+  });
+
+  it("reports footer saves as busy and stays protected after reverting to the old baseline", async () => {
+    let resolve!: () => void;
+    onUpdateField.mockImplementationOnce(() => new Promise<void>((done) => { resolve = done; }));
+    const saveRef = { current: null as (() => Promise<boolean>) | null };
+    const discardRef = { current: null as (() => void) | null };
+    const onDirtyChange = vi.fn();
+    const onSavingChange = vi.fn();
+    mount(STRING_FIELD, TARGETS, { fieldSaveRef: saveRef, fieldDiscardRef: discardRef, onDirtyChange, onSavingChange });
+    editDescription("submitted B");
+    fireEvent.click(screen.getByTestId("field-save-btn"));
+    const pending = saveRef.current!();
+    expect(onSavingChange).toHaveBeenLastCalledWith(true);
+    editDescription("newer C");
+    act(() => { discardRef.current!(); });
+    expect((screen.getByLabelText("Field description") as HTMLTextAreaElement).value).toBe("newer C");
+    editDescription("");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    expect(screen.queryByTestId("field-discard-btn")).toBeNull();
+    let result: boolean | undefined;
+    await act(async () => { resolve(); result = await pending; });
+    expect(result).toBe(false);
+    expect(onSavingChange).toHaveBeenLastCalledWith(false);
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    expect(screen.getByTestId("field-save-btn")).toBeDefined();
+  });
+
+  it("treats server normalization during a save as persisted rather than new local edits", async () => {
+    let resolve!: () => void;
+    onUpdateField.mockImplementationOnce(() => new Promise<void>((done) => { resolve = done; }));
+    const saveRef = { current: null as (() => Promise<boolean>) | null };
+    const onDirtyChange = vi.fn();
+    const { rerender } = mount(STRING_FIELD, TARGETS, { fieldSaveRef: saveRef, onDirtyChange });
+    editDescription("submitted description");
+    let pending!: Promise<boolean>;
+    act(() => { pending = saveRef.current!(); });
+    const incoming = { ...STRING_FIELD, description: "submitted description", decorators: { keep: "me", typespec: { identity: { format: null }, documentation: {} } } };
+    rerender(<FieldQuickEditPanel field={incoming} entityId="ent-1" domainSlug="payments" onUpdateField={onUpdateField as never} fieldSaveRef={saveRef} onDirtyChange={onDirtyChange} />);
+    let result: boolean | undefined;
+    await act(async () => { resolve(); result = await pending; });
+    expect(result).toBe(true);
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    expect(screen.queryByTestId("field-save-btn")).toBeNull();
+  });
+
+  it("ignores an unmounted panel's completion while another field is saving", async () => {
+    let resolveOld!: () => void;
+    let resolveNew!: () => void;
+    onUpdateField.mockImplementationOnce(() => new Promise<void>((done) => { resolveOld = done; }));
+    onUpdateField.mockImplementationOnce(() => new Promise<void>((done) => { resolveNew = done; }));
+    const saveRef = { current: null as (() => Promise<boolean>) | null };
+    const onDirtyChange = vi.fn();
+    const onSavingChange = vi.fn();
+    const old = mount(STRING_FIELD, TARGETS, { fieldSaveRef: saveRef, onDirtyChange, onSavingChange });
+    editDescription("old field edit");
+    let oldPending!: Promise<boolean>;
+    act(() => { oldPending = saveRef.current!(); });
+    old.unmount();
+    mount({ ...STRING_FIELD, id: "f2", name: "secondField" }, TARGETS, { fieldSaveRef: saveRef, onDirtyChange, onSavingChange });
+    editDescription("new field edit");
+    let newPending!: Promise<boolean>;
+    act(() => { newPending = saveRef.current!(); });
+    onDirtyChange.mockClear();
+    onSavingChange.mockClear();
+    let oldResult: boolean | undefined;
+    await act(async () => { resolveOld(); oldResult = await oldPending; });
+    expect(oldResult).toBe(false);
+    expect(onDirtyChange).not.toHaveBeenCalled();
+    expect(onSavingChange).not.toHaveBeenCalled();
+    await act(async () => { resolveNew(); await newPending; });
+    expect(onSavingChange).toHaveBeenLastCalledWith(false);
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("Escape dismisses the discard question while keeping the local edits", async () => {
+    mount(STRING_FIELD);
+    editDescription("keep these edits");
+    fireEvent.click(screen.getByTestId("field-discard-btn"));
+    expect(await screen.findByRole("dialog")).toBeDefined();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByTestId("field-edit-panel").textContent).toContain("keep these edits");
+    expect(screen.getByTestId("field-save-btn")).toBeDefined();
+    expect(onUpdateField).not.toHaveBeenCalled();
+  });
+
+  it("discard returns to the last successful save even before refreshed props arrive", async () => {
+    const saveRef = { current: null as (() => Promise<boolean>) | null };
+    const discardRef = { current: null as (() => void) | null };
+    const onDirtyChange = vi.fn();
+    mount(STRING_FIELD, TARGETS, { fieldSaveRef: saveRef, fieldDiscardRef: discardRef, onDirtyChange });
+    editDescription("saved description");
+    await act(async () => { await saveRef.current!(); });
+    editDescription("discard this edit");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    act(() => { discardRef.current!(); });
+    expect((screen.getByLabelText("Field description") as HTMLTextAreaElement).value).toBe("saved description");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+});
 
 describe("choosing the reference type in the selected-field panel", () => {
   it("asks for the target, shows it before saving, and saves the type with the qualified reference (no version)", async () => {
@@ -188,6 +392,7 @@ describe("choosing the reference type in the selected-field panel", () => {
     expect(screen.getByTestId("field-reference-target")).toBeDefined();
 
     fireEvent.click(await screen.findByTestId("field-discard-btn"));
+    fireEvent.click(await screen.findByTestId("field-confirm-discard"));
 
     expect(screen.queryByTestId("field-reference-target")).toBeNull();
     expect(screen.queryByTestId("field-save-btn")).toBeNull();

@@ -47,7 +47,7 @@ export function SchemaCodePreview({ code, language = "sql", onCopy, title = "Pre
           )}
         </button>
       </div>
-      <pre className="p-space-3 text-caption font-mono text-foreground overflow-x-auto max-h-80 overflow-y-auto">
+      <pre className="p-space-3 text-body-small leading-relaxed font-mono text-foreground overflow-x-auto max-h-80 overflow-y-auto">
         <code>
           {lines.map((line, i) => (
             <div key={i} className="flex">

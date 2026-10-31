@@ -562,11 +562,6 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
 
   return (
     <div data-testid="schemas-tab">
-      <div className="flex items-center justify-between mb-space-4">
-        <h2 className="text-heading-2 text-foreground">Schemas</h2>
-        <span className="text-caption text-muted-foreground">{entityName} &middot; v{entity.version}</span>
-      </div>
-
       <div className="flex gap-space-4">
         {/* Vertical technology tabs */}
         <div className="w-[160px] shrink-0 space-y-1">

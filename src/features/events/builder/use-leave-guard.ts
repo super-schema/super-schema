@@ -14,7 +14,8 @@
 //             clean again).
 //   Never:    a `replace` (the page rewrites ?tab= / ?section= / ?item= with history.replaceState), a navigation to this same pathname
 //             (any query, any hash), a hash change, a download, a navigation the browser does not let the page cancel, modified clicks
-//             and links that open elsewhere (new tab, `target`, `download`). Tab and section switches inside the page must never prompt.
+//             and links that open elsewhere (new tab, `target`, `download`). By default tab/section switches stay local; editors can
+//             opt into guarding one query key when changing that view unmounts unsaved controls.
 //
 // Why clicks are stopped BEFORE the router: next/link and the explorer navigate with `router.push`, and Next renders the new route first
 // and calls history.pushState afterwards (in an insertion effect of the same commit). A `navigate` listener that cancels THAT push finds
@@ -58,7 +59,7 @@ function navigationApi(): NavigationLike | null {
 }
 
 /** Where `url` leads: `href` as the router wants it (a path for this site), and whether it stays on this very page (same origin and pathname). Null for an address that does not parse. */
-function resolveTarget(url: string): { href: string; sameSite: boolean; staysHere: boolean } | null {
+function resolveTarget(url: string, queryKey?: string): { href: string; sameSite: boolean; staysHere: boolean } | null {
   let parsed: URL;
   try {
     parsed = new URL(url, window.location.href);
@@ -69,15 +70,17 @@ function resolveTarget(url: string): { href: string; sameSite: boolean; staysHer
   return {
     href: sameSite ? `${parsed.pathname}${parsed.search}${parsed.hash}` : parsed.href,
     sameSite,
-    staysHere: sameSite && parsed.pathname === window.location.pathname,
+    staysHere: sameSite && parsed.pathname === window.location.pathname && (queryKey === undefined || parsed.searchParams.get(queryKey) === new URL(window.location.href).searchParams.get(queryKey)),
   };
 }
 
 const SENTINEL_KEY = "__eventLeaveGuard";
 
 /** `dirty` false → no listeners and `pending` stays null. */
-export function useLeaveGuard(dirty: boolean): { pending: PendingLeave | null } {
+export function useLeaveGuard(dirty: boolean, options: { queryKey?: string } = {}): { pending: PendingLeave | null } {
   const router = useRouter();
+  // Opt in when a query-key change unmounts local editor controls.
+  const queryKey = options.queryKey;
   const [pending, setPending] = useState<PendingLeave | null>(null);
   // Whether the current history entry is our sentinel (no Navigation API only). It is tracked here and NOT read back from `history.state`:
   // the page rewrites ?tab= / ?section= with `history.replaceState`, and Next's patched `replaceState` replaces the entry's state, marker
@@ -126,7 +129,7 @@ export function useLeaveGuard(dirty: boolean): { pending: PendingLeave | null } 
       if (!(anchor instanceof HTMLAnchorElement) || anchor.hasAttribute("download")) return;
       const frame = anchor.getAttribute("target");
       if (frame !== null && frame !== "" && frame !== "_self") return;
-      const target = resolveTarget(anchor.href);
+      const target = resolveTarget(anchor.href, queryKey);
       // Another site is left to the Navigation API (Chromium) and beforeunload.
       if (target === null || !target.sameSite || target.staysHere) return;
       event.preventDefault();
@@ -138,7 +141,7 @@ export function useLeaveGuard(dirty: boolean): { pending: PendingLeave | null } 
     const onBeforeNavigate = (event: Event) => {
       const href = beforeNavigateHref(event);
       if (off || href === null) return;
-      const target = resolveTarget(href);
+      const target = resolveTarget(href, queryKey);
       if (target === null || target.staysHere) return;
       event.preventDefault();
       askToGo(target.href);
@@ -154,7 +157,7 @@ export function useLeaveGuard(dirty: boolean): { pending: PendingLeave | null } 
         if (off || !e.cancelable || e.navigationType === "replace" || e.hashChange || typeof e.downloadRequest === "string") return;
         // A same-document push is `router.push` calling history.pushState after Next rendered the new route (see above): too late to stop.
         if (e.navigationType === "push" && e.destination.sameDocument) return;
-        const target = resolveTarget(e.destination.url);
+        const target = resolveTarget(e.destination.url, queryKey);
         if (target === null || target.staysHere) return;
         e.preventDefault();
         if (e.navigationType === "traverse") {
@@ -189,7 +192,7 @@ export function useLeaveGuard(dirty: boolean): { pending: PendingLeave | null } 
       removeHistoryGuard();
       setPending(null);
     };
-  }, [dirty, router]);
+  }, [dirty, router, queryKey]);
 
   return { pending: dirty ? pending : null };
 }

@@ -13,7 +13,6 @@ import {
   Globe,
   Radio,
   Trash2,
-  Tag,
   Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -27,14 +26,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { EntityCard } from "@/components/custom/EntityCard";
-import { TypePicker } from "@/components/custom/TypePicker";
-import { standardClassificationVariant } from "@/lib/classification-counts";
-import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
-import { getTypeInfo } from "@/lib/data-types";
-import { createEntityWithFieldsAction, deleteEntityAction, type CreateFieldInput } from "./actions";
+import { deleteEntityAction } from "./actions";
 import { CreateDropdown } from "./components/CreateDropdown";
 import { DomainTypesTab, type DomainTypeCreateIntent, type InheritedDataTypes, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
 import { DomainApisTab, type DomainApiCreateIntent, type InheritedServices, type ServiceData } from "./components/DomainApisTab";
@@ -110,31 +103,8 @@ interface DomainWorkspaceProps {
   productContacts?: ProductContactsValue;
 }
 
-interface InlineField {
-  tempId: string;
-  name: string;
-  type: string;
-  nullable: boolean;
-  isKey: boolean;
-  description: string;
-  classification: string | null;
-  precision: number | null;
-  scale: number | null;
-  aliases: string;
-}
-
-function needsPrecisionScale(typeId: string): boolean {
-  const info = getTypeInfo(typeId);
-  return !!info?.requiresPrecision || !!info?.requiresScale;
-}
-
 /** What the Edit contacts dialog starts from when the page passes no contacts: a product without any. */
 const NO_CONTACTS: ProductContactsValue = { engineeringLead: null, manager: null, teamEmails: [] };
-
-let nextTempId = 0;
-function makeTempId() {
-  return `temp-${++nextTempId}`;
-}
 
 const VIEW_MODE_STORAGE_KEY = "super-schema:view-mode";
 const VIEW_MODE_CHANGE_EVENT = "super-schema:view-mode-change";
@@ -170,7 +140,6 @@ export function DomainWorkspace({
   productSlug,
   productName,
   domainDescription,
-  domainPolicy,
   entities,
   sharedEnums,
   customScalars,
@@ -229,7 +198,6 @@ export function DomainWorkspace({
     getViewModeSnapshot,
     (): "tile" | "list" => "tile"
   );
-  const [showCreate, setShowCreate] = useState(false);
 
   const newEntityHref = assetHref({ kind: "newEntity", domainSlug, productSlug });
   const productTarget = { level: "PRODUCT", productId } as const;
@@ -248,31 +216,8 @@ export function DomainWorkspace({
   const [apiCreateIntent, setApiCreateIntent] = useState<DomainApiCreateIntent | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
   const [isDeletingEntity, setIsDeletingEntity] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
   const [sortField, setSortField] = useState<string>("updatedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-
-  // Entity creation state
-  const [createName, setCreateName] = useState("");
-  const [createDescription, setCreateDescription] = useState("");
-  const [inlineFields, setInlineFields] = useState<InlineField[]>([]);
-
-  // Add-field form state
-  const [showFieldForm, setShowFieldForm] = useState(false);
-  const [newFieldName, setNewFieldName] = useState("");
-  const [newFieldType, setNewFieldType] = useState("string");
-  const [newFieldDescription, setNewFieldDescription] = useState("");
-  const [newFieldNullable, setNewFieldNullable] = useState(true);
-  const [newFieldIsKey, setNewFieldIsKey] = useState(false);
-  const [newFieldClassification, setNewFieldClassification] = useState<string | null>(null);
-  const [newFieldPrecision, setNewFieldPrecision] = useState("");
-  const [newFieldScale, setNewFieldScale] = useState("");
-  const [newFieldAliases, setNewFieldAliases] = useState("");
-
-  // Domain policy defaults
-  const defaultClassification = (domainPolicy?.defaultClassification as string) ?? null;
-  const defaultRetention = (domainPolicy?.defaultRetention as string) ?? "";
 
   function toggleView(mode: "tile" | "list") {
     localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
@@ -296,109 +241,6 @@ export function DomainWorkspace({
       return sortDir === "asc" ? cmp : -cmp;
     });
   }, [entities, sortField, sortDir]);
-
-  function handleNewFieldKeyChange(checked: boolean) {
-    setNewFieldIsKey(checked);
-    if (checked) setNewFieldNullable(false);
-  }
-
-  function resetFieldForm() {
-    setNewFieldName("");
-    setNewFieldType("string");
-    setNewFieldDescription("");
-    setNewFieldNullable(true);
-    setNewFieldIsKey(false);
-    setNewFieldClassification(null);
-    setNewFieldPrecision("");
-    setNewFieldScale("");
-    setNewFieldAliases("");
-    setShowFieldForm(false);
-  }
-
-  function addInlineField() {
-    if (!newFieldName.trim()) return;
-    setInlineFields((prev) => [
-      ...prev,
-      {
-        tempId: makeTempId(),
-        name: newFieldName.trim(),
-        type: newFieldType,
-        nullable: newFieldNullable,
-        isKey: newFieldIsKey,
-        description: newFieldDescription,
-        classification: newFieldClassification,
-        precision: newFieldPrecision ? parseInt(newFieldPrecision, 10) : null,
-        scale: newFieldScale ? parseInt(newFieldScale, 10) : null,
-        aliases: newFieldAliases,
-      },
-    ]);
-    resetFieldForm();
-  }
-
-  function removeInlineField(tempId: string) {
-    setInlineFields((prev) => prev.filter((f) => f.tempId !== tempId));
-  }
-
-  function resetCreateForm() {
-    setShowCreate(false);
-    setCreateError(null);
-    setCreateName("");
-    setCreateDescription("");
-    setInlineFields([]);
-    resetFieldForm();
-  }
-
-  async function handleCreate() {
-    if (!createName.trim()) {
-      setCreateError("Entity name is required");
-      return;
-    }
-
-    setCreateError(null);
-    setIsCreating(true);
-
-    const fields: CreateFieldInput[] = inlineFields.map((f) => {
-      const aliases = f.aliases
-        .split(",")
-        .map((a) => a.trim())
-        .filter(Boolean);
-      const decorators: Record<string, unknown> = {};
-      if (defaultRetention) {
-        decorators.policy = { retention: defaultRetention };
-      }
-      return {
-        name: f.name,
-        type: f.type,
-        nullable: f.nullable,
-        isKey: f.isKey,
-        description: f.description,
-        classification: f.classification,
-        precision: f.precision,
-        scale: f.scale,
-        ...(aliases.length > 0 && { aliases }),
-        ...(Object.keys(decorators).length > 0 && { decorators }),
-      };
-    });
-
-    const result = await createEntityWithFieldsAction(
-      domainId,
-      {
-        name: createName.trim(),
-        description: createDescription,
-        fields,
-      },
-      productId
-    );
-
-    setIsCreating(false);
-
-    if (result?.error) {
-      setCreateError(result.error);
-    } else {
-      invalidateDomainsTree();
-      resetCreateForm();
-    }
-  }
 
   async function handleDeleteEntity(id: string) {
     setIsDeletingEntity(true);
@@ -606,271 +448,6 @@ export function DomainWorkspace({
           viewMode={viewMode}
           onCreate={() => setNewEventOpen(true)}
         />
-      )}
-
-      {/* Create Entity inline form */}
-      {activeTab === "entities" && showCreate && (
-        <div className="surface-glass rounded-xl border border-primary/20 p-space-6 mb-space-6">
-          <h3 className="text-heading-2 text-foreground mb-space-4">Create New Entity</h3>
-
-          {/* Entity info */}
-          <div className="space-y-space-4 mb-space-6">
-            <div>
-              <label className="text-body-small text-foreground mb-space-1 block font-medium">
-                Entity Name
-              </label>
-              <Input
-                value={createName}
-                onChange={(e) => setCreateName(e.target.value)}
-                placeholder="e.g., Customer, Order, Transaction"
-                required
-                maxLength={128}
-                autoFocus
-                className="h-9 font-mono"
-              />
-            </div>
-            <div>
-              <label className="text-body-small text-foreground mb-space-1 block font-medium">
-                Description
-              </label>
-              <Input
-                value={createDescription}
-                onChange={(e) => setCreateDescription(e.target.value)}
-                placeholder="Brief description"
-                className="h-9"
-              />
-            </div>
-          </div>
-
-          {/* Fields section */}
-          <div className="mb-space-4">
-            <label className="text-body-small text-foreground mb-space-2 block font-medium">
-              Fields
-              <span className="text-muted-foreground font-normal ml-1">(optional — add fields now or later)</span>
-            </label>
-
-            {/* Existing inline fields as cards */}
-            {inlineFields.length > 0 && (
-              <div className="space-y-1 mb-space-3">
-                {inlineFields.map((field) => {
-                  const aliases = field.aliases
-                    .split(",")
-                    .map((a) => a.trim())
-                    .filter(Boolean);
-                  return (
-                    <div
-                      key={field.tempId}
-                      className="surface-glass rounded-lg border border-border/50 hover:border-border transition-colors group"
-                    >
-                      <div className="flex items-center gap-space-2 px-space-3 py-space-2">
-                        {/* Name */}
-                        <span className="font-mono text-body-small text-foreground min-w-0 max-w-[180px] truncate">
-                          {field.name}
-                        </span>
-
-                        {/* Tags */}
-                        <div className="flex items-center gap-1 flex-wrap flex-1 min-w-0">
-                          <Badge variant="secondary" className="text-[10px] h-4 px-1 font-mono">
-                            {getTypeInfo(field.type)?.label ?? field.type}
-                          </Badge>
-                          {needsPrecisionScale(field.type) && (
-                            <span className="text-caption text-muted-foreground font-mono">
-                              ({field.precision ?? "?"},{field.scale ?? "?"})
-                            </span>
-                          )}
-                          {field.isKey && (
-                            <Badge variant="warning" className="text-[10px] h-4 px-1">KEY</Badge>
-                          )}
-                          {!field.nullable && !field.isKey && (
-                            <Badge variant="outline" className="text-[10px] h-4 px-1">NOT NULL</Badge>
-                          )}
-                          {field.classification && (
-                            <Badge
-                              variant={standardClassificationVariant(field.classification) ?? "secondary"}
-                              className="text-[10px] h-4 px-1"
-                            >
-                              {field.classification}
-                            </Badge>
-                          )}
-                          {aliases.map((a) => (
-                            <Badge key={a} variant="secondary" className="text-[10px] h-4 px-1 font-mono">{a}</Badge>
-                          ))}
-                          {field.description && (
-                            <span className="text-caption text-muted-foreground/60 truncate max-w-[200px]">
-                              {field.description}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Delete */}
-                        <button
-                          onClick={() => removeInlineField(field.tempId)}
-                          className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded opacity-0 group-hover:opacity-100"
-                          title="Remove field"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Add field form */}
-            {showFieldForm ? (
-              <div className="rounded-lg border border-border/50 p-space-3 space-y-space-3 bg-accent/5">
-                {/* Row 1: Name + Type */}
-                <div className="flex items-center gap-space-3">
-                  <div className="flex-1 min-w-0">
-                    <label className="text-caption text-muted-foreground mb-1 block">Name</label>
-                    <Input
-                      value={newFieldName}
-                      onChange={(e) => {
-                        setNewFieldName(e.target.value);
-                        if (e.target.value.trim() && !newFieldClassification && defaultClassification) {
-                          setNewFieldClassification(defaultClassification);
-                        }
-                      }}
-                      placeholder="field_name"
-                      className="h-8 font-mono text-body-small"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && newFieldName.trim()) addInlineField();
-                        if (e.key === "Escape") resetFieldForm();
-                      }}
-                    />
-                  </div>
-                  <div className="w-[140px]">
-                    <label className="text-caption text-muted-foreground mb-1 block">Type</label>
-                    <TypePicker value={newFieldType} onChange={setNewFieldType} />
-                  </div>
-                  {needsPrecisionScale(newFieldType) && (
-                    <>
-                      <div className="w-[72px]">
-                        <label className="text-caption text-muted-foreground mb-1 block">Precision</label>
-                        <Input
-                          type="number"
-                          value={newFieldPrecision}
-                          onChange={(e) => setNewFieldPrecision(e.target.value)}
-                          className="h-8 text-body-small"
-                          placeholder="18"
-                        />
-                      </div>
-                      <div className="w-[72px]">
-                        <label className="text-caption text-muted-foreground mb-1 block">Scale</label>
-                        <Input
-                          type="number"
-                          value={newFieldScale}
-                          onChange={(e) => setNewFieldScale(e.target.value)}
-                          className="h-8 text-body-small"
-                          placeholder="2"
-                        />
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Row 2: Description */}
-                <div>
-                  <label className="text-caption text-muted-foreground mb-1 block">Description</label>
-                  <Input
-                    value={newFieldDescription}
-                    onChange={(e) => setNewFieldDescription(e.target.value)}
-                    placeholder="Brief description"
-                    className="h-8 text-body-small"
-                  />
-                </div>
-
-                {/* Row 3: Constraints */}
-                <div className="flex items-center gap-space-4 flex-wrap">
-                  <label className="flex items-center gap-1.5 text-caption text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={newFieldNullable}
-                      onChange={(e) => setNewFieldNullable(e.target.checked)}
-                      className="accent-primary"
-                      disabled={newFieldIsKey}
-                    />
-                    Nullable
-                    {newFieldIsKey && <span className="text-[10px] text-muted-foreground/50">(auto: key)</span>}
-                  </label>
-                  <label className="flex items-center gap-1.5 text-caption text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={newFieldIsKey}
-                      onChange={(e) => handleNewFieldKeyChange(e.target.checked)}
-                      className="accent-primary"
-                    />
-                    Primary Key
-                  </label>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-caption text-muted-foreground">Classification</span>
-                    <ClassificationPicker value={newFieldClassification} onChange={setNewFieldClassification} />
-                  </div>
-                </div>
-
-                {/* Row 4: Aliases */}
-                <div>
-                  <label className="text-caption text-muted-foreground mb-1 block">
-                    Aliases <span className="text-muted-foreground/50">(comma-separated)</span>
-                  </label>
-                  <Input
-                    value={newFieldAliases}
-                    onChange={(e) => setNewFieldAliases(e.target.value)}
-                    placeholder="alt_name, other_name"
-                    className="h-8 text-body-small font-mono"
-                  />
-                </div>
-
-                {/* Policy hint */}
-                {defaultRetention && (
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Tag className="w-3.5 h-3.5 text-muted-foreground/50" />
-                    <span className="text-caption text-muted-foreground/50">
-                      Domain policy: retention {defaultRetention}
-                    </span>
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div className="flex items-center gap-space-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={addInlineField}
-                    disabled={!newFieldName.trim()}
-                    className="gap-1"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Add Field
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={resetFieldForm}>
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowFieldForm(true)}
-                className="w-full flex items-center justify-center gap-2 py-space-2 rounded-lg border border-dashed border-border hover:border-primary/40 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-caption"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add Field
-              </button>
-            )}
-          </div>
-
-          {createError && <p className="text-body-small text-destructive mb-space-4">{createError}</p>}
-          <div className="flex gap-space-2">
-            <Button onClick={handleCreate} disabled={isCreating}>
-              {isCreating ? "Creating..." : "Create Entity"}
-            </Button>
-            <Button type="button" variant="outline" onClick={resetCreateForm}>
-              Cancel
-            </Button>
-          </div>
-        </div>
       )}
 
       {/* Entity content */}

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { listUsagesAction } from "@/app/(dashboard)/schemas/usage-actions";
 import type { UsageList, UsageSubject } from "@/lib/events/usage";
 
@@ -44,7 +45,8 @@ export function UsedByPanel({
   subject, title = "Used by", emptyText = "Nothing references this yet.",
 }: { subject: UsageSubject; title?: string; emptyText?: string }) {
   const { kind, id } = partsOf(subject);
-  const key = `${kind}:${id}`;
+  const [attempt, setAttempt] = useState(0);
+  const key = `${kind}:${id}:${attempt}`;
   // The outcome is keyed by subject: a result for a previous subject counts as "still loading" for the new one.
   const [result, setResult] = useState<{ key: string; outcome: Outcome } | null>(null);
   const outcome = result?.key === key ? result.outcome : null;
@@ -76,7 +78,12 @@ export function UsedByPanel({
       {outcome === null && (
         <p className="flex items-center gap-2 text-body-small text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Looking up references…</p>
       )}
-      {outcome?.status === "error" && <p role="alert" className="text-body-small text-destructive">{outcome.message}</p>}
+      {outcome?.status === "error" && (
+        <div className="flex flex-col items-start gap-space-2">
+          <p role="alert" className="text-body-small text-destructive">{outcome.message}</p>
+          <Button type="button" variant="outline" size="sm" onClick={() => setAttempt((value) => value + 1)}>Retry references</Button>
+        </div>
+      )}
       {outcome?.status === "ready" && rows.length === 0 && <p className="text-body-small text-muted-foreground">{emptyText}</p>}
       {rows.length > 0 && (
         <ul className="space-y-space-1">

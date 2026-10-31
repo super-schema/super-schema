@@ -11,6 +11,7 @@ import {
 const mocks = vi.hoisted(() => ({ trackRecentEntity: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }));
 vi.mock("@/lib/recent-entities", () => ({ trackRecentEntity: mocks.trackRecentEntity }));

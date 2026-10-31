@@ -1,8 +1,12 @@
 "use client";
 
 import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
-import { useRouter } from "next/navigation";
-import { Zap, Globe, Rocket, FileCode, Upload } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Zap, Upload } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { UnsavedChangesDialog } from "@/features/events/builder/UnsavedChangesDialog";
+import { useLeaveGuard, type PendingLeave } from "@/features/events/builder/use-leave-guard";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { FieldEditor } from "./field-editor";
@@ -74,6 +78,18 @@ import { pluralize } from "@/lib/pluralize";
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
 type ViewTab = "editor" | "versions" | "governance" | "alerts" | "schemas" | "api" | "deployments" | "typespec";
 type RightPanelTab = "field-edit" | "typespec-preview";
+
+const VIEW_GROUPS = [
+  { label: "Author", tabs: [["editor", "Editor"], ["typespec", "TypeSpec source"]] },
+  { label: "Deliver", tabs: [["schemas", "Schemas"], ["api", "API"], ["deployments", "Deployments"]] },
+  { label: "Govern", tabs: [["governance", "Governance"], ["alerts", "Alerts"]] },
+  { label: "History", tabs: [["versions", "Versions"]] },
+] satisfies Array<{ label: string; tabs: Array<[ViewTab, string]> }>;
+
+function normalizeView(value: string | null, level: "TENANT" | "PRODUCT"): ViewTab {
+  if (value === "api" && level !== "PRODUCT") return "editor";
+  return VIEW_GROUPS.some((group) => group.tabs.some(([id]) => id === value)) ? value as ViewTab : "editor";
+}
 
 /** Message for a thrown value (server actions reject on network or server failures). */
 function errorMessage(e: unknown): string {
@@ -179,6 +195,9 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   const invalidateDomainsTree = useInvalidateDomainsTree();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [isDeletingEntity, setIsDeletingEntity] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteCancelRef = useRef<HTMLButtonElement>(null);
+  const deleteReturnFocusRef = useRef<HTMLElement | null>(null);
 
   // Version history state
   const [versionHistory, setVersionHistory] = useState<VersionSnapshot[]>([]);
@@ -187,8 +206,31 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
   const [showDiff, setShowDiff] = useState(false);
 
-  // View tab state
-  const [activeTab, setActiveTab] = useState<ViewTab>("editor");
+  // Native history updates keep the view shareable without remounting the workspace.
+  const searchParams = useSearchParams();
+  const requestedView = normalizeView(searchParams.get("tab"), level);
+  const [activeTab, setActiveTab] = useState<ViewTab>(requestedView);
+  const activeTabRef = useRef(requestedView);
+  const tabsListRef = useRef<HTMLDivElement>(null);
+
+  // Keep the selected tab visible on deep links, view changes and panel resizes.
+  useEffect(() => {
+    const list = tabsListRef.current;
+    if (!list) return;
+    const revealSelectedTab = () => {
+      const tab = list.querySelector<HTMLElement>(`[data-testid="tab-${activeTab}"]`);
+      if (!tab) return;
+      const viewport = list.getBoundingClientRect();
+      const bounds = tab.getBoundingClientRect();
+      if (bounds.left < viewport.left) list.scrollLeft += bounds.left - viewport.left;
+      else if (bounds.right > viewport.right) list.scrollLeft += bounds.right - viewport.right;
+    };
+    revealSelectedTab();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(revealSelectedTab);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [activeTab]);
 
   // Draft + Publish state (spec §5.3). Server props are the source of truth;
   // saves flip the local copy until the next server render (React "adjust
@@ -215,6 +257,10 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   // The versions tab must not say "Not published yet" before the first load finishes, or when it failed.
   const [versionsLoaded, setVersionsLoaded] = useState(false);
   const [versionsError, setVersionsError] = useState<string | null>(null);
+  const [legacyLoaded, setLegacyLoaded] = useState(false);
+  const [legacyError, setLegacyError] = useState<string | null>(null);
+  const publishedRequestRef = useRef(0);
+  const legacyRequestRef = useRef(0);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishPreview, setPublishPreview] = useState<PublishAnalysis | null>(null);
   const [publishLoadError, setPublishLoadError] = useState<string | null>(null);
@@ -237,22 +283,130 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   }, []);
 
   // Refs for keyboard shortcut save/discard delegation
-  const fieldSaveRef = useRef<(() => void) | null>(null);
+  const fieldSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const fieldDiscardRef = useRef<(() => void) | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingLeave | null>(null);
+  const [savingField, setSavingField] = useState(false);
+  const [panelSaving, setPanelSaving] = useState(false);
+  const panelSavingRef = useRef(false);
+  const fieldBusy = savingField || panelSaving;
+  const handlePanelSavingChange = useCallback((saving: boolean) => {
+    panelSavingRef.current = saving;
+    setPanelSaving(saving);
+  }, []);
+  const [guardError, setGuardError] = useState<string | null>(null);
+  const fieldSaveAttempt = useRef<Promise<boolean> | null>(null);
+  const { pending: pendingLeave } = useLeaveGuard(isFieldDirty || fieldBusy, { queryKey: "tab" });
+  const pendingDecision = pendingAction ?? pendingLeave;
+
+  const requestAction = useCallback((run: () => void | Promise<void>, destination = "continue") => {
+    const execute = () => {
+      try { void Promise.resolve(run()).catch((error) => toast.error(errorMessage(error))); }
+      catch (error) { toast.error(errorMessage(error)); }
+    };
+    if (!fieldDirtyRef.current && !panelSavingRef.current && !fieldSaveAttempt.current) {
+      execute();
+      return;
+    }
+    setGuardError(null);
+    let settled = false;
+    setPendingAction({
+      destination,
+      proceed() {
+        if (settled) return;
+        settled = true;
+        setPendingAction(null);
+        execute();
+      },
+      stay() {
+        if (settled) return;
+        settled = true;
+        setPendingAction(null);
+      },
+    });
+  }, []);
+
+  const saveField = useCallback((): Promise<boolean> => {
+    if (fieldSaveAttempt.current) return fieldSaveAttempt.current;
+    const save = fieldSaveRef.current;
+    if (!save) {
+      setGuardError("The field editor is not ready. Stay here and try again.");
+      return Promise.resolve(false);
+    }
+    setSavingField(true);
+    setGuardError(null);
+    const attempt = (async () => {
+      try {
+        if (await Promise.resolve().then(save) !== true) {
+          setGuardError("The field could not be saved, or newer edits remain. Stay to review your edits, or retry saving.");
+          return false;
+        }
+        handleFieldDirtyChange(false);
+        return true;
+      } catch (error) {
+        setGuardError(`Could not save the field: ${errorMessage(error)}`);
+        return false;
+      } finally {
+        fieldSaveAttempt.current = null;
+        setSavingField(false);
+      }
+    })();
+    fieldSaveAttempt.current = attempt;
+    return attempt;
+  }, [handleFieldDirtyChange]);
+
+  const discardField = useCallback(() => {
+    if (panelSavingRef.current || fieldSaveAttempt.current) {
+      setGuardError("Wait for the current save to finish before discarding edits.");
+      return false;
+    }
+    if (fieldDirtyRef.current && !fieldDiscardRef.current) {
+      setGuardError("The field editor is not ready. Stay here and try again.");
+      return false;
+    }
+    fieldDiscardRef.current?.();
+    handleFieldDirtyChange(false);
+    setGuardError(null);
+    return true;
+  }, [handleFieldDirtyChange]);
+
+  const applyView = useCallback((tab: ViewTab, history: "push" | "replace" | "none" = "replace") => {
+    activeTabRef.current = tab;
+    setActiveTab(tab);
+    if (tab !== "editor") setRightPanelTab("typespec-preview");
+    if (history !== "none") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", tab);
+      // Next copies its internal state itself; passing __NA/_N would bypass useSearchParams synchronization.
+      if (url.href !== window.location.href) window.history[history === "push" ? "pushState" : "replaceState"](null, "", url);
+    }
+  }, []);
+
+  // The leave guard cancels view traversals before the history index moves. Stay never rewrites a traversed entry.
+  useEffect(() => {
+    if (requestedView !== activeTabRef.current && !isFieldDirty && !fieldBusy) applyView(requestedView, "none");
+  }, [requestedView, isFieldDirty, fieldBusy, applyView]);
 
   const selectedField = selectedFieldId
     ? fields.find((f) => f.id === selectedFieldId) ?? null
     : null;
 
-  // Navigation guard: check dirty before switching fields
   const handleFieldSelect = useCallback((fieldId: string) => {
-    if (fieldDirtyRef.current) {
-      const confirmed = window.confirm("You have unsaved changes. Discard and continue?");
-      if (!confirmed) return;
-    }
-    setSelectedFieldId(fieldId);
-    setRightPanelTab("field-edit");
-  }, []);
+    if (fieldId === selectedFieldId && activeTab === "editor" && rightPanelTab === "field-edit") return;
+    requestAction(() => {
+      applyView("editor");
+      setSelectedFieldId(fieldId);
+      setRightPanelTab("field-edit");
+    });
+  }, [selectedFieldId, activeTab, rightPanelTab, requestAction, applyView]);
+
+  const handleRightPanelTabChange = useCallback((tab: RightPanelTab) => {
+    if (tab === rightPanelTab) return;
+    requestAction(() => {
+      if (tab === "field-edit") applyView("editor");
+      setRightPanelTab(tab);
+    });
+  }, [rightPanelTab, requestAction, applyView]);
 
   // Compute entity alerts from domain completeness requirements
   const entityAlerts = useMemo(() => {
@@ -273,7 +427,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     setTypeSpecTrigger((n) => n + 1);
     if (result?.error) {
       toast.error(result.error);
-      return;
+      throw new Error(result.error);
     }
     markDraftDirty();
     flashSaved();
@@ -318,7 +472,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     });
   }, [entity.id, entity.status, flashSaved]);
 
-  const handleEmit = useCallback(async () => {
+  const emitSavedDraft = useCallback(async () => {
     setIsEmitting(true);
     try {
       // A name that two entities answer to is asked about (the same pick dialog a generation opens), and the emission runs again.
@@ -352,31 +506,57 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     }
   }, [entity.id, resolveReferences]);
 
-  const handleOpenHistory = useCallback(async () => {
-    // allSettled: a failure in one list must not hide the other, and nothing may go unreported.
-    const [published, legacy] = await Promise.allSettled([
-      listEntityVersionsAction(entity.id),
-      getVersionHistoryAction(entity.id),
-    ]);
-    if (published.status === "rejected") {
-      setVersionsError(errorMessage(published.reason));
-    } else if ("error" in published.value) {
-      setVersionsError(published.value.error);
-    } else {
-      setVersionsError(null);
-      setPublishedVersions(published.value.versions);
+  const handleEmit = useCallback(() => {
+    requestAction(emitSavedDraft, "generate");
+  }, [requestAction, emitSavedDraft]);
+
+  const loadPublishedHistory = useCallback(async () => {
+    const request = ++publishedRequestRef.current;
+    setVersionsLoaded(false);
+    setVersionsError(null);
+    try {
+      const result = await listEntityVersionsAction(entity.id);
+      if (request !== publishedRequestRef.current) return;
+      if ("error" in result) setVersionsError(result.error);
+      else setPublishedVersions(result.versions);
+    } catch (error) {
+      if (request === publishedRequestRef.current) setVersionsError(errorMessage(error));
+    } finally {
+      if (request === publishedRequestRef.current) setVersionsLoaded(true);
     }
-    if (legacy.status === "fulfilled" && legacy.value.versions) {
-      setVersionHistory(legacy.value.versions as VersionSnapshot[]);
-    }
-    setVersionsLoaded(true);
   }, [entity.id]);
+
+  const loadLegacyHistory = useCallback(async () => {
+    const request = ++legacyRequestRef.current;
+    setLegacyLoaded(false);
+    setLegacyError(null);
+    try {
+      const result = await getVersionHistoryAction(entity.id);
+      if (request !== legacyRequestRef.current) return;
+      if ("error" in result) setLegacyError(result.error);
+      else if (result.versions) setVersionHistory(result.versions as VersionSnapshot[]);
+      else setLegacyError("The history response was incomplete. Try again.");
+    } catch (error) {
+      if (request === legacyRequestRef.current) setLegacyError(errorMessage(error));
+    } finally {
+      if (request === legacyRequestRef.current) setLegacyLoaded(true);
+    }
+  }, [entity.id]);
+
+  const handleOpenHistory = useCallback(async () => {
+    await Promise.all([loadPublishedHistory(), loadLegacyHistory()]);
+  }, [loadPublishedHistory, loadLegacyHistory]);
+
+  useEffect(() => {
+    if (activeTab === "versions") void handleOpenHistory();
+  }, [activeTab, handleOpenHistory]);
 
   // Loads the publish preview. An ambiguous reference that blocks it is asked right away (the pick dialog opens over the publish dialog,
   // the pick is saved on the entity + field that hold the reference, often a member of the closure) and the preview is loaded again.
   // Cancelling leaves the blocker listed, with a button to choose.
   const loadPublishPreview = useCallback(async () => {
     setPublishLoadError(null);
+    setPublishPreview(null);
     const asked = new Set<string>();
     try {
       for (;;) {
@@ -400,16 +580,14 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     }
   }, [entity.id, pickReference]);
 
-  const handleOpenPublish = useCallback(async () => {
-    if (fieldDirtyRef.current) {
-      const confirmed = window.confirm("You have unsaved field edits. Publish the last saved draft without them?");
-      if (!confirmed) return;
-    }
-    setPublishOpen(true);
-    setPublishPreview(null);
-    setPublishError(null);
-    await loadPublishPreview();
-  }, [loadPublishPreview]);
+  const handleOpenPublish = useCallback(() => {
+    requestAction(async () => {
+      setPublishOpen(true);
+      setPublishPreview(null);
+      setPublishError(null);
+      await loadPublishPreview();
+    }, "publish");
+  }, [requestAction, loadPublishPreview]);
 
   const handleConfirmPublish = useCallback(async (input: PublishInput) => {
     setIsPublishing(true);
@@ -476,10 +654,12 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
 
   const handleHistoryViewDiff = useCallback(
     async (versionNumber: number, previousVersion: number) => {
-      await handleCompare(previousVersion, versionNumber);
-      setActiveTab("editor");
+      requestAction(async () => {
+        await handleCompare(previousVersion, versionNumber);
+        applyView("editor");
+      });
     },
-    [handleCompare]
+    [handleCompare, requestAction, applyView]
   );
 
 
@@ -506,12 +686,16 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   }, [entity.id]);
 
   const handleDeleteEntity = useCallback(async () => {
+    if (isDeletingEntity) return;
     setIsDeletingEntity(true);
+    setDeleteError(null);
     try {
       const result = await deleteEntityAction(entity.id);
       if (result.error) {
+        setDeleteError(result.error);
         toast.error(result.error);
       } else {
+        setDeleteConfirmOpen(false);
         toast.success(`"${entity.name}" deleted`);
         void invalidateDomainsTree(); // the explorer reads a cached tree: without this the deleted entity row stays until a reload
         router.push(
@@ -520,13 +704,13 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
             : assetHref({ kind: "enterprise" })
         );
       }
-    } catch {
+    } catch (error) {
+      setDeleteError(`Failed to delete entity: ${errorMessage(error)}`);
       toast.error("Failed to delete entity");
     } finally {
       setIsDeletingEntity(false);
-      setDeleteConfirmOpen(false);
     }
-  }, [entity.id, entity.name, entity.domainSlug, entity.productSlug, router, invalidateDomainsTree]);
+  }, [isDeletingEntity, entity.id, entity.name, entity.domainSlug, entity.productSlug, router, invalidateDomainsTree]);
 
   // Metadata save (tags / owner) — updates the draft only (spec D1).
   const handleMetaSaved = useCallback(() => {
@@ -534,46 +718,31 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     flashSaved();
   }, [flashSaved, markDraftDirty]);
 
-  // Navigation guard: tab switching
   const handleTabChange = useCallback((tab: ViewTab) => {
-    if (fieldDirtyRef.current) {
-      const confirmed = window.confirm("You have unsaved changes. Discard and continue?");
-      if (!confirmed) return;
-    }
-    setActiveTab(tab);
-    if (tab === "versions") {
-      handleOpenHistory();
-    }
-  }, [handleOpenHistory]);
+    const next = normalizeView(tab, level);
+    if (next === activeTabRef.current) return;
+    requestAction(() => applyView(next));
+  }, [level, requestAction, applyView]);
 
-  // Keyboard shortcuts: Cmd+E to emit, Cmd+S to save, Escape to discard
+  // Escape belongs to the active overlay; it never resets field edits.
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "e") {
+      if (e.defaultPrevented || document.querySelector('[role="dialog"]')) return;
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+      if (e.key.toLowerCase() === "e") {
         e.preventDefault();
-        if (!readOnly_ && !isEmitting) {
-          handleEmit();
-        }
+        e.stopImmediatePropagation();
+        if (!readOnly_ && !isEmitting && !fieldBusy) handleEmit();
       }
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+      if (e.key.toLowerCase() === "s" && activeTab === "editor") {
         e.preventDefault();
-        if (fieldDirtyRef.current && fieldSaveRef.current) {
-          fieldSaveRef.current();
-        }
-      }
-      if (e.key === "Escape") {
-        if (deleteConfirmOpen) {
-          setDeleteConfirmOpen(false);
-          return;
-        }
-        if (fieldDirtyRef.current && fieldDiscardRef.current) {
-          fieldDiscardRef.current();
-        }
+        e.stopImmediatePropagation();
+        if (!readOnly_ && fieldDirtyRef.current) void saveField();
       }
     }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleEmit, readOnly_, isEmitting, deleteConfirmOpen]);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [handleEmit, saveField, readOnly_, isEmitting, fieldBusy, activeTab]);
 
   // Navigation guard: beforeunload when dirty
   useEffect(() => {
@@ -588,36 +757,36 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
 
   return (
     <>
-    {deleteConfirmOpen && (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" role="dialog" aria-modal="true" aria-labelledby="entity-delete-confirm-title">
-        <div className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm w-full mx-4">
-          <h3 id="entity-delete-confirm-title" className="text-heading-3 text-foreground mb-2">
-            Delete &ldquo;{entity.name}&rdquo;?
-          </h3>
-          <p className="text-body-small text-muted-foreground mb-4">
-            Permanently deletes this entity and all its fields. This action cannot be undone.
-          </p>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setDeleteConfirmOpen(false)}
-              disabled={isDeletingEntity}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleDeleteEntity}
-              disabled={isDeletingEntity}
-            >
-              {isDeletingEntity ? "Deleting..." : "Delete"}
-            </Button>
-          </div>
-        </div>
-      </div>
-    )}
+    <UnsavedChangesDialog
+      pending={pendingDecision}
+      saving={fieldBusy}
+      error={guardError}
+      description={pendingDecision?.destination === "generate"
+        ? "This field has unsaved edits. Save them before generating schemas, or discard them to generate from the saved draft."
+        : "This field has unsaved edits. Save them before continuing, discard them, or stay here."}
+      saveLabel={pendingDecision?.destination === "generate" ? "Save and generate" : "Save and continue"}
+      discardLabel={pendingDecision?.destination === "generate" ? "Discard and generate" : "Discard and continue"}
+      onSaveAndLeave={saveField}
+      onDiscardAndLeave={discardField}
+      onStay={() => { if (!fieldBusy) { pendingDecision?.stay(); setGuardError(null); } }}
+    />
+    <Dialog
+      open={deleteConfirmOpen}
+      disablePointerDismissal={isDeletingEntity}
+      onOpenChange={(open) => { if (!isDeletingEntity) setDeleteConfirmOpen(open); }}
+    >
+      <DialogContent initialFocus={deleteCancelRef} finalFocus={deleteReturnFocusRef} showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Delete &ldquo;{entity.name}&rdquo;?</DialogTitle>
+          <DialogDescription>Permanently deletes this entity and all its fields. This action cannot be undone.</DialogDescription>
+        </DialogHeader>
+        {deleteError && <p role="alert" className="text-body-small text-destructive">{deleteError}</p>}
+        <DialogFooter>
+          <Button ref={deleteCancelRef} type="button" variant="outline" size="sm" onClick={() => setDeleteConfirmOpen(false)} disabled={isDeletingEntity}>Cancel</Button>
+          <Button type="button" variant="destructive" size="sm" onClick={handleDeleteEntity} disabled={isDeletingEntity}>{isDeletingEntity ? "Deleting…" : "Delete"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     <div className="animate-auth-fade-up">
       <EntityHeader
         level={level}
@@ -632,10 +801,23 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         replacementEntity={replacementEntity}
         toolbar={
           <EntityToolbar
-            onDelete={readOnly_ ? undefined : () => setDeleteConfirmOpen(true)}
+            onDelete={readOnly_ ? undefined : () => {
+              deleteReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+              setDeleteError(null);
+              setDeleteConfirmOpen(true);
+            }}
           />
         }
       />
+
+      <div className="mb-space-4 flex flex-wrap items-center justify-between gap-space-3 rounded-lg border border-border px-space-3 py-space-2">
+        <p role="status" aria-live="polite" data-testid="workspace-draft-status" className="text-body-small text-muted-foreground">
+          {fieldBusy ? "Saving field edits…" : isFieldDirty ? "Unsaved field edits" : versionState.hasUnpublishedChanges ? "Draft saved · unpublished changes" : versionState.latestVersionLabel ? `Published v${versionState.latestVersionLabel} · draft up to date` : "Draft saved · not published"}
+        </p>
+        {!readOnly_ && <Button type="button" variant="outline" size="sm" onClick={handleEmit} disabled={isEmitting || fieldBusy}>
+          <Zap data-icon="inline-start" aria-hidden="true" />{isEmitting ? "Generating…" : "Generate schemas"}
+        </Button>}
+      </div>
 
       {/* Inline entity metadata */}
       <InlineEntityMeta
@@ -653,7 +835,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         domainSlug={entity.domainSlug}
         isReadOnly={readOnly_}
         rightPanelTab={rightPanelTab}
-        onTabChange={setRightPanelTab}
+        onTabChange={handleRightPanelTabChange}
         onUpdateField={handleUpdateField}
         typeSpecTrigger={typeSpecTrigger}
         existingFields={fields.map((f) => ({
@@ -663,97 +845,29 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
           isKey: f.isKey,
         }))}
         onTypeSpecApplied={() => {
-          // Trigger page refresh to reload fields from DB
-          window.location.reload();
+          markDraftDirty();
+          flashSaved();
+          setTypeSpecTrigger((n) => n + 1);
+          router.refresh();
         }}
         onDirtyChange={handleFieldDirtyChange}
+        onSavingChange={handlePanelSavingChange}
         fieldSaveRef={fieldSaveRef}
         fieldDiscardRef={fieldDiscardRef}
         referenceTargets={referenceTargets}
       />
 
-      {/* View Tab Bar — definition tabs | action tabs */}
-      <div className="flex items-center mb-space-4 border-b border-border/50">
-        {/* Definition tabs */}
-        {(["editor", "versions", "governance", "alerts"] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => handleTabChange(tab)}
-            className={`px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-              activeTab === tab
-                ? "border-foreground text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-            data-testid={`tab-${tab}`}
-            data-alert-count={tab === "alerts" ? alertCount : undefined}
-          >
-            {tab === "editor" ? "Editor" : tab === "versions" ? "Versions" : tab === "governance" ? "Governance" : `Alerts${alertCount > 0 ? ` (${alertCount})` : ""}`}
-          </button>
-        ))}
-
-        {/* Dirty indicator */}
-        {isFieldDirty && (
-          <span className="w-2 h-2 rounded-full bg-warning ml-1" title="Unsaved changes" />
-        )}
-
-        {/* Separator between definition and action tabs */}
-        <span className="mx-2 w-px h-4 bg-border/60 self-center" />
-
-        {/* Action tabs — visually distinct with icons and primary accent */}
-        <button
-          onClick={() => handleTabChange("schemas")}
-          className={`flex items-center gap-1 px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === "schemas"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-primary"
-          }`}
-          data-testid="tab-schemas"
-        >
-          <Zap className="w-3 h-3" />
-          Schemas
-        </button>
-        {level === "PRODUCT" && (
-          <button
-            onClick={() => handleTabChange("api")}
-            className={`flex items-center gap-1 px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-              activeTab === "api"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-primary"
-            }`}
-            data-testid="tab-api"
-          >
-            <Globe className="w-3 h-3" />
-            API
-          </button>
-        )}
-        <button
-          onClick={() => handleTabChange("deployments")}
-          className={`flex items-center gap-1 px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === "deployments"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-primary"
-          }`}
-          data-testid="tab-deployments"
-        >
-          <Rocket className="w-3 h-3" />
-          Deployments
-        </button>
-        <button
-          onClick={() => handleTabChange("typespec")}
-          className={`flex items-center gap-1 px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === "typespec"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-primary"
-          }`}
-          data-testid="tab-typespec"
-        >
-          <FileCode className="w-3 h-3" />
-          TypeSpec
-        </button>
-      </div>
+      <Tabs value={activeTab} onValueChange={(value) => handleTabChange(value as ViewTab)} className="min-w-0">
+        <TabsList ref={tabsListRef} variant="line" aria-label="Entity workspace views" className="mb-space-4 h-auto w-full min-w-0 flex-nowrap justify-start gap-space-1 overflow-x-auto border-b border-border pb-space-2 group-data-horizontal/tabs:h-auto">
+          {VIEW_GROUPS.flatMap<[ViewTab, string]>((group) => group.tabs).filter(([tab]) => level === "PRODUCT" || tab !== "api").map(([tab, label]) => (
+            <TabsTrigger key={tab} value={tab} data-testid={`tab-${tab}`} data-alert-count={tab === "alerts" ? alertCount : undefined} className="min-h-9 flex-none px-space-3">
+              {label}{tab === "alerts" && alertCount > 0 ? ` (${alertCount})` : ""}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
       {/* Center Panel */}
-      <div key={activeTab} className="mb-space-8 animate-in fade-in duration-150">
+      <TabsContent key={activeTab} value={activeTab} className="mb-space-8 min-w-0">
         {activeTab === "editor" && (
           showDiff && diffResult ? (
             <DiffViewer diff={diffResult} onClose={handleCloseDiff} />
@@ -829,8 +943,9 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
             readOnly={readOnly_}
             onSaved={() => {
               markDraftDirty();
-              // The saved source changed the fields: the right panel's TypeSpec preview regenerates from them.
+              // Refresh data while preserving the source tab, selected field and URL.
               setTypeSpecTrigger((n) => n + 1);
+              router.refresh();
             }}
           />
         )}
@@ -852,9 +967,10 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
               )}
             </div>
             {versionsError ? (
-              <p role="alert" data-testid="versions-error" className="text-body-small text-destructive">
-                Could not load published versions: {versionsError}
-              </p>
+              <div className="flex flex-col items-start gap-space-2">
+                <p role="alert" data-testid="versions-error" className="text-body-small text-destructive">Could not load published versions: {versionsError}</p>
+                <Button type="button" variant="outline" size="sm" onClick={() => void loadPublishedHistory()}>Retry published versions</Button>
+              </div>
             ) : !versionsLoaded ? (
               <p data-testid="versions-loading" className="text-body-small text-muted-foreground">
                 Loading published versions…
@@ -870,7 +986,14 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
               {showDiff && diffResult && (
                 <DiffViewer diff={diffResult} onClose={handleCloseDiff} />
               )}
-              {versionHistory.length > 0 ? (
+              {legacyError ? (
+                <div className="flex flex-col items-start gap-space-2">
+                  <p role="alert" data-testid="legacy-history-error" className="text-body-small text-destructive">Could not load legacy history: {legacyError}</p>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void loadLegacyHistory()}>Retry legacy history</Button>
+                </div>
+              ) : !legacyLoaded ? (
+                <p role="status" className="text-body-small text-muted-foreground">Loading legacy history…</p>
+              ) : versionHistory.length > 0 ? (
                 <div className="space-y-space-2">
                   {versionHistory.map((v, idx) => (
                     <div
@@ -951,13 +1074,8 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
             <h2 className="text-heading-2 text-foreground">Alerts</h2>
             <AlertsTab
               alerts={entityAlerts}
-              onNavigateToField={(fieldId) => {
-                handleFieldSelect(fieldId);
-                setActiveTab("editor");
-              }}
-              onNavigateToTab={(tab) => {
-                setActiveTab(tab as ViewTab);
-              }}
+              onNavigateToField={handleFieldSelect}
+              onNavigateToTab={(tab) => handleTabChange(normalizeView(tab, level))}
             />
           </div>
         )}
@@ -973,9 +1091,12 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
             isReadOnly={readOnly_}
           />
         )}
-      </div>
+      </TabsContent>
+      </Tabs>
 
       <PublishEntityDialog
+        consumerPreview={<UsedByPanel subject={{ kind: "entity", entityId: entity.id }} title="Consumers to review" emptyText="No visible references were found for this entity." />}
+        onRetry={() => void loadPublishPreview()}
         open={publishOpen}
         entityName={entity.name}
         preview={publishPreview}

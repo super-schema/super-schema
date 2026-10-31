@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { PendingLeave } from "./use-leave-guard";
 
-export function UnsavedChangesDialog({ pending, saving, error, onSaveAndLeave, onDiscardAndLeave, onStay }: {
+export function UnsavedChangesDialog({ pending, saving, error, onSaveAndLeave, onDiscardAndLeave, onStay, description = "This event has unsaved changes. Save them before you leave, or discard them.", saveLabel = "Save & leave", discardLabel = "Discard & leave" }: {
   pending: PendingLeave | null;
   /** A save is running (this dialog's, or the page's own Save). */
   saving: boolean;
@@ -19,7 +19,11 @@ export function UnsavedChangesDialog({ pending, saving, error, onSaveAndLeave, o
   error: string | null;
   /** Saves the draft; true when it was saved. `useEventDraft().save` never throws. */
   onSaveAndLeave: () => Promise<boolean>;
-  onDiscardAndLeave: () => void;
+  onDiscardAndLeave: () => void | boolean;
+  /** Optional wording for other editors using the same decision and focus behavior. */
+  description?: string;
+  saveLabel?: string;
+  discardLabel?: string;
   /** Closes the question (`pending.stay()`); called for Stay, Escape and a click outside. */
   onStay: () => void;
 }) {
@@ -32,7 +36,7 @@ export function UnsavedChangesDialog({ pending, saving, error, onSaveAndLeave, o
   }
   function discardAndLeave() {
     if (pending === null || saving) return;
-    onDiscardAndLeave();
+    if (onDiscardAndLeave() === false) return;
     pending.proceed();
   }
 
@@ -47,15 +51,15 @@ export function UnsavedChangesDialog({ pending, saving, error, onSaveAndLeave, o
       <DialogContent className="sm:max-w-md" showCloseButton={false} initialFocus={stayRef} data-testid="unsaved-changes-dialog">
         <DialogHeader>
           <DialogTitle>Unsaved changes</DialogTitle>
-          <DialogDescription>This event has unsaved changes. Save them before you leave, or discard them.</DialogDescription>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
         {error && <p role="alert" data-testid="unsaved-changes-error" className="text-body-small text-destructive">{error}</p>}
 
         <DialogFooter>
           <Button ref={stayRef} type="button" variant="outline" size="sm" onClick={onStay} disabled={saving} data-testid="leave-stay">Stay</Button>
-          <Button type="button" variant="outline" size="sm" onClick={discardAndLeave} disabled={saving} data-testid="leave-discard">Discard &amp; leave</Button>
-          <Button type="button" size="sm" onClick={() => { void saveAndLeave(); }} disabled={saving} data-testid="leave-save">{saving ? "Saving…" : "Save & leave"}</Button>
+          <Button type="button" variant="outline" size="sm" onClick={discardAndLeave} disabled={saving} data-testid="leave-discard">{discardLabel}</Button>
+          <Button type="button" size="sm" onClick={() => { void saveAndLeave(); }} disabled={saving} data-testid="leave-save">{saving ? "Saving…" : saveLabel}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

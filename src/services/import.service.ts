@@ -145,7 +145,8 @@ export function importSchemaAssets(
   if (!docResult.success) return docResult;
 
   const doc = docResult.data;
-  if (countImportAssets(doc) > 1) {
+  // A document with no entity (a root enum) has nothing for the single-entity review to show.
+  if (countImportAssets(doc) > 1 || doc.entities.length === 0) {
     return ok({ kind: "multi", result: toAssetImportResult(doc) });
   }
 

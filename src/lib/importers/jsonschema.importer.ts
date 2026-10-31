@@ -1261,17 +1261,36 @@ function extractConstraints(node: JsonSchemaNode): {
 /** "#/$defs/Customer" → "Customer"; "https://x/Order.json" → "Order"; "Card" → "Card". */
 export function refToEntityName(ref: string): string {
   const last = ref.split(/[/#]/).filter(Boolean).pop() ?? ref;
-  return last.replace(/\.(schema\.json|json)$/i, "");
+  return withoutVersion(last.replace(/\.(schema\.json|json)$/i, ""));
+}
+
+/** `PersonName.v1` -> `PersonName`: a versioned file is named by what it holds, so a reference to it and the entity imported from it agree. */
+function withoutVersion(name: string): string {
+  const stripped = name.replace(/\.v\d+$/i, "");
+  return stripped === "" ? name : stripped;
+}
+
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** The file name of an `$id` (no version, no extension), `undefined` when it is not an identifier. */
+function idBasename(schema: JsonSchemaNode): string | undefined {
+  if (typeof schema.$id !== "string" || !schema.$id.trim()) return undefined;
+  const last = schema.$id.split(/[/#]/).filter(Boolean).pop() ?? "";
+  const stripped = withoutVersion(last.replace(/\.(schema\.json|json)$/i, ""));
+  return IDENTIFIER.test(stripped) ? stripped : undefined;
 }
 
 function deriveEntityName(schema: JsonSchemaNode): string {
   if (typeof schema.title === "string" && schema.title.trim()) {
-    return schema.title.trim();
+    // A display title ("Portable Postal Address (Medium-Grained)") is no name: the file the document came from is, when it is one
+    // ("Address.v1.json"), and it is what a `$ref` to the document names.
+    const title = schema.title.trim();
+    return IDENTIFIER.test(title) ? title : (idBasename(schema) ?? title);
   }
   if (typeof schema.$id === "string" && schema.$id.trim()) {
     // "https://example.com/schemas/user.json" → "user"
     const last = schema.$id.split(/[/#]/).filter(Boolean).pop() ?? "";
-    const stripped = last.replace(/\.(json|schema\.json)$/i, "");
+    const stripped = withoutVersion(last.replace(/\.(json|schema\.json)$/i, ""));
     if (stripped) return stripped;
   }
   return IMPORTED_ENTITY_FALLBACK_NAME;
@@ -1977,9 +1996,58 @@ function parseGuarded(rawContent: string, outIndex?: Map<string, DefinitionIndex
   }
 }
 
+/**
+ * The shared enum of an all-string enum node (a definition, or a root `type: string` + `enum`). What the node carries besides its symbols has
+ * no place on a shared enum row: kept on the enum, and on every field that uses it.
+ */
+function buildParsedEnum(name: string, node: JsonSchemaNode, warnings: string[]): ParsedEnum {
+  const parsedEnum: ParsedEnum = {
+    name,
+    values: boundEnumSymbols([...new Set((node.enum ?? []).filter((v) => v !== null) as string[])], name, warnings, node),
+  };
+  if (typeof node.description === "string") parsedEnum.description = node.description;
+  const enumExtensions = captureExtensions(node, true);
+  const enumIgnored = ignoredKeywordsOf([node], true);
+  if (node.deprecated === true) parsedEnum.deprecated = true;
+  if (enumExtensions) parsedEnum.extensions = enumExtensions;
+  if (enumIgnored) parsedEnum.ignoredKeywords = enumIgnored;
+  const carried = [...(parsedEnum.deprecated ? ["deprecated"] : []), ...Object.keys(enumExtensions ?? {})];
+  if (carried.length > 0) {
+    const shown = carried.length > 10 ? `${carried.slice(0, 10).join(", ")} and ${carried.length - 10} more` : carried.join(", ");
+    warnings.push(`Enum \`${name}\`: ${shown} ${carried.length === 1 ? "is" : "are"} kept on every field that uses it (a shared enum has no place of its own for ${carried.length === 1 ? "it" : "them"})`);
+  }
+  return parsedEnum;
+}
+
+/**
+ * A root `type: array` is imported through its items: an array of objects is the element entity, an array of string enum symbols the
+ * enum. The array itself (`minItems`, `maxItems`, `uniqueItems`) has no place in the IR and is reported. The root's own title / description /
+ * `$id` name and describe the result. Anything else is refused.
+ */
+function unwrapRootArray(schema: JsonSchemaNode): { schema: JsonSchemaNode; warnings: string[] } | { refusal: string } {
+  const items = schema.items;
+  const refusal = "Array-root JSON Schemas are not supported for entity import unless their items are an object or a string enum";
+  if (!isSchemaObject(items)) return { refusal };
+  const itemType = normalizeType(items.type).base;
+  const isEnum = itemType === "string" && Array.isArray(items.enum) && isStringEnum(items.enum);
+  const isObject = items.properties !== undefined || Array.isArray(items.allOf) || itemType === "object";
+  if (!isEnum && !isObject) return { refusal };
+  const { type: _type, items: _items, minItems, maxItems, uniqueItems, contains, ...rootRest } = schema;
+  void _type; void _items;
+  const merged: JsonSchemaNode = { ...items, ...rootRest, description: schema.description ?? items.description, title: schema.title ?? items.title };
+  const wrapper = [minItems !== undefined && "minItems", maxItems !== undefined && "maxItems", uniqueItems !== undefined && "uniqueItems", contains !== undefined && "contains"].filter(Boolean);
+  const named = deriveEntityName(merged);
+  return {
+    schema: merged,
+    warnings: [
+      `The root of this schema is an array: its items were imported as ${isEnum ? "the enum" : "the entity"} "${named}"; the array itself${wrapper.length > 0 ? ` (${wrapper.join(", ")})` : ""} is not modelled.`,
+    ],
+  };
+}
+
 function importJsonSchemaDocument(content: string, outIndex?: Map<string, DefinitionIndexEntry>, budget?: ResolveBudget): Result<MultiEntityImportResult> {
-  const { value: schema, message: rejected, tooBig } = parseStructured(content);
-  if (schema === null) {
+  const { value: parsedRoot, message: rejected, tooBig } = parseStructured(content);
+  if (parsedRoot === null) {
     return err({
       code: "PARSE_ERROR",
       message: rejected ?? "Invalid JSON: could not parse JSON Schema",
@@ -1991,7 +2059,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     });
   }
 
-  if (typeof schema !== "object" || Array.isArray(schema)) {
+  if (typeof parsedRoot !== "object" || Array.isArray(parsedRoot)) {
     return err({
       code: "PARSE_ERROR",
       message: "Expected a JSON Schema object at the top level",
@@ -1999,22 +2067,30 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     });
   }
 
-  const { base: rootBase } = normalizeType(schema.type);
-
-  if (rootBase === "array") {
-    return err({
-      code: "PARSE_ERROR",
-      message: "Array-root JSON Schemas are not supported for entity import",
-      suggestedFix: "Wrap the item schema in an object, or import the element schema directly.",
-    });
+  let schema: JsonSchemaNode = parsedRoot;
+  const rootNotes: string[] = [];
+  if (normalizeType(schema.type).base === "array") {
+    const unwrapped = unwrapRootArray(schema);
+    if ("refusal" in unwrapped) {
+      return err({
+        code: "PARSE_ERROR",
+        message: unwrapped.refusal,
+        suggestedFix: "Wrap the item schema in an object, or import the element schema directly.",
+      });
+    }
+    schema = unwrapped.schema;
+    rootNotes.push(...unwrapped.warnings);
   }
+  const { base: rootBase } = normalizeType(schema.type);
 
   // A root assembled from `allOf` members is an entity too (properties from members, or a typed object with a base).
   const rootMembers = collectObjectMembers(schema);
   const rootIsEntity = rootMembers.properties.size > 0 || (rootBase === "object" && rootMembers.baseRefs.length > 0);
   const rootEntityName = rootIsEntity ? deriveEntityName(schema) : undefined;
+  // A root `type: string` + `enum` is a shared enum of its own.
+  const rootIsEnum = !rootIsEntity && rootBase === "string" && Array.isArray(schema.enum) && isStringEnum(schema.enum);
   const { definitions, taken } = indexDefinitions(schema, rootEntityName);
-  const warnings: string[] = [];
+  const warnings: string[] = [...rootNotes];
   const unions: ParsedUnion[] = [];
   const ctx: ResolveContext = {
     definitions,
@@ -2055,6 +2131,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
   }
 
   const enums: ParsedEnum[] = [];
+  if (rootIsEnum) enums.push(buildParsedEnum(deriveEntityName(schema), schema, warnings));
   const sharedUnions: ParsedUnion[] = [];
   for (const def of definitions.values()) {
     if (def.kind === "entity") {
@@ -2070,24 +2147,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
         originalContent: content,
       });
     } else if (def.kind === "enum") {
-      const parsedEnum: ParsedEnum = {
-        name: def.assetName,
-        // `kind: "enum"` is only assigned to all-string enums (indexDefinitions).
-        values: boundEnumSymbols([...new Set((def.node.enum ?? []).filter((v) => v !== null) as string[])], def.assetName, warnings, def.node),
-      };
-      if (typeof def.node.description === "string") parsedEnum.description = def.node.description;
-      // What the definition carries besides its symbols has no place on a shared enum row: kept here, and on every field that uses it.
-      const enumExtensions = captureExtensions(def.node, true);
-      const enumIgnored = ignoredKeywordsOf([def.node], true);
-      if (def.node.deprecated === true) parsedEnum.deprecated = true;
-      if (enumExtensions) parsedEnum.extensions = enumExtensions;
-      if (enumIgnored) parsedEnum.ignoredKeywords = enumIgnored;
-      const carried = [...(parsedEnum.deprecated ? ["deprecated"] : []), ...Object.keys(enumExtensions ?? {})];
-      if (carried.length > 0) {
-        const shown = carried.length > 10 ? `${carried.slice(0, 10).join(", ")} and ${carried.length - 10} more` : carried.join(", ");
-        warnings.push(`Enum \`${def.assetName}\`: ${shown} ${carried.length === 1 ? "is" : "are"} kept on every field that uses it (a shared enum has no place of its own for ${carried.length === 1 ? "it" : "them"})`);
-      }
-      enums.push(parsedEnum);
+      enums.push(buildParsedEnum(def.assetName, def.node, warnings));
     } else if (def.kind === "union") {
       const memberTypes = ctx.sharedUnionMembers.get(def.assetName);
       if (memberTypes) {
@@ -2113,7 +2173,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     for (const [pointer, def] of definitions) outIndex.set(pointer, { kind: def.kind, assetName: def.assetName });
   }
 
-  if (entities.length === 0) {
+  if (entities.length === 0 && enums.length === 0) {
     return err({
       code: "PARSE_ERROR",
       message: "JSON Schema has no properties to import",

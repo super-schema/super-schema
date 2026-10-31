@@ -57,7 +57,7 @@ export function EntityCard({
     <div
       data-testid="entity-card"
       data-entity-slug={slug}
-      className="group relative surface-glass rounded-xl border border-border p-space-6 transition-all duration-200 hover:border-primary/30 hover:shadow-lg"
+      className="group relative flex min-w-0 flex-col surface-glass rounded-xl border border-border p-space-6 transition-all duration-200 hover:border-primary/30 hover:shadow-lg"
     >
       {onDelete && (
         <button
@@ -72,10 +72,10 @@ export function EntityCard({
         </button>
       )}
 
-      <Link href={assetHref({ kind: "entity", slug, domainSlug, productSlug })} className="block">
+      <Link href={assetHref({ kind: "entity", slug, domainSlug, productSlug })} className="flex min-w-0 flex-1 flex-col">
         {/* Header */}
-        <div className="flex items-start justify-between mb-space-2 pr-space-8">
-          <h3 className="text-heading-3 text-foreground font-mono group-hover:text-primary transition-colors">
+        <div className={`mb-space-3 flex min-w-0 flex-col items-start gap-space-2 ${onDelete ? "pr-space-8" : ""}`}>
+          <h3 className="min-w-0 max-w-full [overflow-wrap:anywhere] text-heading-3 text-foreground font-mono group-hover:text-primary transition-colors">
             {name}
           </h3>
           <div className="flex items-center gap-space-2">
@@ -128,7 +128,7 @@ export function EntityCard({
         )}
 
         {/* Footer */}
-        <div className="flex items-center gap-space-3 text-caption text-muted-foreground">
+        <div className="mt-auto flex flex-wrap items-center gap-x-space-3 gap-y-space-1 text-caption text-muted-foreground">
           <span>{pluralize(fieldCount, "field")}</span>
           <span>v{version}</span>
           <span className="ml-auto">{formatDateOnly(updatedAt)}</span>
