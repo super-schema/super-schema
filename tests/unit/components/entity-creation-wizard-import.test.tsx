@@ -283,7 +283,8 @@ describe("EntityCreationWizard — visual builder hand-off (Story 15.6)", () => 
     await waitFor(() => expect(screen.getByDisplayValue("Visual")).toBeDefined());
     expect(importSchemaAssets).toHaveBeenCalledWith(
       expect.stringContaining("message Visual {"),
-      "protobuf"
+      "protobuf",
+      undefined
     );
   });
 
@@ -292,7 +293,7 @@ describe("EntityCreationWizard — visual builder hand-off (Story 15.6)", () => 
     await pasteAndParse(`syntax = "proto3";\nmessage User { string id = 1; }`);
 
     await waitFor(() => expect(screen.getByDisplayValue("User")).toBeDefined());
-    expect(importSchemaAssets).toHaveBeenLastCalledWith(expect.any(String), "protobuf");
+    expect(importSchemaAssets).toHaveBeenLastCalledWith(expect.any(String), "protobuf", undefined);
   });
 
   it("routes an OpenAPI document (now accepted as .json/.yaml) through the OpenAPI action", async () => {
