@@ -119,3 +119,42 @@ describe("entity naming", () => {
     expect(refToEntityName("order.json")).toBe("order");
   });
 });
+
+describe("dictionaries (additionalProperties as a schema)", () => {
+  const fieldOf = (prop: unknown) => {
+    const doc = parse({ title: "Holder", type: "object", properties: { m: prop } });
+    return doc.entities[0].fields[0];
+  };
+
+  it("is a map field typed by its value schema", () => {
+    const f = fieldOf({ type: "object", description: "d", additionalProperties: { type: "string" } });
+    expect(f).toMatchObject({ type: "map", mapKeyType: "string", mapValueType: "string" });
+    expect(f.extensions?.additionalProperties).toBeUndefined();
+    expect(f.ignoredKeywords ?? []).not.toContain("additionalProperties");
+  });
+
+  it("keeps the enum of the values", () => {
+    const f = fieldOf({ type: "object", additionalProperties: { type: "string", enum: ["APPROVED", "DECLINED"] } });
+    expect(f).toMatchObject({ type: "map", mapValueType: "enum", enumValues: ["APPROVED", "DECLINED"] });
+  });
+
+  it("keeps the entity a value refers to", () => {
+    const doc = parse({ title: "Holder", type: "object", properties: { m: { type: "object", additionalProperties: { $ref: "#/$defs/Item" } } }, $defs: { Item: { type: "object", properties: { a: { type: "string" } } } } });
+    expect(doc.entities[0].fields[0]).toMatchObject({ type: "map", mapValueType: "reference", referencedEntityName: "Item" });
+  });
+
+  it("is not a map when the object declares properties, or when additionalProperties is a boolean", () => {
+    expect(fieldOf({ type: "object", properties: { a: { type: "string" } }, additionalProperties: { type: "string" } }).type).toBe("object");
+    expect(fieldOf({ type: "object", additionalProperties: false }).type).toBe("object");
+    expect(fieldOf({ type: "object", additionalProperties: true }).type).toBe("object");
+  });
+});
+
+describe("dictionary whose value schema says more than a type", () => {
+  it("is a map and keeps the value schema whole on the field", () => {
+    const doc = parse({ title: "H", type: "object", properties: { m: { type: "object", additionalProperties: { type: "string", maxLength: 3 } } } });
+    const f = doc.entities[0].fields[0];
+    expect(f).toMatchObject({ type: "map", mapValueType: "string" });
+    expect(f.extensions?.additionalProperties).toEqual({ type: "string", maxLength: 3 });
+  });
+});

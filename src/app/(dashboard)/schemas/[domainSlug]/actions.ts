@@ -23,7 +23,7 @@ import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
 import { createImportedEntities, entityExtensionsMetadata, existingEntityNames, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
-import { linkImportedEntity, relinkDanglingFields } from "@/services/imported-links";
+import { adoptBaseFields, linkImportedEntity, PENDING_BASE_KEY, relinkDanglingFields } from "@/services/imported-links";
 import { builtInNameConflict } from "@/lib/compiler/built-in-names";
 import { renameBuiltInPayload } from "@/lib/builtin-entity-renames";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
@@ -188,11 +188,14 @@ async function createProductEntity(params: {
                 description,
                 ownerId: userId,
                 ...(linked?.parentEntityId ? { parentEntityId: linked.parentEntityId } : {}),
-                ...entityExtensionsMetadata(params.extensions),
+                ...(linked?.pendingBase
+                  ? { metadata: { ...(entityExtensionsMetadata(params.extensions).metadata ?? {}), [PENDING_BASE_KEY]: linked.pendingBase } }
+                  : entityExtensionsMetadata(params.extensions)),
                 ...(linked && { fields: { create: linked.fields.map(mapFieldCreateInput) } }),
               },
             });
             await relinkDanglingFields(tx, { productId, entity: { id: row.id, name } });
+            await adoptBaseFields(tx, { productId, entity: { id: row.id, name } });
             return row;
           },
         });

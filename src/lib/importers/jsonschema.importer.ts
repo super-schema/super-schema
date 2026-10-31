@@ -1042,6 +1042,14 @@ function resolveNamedRefUnion(
   };
 }
 
+/** What a map's value schema may carry for the map type to be all it says. */
+const MAP_VALUE_TYPE_KEYS: ReadonlySet<string> = new Set(["type", "enum", "const", "$ref", "format", "description", "title"]);
+
+/** An object schema that is a dictionary: a schema for the values of its extra keys, and no properties of its own. */
+function isMapSchema(node: JsonSchemaNode): boolean {
+  return isSchemaObject(node.additionalProperties) && !(isSchemaObject(node.properties) && Object.keys(node.properties).length > 0);
+}
+
 function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedType {
   charge(ctx.run);
   if (typeof node.$ref === "string") {
@@ -1162,6 +1170,8 @@ function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedT
     case "array":
       return { type: "array", confidence: "medium", nullable: nullableFromType, originalType: "array" };
     case "object":
+      // `additionalProperties: <schema>` and no declared properties: a dictionary string -> value (buildFields reads the value type).
+      if (isMapSchema(node)) return { type: "map", confidence: "medium", nullable: nullableFromType, originalType: "object/additionalProperties" };
       return { type: "object", confidence: "low", nullable: nullableFromType, originalType: "object" };
     case "null":
       return { type: "string", confidence: "low", nullable: true, originalType: "null" };
@@ -1903,6 +1913,33 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       else LOW_FROM_UNRESOLVED_REF.delete(field);
       if (item.type === "reference" && item.lowFromUnresolvedRef && isExternalRef(item.originalType)) {
         field.danglingRef = { ref: item.originalType, reason: DANGLING_REASON, element: true };
+      }
+    }
+
+    // Map value type (+ reference / enum target of the value). The value schema IS the type now, so it is no longer an ignored keyword.
+    const valueSchema = resolved.type === "map" ? sources.find((s) => isMapSchema(s))?.additionalProperties : undefined;
+    if (isSchemaObject(valueSchema)) {
+      const value = resolveSchemaType(valueSchema, ctx);
+      field.mapKeyType = "string";
+      field.mapValueType = value.type;
+      if (value.referencedEntityName) field.referencedEntityName = value.referencedEntityName;
+      if (value.enumName) field.enumName = value.enumName;
+      if (value.enumValues) field.enumValues = value.enumValues;
+      if (value.unionName) field.unionName = value.unionName;
+      if (value.unionMembers) field.unionMembers = value.unionMembers;
+      if (value.type === "reference" || value.type === "enum" || value.type === "union") field.confidence = value.confidence;
+      // The map type says only the value's TYPE: a value schema with more in it (a constraint, a vendor key) stays whole on the field too.
+      const typeOnly = Object.keys(valueSchema).every((key) => MAP_VALUE_TYPE_KEYS.has(key));
+      if (typeOnly && field.extensions) {
+        const { additionalProperties: _consumed, ...rest } = field.extensions;
+        void _consumed;
+        if (Object.keys(rest).length > 0) field.extensions = rest;
+        else delete field.extensions;
+      }
+      if (typeOnly && field.ignoredKeywords) {
+        const rest = field.ignoredKeywords.filter((k) => k !== "additionalProperties");
+        if (rest.length > 0) field.ignoredKeywords = rest;
+        else delete field.ignoredKeywords;
       }
     }
 

@@ -13,7 +13,7 @@ const field = (name: string, extra: Partial<CreateFieldInput> = {}): CreateField
 
 function run(fields: CreateFieldInput[], overrides: Partial<CreateImportedEntitiesArgs> = {}) {
   const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-  const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
+  const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) } } as unknown as Prisma.TransactionClient;
   const notes: string[] = [];
   const skipped: string[] = [];
   const done = createImportedEntities(tx, {
@@ -60,7 +60,7 @@ describe("createImportedEntities: a reserved field name", () => {
 
   it("keeps the rest of the field (type, key flag, field number, order) and still creates the entity", async () => {
     const create = vi.fn(async () => ({ id: "e1" }));
-    const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
+    const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) } } as unknown as Prisma.TransactionClient;
     const created = await createImportedEntities(tx, {
       entities: [{ name: "Order", fields: [field("hasOwnProperty", { type: "int32", isKey: true, fieldNumber: 7 })] }],
       productScope: { tenantId: "t", domainId: "d", productId: "p" }, productId: "p", ownerId: "u",
@@ -80,7 +80,7 @@ describe("createImportedEntities: a reserved ENTITY name", () => {
   /** Every entity of the batch is written; returns what the loop created and what it told. */
   async function runBatch(entities: CreateImportedEntitiesArgs["entities"], overrides: Partial<CreateImportedEntitiesArgs> = {}) {
     const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-    const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
+    const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) } } as unknown as Prisma.TransactionClient;
     const notes: string[] = [];
     const asked: string[] = [];
     const refs = new Map<string, { id: string; productId: string }>();
@@ -114,7 +114,9 @@ describe("createImportedEntities: a reserved ENTITY name", () => {
     ]);
     const child = r.written[1];
     expect(child.parentEntityId).toBe("id-hasOwnProperty_1");
-    expect(child.fields.create.map((f) => f.decorators)).toEqual([{ referencedEntityName: "hasOwnProperty_1" }, { arrayElementType: "hasOwnProperty_1", referencedEntityName: "Other" }]);
+    // the base's field `id` is copied in front of the child's own (a stored entity does not inherit)
+    expect(child.fields.create.map((f) => f.name)).toEqual(["id", "parent", "many"]);
+    expect(child.fields.create.slice(1).map((f) => f.decorators)).toEqual([{ referencedEntityName: "hasOwnProperty_1" }, { arrayElementType: "hasOwnProperty_1", referencedEntityName: "Other" }]);
     expect(r.refs.get("hasOwnProperty")?.id).toBe("id-hasOwnProperty_1");
     expect(r.refs.get("hasOwnProperty_1")?.id).toBe("id-hasOwnProperty_1");
   });

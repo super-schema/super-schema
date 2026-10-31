@@ -13,7 +13,7 @@ function run(
   sourceFormat?: string
 ) {
   const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-  const findMany = vi.fn(async () => existing);
+  const findMany = vi.fn(async (arg?: { select?: { slug?: boolean } }) => (arg?.select?.slug === true ? existing : []));
   const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany } } as unknown as Prisma.TransactionClient;
   const skipped: string[] = [];
   const notes: string[] = [];
@@ -97,10 +97,12 @@ describe("createImportedEntities: a built-in type name", () => {
     const r = run([{ name: "Duration" }], [{ name: "Duration2", slug: "duration2" }, { name: "Dur", slug: "duration3" }]);
     await r.done;
     expect(r.written()[0]!.name).toBe("Duration4");
-    expect(r.findMany).toHaveBeenCalledTimes(1);
+    // the names-and-slugs query of the rename (the base-field adoption asks the same table about something else)
+    const takenQueries = (m: typeof r.findMany) => (m.mock.calls as unknown[][]).filter(([arg]) => (arg as { select?: { slug?: boolean } } | undefined)?.select?.slug === true).length;
+    expect(takenQueries(r.findMany)).toBe(1);
     const none = run([{ name: "Order" }]);
     await none.done;
-    expect(none.findMany).not.toHaveBeenCalled();
+    expect(takenQueries(none.findMany)).toBe(0);
   });
 
   it("rewrites the type text of a TypeSpec or OpenAPI field, and not of a JSON Schema one", async () => {
