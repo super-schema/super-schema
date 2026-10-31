@@ -5,7 +5,7 @@
 import type { Prisma } from "@/generated/prisma/client";
 import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { readDanglingMarker } from "@/lib/field-dangling";
-import { writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
+import { withoutReferenceKeys, writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
 
 type Target = { id: string; name: string };
 
@@ -38,9 +38,40 @@ export function linkFields(fields: CreateFieldInput[], targets: ReadonlyMap<stri
   });
 }
 
-async function placeOf(tx: Prisma.TransactionClient, productId: string): Promise<Pick<EntityRef, "domain" | "product"> | undefined> {
-  const product = await tx.product.findUnique({ where: { id: productId }, select: { name: true, domain: { select: { name: true } } } });
-  return product ? { domain: product.domain.name, product: product.name } : undefined;
+async function placeOf(tx: Prisma.TransactionClient, productId: string): Promise<(Pick<EntityRef, "domain" | "product"> & { domainId?: string }) | undefined> {
+  const product = await tx.product.findUnique({ where: { id: productId }, select: { name: true, domainId: true, domain: { select: { name: true } } } });
+  return product ? { domain: product.domain.name, product: product.name, ...(product.domainId ? { domainId: product.domainId } : {}) } : undefined;
+}
+
+type EnumTarget = { name: string; values: string[] };
+
+/** The field once it points at the shared enum `target` instead of at a file nothing answered: an enum field, or an array of enum symbols. Pure. */
+export function linkFieldToEnum(field: CreateFieldInput, target: EnumTarget): CreateFieldInput {
+  const decorators = decoratorsOf(field);
+  const marker = decorators ? readDanglingMarker(decorators) : undefined;
+  if (!decorators || !marker) return field;
+  const { danglingRef: _marker, ...rest } = withoutReferenceKeys(decorators);
+  void _marker;
+  if (marker.element) {
+    return { ...field, decorators: { ...rest, arrayElementType: "enum", enumValues: target.values, enumName: target.name } };
+  }
+  // An enum field keeps its symbols in `typespec.validation.pattern` ("A|B"), which the generator reads for it.
+  const typespec = (rest.typespec && typeof rest.typespec === "object" ? rest.typespec : {}) as Record<string, unknown>;
+  const validation = (typespec.validation && typeof typespec.validation === "object" ? typespec.validation : {}) as Record<string, unknown>;
+  return {
+    ...field,
+    type: "enum",
+    decorators: { ...rest, enumName: target.name, typespec: { ...typespec, validation: { ...validation, pattern: target.values.join("|") } } },
+  };
+}
+
+/** `fields` with every dangling field whose target is a shared enum among `enums` (by name) linked to it. Pure. */
+export function linkFieldsToEnums(fields: CreateFieldInput[], enums: ReadonlyMap<string, EnumTarget>): CreateFieldInput[] {
+  return fields.map((field) => {
+    const name = danglingTargetName(decoratorsOf(field));
+    const target = name === undefined ? undefined : enums.get(name);
+    return target ? linkFieldToEnum(field, target) : field;
+  });
 }
 
 /**
@@ -62,9 +93,14 @@ export async function linkImportedEntity(
   if (names.size === 0) return { fields: args.fields };
 
   const rows = await tx.entity.findMany({ where: { productId: args.productId, name: { in: [...names] } }, select: { id: true, name: true } });
-  if (rows.length === 0) return { fields: args.fields };
   const place = await placeOf(tx, args.productId);
-  return { fields: place ? linkFields(args.fields, new Map(rows.map((row) => [row.name, row])), place) : args.fields };
+  const linked = place && rows.length > 0 ? linkFields(args.fields, new Map(rows.map((row) => [row.name, row])), place) : args.fields;
+
+  // What no entity answers to may be a shared ENUM of the domain (a `$ref` to an enum file): the field becomes an enum field.
+  const rest = [...names].filter((name) => !rows.some((row) => row.name === name));
+  if (rest.length === 0 || !place?.domainId) return { fields: linked };
+  const enums = await tx.sharedEnum.findMany({ where: { domainId: place.domainId, name: { in: rest } }, select: { name: true, values: true } });
+  return { fields: enums.length > 0 ? linkFieldsToEnums(linked, new Map(enums.map((row) => [row.name, row]))) : linked };
 }
 
 /** The entity metadata key that holds the NAME of the entity this one extends (an `allOf` base of another file). */
@@ -88,4 +124,26 @@ export async function relinkDanglingFields(tx: Prisma.TransactionClient, args: {
     await tx.field.update({ where: { id: row.id }, data: { decorators: linkedDecorators(decorators, args.entity, place) as Prisma.InputJsonObject } });
   }
   return dangling.length;
+}
+
+/**
+ * After a shared enum is created: the domain's entities' fields that still point at its name as a dangling reference become enum fields
+ * of it (files imported in any order end up linked). Returns how many fields were linked.
+ */
+export async function relinkDanglingFieldsToEnum(tx: Prisma.TransactionClient, args: { domainId: string; enum: EnumTarget }): Promise<number> {
+  const candidates = await tx.field.findMany({
+    where: { entity: { domainId: args.domainId }, decorators: { path: ["referencedEntityName"], equals: args.enum.name } },
+    select: { id: true, name: true, type: true, decorators: true },
+  });
+  let linked = 0;
+  for (const row of candidates) {
+    if (readDanglingMarker(row.decorators) === undefined) continue;
+    const decorators = row.decorators as Record<string, unknown>;
+    const input = { name: row.name, type: row.type, nullable: true, isKey: false, description: "", classification: null, precision: null, scale: null, decorators } satisfies CreateFieldInput;
+    const next = linkFieldToEnum(input, args.enum);
+    if (next === input) continue;
+    await tx.field.update({ where: { id: row.id }, data: { type: next.type, decorators: next.decorators as Prisma.InputJsonObject } });
+    linked += 1;
+  }
+  return linked;
 }

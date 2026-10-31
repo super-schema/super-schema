@@ -310,7 +310,7 @@ export function ImportDialog({
 
     // Protobuf / Avro / JSON Schema: every asset of the document; >1 asset →
     // multi-asset review, otherwise the single-entity review.
-    const result = importSchemaAssets(content, format);
+    const result = importSchemaAssets(content, format, filename);
     if (!result.success) {
       // Fallback: when the content isn't a recognized schema, treat it as a
       // sample JSON *event* and infer a JSON Schema from it, then re-import.

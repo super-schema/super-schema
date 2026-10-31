@@ -158,3 +158,33 @@ describe("dictionary whose value schema says more than a type", () => {
     expect(f.extensions?.additionalProperties).toEqual({ type: "string", maxLength: 3 });
   });
 });
+
+describe("naming by the file the document came from", () => {
+  const withName = (schema: unknown, sourceName?: string) => {
+    const result = parseJsonSchemaDocument(JSON.stringify(schema), undefined, sourceName);
+    if (!result.success) throw new Error(result.error.message);
+    return result.data;
+  };
+  const OBJ = { type: "object", properties: { a: { type: "string" } } };
+
+  it("uses the file name, without version and extension, when the title is no identifier and there is no $id", () => {
+    expect(withName({ ...OBJ, title: "Orthography Type" }, "common/Orthography.v1.json").entities[0].name).toBe("Orthography");
+  });
+
+  it("names an enum the same way", () => {
+    expect(withName({ title: "Orthography Type", type: "string", enum: ["Latn", "Cyrl"] }, "Orthography.v1.json").enums[0].name).toBe("Orthography");
+  });
+
+  it("names an untitled document by its file", () => {
+    expect(withName(OBJ, "PersonName.v1.json").entities[0].name).toBe("PersonName");
+  });
+
+  it("keeps an identifier title, and the $id before the file", () => {
+    expect(withName({ ...OBJ, title: "Keep" }, "Other.json").entities[0].name).toBe("Keep");
+    expect(withName({ ...OBJ, title: "Some Title", $id: "https://x/FromId.v1.json" }, "FromFile.json").entities[0].name).toBe("FromId");
+  });
+
+  it("ignores a file name that is no identifier", () => {
+    expect(withName({ ...OBJ, title: "Some Title" }, "my schema (1).json").entities[0].name).toBe("Some Title");
+  });
+});

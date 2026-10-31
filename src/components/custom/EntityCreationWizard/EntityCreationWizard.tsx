@@ -261,7 +261,7 @@ export function EntityCreationWizard({
 
         // Other formats: every asset of the document (Protobuf / Avro / JSON Schema
         // can define several); more than one goes to the multi-asset review.
-        const result = importSchemaAssets(content, resolvedFormat);
+        const result = importSchemaAssets(content, resolvedFormat, filename);
         if (!result.success) {
           setError(result.error.message);
           return;

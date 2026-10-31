@@ -31,3 +31,7 @@ diffed against the originals.
 ## Item-level keywords (`x-items-*`)
 
 The IR keeps an array's item `description`, length / range bounds, `pattern`, `format` and `title` on the array field as `x-items-<keyword>` (no element-level slot). The JSON Schema output now moves each back onto `items` (`src/lib/typespec-official/item-keywords.ts`, applied to every emitted `.json` file; a `$ref` may have siblings in 2020-12), so `items: { $ref, description, minLength, maxLength }` round-trips. OpenAPI 3 keeps them as `x-items-*` (3.0 ignores `$ref` siblings).
+
+## `$ref` to an enum file
+
+A field whose `$ref` names a file that is a shared ENUM (`LegalName.orthography` -> `Orthography.v1.json`) is linked like a reference to an entity, in either import order: at create, a dangling name no entity answers to is looked up among the domain's shared enums and the field becomes an enum field (or an array of enum symbols); when the enum is imported later it relinks the domain's dangling fields that name it (`imported-links.ts`). Names match because a document with no identifier title and no `$id` is now named by the file it was imported from (`importSchemaAssets(content, format, sourceName)`: the workbench passes the file name; pasted text has none, so a pasted enum with a display title stays unlinked).

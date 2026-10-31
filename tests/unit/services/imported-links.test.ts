@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { linkFields, linkImportedEntity, relinkDanglingFields } from "@/services/imported-links";
+import { linkFieldToEnum, linkFields, linkImportedEntity, relinkDanglingFields, relinkDanglingFieldsToEnum } from "@/services/imported-links";
 import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 
 const place = { domain: "CDS", product: "customer" };
@@ -24,7 +24,8 @@ describe("linkFields", () => {
 describe("linkImportedEntity", () => {
   const tx = (entities: Array<{ id: string; name: string }>) => ({
     entity: { findMany: vi.fn().mockResolvedValue(entities) },
-    product: { findUnique: vi.fn().mockResolvedValue({ name: "customer", domain: { name: "CDS" } }) },
+    product: { findUnique: vi.fn().mockResolvedValue({ name: "customer", domainId: "d1", domain: { name: "CDS" } }) },
+    sharedEnum: { findMany: vi.fn().mockResolvedValue([]) },
   });
 
   it("asks nothing when there is nothing to link", async () => {
@@ -59,5 +60,73 @@ describe("relinkDanglingFields", () => {
     expect(update).toHaveBeenCalledTimes(1);
     expect(update.mock.calls[0][0]).toMatchObject({ where: { id: "f1" }, data: { decorators: { referencedEntityId: "ad" } } });
     expect(update.mock.calls[0][0].data.decorators).not.toHaveProperty("danglingRef");
+  });
+});
+
+describe("a dangling reference to an enum file", () => {
+  const ORTHOGRAPHY = { name: "Orthography", values: ["Latn", "Cyrl"] };
+  const elementOf = (target: string) => ({ referencedEntityName: target, danglingRef: { ref: `${target}.v1.json`, element: true } });
+
+  it("makes a direct reference an enum field carrying the symbols, with no reference left", () => {
+    const linked = linkFieldToEnum(field("orthography", dangling("Orthography")), ORTHOGRAPHY);
+    expect(linked.type).toBe("enum");
+    expect(linked.decorators).toMatchObject({ enumName: "Orthography", typespec: { validation: { pattern: "Latn|Cyrl" } } });
+    expect(linked.decorators).not.toHaveProperty("danglingRef");
+    expect(linked.decorators).not.toHaveProperty("referencedEntityName");
+  });
+
+  it("keeps the validation and typespec facts the field already had", () => {
+    const linked = linkFieldToEnum(field("o", { ...dangling("Orthography"), typespec: { validation: { minLength: 1 }, documentation: { summary: "s" } } }), ORTHOGRAPHY);
+    expect(linked.decorators).toMatchObject({ typespec: { validation: { minLength: 1, pattern: "Latn|Cyrl" }, documentation: { summary: "s" } } });
+  });
+
+  it("makes an array of references an array of enum symbols", () => {
+    const linked = linkFieldToEnum({ ...field("scripts", elementOf("Orthography")), type: "array" }, ORTHOGRAPHY);
+    expect(linked.type).toBe("array");
+    expect(linked.decorators).toMatchObject({ arrayElementType: "enum", enumValues: ["Latn", "Cyrl"], enumName: "Orthography" });
+    expect(linked.decorators).not.toHaveProperty("danglingRef");
+  });
+
+  it("leaves a field that is not dangling as it is", () => {
+    const plain = field("x", { referencedEntityName: "Orthography" });
+    expect(linkFieldToEnum(plain, ORTHOGRAPHY)).toBe(plain);
+  });
+
+  it("is looked for in the domain's shared enums when no entity has the name, and only then", async () => {
+    const db = {
+      entity: { findMany: vi.fn().mockResolvedValue([{ id: "ad", name: "Address" }]) },
+      product: { findUnique: vi.fn().mockResolvedValue({ name: "customer", domainId: "d1", domain: { name: "CDS" } }) },
+      sharedEnum: { findMany: vi.fn().mockResolvedValue([ORTHOGRAPHY]) },
+    };
+    const result = await linkImportedEntity(db as never, { productId: "p", fields: [field("addr", dangling("Address")), field("o", dangling("Orthography"))] });
+    expect(db.sharedEnum.findMany).toHaveBeenCalledWith({ where: { domainId: "d1", name: { in: ["Orthography"] } }, select: { name: true, values: true } });
+    expect(result.fields[0].decorators).toMatchObject({ referencedEntityId: "ad" });
+    expect(result.fields[1].type).toBe("enum");
+  });
+
+  it("is not looked for when every name was an entity", async () => {
+    const db = {
+      entity: { findMany: vi.fn().mockResolvedValue([{ id: "ad", name: "Address" }]) },
+      product: { findUnique: vi.fn().mockResolvedValue({ name: "customer", domainId: "d1", domain: { name: "CDS" } }) },
+      sharedEnum: { findMany: vi.fn() },
+    };
+    await linkImportedEntity(db as never, { productId: "p", fields: [field("addr", dangling("Address"))] });
+    expect(db.sharedEnum.findMany).not.toHaveBeenCalled();
+  });
+
+  it("relinks the domain's dangling fields when the enum is created afterwards", async () => {
+    const update = vi.fn().mockResolvedValue({});
+    const db = {
+      field: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "f1", name: "o", type: "reference", decorators: dangling("Orthography") },
+          { id: "f2", name: "p", type: "reference", decorators: { referencedEntityName: "Orthography", referencedEntityId: "x" } },
+        ]),
+        update,
+      },
+    };
+    expect(await relinkDanglingFieldsToEnum(db as never, { domainId: "d1", enum: ORTHOGRAPHY })).toBe(1);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0][0]).toMatchObject({ where: { id: "f1" }, data: { type: "enum", decorators: { enumName: "Orthography" } } });
   });
 });

@@ -23,7 +23,7 @@ import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
 import { createImportedEntities, entityExtensionsMetadata, existingEntityNames, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
-import { EXTENDS_METADATA_KEY, linkImportedEntity, relinkDanglingFields } from "@/services/imported-links";
+import { EXTENDS_METADATA_KEY, linkImportedEntity, relinkDanglingFields, relinkDanglingFieldsToEnum } from "@/services/imported-links";
 import { builtInNameConflict } from "@/lib/compiler/built-in-names";
 import { renameBuiltInPayload } from "@/lib/builtin-entity-renames";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
@@ -1399,6 +1399,8 @@ export async function createDomainAssetsFromImportAction(
           },
         });
         result.enumsCreated++;
+        // entities imported before this enum that pointed at its file by name are linked to it now
+        if (domainScope.data.domainId) await relinkDanglingFieldsToEnum(tx, { domainId: domainScope.data.domainId, enum: { name, values: sharedEnum.values } });
       }
 
       for (const scalar of payload.customScalars) {

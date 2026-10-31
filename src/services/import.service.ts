@@ -35,7 +35,8 @@ import {
 /** Formats whose importer returns every asset of the document. */
 function parseDocumentWithFormat(
   content: string,
-  format: ImportFormat
+  format: ImportFormat,
+  sourceName?: string
 ): Result<MultiEntityImportResult> | null {
   switch (format) {
     case "avro":
@@ -43,7 +44,7 @@ function parseDocumentWithFormat(
     case "protobuf":
       return parseProtobufDocument(content);
     case "json-schema":
-      return parseJsonSchemaDocument(content);
+      return parseJsonSchemaDocument(content, undefined, sourceName);
     default:
       return null;
   }
@@ -55,9 +56,10 @@ function parseDocumentWithFormat(
  */
 function parseWithFormat(
   content: string,
-  format: ImportFormat
+  format: ImportFormat,
+  sourceName?: string
 ): Result<ImportResult> {
-  const doc = parseDocumentWithFormat(content, format);
+  const doc = parseDocumentWithFormat(content, format, sourceName);
   if (doc) {
     return doc.success ? ok(toSingleEntityImport(doc.data)) : doc;
   }
@@ -133,10 +135,12 @@ export type SchemaImportRoute =
  */
 export function importSchemaAssets(
   content: string,
-  format?: ImportFormat | null
+  format?: ImportFormat | null,
+  /** The name of the file the content came from, when it came from one: it names a document that has no better name (and is what a `$ref` to it says). */
+  sourceName?: string
 ): Result<SchemaImportRoute> {
   const resolvedFormat = format || detectFormat(content);
-  const docResult = resolvedFormat ? parseDocumentWithFormat(content, resolvedFormat) : null;
+  const docResult = resolvedFormat ? parseDocumentWithFormat(content, resolvedFormat, sourceName) : null;
 
   if (!docResult) {
     const single = importSchema(content, resolvedFormat);
@@ -182,7 +186,7 @@ export function bulkImport(
       continue;
     }
 
-    const result = parseWithFormat(file.content, format);
+    const result = parseWithFormat(file.content, format, file.filename);
     if (!result.success) {
       errors.push({
         filename: file.filename,
