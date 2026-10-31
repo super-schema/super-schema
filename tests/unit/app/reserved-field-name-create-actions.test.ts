@@ -13,7 +13,7 @@ const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockEnsureDefault
     domain: { findUnique: vi.fn() },
     auditLog: { create: vi.fn() },
   },
-  mockTx: { entity: { create: vi.fn(), findFirst: vi.fn() } },
+  mockTx: { field: { findMany: vi.fn(async () => []) }, entity: { create: vi.fn(), findFirst: vi.fn() } },
   mockAssertNameAvailable: vi.fn(),
   mockEnsureDefaultProductId: vi.fn(),
 }));

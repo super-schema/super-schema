@@ -13,6 +13,7 @@ import { isPlainObject } from "@/lib/editable-fields";
 import { genericExtensionEntries, setOwn } from "@/lib/compiler/governance-decorators";
 import { generateSlug } from "@/lib/slug";
 import { entityNameMessage } from "@/lib/entity-name";
+import { linkImportedEntity, relinkDanglingFields } from "@/services/imported-links";
 
 export interface ImportedEntityInput {
   name: string;
@@ -141,7 +142,10 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
       continue;
     }
 
-    const parentEntityId = entity.extends ? refs.get(entity.extends)?.id : undefined;
+    // Another file of the same folder, imported earlier: a base or a `$ref` target that is not part of this batch is looked for in the product.
+    const batchParent = entity.extends ? refs.get(entity.extends)?.id : undefined;
+    const linked = await linkImportedEntity(tx, { productId, fields: entity.fields, extends: batchParent ? undefined : entity.extends });
+    const parentEntityId = batchParent ?? linked.parentEntityId;
     // metadata.sourceFormat records the format the entity was imported in: a message's "Auto" representation follows it
     // (Avro-imported stays Avro). Model tags travel next to it. Nothing is written when neither is known.
     const extensions = sanitizeExtensions(entity.extensions);
@@ -161,11 +165,12 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
         ...(parentEntityId ? { parentEntityId } : {}),
         ...(Object.keys(entityMetadata).length > 0 ? { metadata: entityMetadata } : {}),
         fields: {
-          create: renameReservedFields(entity.fields, (from, to) => args.note?.(reservedFieldRenamedMessage(from, to, name))).map((field, index) => mapFieldCreateInput(field, index)),
+          create: renameReservedFields(linked.fields, (from, to) => args.note?.(reservedFieldRenamedMessage(from, to, name))).map((field, index) => mapFieldCreateInput(field, index)),
         },
       },
     });
 
+    await relinkDanglingFields(tx, { productId, entity: { id: row.id, name } });
     refs.set(entity.name, { id: row.id, productId });
     // whatever else in the import still calls it by the name the file gave it (a service of the same import) finds it too
     const original = originals.get(name);

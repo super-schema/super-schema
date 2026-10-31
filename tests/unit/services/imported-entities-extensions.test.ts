@@ -14,7 +14,7 @@ type Written = { metadata?: Record<string, unknown>; fields: { create: Array<Rec
 
 async function persist(entity: Record<string, unknown>, sourceFormat?: string): Promise<Written> {
   const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-  const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
+  const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
   await createImportedEntities(tx, {
     entities: [{ name: "Order", fields: [], ...entity } as ImportedEntityInput],
     productScope: { tenantId: "t", domainId: "d", productId: "p" },

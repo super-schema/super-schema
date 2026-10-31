@@ -422,6 +422,8 @@ export function EntityCreationWizard({
       name: state.entityName.trim(),
       description: sanitizeImportedText(state.entityDescription),
       fields,
+      // A base the schema names (`allOf` of another file): linked to the product's entity of that name when there is one.
+      ...(state.importedEntity?.extends ? { extends: state.importedEntity.extends } : {}),
       // The model's own vendor keys (`x-*` of the schema root) belong to the entity, not to a field.
       ...(state.importedEntity?.extensions && Object.keys(state.importedEntity.extensions).length > 0
         ? { extensions: state.importedEntity.extensions }

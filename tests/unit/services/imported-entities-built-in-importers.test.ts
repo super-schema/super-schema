@@ -22,7 +22,7 @@ async function persist(result: TypeSpecImportResult) {
     selectedUnions: [], selectedServices: [], selectedDecorators: [],
   });
   const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-  const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) } } as unknown as Prisma.TransactionClient;
+  const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) } } as unknown as Prisma.TransactionClient;
   const skipped: string[] = [];
   const notes: string[] = [];
   await createImportedEntities(tx, {

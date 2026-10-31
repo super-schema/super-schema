@@ -23,6 +23,7 @@ import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
 import { createImportedEntities, entityExtensionsMetadata, existingEntityNames, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
+import { linkImportedEntity, relinkDanglingFields } from "@/services/imported-links";
 import { builtInNameConflict } from "@/lib/compiler/built-in-names";
 import { renameBuiltInPayload } from "@/lib/builtin-entity-renames";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
@@ -148,6 +149,8 @@ async function createProductEntity(params: {
   fields?: CreateFieldInput[];
   /** Entity-level vendor extensions of an import (`metadata.custom.extensions`); sanitised here. */
   extensions?: unknown;
+  /** The base an import names (`allOf` of another file): its parent when the product has an entity of that name. */
+  extends?: string;
 }): Promise<{ entityId: string } | { error: string }> {
   const { userId, domainId, description, fields } = params;
   const name = params.name.trim();
@@ -174,18 +177,24 @@ async function createProductEntity(params: {
             scope.domainId === domainId
               ? ok(undefined)
               : err({ code: "INVALID_SCOPE", message: "Product does not belong to this domain" }),
-          write: (tx, scope) =>
-            tx.entity.create({
+          write: async (tx, scope) => {
+            // Another file of the same folder, imported earlier: a dangling `$ref` / a base that the product has an entity for is linked.
+            const linked = fields ? await linkImportedEntity(tx, { productId, fields, extends: params.extends }) : undefined;
+            const row = await tx.entity.create({
               data: {
                 name,
                 slug: generateSlug(name),
                 ...scope,
                 description,
                 ownerId: userId,
+                ...(linked?.parentEntityId ? { parentEntityId: linked.parentEntityId } : {}),
                 ...entityExtensionsMetadata(params.extensions),
-                ...(fields && { fields: { create: fields.map(mapFieldCreateInput) } }),
+                ...(linked && { fields: { create: linked.fields.map(mapFieldCreateInput) } }),
               },
-            }),
+            });
+            await relinkDanglingFields(tx, { productId, entity: { id: row.id, name } });
+            return row;
+          },
         });
         if (!created.success) throw new ServiceErrorRejection(created.error);
         return created.data;
@@ -200,7 +209,7 @@ async function createProductEntity(params: {
 
 export async function createEntityWithFieldsAction(
   domainId: string,
-  data: { name: string; description: string; fields: CreateFieldInput[]; extensions?: Record<string, unknown> },
+  data: { name: string; description: string; fields: CreateFieldInput[]; extensions?: Record<string, unknown>; extends?: string },
   productId?: string
 ) {
 
@@ -208,6 +217,7 @@ export async function createEntityWithFieldsAction(
   // validation failure here instead of a TypeError further down.
   if (!isPlainObject(data)) return { error: "Entity details are required", code: "VALIDATION_ERROR" };
   const { name, description, fields, extensions } = data;
+  const baseName = typeof data.extends === "string" && data.extends.trim() !== "" ? data.extends.trim() : undefined;
 
   if (typeof name !== "string" || name.trim().length === 0) {
     return { error: "Entity name is required" };
@@ -245,6 +255,7 @@ export async function createEntityWithFieldsAction(
       description,
       fields,
       extensions,
+      extends: baseName,
     });
     if ("error" in created) return { error: created.error };
 

@@ -19,6 +19,7 @@ const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockEnsureDefault
     },
   },
   mockTx: {
+    field: { findMany: vi.fn(async () => []) },
     entity: {
       create: vi.fn(),
     },
