@@ -40,7 +40,9 @@ export interface OfficialTypeSpecTargetResult {
 
 export async function emitOfficialTypeSpecTargetForEntity(
   entityId: string,
-  targetKey: string
+  targetKey: string,
+  /** Who asks and in which mode: needed for an entity that extends another (its columns come from the bases, read as `reader` may). */
+  inherit?: { tenantId: string; mode: import("@/lib/references/closure").ResolveMode; reader: import("@/lib/references/closure").ClosureReader }
 ): Promise<OfficialTypeSpecTargetResult> {
   // Lazy import so the module can be used (FromData path) without a DATABASE_URL.
   const { prisma } = await import("@/lib/db");
@@ -96,6 +98,16 @@ export async function emitOfficialTypeSpecTargetForEntity(
     sortOrder: field.sortOrder,
   }));
 
+  const closure = await import("@/lib/references/closure");
+  if (closure.baseNameOf(entity.metadata) !== undefined) {
+    if (!inherit) return invalidResult(`${entity.name} extends another entity: generating it needs the caller's tenant, mode and roles.`);
+    const inherited = await closure.loadInheritedFields(prisma, inherit.tenantId, entity.id, entity.metadata, inherit.mode, { reader: inherit.reader });
+    if (!inherited.success) {
+      const { closureFailure } = await import("@/lib/emission/closure-generation");
+      return invalidResult(closureFailure(inherited.error).message);
+    }
+    return emitOfficialTypeSpecTargetFromData(prismaEntity, closure.withInheritedFields(prismaFields, inherited.data.fields), targetKey);
+  }
   return emitOfficialTypeSpecTargetFromData(prismaEntity, prismaFields, targetKey);
 }
 

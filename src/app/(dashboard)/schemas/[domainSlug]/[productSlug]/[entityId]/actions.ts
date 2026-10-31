@@ -1495,7 +1495,7 @@ export async function generateSchemaAction(entityId: string, target: string, opt
         const { emitOfficialTypeSpecTargetForEntity } = await import(
           "@/lib/typespec-official/emitter.service"
         );
-        officialResult = await emitOfficialTypeSpecTargetForEntity(entityId, target);
+        officialResult = await emitOfficialTypeSpecTargetForEntity(entityId, target, { tenantId: await getActiveTenantId(), mode, reader: entityReader(access.principal.assignments) });
       }
       if (officialResult.validationStatus === "INVALID") {
         // A diagnostic that means "an input is missing" slipped past the pre-check: still a question, not an error string.

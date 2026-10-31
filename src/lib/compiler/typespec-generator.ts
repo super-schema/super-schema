@@ -90,6 +90,8 @@ export interface ClosureMemberOptions {
   referenceType(field: SuperSchemaField): string | null;
   /** The document uses the name `Enterprise` itself (a namespace segment or model), so classifications ride as extensions. */
   enterpriseShadowed?: boolean;
+  /** The fully qualified model this one extends (`SuperSchemaClosure.D.P.Base.Base`); absent: it extends nothing. */
+  baseType?: string;
 }
 
 /**
@@ -124,7 +126,7 @@ export function generateTypeSpecWithDiagnostics(
 ): GeneratedTypeSpec {
   const member = options.closureMember;
   const model: SuperSchemaModel = member
-    ? { ...standalone, entity: { ...standalone.entity, name: member.modelName }, namespace: undefined }
+    ? { ...standalone, entity: { ...standalone.entity, name: member.modelName, parentEntityName: member.baseType }, namespace: undefined }
     : standalone;
   const governance = resolveGovernance(model, options);
   const ctx = createContext(model, member?.referenceType);
@@ -186,7 +188,7 @@ export function generateTypeSpecWithDiagnostics(
   // Emit model definition with optional extends
   const modelName = sanitizeIdentifier(model.entity.name);
   const extendsClause = model.entity.parentEntityName
-    ? ` extends ${sanitizeIdentifier(model.entity.parentEntityName)}`
+    ? ` extends ${model.entity.parentEntityName.split(".").map(sanitizeIdentifier).join(".")}`
     : "";
   lines.push(`model ${modelName}${extendsClause} {`);
 
@@ -307,7 +309,7 @@ export function generateTypeSpecWithSourceMap(
   // Emit model definition
   const modelName = sanitizeIdentifier(model.entity.name);
   const extendsClause = model.entity.parentEntityName
-    ? ` extends ${sanitizeIdentifier(model.entity.parentEntityName)}`
+    ? ` extends ${model.entity.parentEntityName.split(".").map(sanitizeIdentifier).join(".")}`
     : "";
   lines.push(`model ${modelName}${extendsClause} {`);
 

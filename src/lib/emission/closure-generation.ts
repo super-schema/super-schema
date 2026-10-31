@@ -61,6 +61,18 @@ export function closureFailure(error: ClosureError): ServiceError {
         message: `${describeRef(error.ref)} has never been published, so a published schema cannot use it. Publish it first, or generate the draft instead.`,
         details: { ref: error.ref },
       };
+    case "AMBIGUOUS_BASE":
+      return {
+        code: error.code,
+        message: `${error.owner.entity} extends "${error.name}", which matches ${error.candidates.length} entities: ${error.candidates.map(describeRef).join("; ")}. Rename the base so one of them is nearer (same product), or extend a name only one entity has.`,
+        details: { name: error.name, candidates: error.candidates, owner: error.owner },
+      };
+    case "INHERITANCE_CYCLE":
+      return {
+        code: error.code,
+        message: `These entities extend each other in a circle: ${error.chain.map((ref) => ref.entity).join(" -> ")}. Remove one of the \`extends\`.`,
+        details: { chain: error.chain },
+      };
     case "CLOSURE_TOO_LARGE":
       return {
         code: error.code,

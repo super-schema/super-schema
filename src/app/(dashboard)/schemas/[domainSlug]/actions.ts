@@ -23,7 +23,7 @@ import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
 import { createImportedEntities, entityExtensionsMetadata, existingEntityNames, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
-import { adoptBaseFields, linkImportedEntity, PENDING_BASE_KEY, relinkDanglingFields } from "@/services/imported-links";
+import { EXTENDS_METADATA_KEY, linkImportedEntity, relinkDanglingFields } from "@/services/imported-links";
 import { builtInNameConflict } from "@/lib/compiler/built-in-names";
 import { renameBuiltInPayload } from "@/lib/builtin-entity-renames";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
@@ -179,7 +179,7 @@ async function createProductEntity(params: {
               : err({ code: "INVALID_SCOPE", message: "Product does not belong to this domain" }),
           write: async (tx, scope) => {
             // Another file of the same folder, imported earlier: a dangling `$ref` / a base that the product has an entity for is linked.
-            const linked = fields ? await linkImportedEntity(tx, { productId, fields, extends: params.extends }) : undefined;
+            const linked = fields ? await linkImportedEntity(tx, { productId, fields }) : undefined;
             const row = await tx.entity.create({
               data: {
                 name,
@@ -187,15 +187,13 @@ async function createProductEntity(params: {
                 ...scope,
                 description,
                 ownerId: userId,
-                ...(linked?.parentEntityId ? { parentEntityId: linked.parentEntityId } : {}),
-                ...(linked?.pendingBase
-                  ? { metadata: { ...(entityExtensionsMetadata(params.extensions).metadata ?? {}), [PENDING_BASE_KEY]: linked.pendingBase } }
+                ...(params.extends
+                  ? { metadata: { ...(entityExtensionsMetadata(params.extensions).metadata ?? {}), [EXTENDS_METADATA_KEY]: params.extends } }
                   : entityExtensionsMetadata(params.extensions)),
                 ...(linked && { fields: { create: linked.fields.map(mapFieldCreateInput) } }),
               },
             });
             await relinkDanglingFields(tx, { productId, entity: { id: row.id, name } });
-            await adoptBaseFields(tx, { productId, entity: { id: row.id, name } });
             return row;
           },
         });

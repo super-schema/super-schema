@@ -55,6 +55,8 @@ function mapErrorCodeToStatus(code: string): number {
     case "PIN_NOT_FOUND":
     case "PIN_CONFLICT":
     case "NEVER_PUBLISHED":
+    case "AMBIGUOUS_BASE":
+    case "INHERITANCE_CYCLE":
     case "CLOSURE_TOO_LARGE":
       return 422;
     default:

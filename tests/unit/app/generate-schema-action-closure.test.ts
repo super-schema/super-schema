@@ -411,7 +411,7 @@ describe("generateSchemaAction: result and storage", () => {
     p.field.findMany.mockResolvedValue([{ name: "id", isKey: true, nullable: false, type: "string", decorators: {} }]);
     const result = await actions.generateSchemaAction("a", "bigquery");
     expect(result).toMatchObject({ success: true });
-    expect(h.emitOfficial).toHaveBeenCalledWith("a", "bigquery");
+    expect(h.emitOfficial).toHaveBeenCalledWith("a", "bigquery", expect.objectContaining({ mode: expect.any(String) }));
     expect(p.entity.findMany).not.toHaveBeenCalled();
     expect(h.emitClosure).not.toHaveBeenCalled();
     const stored = storedVersion("a", "bigquery");

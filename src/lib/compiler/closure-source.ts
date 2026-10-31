@@ -214,6 +214,12 @@ function prefixSharedNames(model: SuperSchemaModel, modelName: string, mustPrefi
 
 type Placed = { entity: ClosureEntity; namespace: string; modelName: string };
 
+/**
+ * The targets that cannot carry inheritance: a .proto message and an Avro record cannot extend another, and the Java POJO emitter writes
+ * no `extends` (the class would silently lose the base's properties). They get the base's fields written into the entity.
+ */
+const FLATTEN_BASE_TARGETS: ReadonlySet<string> = new Set(["protobuf", "avro", "java-pojo"]);
+
 const nameKey = (name: string) => name.trim().toLowerCase();
 const idKey = (name: string) => sanitizeIdentifier(name.trim()).toLowerCase();
 
@@ -232,6 +238,8 @@ export type ClosureTypeSpec = {
    * A target that names a file after a declaration (JSON Schema writes `<Name>.json` for each) maps the file back to its entity with this.
    */
   declarations: Map<string, string[]>;
+  /** entityId -> the fields the entity's block declares, as written (inherited ones included for a target with no inheritance). */
+  fields: Map<string, SuperSchemaField[]>;
   /** Reference fields typed `unknown` because their target is not part of the closure (one entry per entity and field). */
   unresolved: Array<{ entityId: string; fieldName: string; reference: string }>;
 };
@@ -277,6 +285,25 @@ export function generateClosureTypeSpec(
       return [p, opts.target === "protobuf" ? withUnionFieldsAsString(model).model : model] as const;
     })
   );
+  // A target with no inheritance (Protobuf, Avro) gets the base's fields written into the entity (ancestors first, an own field of the same
+  // name winning); the others get `extends` with the base's qualified model (below).
+  const placedById = new Map(placed.map((p) => [p.entity.entityId, p]));
+  const baseOf = (p: Placed): Placed | undefined => (p.entity.baseEntityId ? placedById.get(p.entity.baseEntityId) : undefined);
+  const flattens = FLATTEN_BASE_TARGETS.has(opts.target);
+  const inheritedFields = (p: Placed, seen = new Set<string>()): SuperSchemaField[] => {
+    const base = baseOf(p);
+    if (!base || seen.has(base.entity.entityId)) return [];
+    seen.add(base.entity.entityId);
+    return [...inheritedFields(base, seen), ...(compiled.get(base)?.fields ?? [])];
+  };
+  const withInheritedFields = (p: Placed, model: SuperSchemaModel): SuperSchemaModel => {
+    if (!flattens || !baseOf(p)) return model;
+    const own = new Set(model.fields.map((f) => f.name));
+    const inherited = new Map<string, SuperSchemaField>();
+    for (const f of inheritedFields(p)) if (!own.has(f.name)) inherited.set(f.name, f);
+    return { ...model, fields: [...inherited.values(), ...model.fields] };
+  };
+
   const sharedClaims = new Map<string, number>();
   for (const model of compiled.values()) for (const name of sharedTypeNames(model)) sharedClaims.set(name, (sharedClaims.get(name) ?? 0) + 1);
   const mustPrefix = (name: string): boolean =>
@@ -316,8 +343,10 @@ export function generateClosureTypeSpec(
   const diagnostics: GeneratorDiagnostic[] = [];
   const declarations = new Map<string, string[]>();
   const unresolved: ClosureTypeSpec["unresolved"] = [];
+  const fieldsByEntity = new Map<string, SuperSchemaField[]>();
   for (const p of placed) {
-    const model = prefixSharedNames(compiled.get(p) as SuperSchemaModel, p.modelName, mustPrefix);
+    const model = prefixSharedNames(withInheritedFields(p, compiled.get(p) as SuperSchemaModel), p.modelName, mustPrefix);
+    fieldsByEntity.set(p.entity.entityId, model.fields);
     const reported = new Set<string>();
     const memberReferenceType = (field: SuperSchemaField): string | null => {
       const type = referenceType(field);
@@ -330,7 +359,12 @@ export function generateClosureTypeSpec(
     };
     const generated = generateTypeSpecWithDiagnostics(model, {
       governance,
-      closureMember: { modelName: p.modelName, referenceType: memberReferenceType, enterpriseShadowed },
+      closureMember: {
+        modelName: p.modelName,
+        referenceType: memberReferenceType,
+        enterpriseShadowed,
+        ...(!flattens && baseOf(p) ? { baseType: qualifiedModel(baseOf(p) as Placed) } : {}),
+      },
     });
     diagnostics.push(...generated.diagnostics);
 
@@ -361,6 +395,7 @@ export function generateClosureTypeSpec(
     diagnostics,
     namespaces: new Map(placed.map((p) => [p.entity.entityId, p.namespace])),
     declarations,
+    fields: fieldsByEntity,
     unresolved,
   };
 }

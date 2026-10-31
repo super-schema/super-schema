@@ -27,6 +27,8 @@ export type ClosureEntity = {
   version?: string;
   fields: PrismaFieldInput[];
   entity: PrismaEntityInput;
+  /** The member this entity extends (its `metadata.extends` name, resolved to the latest of that name), when the closure has one. */
+  baseEntityId?: string;
 };
 
 export type ClosureError =
@@ -44,6 +46,10 @@ export type ClosureError =
   | { code: "PIN_CONFLICT"; ref: EntityRef; pins: { field: string; owner: EntityRef; version: string }[] }
   | { code: "NEVER_PUBLISHED"; ref: EntityRef }
   | { code: "CLOSURE_TOO_LARGE"; limit: number }
+  /** The entity extends a name that several entities answer to equally well (same product and same domain do not settle it). */
+  | { code: "AMBIGUOUS_BASE"; name: string; candidates: EntityRef[]; owner: EntityRef }
+  /** Entities that extend each other in a circle: no schema can be written for them. */
+  | { code: "INHERITANCE_CYCLE"; chain: EntityRef[] }
   /**
    * The closure reaches an entity the caller's roles do not cover (KD-045): refused whole, never omitted and never described. `field` is the field of
    * an entity the caller CAN read that holds the reference (their own field); the unreadable entity is named nowhere in the error: not its name,
@@ -235,6 +241,39 @@ function resolveTarget<T extends Resolvable>(
   return { ambiguous: matches.sort(byQualified), name: q };
 }
 
+/** The name an entity extends (`metadata.extends`), `undefined` when it extends nothing. The metadata is stored JSON: shape-checked. */
+export function baseNameOf(metadata: unknown): string | undefined {
+  const value = metadata && typeof metadata === "object" ? (metadata as { extends?: unknown }).extends : undefined;
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+}
+
+/**
+ * The entity a bare base name means, as the LATEST of that name (the content comes from the mode: the latest published version, or the
+ * saved rows). A name several entities share is settled by place: the owner's own product, then its domain, then the tenant. The entity
+ * itself is never its own base. `undefined`: nothing answers to the name; `ambiguous`: the nearest place that has any still has several.
+ */
+function resolveBase<T extends Resolvable & { place: ClosurePlace }>(
+  index: Map<string, T>,
+  owner: T,
+  name: string
+): { target: T } | { ambiguous: T[] } | undefined {
+  const others = [...index.values()].filter((e) => e.id !== owner.id);
+  const exact = others.filter((e) => nameKey(e.name) === nameKey(name));
+  const matches = exact.length > 0 ? exact : others.filter((e) => idKey(e.name) === idKey(name));
+  if (matches.length === 0) return undefined;
+  const nearer: Array<(e: T) => boolean> = [
+    (e) => e.place.productId !== null && e.place.productId === owner.place.productId,
+    (e) => e.place.domainId !== null && e.place.domainId === owner.place.domainId,
+    () => true,
+  ];
+  for (const within of nearer) {
+    const here = matches.filter(within);
+    if (here.length === 1) return { target: here[0] };
+    if (here.length > 1) return { ambiguous: here.sort(byQualified) };
+  }
+  return undefined;
+}
+
 /** What {@link createRefResolver} answers: the one entity a reference means, the several a bare name matches, or nothing (dangling). */
 export type RefResolution = { target: EntityRef } | { ambiguous: EntityRef[]; name: string } | undefined;
 
@@ -399,6 +438,8 @@ export async function loadReferenceClosure(
     applied: Map<string, string | undefined>;
     /** Members of a published or pinned source whose version froze no entity snapshot (published before snapshots): read from the live row. */
     legacy: Set<string>;
+    /** One sentence per entity whose `extends` name nothing answers to (generated without the base). */
+    danglingBases: string[];
   };
 
   /**
@@ -413,6 +454,7 @@ export async function loadReferenceClosure(
     const observed = new Map<string, Observation[]>();
     const applied = new Map<string, string | undefined>();
     const legacy = new Set<string>();
+    const danglingBases: string[] = [];
 
     const add = async (
       e: IndexedEntity,
@@ -483,6 +525,21 @@ export async function loadReferenceClosure(
           observed.set(resolved.target.id, list);
         }
       }
+      // The base an entity extends is an edge like a reference, found by NAME (it carries no pin: it is always the latest).
+      const baseName = baseNameOf(current.entity.metadata);
+      const owner = index.get(current.entityId);
+      if (baseName && owner) {
+        const found = resolveBase(index, owner, baseName);
+        if (found === undefined) {
+          danglingBases.push(`${current.ref.entity} extends "${baseName}", which no entity answers to: it is generated without a base.`);
+        } else if ("ambiguous" in found) {
+          if (reader && found.ambiguous.some((candidate) => !reader(candidate.place))) return refuse("extends");
+          return { success: false, error: { code: "AMBIGUOUS_BASE", name: baseName, candidates: found.ambiguous.map((c) => c.ref), owner: current.ref } };
+        } else {
+          current.baseEntityId = found.target.id;
+          edges.push({ field: "extends", target: found.target });
+        }
+      }
       graph.set(current.entityId, [...new Set(edges.map((e) => e.target.id))]);
 
       // Breadth-first by qualified name, a field's name breaking ties.
@@ -498,7 +555,7 @@ export async function loadReferenceClosure(
         seen.add(edge.target.id);
       }
     }
-    return ok({ entities, graph, upgrades, observed, applied, legacy });
+    return ok({ entities, graph, upgrades, observed, applied, legacy, danglingBases });
   };
 
   // A closure resolves each entity ONCE (the emitted files are per entity), so a pin on any edge to an entity applies to it everywhere:
@@ -544,8 +601,20 @@ export async function loadReferenceClosure(
     };
   }
 
-  const { entities, graph, upgrades, observed, legacy } = result;
-  const notes: string[] = [];
+  const { entities, graph, upgrades, observed, legacy, danglingBases } = result;
+  // Entities that extend each other in a circle have no schema: walk every chain of bases once.
+  const baseOf = new Map(entities.flatMap((e) => (e.baseEntityId ? [[e.entityId, e.baseEntityId] as const] : [])));
+  for (const member of entities) {
+    const chain = [member.entityId];
+    for (let next = baseOf.get(member.entityId); next !== undefined; next = baseOf.get(next)) {
+      if (chain.includes(next)) {
+        const refs = [...chain.slice(chain.indexOf(next)), next].map((id) => entities.find((e) => e.entityId === id)?.ref).filter((r): r is EntityRef => r !== undefined);
+        return { success: false, error: { code: "INHERITANCE_CYCLE", chain: refs } };
+      }
+      chain.push(next);
+    }
+  }
+  const notes: string[] = [...danglingBases];
   for (const entity of entities) {
     const list = observed.get(entity.entityId) ?? [];
     const pinning = distinctPins(list)[0];
@@ -571,4 +640,59 @@ export async function loadReferenceClosure(
     upgrades,
     notes,
   });
+}
+
+/**
+ * The fields an entity inherits from the bases it extends, ancestors first, for a target that writes no inheritance (a DDL table has every
+ * column of the entity in it). Each base is resolved like in {@link loadReferenceClosure}: by name, as the latest of that name in `mode`,
+ * nearest place first, readable by `opts.reader`. `metadata` is the entity's own (the name of its base is in it). No base: no fields.
+ */
+export async function loadInheritedFields(
+  db: DbClient,
+  tenantId: string,
+  entityId: string,
+  metadata: unknown,
+  mode: ResolveMode,
+  opts?: { reader?: ClosureReader }
+): Promise<Result<{ fields: PrismaFieldInput[]; notes: string[] }, ClosureError>> {
+  let baseName = baseNameOf(metadata);
+  if (!baseName) return ok({ fields: [], notes: [] });
+  if (typeof tenantId !== "string" || tenantId.trim() === "") return { success: false, error: { code: "CROSS_TENANT" } };
+  const index = await loadTenantIndex(db, tenantId);
+  const root = index.get(entityId);
+  if (!root) return { success: false, error: { code: "CROSS_TENANT" } };
+
+  const nearestFirst: PrismaFieldInput[][] = [];
+  const notes: string[] = [];
+  const chain: IndexedEntity[] = [root];
+  let owner = root;
+  while (baseName) {
+    const found = resolveBase(index, owner, baseName);
+    if (found === undefined) {
+      notes.push(`${owner.name} extends "${baseName}", which no entity answers to: it is generated without a base.`);
+      break;
+    }
+    if ("ambiguous" in found) {
+      if (opts?.reader && found.ambiguous.some((candidate) => !opts.reader!(candidate.place))) return { success: false, error: { code: "REFERENCE_NOT_READABLE", field: "extends" } };
+      return { success: false, error: { code: "AMBIGUOUS_BASE", name: baseName, candidates: found.ambiguous.map((c) => c.ref), owner: owner.ref } };
+    }
+    const target = found.target;
+    if (opts?.reader && !opts.reader(target.place)) return { success: false, error: { code: "REFERENCE_NOT_READABLE", field: "extends" } };
+    if (chain.some((e) => e.id === target.id)) return { success: false, error: { code: "INHERITANCE_CYCLE", chain: [...chain.slice(chain.findIndex((e) => e.id === target.id)), target].map((e) => e.ref) } };
+    const loaded = await loadContent(db, target, mode, undefined, "extends");
+    if (!loaded.success) return loaded;
+    nearestFirst.push(loaded.data.fields);
+    chain.push(target);
+    owner = target;
+    baseName = baseNameOf(loaded.data.snapshot ? loaded.data.snapshot.metadata : await loadMemberMetadata(db, target.id));
+  }
+  return ok({ fields: nearestFirst.reverse().flat(), notes });
+}
+
+/** `own` with the inherited fields in front of it (an own field of the same name wins; a later ancestor's overrides an earlier one's), re-numbered. */
+export function withInheritedFields(own: PrismaFieldInput[], inherited: PrismaFieldInput[]): PrismaFieldInput[] {
+  const taken = new Set(own.map((f) => f.name));
+  const byName = new Map<string, PrismaFieldInput>();
+  for (const field of inherited) if (!taken.has(field.name)) byName.set(field.name, field);
+  return [...byName.values(), ...own].map((field, index) => ({ ...field, sortOrder: index }));
 }

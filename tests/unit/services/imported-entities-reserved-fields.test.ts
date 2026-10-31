@@ -114,9 +114,8 @@ describe("createImportedEntities: a reserved ENTITY name", () => {
     ]);
     const child = r.written[1];
     expect(child.parentEntityId).toBe("id-hasOwnProperty_1");
-    // the base's field `id` is copied in front of the child's own (a stored entity does not inherit)
-    expect(child.fields.create.map((f) => f.name)).toEqual(["id", "parent", "many"]);
-    expect(child.fields.create.slice(1).map((f) => f.decorators)).toEqual([{ referencedEntityName: "hasOwnProperty_1" }, { arrayElementType: "hasOwnProperty_1", referencedEntityName: "Other" }]);
+    expect((child as { metadata?: { extends?: string } }).metadata?.extends).toBe("hasOwnProperty_1");
+    expect(child.fields.create.map((f) => f.decorators)).toEqual([{ referencedEntityName: "hasOwnProperty_1" }, { arrayElementType: "hasOwnProperty_1", referencedEntityName: "Other" }]);
     expect(r.refs.get("hasOwnProperty")?.id).toBe("id-hasOwnProperty_1");
     expect(r.refs.get("hasOwnProperty_1")?.id).toBe("id-hasOwnProperty_1");
   });

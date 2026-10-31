@@ -13,7 +13,7 @@ import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import type { EmissionResult, TargetOutput } from "./emission.types";
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
 import { getSchemaTargetCatalog, type SchemaTargetDefinition } from "@/lib/schema-targets/catalog";
-import { loadReferenceClosure, withoutSchemaVersions, type ClosureReader, type ReferenceClosure, type ResolveMode } from "@/lib/references/closure";
+import { baseNameOf, loadInheritedFields, loadReferenceClosure, withInheritedFields, withoutSchemaVersions, type ClosureReader, type ReferenceClosure, type ResolveMode } from "@/lib/references/closure";
 import type { ServiceError } from "@/types/result";
 import type { SchemaVersionResolution } from "@/types/schema-version";
 import { closureFailure, describeResolution, emitClosureTarget, type ClosureTargetResult } from "./closure-generation";
@@ -78,12 +78,22 @@ export async function emitTargetsForEntity(
     else refusal = closureFailure(loaded.error);
   }
 
+  // A DB target has no inheritance: an entity that extends another gets the columns of its bases (the latest of each, in `mode`).
+  let dbFields = fields;
+  let dbRefusal: ServiceError | undefined;
+  if (targets.some((target) => !target.closureEmission) && baseNameOf(entity.metadata) !== undefined) {
+    const inherited = await loadInheritedFields(db, entity.tenantId, entity.id, entity.metadata, mode, { reader });
+    if (inherited.success) dbFields = withInheritedFields(fields, inherited.data.fields);
+    else dbRefusal = closureFailure(inherited.error);
+  }
+
   const results = await Promise.all(
     targets.map(async (target): Promise<TargetEmission> => {
       if (!target.closureEmission) {
+        if (dbRefusal) return { target, result: { output: "", validationStatus: "INVALID", warnings: [], errors: [{ message: dbRefusal.message }] } };
         // The stored schema versions are never emission input (and can be large): the DB target gets the entity without them.
         const standalone = { ...entity, metadata: withoutSchemaVersions(entity.metadata) };
-        return { target, result: await emitOfficialTypeSpecTargetFromData(standalone, fields, target.key) };
+        return { target, result: await emitOfficialTypeSpecTargetFromData(standalone, dbFields, target.key) };
       }
       if (!closure) {
         const message = refusal?.message ?? "The reference closure could not be built.";

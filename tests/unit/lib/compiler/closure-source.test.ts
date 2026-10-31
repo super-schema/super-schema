@@ -433,3 +433,50 @@ describe("closure emission hooks (namespaces, declarations, unresolved reference
     expect(out.namespaces.get("b")).toBe("SuperSchemaClosure.D.P.B");
   });
 });
+
+describe("generateClosureTypeSpec: an entity that extends a member", () => {
+  const closureWithBase = (target: string) => {
+    const base = member("b1", "D", "P", "PersonName", [field("given_name", "string", 1), field("surname", "string", 2)]);
+    const child = { ...member("c1", "D", "P", "StakeholderName", [field("suffix", "string", 1)]), baseEntityId: "b1" };
+    return generateClosureTypeSpec({ entities: [child, base] }, { target });
+  };
+
+  it("writes `extends` with the base's fully qualified model, and the source compiles", async () => {
+    const out = closureWithBase("json-schema");
+    expect(out.source).toMatch(/model StakeholderName extends SuperSchemaClosure\.D\.P\.PersonName\.PersonName \{/);
+    await expectCompiles(out.source);
+  });
+
+  it("keeps only the entity's own fields in a model that extends", () => {
+    const out = closureWithBase("json-schema");
+    const child = out.source.slice(out.source.indexOf("model StakeholderName"), out.source.indexOf("}", out.source.indexOf("model StakeholderName")));
+    expect(child).toContain("suffix");
+    expect(child).not.toContain("given_name");
+  });
+
+  it.each(["protobuf", "avro"])("copies the base's fields in front of the entity's own for %s (no inheritance there), and writes no `extends`", (target) => {
+    const out = closureWithBase(target);
+    expect(out.source).not.toMatch(/ extends /);
+    const child = out.source.slice(out.source.indexOf("model StakeholderName"), out.source.indexOf("}", out.source.indexOf("model StakeholderName")));
+    expect(child.indexOf("given_name")).toBeGreaterThan(-1);
+    expect(child.indexOf("given_name")).toBeLessThan(child.indexOf("suffix"));
+  });
+
+  it("an own field of the same name wins over the base's", () => {
+    const base = member("b1", "D", "P", "Base", [field("name", "string", 1, {}, { description: "base" })]);
+    const child = { ...member("c1", "D", "P", "Child", [field("name", "string", 1, {}, { description: "own" })]), baseEntityId: "b1" };
+    const out = generateClosureTypeSpec({ entities: [child, base] }, { target: "protobuf" });
+    const block = out.source.slice(out.source.indexOf("model Child"), out.source.indexOf("}", out.source.indexOf("model Child")));
+    expect(block.match(/\bname\b/g)?.length).toBe(1);
+    expect(block).toContain("own");
+  });
+
+  it("follows a chain of bases when it copies them", () => {
+    const root = member("r", "D", "P", "Root", [field("a", "string", 1)]);
+    const mid = { ...member("m", "D", "P", "Mid", [field("b", "string", 1)]), baseEntityId: "r" };
+    const leaf = { ...member("l", "D", "P", "Leaf", [field("c", "string", 1)]), baseEntityId: "m" };
+    const out = generateClosureTypeSpec({ entities: [leaf, mid, root] }, { target: "avro" });
+    const block = out.source.slice(out.source.indexOf("model Leaf"), out.source.indexOf("}", out.source.indexOf("model Leaf")));
+    expect(["a", "b", "c"].map((n) => block.indexOf(` ${n}?`) > -1 || block.indexOf(` ${n}:`) > -1)).toEqual([true, true, true]);
+  });
+});

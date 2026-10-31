@@ -13,7 +13,7 @@ import { isPlainObject } from "@/lib/editable-fields";
 import { genericExtensionEntries, setOwn } from "@/lib/compiler/governance-decorators";
 import { generateSlug } from "@/lib/slug";
 import { entityNameMessage } from "@/lib/entity-name";
-import { adoptBaseFields, linkImportedEntity, PENDING_BASE_KEY, relinkDanglingFields } from "@/services/imported-links";
+import { EXTENDS_METADATA_KEY, linkImportedEntity, relinkDanglingFields } from "@/services/imported-links";
 
 export interface ImportedEntityInput {
   name: string;
@@ -119,8 +119,6 @@ async function renameUnsafeEntities(tx: Prisma.TransactionClient, args: CreateIm
 export async function createImportedEntities(tx: Prisma.TransactionClient, args: CreateImportedEntitiesArgs): Promise<Array<{ id: string; name: string }>> {
   const { productScope, productId, ownerId, sourceFormat, refs } = args;
   const created: Array<{ id: string; name: string }> = [];
-  /** The final fields of every entity created so far, by the name the import gave it: what a later entity that extends it copies. */
-  const builtFields = new Map<string, CreateFieldInput[]>();
   // Names are trimmed before BOTH the registry check and the write: the registry compares trimmed names, so an
   // untrimmed stored name ("Foo ") would slip past a later "Foo" and break line uniqueness.
   const { entities, originals } = await renameUnsafeEntities(tx, args);
@@ -144,16 +142,11 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
       continue;
     }
 
-    // Another file of the same folder, imported earlier: a base or a `$ref` target that is not part of this batch is looked for in the product.
     const batchParent = entity.extends ? refs.get(entity.extends)?.id : undefined;
-    // A base of this batch is copied from memory; any other base is looked for in the product (and copied from it).
-    const batchBase = entity.extends ? builtFields.get(entity.extends) : undefined;
-    const own = new Set(entity.fields.map((field) => field.name));
-    const fromBatch = batchBase ? batchBase.filter((field) => !own.has(field.name)) : [];
-    const linked = await linkImportedEntity(tx, { productId, fields: [...fromBatch, ...entity.fields], extends: batchBase ? undefined : entity.extends });
-    const parentEntityId = batchParent ?? linked.parentEntityId;
-    const inherited = linked.inherited ?? (fromBatch.length > 0 && entity.extends ? { from: entity.extends, count: fromBatch.length } : undefined);
-    if (inherited) args.note?.(`Entity "${name}": ${inherited.count} field${inherited.count === 1 ? "" : "s"} of its base "${inherited.from}" ${inherited.count === 1 ? "was" : "were"} copied into it (a stored entity does not inherit).`);
+    // Another file of the same folder, imported earlier: a dangling `$ref` that the product has an entity for is linked. The base an `allOf`
+    // names is kept by name (`metadata.extends`) and resolved to its latest version when a schema is generated.
+    const linked = await linkImportedEntity(tx, { productId, fields: entity.fields });
+    const parentEntityId = batchParent;
     // metadata.sourceFormat records the format the entity was imported in: a message's "Auto" representation follows it
     // (Avro-imported stays Avro). Model tags travel next to it. Nothing is written when neither is known.
     const extensions = sanitizeExtensions(entity.extensions);
@@ -162,7 +155,7 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
       ...(entity.deprecated === true ? { deprecation: { deprecated: true, reason: "Marked deprecated in the imported schema" } } : {}),
       ...(sourceFormat ? { sourceFormat } : {}),
       ...(extensions ? { custom: { extensions } } : {}),
-      ...(linked.pendingBase && !batchParent ? { [PENDING_BASE_KEY]: linked.pendingBase } : {}),
+      ...(entity.extends ? { [EXTENDS_METADATA_KEY]: entity.extends } : {}),
     };
     const row = await tx.entity.create({
       data: {
@@ -180,10 +173,6 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
     });
 
     await relinkDanglingFields(tx, { productId, entity: { id: row.id, name } });
-    for (const completed of await adoptBaseFields(tx, { productId, entity: { id: row.id, name } })) {
-      args.note?.(`Entity "${completed}": the fields of its base "${name}" were copied into it (a stored entity does not inherit).`);
-    }
-    builtFields.set(entity.name, linked.fields);
     refs.set(entity.name, { id: row.id, productId });
     // whatever else in the import still calls it by the name the file gave it (a service of the same import) finds it too
     const original = originals.get(name);

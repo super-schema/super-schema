@@ -25,6 +25,7 @@
  * never reaches a target.
  */
 
+import { liftItemKeywords } from "./item-keywords";
 import { compileEntity, type PrismaEntityInput, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { CLOSURE_ROOT_NAMESPACE, builtInQualificationNotes, generateClosureTypeSpec, type ClosureTypeSpec } from "@/lib/compiler/closure-source";
 import { DEFAULT_MAX_CLOSURE_ENTITIES, type ReferenceClosure } from "@/lib/references/closure";
@@ -209,7 +210,9 @@ async function emitClosureUnguarded(closure: Closure, targetKey: TargetId): Prom
   const served = new Map<string, Set<string>>(entities.map((e) => [e.entityId, new Set<string>()]));
   const keep = (path: string, content: string, attribution: NonNullable<Attribution>): void => {
     const finalPath = attribution.path ?? path;
-    files.push({ path: finalPath, content, target: key, entityId: attribution.entityId });
+    // The keywords of an array's items that the IR keeps on the array field go back on `items` (JSON Schema: a $ref may have siblings).
+    const text = key === "json-schema" && finalPath.endsWith(".json") ? liftItemKeywords(content) : content;
+    files.push({ path: finalPath, content: text, target: key, entityId: attribution.entityId });
     for (const id of [attribution.entityId, ...(attribution.alsoFor ?? [])]) served.get(id)?.add(finalPath);
   };
   let dropped: Array<{ path: string; content: string }> = [];
@@ -548,7 +551,7 @@ function protobufPlan(
   // The canonical source uses stdlib scalars, `Record<...>` and value-less enums the emitter rejects: project it (as stand-alone
   // does), then number every entity's fields.
   let body = projectTypeSpecSourceForProtobuf(generated.source);
-  for (const p of places) body = injectProtobufFieldNumbers(body, p.modelName, p.model.fields);
+  for (const p of places) body = injectProtobufFieldNumbers(body, p.modelName, generated.fields.get(p.entityId) ?? p.model.fields);
 
   const groupsOfPackages = placesByNamespace(places);
   const packageOf = (namespace: string): string => stripRoot(namespace);

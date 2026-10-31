@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { loadReferenceClosure, type ClosureError } from "@/lib/references/closure";
+import { loadInheritedFields, loadReferenceClosure, withInheritedFields, type ClosureError } from "@/lib/references/closure";
 import { qualifiedName, upgradeLegacyReference, writeFieldReference } from "@/lib/references/entity-reference";
 
 type FieldRow = { id: string; name: string; decorators: Record<string, unknown>; type?: string };
@@ -842,4 +842,121 @@ describe("loadReferenceClosure: the entity snapshot of a published version", () 
       expect(r.success && r.data.notes.some((n) => n.includes("published before snapshots"))).toBe(true);
     }
   );
+});
+
+describe("loadReferenceClosure: an entity that extends another (metadata.extends, a bare name)", () => {
+  const extending = (id: string, base: string, over: Partial<EntityRow> = {}) => ent(id, { metadata: { extends: base }, ...over });
+
+  it("brings the base into the closure and says which member it is", async () => {
+    const db = fakeDb([extending("a", "Base", { name: "Child", product: "p1", domain: "d1" }), ent("base", { name: "Base", product: "p1", domain: "d1" })]);
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(names(r.data)).toEqual(["Child", "Base"]);
+    expect(r.data.root.baseEntityId).toBe("base");
+    expect(r.data.entities[1].baseEntityId).toBeUndefined();
+  });
+
+  it("follows a chain of bases", async () => {
+    const db = fakeDb([extending("a", "Mid", { name: "Child" }), extending("mid", "Root", { name: "Mid" }), ent("root", { name: "Root" })]);
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success && names(r.data)).toEqual(["Child", "Mid", "Root"]);
+  });
+
+  it("reads the LATEST published version of the base in published mode", async () => {
+    const base = ent("base", { name: "Base", latest: "base-v2.0", versions: [version("base", 1, 0, []), version("base", 2, 0, [])] });
+    const db = fakeDb([extending("a", "Base", { name: "Child" }), base]);
+    const r = await loadReferenceClosure(db, "t1", "a", "published", { rootAtDraft: true });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.entities[1].version).toBe("2.0");
+  });
+
+  it("refuses a base that was never published when published schemas are asked for", async () => {
+    const db = fakeDb([extending("a", "Base", { name: "Child" }), ent("base", { name: "Base" })]);
+    const r = await loadReferenceClosure(db, "t1", "a", "published", { rootAtDraft: true });
+    expect(!r.success && r.error.code).toBe("NEVER_PUBLISHED");
+  });
+
+  it("prefers the base of the same product, then of the same domain, over a namesake elsewhere", async () => {
+    const db = fakeDb([
+      extending("a", "Base", { name: "Child", domain: "d1", product: "p1" }),
+      ent("far", { name: "Base", domain: "d2", product: "p2" }),
+      ent("near", { name: "Base", domain: "d1", product: "p1" }),
+      ent("same-domain", { name: "Base", domain: "d1", product: "p9" }),
+    ]);
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success && r.data.root.baseEntityId).toBe("near");
+  });
+
+  it("refuses a base name that two entities answer to equally well", async () => {
+    const db = fakeDb([
+      extending("a", "Base", { name: "Child", domain: "d1", product: "p1" }),
+      ent("b1", { name: "Base", domain: "d2", product: "p2" }),
+      ent("b2", { name: "Base", domain: "d3", product: "p3" }),
+    ]);
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(!r.success && r.error.code).toBe("AMBIGUOUS_BASE");
+  });
+
+  it("emits without a base nothing answers to, and says so", async () => {
+    const db = fakeDb([extending("a", "Gone", { name: "Child" })]);
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(names(r.data)).toEqual(["Child"]);
+    expect(r.data.root.baseEntityId).toBeUndefined();
+    expect(r.data.notes.some((n) => /Child/.test(n) && /Gone/.test(n))).toBe(true);
+  });
+
+  it("does not take the entity itself for its base, and an inheritance cycle is refused", async () => {
+    const self = fakeDb([extending("a", "Child", { name: "Child" })]);
+    const r1 = await loadReferenceClosure(self, "t1", "a", "draft");
+    expect(r1.success && r1.data.root.baseEntityId).toBeUndefined();
+    const cycle = fakeDb([extending("a", "B", { name: "A" }), extending("b", "A", { name: "B" })]);
+    const r2 = await loadReferenceClosure(cycle, "t1", "a", "draft");
+    expect(!r2.success && r2.error.code).toBe("INHERITANCE_CYCLE");
+  });
+});
+
+describe("loadInheritedFields (the columns a DB target gets from the bases)", () => {
+  const plain = (id: string, over: Partial<EntityRow>, names: string[]) => ent(id, over, names.map((n) => [n, {}, "string"] as TypedField));
+
+  it("returns the fields of every base, the farthest ancestor first", async () => {
+    const db = fakeDb([
+      plain("a", { name: "Leaf", metadata: { extends: "Mid" } }, ["c"]),
+      plain("mid", { name: "Mid", metadata: { extends: "Root" } }, ["b"]),
+      plain("root", { name: "Root" }, ["a"]),
+    ]);
+    const r = await loadInheritedFields(db, "t1", "a", { extends: "Mid" }, "draft");
+    expect(r.success && r.data.fields.map((f) => f.name)).toEqual(["a", "b"]);
+  });
+
+  it("returns nothing for an entity that extends nothing", async () => {
+    const r = await loadInheritedFields(fakeDb([plain("a", {}, ["x"])]), "t1", "a", {}, "draft");
+    expect(r.success && r.data.fields).toEqual([]);
+  });
+
+  it("refuses a base the caller's roles do not cover", async () => {
+    const db = fakeDb([plain("a", { name: "Child", domain: "d1", product: "p1" }, []), plain("b", { name: "Base", domain: "d2", product: "p2" }, ["x"])]);
+    const r = await loadInheritedFields(db, "t1", "a", { extends: "Base" }, "draft", { reader: (place) => place.domainId !== "d-d2" });
+    expect(!r.success && r.error.code).toBe("REFERENCE_NOT_READABLE");
+  });
+
+  it("refuses a circle of bases", async () => {
+    const db = fakeDb([plain("a", { name: "A", metadata: { extends: "B" } }, []), plain("b", { name: "B", metadata: { extends: "A" } }, [])]);
+    const r = await loadInheritedFields(db, "t1", "a", { extends: "B" }, "draft");
+    expect(!r.success && r.error.code).toBe("INHERITANCE_CYCLE");
+  });
+});
+
+describe("withInheritedFields", () => {
+  const f = (name: string, description = "") => ({ id: name, name, type: "string", precision: null, scale: null, nullable: true, isKey: false, fieldNumber: null, description, classification: null, aliases: [], decorators: {}, sortOrder: 9 });
+
+  it("puts the inherited fields in front, lets an own field win, and re-numbers", () => {
+    const merged = withInheritedFields([f("name", "own"), f("suffix")], [f("given"), f("name", "base")]);
+    expect(merged.map((x) => x.name)).toEqual(["given", "name", "suffix"]);
+    expect(merged.find((x) => x.name === "name")?.description).toBe("own");
+    expect(merged.map((x) => x.sortOrder)).toEqual([0, 1, 2]);
+  });
 });

@@ -629,3 +629,26 @@ describe("a reference whose target is not in the closure", () => {
     expect(warnings.some((w) => w.includes("ghost") && w.includes("X/Y/Ghost"))).toBe(true);
   });
 });
+
+describe("an entity that extends another member", () => {
+  const base = () => member("b", "Sales", "Orders", "PersonName", [field("given_name", "string", 1), field("surname", "string", 2)]);
+  const child = () => ({ ...member("s", "Sales", "Orders", "Stakeholder", [field("suffix", "string", 1)]), baseEntityId: "b" });
+  const pair = () => closureOf([child(), base()]);
+
+  it("json-schema: allOf with a $ref to the base's file, and only its own properties", async () => {
+    const { files } = await emit(pair(), "json-schema");
+    const json = JSON.parse(files.find((f) => f.path === "Stakeholder.json")!.content);
+    expect(json.allOf).toEqual([{ $ref: "PersonName.json" }]);
+    expect(Object.keys(json.properties)).toEqual(["id", "suffix"]);
+  });
+
+  it.each([["protobuf", /Stakeholder\.proto$/, "given_name"], ["avro", /Stakeholder\.avsc\.json$/, "given_name"], ["java-pojo", /Stakeholder\.java$/, "givenName"]] as const)(
+    "%s: the base's fields are in the entity's own message / record / class (no inheritance there)",
+    async (target, path, name) => {
+      const { files } = await emit(pair(), target);
+      const own = files.find((f) => path.test(f.path))!.content;
+      expect(own).toContain(name);
+      expect(own).toContain("suffix");
+    }
+  );
+});

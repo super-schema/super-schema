@@ -151,7 +151,7 @@ describe("generateSchemaAction: needs input", () => {
   it("emits when a key is flagged", async () => {
     p.field.findMany.mockResolvedValue([{ ...FIELDS[0], isKey: true }, FIELDS[1]]);
     const result = await actions.generateSchemaAction("ent-1", "bigquery");
-    expect(h.emitOfficial).toHaveBeenCalledWith("ent-1", "bigquery");
+    expect(h.emitOfficial).toHaveBeenCalledWith("ent-1", "bigquery", expect.objectContaining({ mode: expect.any(String) }));
     expect(result).toMatchObject({ success: true });
   });
 
