@@ -42,7 +42,7 @@ const shot = (page: import("@playwright/test").Page, name: string) => page.scree
 const label = (key: string) => ENABLED_TARGETS.find((t) => t.key === key)!.displayName;
 
 const PUBLIC_SCHEMA_URL = "https://www.schemastore.org/bower.json";
-const GIT_URL = "https://github.paypal.com/some-org/some-repo/blob/main/schema.json";
+const GIT_URL = "https://github.example.com/some-org/some-repo/blob/main/schema.json";
 
 async function openUrlMode(page: import("@playwright/test").Page, productUrl: string) {
   await openWorkbench(page, productUrl);
@@ -229,7 +229,7 @@ test.describe("A4: x-securityClassification", () => {
     type: "object",
     properties: {
       subscriber_id: { type: "string", "x-securityClassification": { data_class: "class3", data_category: "Intrinsic" } },
-      email: { type: "string", "x-securityClassification": { data_class: "class4", data_category: "PayPalCompany" } },
+      email: { type: "string", "x-securityClassification": { data_class: "class4", data_category: "OrgCompany" } },
       nickname: { type: "string" },
     },
     required: ["subscriber_id"],
@@ -244,7 +244,7 @@ test.describe("A4: x-securityClassification", () => {
     const table = page.locator("tbody");
     await expect(table).toContainText("class3");
     await expect(table).toContainText("class4");
-    await expect(table).toContainText("PayPalCompany");
+    await expect(table).toContainText("OrgCompany");
     await expect(table).toContainText("Intrinsic");
     await shot(page, "A4-review");
     await createEntityFromReview(page, productUrl, "Subscriber");

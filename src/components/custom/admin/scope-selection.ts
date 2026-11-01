@@ -83,7 +83,7 @@ export function selectionToInput(selection: ScopeSelection): ScopeInput | null {
   return { tenantId: selection.tenantId };
 }
 
-/** The place named in words: `Platform`, or the names of the narrowest scope chosen (`PayPal / Payments / Checkout`). */
+/** The place named in words: `Platform`, or the names of the narrowest scope chosen (`Acme / Payments / Checkout`). */
 export function describeSelection(scopes: readonly GrantableScope[], selection: ScopeSelection): string | null {
   if (selection.platform) return "Platform (every tenant)";
   const key = selection.productId ? `P:${selection.productId}` : selection.domainId ? `D:${selection.domainId}` : selection.tenantId ? `T:${selection.tenantId}` : null;

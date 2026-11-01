@@ -72,7 +72,7 @@ export type SetUserDisabledResult = {
 // What the lists show
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 
-/** A scope, with the names a person reads (never only raw ids). `label` is the whole place: `Platform`, `PayPal`, `PayPal / Payments`, `PayPal / Payments / Checkout`. */
+/** A scope, with the names a person reads (never only raw ids). `label` is the whole place: `Platform`, `Acme`, `Acme / Payments`, `Acme / Payments / Checkout`. */
 export type ScopeLabel = {
   kind: ScopeKind;
   scopeKey: string;

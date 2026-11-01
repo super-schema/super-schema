@@ -8,7 +8,7 @@ import type { GitImportConfig } from "@/lib/importers/git-import-config";
  * be checked for the ROOT url only: a root document of an allowed repository could name `$ref`s into any other repository of its owner, and
  * the server fetched them. Every git fetch (root and refs) now passes the same check, before any `gh` call.
  */
-const HOST = "https://github.paypal.com";
+const HOST = "https://github.example.com";
 const ROOT_URL = `${HOST}/acme/schemas/blob/main/root.json`;
 const SECRET = `${HOST}/acme/secret-repo/blob/main/s.json`;
 const OTHER_ORG = `${HOST}/other-org/x/blob/main/s.json`;
@@ -100,18 +100,18 @@ describe("git scope applies to every ref, not only the root", () => {
     await resolveJsonSchemaRefs(ROOT_URL, rootDoc, plain.deps);
     expect(plain.calls.sort()).toEqual(["acme/schemas@main:sibling.json", "acme/secret-repo@main:s.json"]);
 
-    const opted = harness({ mode: "any" }, { extraGitScopes: ["github.paypal.com/other-org"] });
+    const opted = harness({ mode: "any" }, { extraGitScopes: ["github.example.com/other-org"] });
     await resolveJsonSchemaRefs(ROOT_URL, rootDoc, opted.deps);
     expect(opted.calls).toContain("other-org/x@main:s.json");
   });
 
   it("extraGitScopes cannot widen what the server configuration does not allow", async () => {
-    const { deps, calls } = harness({ mode: "restricted", scopes: ["acme"] }, { extraGitScopes: ["github.paypal.com/other-org"] });
+    const { deps, calls } = harness({ mode: "restricted", scopes: ["acme"] }, { extraGitScopes: ["github.example.com/other-org"] });
     const refs = await resolveJsonSchemaRefs(ROOT_URL, rootDoc, deps);
     expect(calls).not.toContain("other-org/x@main:s.json");
     expect(refs.unreachable.get(OTHER_ORG)).toMatch(/not enabled on this server/);
     // and with both the configuration and the extra scope, it is fetched
-    const both = harness({ mode: "restricted", scopes: ["acme", "other-org"] }, { extraGitScopes: ["github.paypal.com/other-org"] });
+    const both = harness({ mode: "restricted", scopes: ["acme", "other-org"] }, { extraGitScopes: ["github.example.com/other-org"] });
     await resolveJsonSchemaRefs(ROOT_URL, rootDoc, both.deps);
     expect(both.calls).toContain("other-org/x@main:s.json");
   });

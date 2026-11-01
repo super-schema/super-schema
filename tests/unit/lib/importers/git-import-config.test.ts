@@ -3,7 +3,7 @@ import { gitRootRefusal, parseGitScopes, readGitImportConfig, type GitImportConf
 import { fetchRootDocument } from "@/lib/importers/jsonschema-ref-resolver";
 import { importJsonSchemaFromUrl } from "@/lib/importers/jsonschema-url-import";
 
-const GIT_URL = "https://github.paypal.com/Acme/Repo/blob/main/s/a.json";
+const GIT_URL = "https://github.example.com/Acme/Repo/blob/main/s/a.json";
 const DOC = JSON.stringify({ type: "object", properties: { a: { type: "string" } } });
 
 describe("readGitImportConfig", () => {

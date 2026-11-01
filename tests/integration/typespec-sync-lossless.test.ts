@@ -45,8 +45,8 @@ const USER_EVENT = {
       pattern: "^([A-Za-z0-9-_])+$", "x-securityClassification": { data_class: "class4", data_category: "Intrinsic" },
     },
     tenant: {
-      type: "string", description: "Name of the adjacency to PayPal.", minLength: 1, maxLength: 100, pattern: "^[a-z0-9_]+$",
-      "x-securityClassification": { data_class: "class4", data_category: "PayPalCompany" },
+      type: "string", description: "Name of the adjacency to Acme.", minLength: 1, maxLength: 100, pattern: "^[a-z0-9_]+$",
+      "x-securityClassification": { data_class: "class4", data_category: "OrgCompany" },
     },
     created_time: {
       description: "Event creation timestamp.", $ref: DATE_REF,

@@ -98,7 +98,7 @@ enum ApiScope {
 
 model Tenant {
   id        String   @id @default(cuid())
-  name      String   @unique // "PayPal", "Venmo", "Xoom"
+  name      String   @unique // "Acme", "Globex", "Initech"
   slug      String   @unique
   description String  @default("")
   isActive  Boolean  @default(true)

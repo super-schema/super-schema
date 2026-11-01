@@ -53,7 +53,7 @@ repeat the spec's reasoning, only the decisions that bind implementation).
 ## Review Focus
 
 - A document whose root is the `allOf: [{$ref}, {properties}]`
-  inheritance shape (real case: PayPal's `address.json`) must produce an
+  inheritance shape (real case: Acme's `address.json`) must produce an
   entity with `extends` set *and* fields from the inline member — not just
   the first `allOf` member, which is what today's code does.
 - A field-level extension whose value is a nested object
@@ -62,7 +62,7 @@ repeat the spec's reasoning, only the decisions that bind implementation).
 - A `$ref` that 404s, or whose host has no configured resolver, must fail
   only that one field (dangling-reference warning) — never the whole import.
 - Two files in different directories sharing a basename (common in the
-  PayPal schema set — e.g. multiple `*_status.json` siblings under different
+  Acme schema set — e.g. multiple `*_status.json` siblings under different
   parents) must not collide into the same entity now that resolution is by
   real resolved URI instead of guessed basename.
 - `oneOf`/`anyOf` members that are a mix of `$ref`s and inline
@@ -401,7 +401,7 @@ git commit -m "feat(import): capture unknown JSON Schema keys as extensions"
   `@apidevtools/json-schema-ref-parser`'s `resolve()` with a custom
   `options.resolve` entry per supported scheme: a `github-enterprise`
   resolver matching a configurable list of internal hostnames (start with
-  `github.paypal.com`), translating a resolved URI's path back into
+  `github.example.com`), translating a resolved URI's path back into
   `gh api --hostname <host> repos/<owner>/<repo>/contents/<path>?ref=<branch>`
   (owner/repo/branch parsed from the *root* document's own source URL,
   passed in by the caller — never hardcoded); a default resolver for plain
@@ -680,15 +680,15 @@ entity's fields.
 **Files:**
 - Test: `tests/integration/jsonschema-user-event-e2e.test.ts` (new) — the
   acceptance test with the user's schema (fixture inline):
-  `{"type":"object","description":"A user event containing user level customer id information used to link a user across different tenants.","properties":{"component":{"type":"string","description":"Name of the source component logging the user event(s).","minLength":1,"maxLength":100,"pattern":"^([A-Za-z0-9-_])+$","x-securityClassification":{"data_class":"class4","data_category":"Intrinsic"}},"tenant":{"type":"string","description":"Name of the adjacency to PayPal.","minLength":1,"maxLength":100,"pattern":"^[a-z0-9_]+$","x-securityClassification":{"data_class":"class4","data_category":"PayPalCompany"}},"created_time":{"description":"Event creation timestamp.","$ref":"common_components/v4/schema/json/openapi-2.0/date_time.json","x-securityClassification":{"data_class":"class4","data_category":"Intrinsic"}},"user_links":{"type":"array","description":"List of list of users and their customer ids along with tenant information.","minItems":1,"maxItems":100,"items":{"$ref":"user_links.json"}}},"required":["user_links","created_time","tenant"]}`.
+  `{"type":"object","description":"A user event containing user level customer id information used to link a user across different tenants.","properties":{"component":{"type":"string","description":"Name of the source component logging the user event(s).","minLength":1,"maxLength":100,"pattern":"^([A-Za-z0-9-_])+$","x-securityClassification":{"data_class":"class4","data_category":"Intrinsic"}},"tenant":{"type":"string","description":"Name of the adjacency to Acme.","minLength":1,"maxLength":100,"pattern":"^[a-z0-9_]+$","x-securityClassification":{"data_class":"class4","data_category":"OrgCompany"}},"created_time":{"description":"Event creation timestamp.","$ref":"common_components/v4/schema/json/openapi-2.0/date_time.json","x-securityClassification":{"data_class":"class4","data_category":"Intrinsic"}},"user_links":{"type":"array","description":"List of list of users and their customer ids along with tenant information.","minItems":1,"maxItems":100,"items":{"$ref":"user_links.json"}}},"required":["user_links","created_time","tenant"]}`.
 - Test (optional, if the Playwright environment can run it):
   `tests/e2e/jsonschema-user-event.spec.ts` extending the pattern in
   `tests/e2e/schema-lifecycle.spec.ts`.
 
 (Original Task 9 text follows; superseded where it conflicts with the
 amendment above — `ImportDialog` and the unmounted review screens are not
-used; the PayPal `address.json` check below still applies as a second
-fixture, skipped when `gh auth status --hostname github.paypal.com` fails.)
+used; the Acme `address.json` check below still applies as a second
+fixture, skipped when `gh auth status --hostname github.example.com` fails.)
 
 **Interfaces:**
 - Consumes: everything above.
@@ -696,10 +696,10 @@ fixture, skipped when `gh auth status --hostname github.paypal.com` fails.)
 
 - [ ] **Step 1: Write the end-to-end integration test.** Fetch
   `v1/schema/json/openapi-3.0/components/schemas/address.json` from
-  `identity.CommonComponentsSpecification` via `gh api --hostname
-  github.paypal.com` (same call already verified reachable in this
+  `common-components` via `gh api --hostname
+  github.example.com` (same call already verified reachable in this
   session) inside the test's setup (skip the test gracefully if `gh auth
-  status --hostname github.paypal.com` fails, so CI without that
+  status --hostname github.example.com` fails, so CI without that
   credential doesn't break), run it through
   `importJsonSchemaFromUrlAction`, and assert: `address` entity has
   `extends` set to the resolved name of `address_portable` (reachable,
@@ -730,7 +730,7 @@ fixture, skipped when `gh auth status --hostname github.paypal.com` fails.)
   a sibling extension key, which Task 1's generic capture already handles
   at the field level per the design's own fallback C; keeping this plan
   from building the synthetic-model machinery unless Task 9's real-world
-  test against the PayPal set actually produces a case needing it avoids
+  test against the Acme set actually produces a case needing it avoids
   speculative work the spec itself flagged as unresolved
   (`extends`-vs-spread, unverified against a real compile). If Task 9's
   fixture needs it, add a Task 5b at that point — don't build it blind.

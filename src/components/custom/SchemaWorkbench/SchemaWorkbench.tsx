@@ -627,7 +627,7 @@ export function SchemaWorkbench({
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !urlLoading) void fetchUrl();
                 }}
-                placeholder="https://github.paypal.com/<org>/<repo>/blob/<ref>/path/schema.json"
+                placeholder="https://github.example.com/<org>/<repo>/blob/<ref>/path/schema.json"
                 className="w-full h-9 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               />
               <p className="text-caption text-muted-foreground">

@@ -21,7 +21,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-const GOOD = "https://github.paypal.com/org/repo/blob/main/schemas/order.json";
+const GOOD = "https://github.example.com/org/repo/blob/main/schemas/order.json";
 
 function resultWithDangling(): TypeSpecImportResult {
   return {

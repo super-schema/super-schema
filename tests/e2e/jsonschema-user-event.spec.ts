@@ -31,11 +31,11 @@ const USER_EVENT = JSON.stringify({
     },
     tenant: {
       type: "string",
-      description: "Name of the adjacency to PayPal.",
+      description: "Name of the adjacency to Acme.",
       minLength: 1,
       maxLength: 100,
       pattern: "^[a-z0-9_]+$",
-      "x-securityClassification": { data_class: "class4", data_category: "PayPalCompany" },
+      "x-securityClassification": { data_class: "class4", data_category: "OrgCompany" },
     },
     created_time: {
       description: "Event creation timestamp.",
@@ -99,7 +99,7 @@ test.describe("JSON Schema import: user event, end to end", () => {
     await expect(table).toContainText("^[a-z0-9_]+$");
     await expect(table).toContainText("Constraint: min items");
     await expect(table).toContainText("Constraint: max items");
-    await expect(table).toContainText("PayPalCompany");
+    await expect(table).toContainText("OrgCompany");
     await expect(table).toContainText("Preserved (kept, not interpreted)");
     await expect(table.getByText("x-securityClassification").first()).toBeVisible();
     // Both $refs are dangling (no base URL for a pasted text), each with its reason.
@@ -159,7 +159,7 @@ test.describe("JSON Schema import: user event, end to end", () => {
     await expect(preview).toContainText("common_components/v4/schema/json/openapi-2.0/date_time.json");
     await expect(preview).toContainText("user_links.json");
     await expect(preview).toContainText("x-securityClassification");
-    await expect(preview).toContainText("PayPalCompany");
+    await expect(preview).toContainText("OrgCompany");
     // no raw compiler diagnostic
     await expect(page.getByText(/invalid-ref|Unknown identifier/)).toHaveCount(0);
   });

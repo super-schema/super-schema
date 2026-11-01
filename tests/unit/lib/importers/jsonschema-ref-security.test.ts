@@ -11,7 +11,7 @@ import {
 } from "@/lib/importers/jsonschema-ref-security";
 
 const coords = (over: Partial<GitCoords> = {}): GitCoords => ({
-  host: "github.paypal.com",
+  host: "github.example.com",
   owner: "Org",
   repo: "repo.name",
   ref: "master",
@@ -90,12 +90,12 @@ describe("assertPublicHost", () => {
 });
 
 describe("parseGitFileUrl", () => {
-  const base = "https://github.paypal.com/ApiSpecifications-R/identity.CommonComponentsSpecification";
+  const base = "https://github.example.com/Acme/common-components";
   it("parses blob URLs", () => {
     const r = parseGitFileUrl(`${base}/blob/master/v1/schema/a.json`);
     expect(r).toEqual({
       ok: true,
-      coords: { host: "github.paypal.com", owner: "ApiSpecifications-R", repo: "identity.CommonComponentsSpecification", ref: "master", path: "v1/schema/a.json" },
+      coords: { host: "github.example.com", owner: "Acme", repo: "common-components", ref: "master", path: "v1/schema/a.json" },
     });
   });
   it("parses raw URLs", () => {
@@ -103,29 +103,29 @@ describe("parseGitFileUrl", () => {
     expect(r.ok && r.coords.ref).toBe("main");
   });
   it("parses API contents URLs", () => {
-    const r = parseGitFileUrl("https://github.paypal.com/api/v3/repos/o/r/contents/p/q.json?ref=dev");
+    const r = parseGitFileUrl("https://github.example.com/api/v3/repos/o/r/contents/p/q.json?ref=dev");
     expect(r).toMatchObject({ ok: true, coords: { owner: "o", repo: "r", ref: "dev", path: "p/q.json" } });
   });
   it("refuses unknown hosts, http, credentials, ports", () => {
     expect(parseGitFileUrl("https://github.com/o/r/blob/m/a.json").ok).toBe(false);
-    expect(parseGitFileUrl("http://github.paypal.com/o/r/blob/m/a.json").ok).toBe(false);
-    expect(parseGitFileUrl("https://u:p@github.paypal.com/o/r/blob/m/a.json").ok).toBe(false);
-    expect(parseGitFileUrl("https://github.paypal.com:8443/o/r/blob/m/a.json").ok).toBe(false);
+    expect(parseGitFileUrl("http://github.example.com/o/r/blob/m/a.json").ok).toBe(false);
+    expect(parseGitFileUrl("https://u:p@github.example.com/o/r/blob/m/a.json").ok).toBe(false);
+    expect(parseGitFileUrl("https://github.example.com:8443/o/r/blob/m/a.json").ok).toBe(false);
   });
   it("honours an overridden host list", () => {
     expect(parseGitFileUrl("https://ghe.test/o/r/blob/m/a.json", ["ghe.test"]).ok).toBe(true);
   });
   it("refuses paths that escaped the blob prefix or traverse", () => {
-    expect(parseGitFileUrl("https://github.paypal.com/o/x.json").ok).toBe(false);
-    expect(parseGitFileUrl("https://github.paypal.com/o/r/blob/m/%2e%2e/b.json").ok).toBe(false);
-    expect(parseGitFileUrl("https://github.paypal.com/o/r/blob/m/a%3Bb.json").ok).toBe(false);
+    expect(parseGitFileUrl("https://github.example.com/o/x.json").ok).toBe(false);
+    expect(parseGitFileUrl("https://github.example.com/o/r/blob/m/%2e%2e/b.json").ok).toBe(false);
+    expect(parseGitFileUrl("https://github.example.com/o/r/blob/m/a%3Bb.json").ok).toBe(false);
   });
 });
 
 describe("validateGitCoords / buildGhArgs", () => {
   it("builds an argv with the endpoint last, after --", () => {
     expect(buildGhArgs(coords())).toEqual([
-      "api", "--hostname", "github.paypal.com", "-H", "Accept: application/vnd.github.raw", "--",
+      "api", "--hostname", "github.example.com", "-H", "Accept: application/vnd.github.raw", "--",
       "repos/Org/repo.name/contents/a/b.json?ref=master",
     ]);
   });

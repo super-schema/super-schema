@@ -1,7 +1,7 @@
 # JSON Schema import fidelity — design
 
 Covers three problems found while testing JSON Schema import against a real
-PayPal common-components schema set: (1) vendor extension (`x-*`) round-trip,
+Acme common-components schema set: (1) vendor extension (`x-*`) round-trip,
 (2) spec-correct `allOf`/`anyOf`/`oneOf` composition mapping, (3) `$ref`
 resolution across files/repos via a real library instead of filename-guessing.
 
@@ -152,7 +152,7 @@ JSON Schema lets `items` carry sibling keys next to `$ref`/`type`; TypeSpec
 has no node for "the element type as used right here" — only models and
 properties can carry decorators. Two paths, chosen per-case:
 
-**A — items is a `$ref` to an entity (the common case, e.g. the PayPal
+**A — items is a `$ref` to an entity (the common case, e.g. the Acme
 sample).** Synthesize a per-usage model that stands in for the item type,
 carries the `@extension`, and is what the array actually references:
 
@@ -246,7 +246,7 @@ literals back into a JS value.
 
 # Addendum A — `allOf` / `anyOf` / `oneOf`: spec-correct composition mapping
 
-## Why this isn't just "handle the PayPal pattern"
+## Why this isn't just "handle the Acme pattern"
 
 The first pass at this (array-items-carry-a-sibling-extension) was shaped
 around one observed file. Re-derived from JSON Schema 2020-12 itself (the
@@ -354,9 +354,9 @@ weren't there (not inlined, not approximated into some invented shape).
 
 `refToEntityName` (`jsonschema.importer.ts:407-410`) strips an external `$ref`
 down to its basename and calls that the entity name — no actual fetch, no
-disambiguation. Confirmed broken against the real PayPal schema set
-(`identity.CommonComponentsSpecification`, fetched via `gh api --hostname
-github.paypal.com` during this conversation): `address.json` contains
+disambiguation. Confirmed broken against the real Acme schema set
+(`common-components`, fetched via `gh api --hostname
+github.example.com` during this conversation): `address.json` contains
 `"$ref": "../../common_components/v5/schema/json/openapi-3.0/components/schemas/address/address_portable.json"`
 — a relative path that climbs out of the current repo into a *different* repo
 entirely. Basename-only naming can't tell that apart from a same-named file
@@ -391,7 +391,7 @@ importer's normal root-schema-to-entity path, one entity per file.
 
 ## Resolving relative paths across our internal git hosts
 
-A plain HTTP(S) resolver doesn't reach `github.paypal.com` (private, needs
+A plain HTTP(S) resolver doesn't reach `github.example.com` (private, needs
 auth) or resolve a relative path like `../../common_components/...` into a
 fetch from the right repo/ref. `json-schema-ref-parser` supports pluggable
 custom resolvers (`options.resolve`); this design adds one that, given a
@@ -468,7 +468,7 @@ the browser's.
   plain HTTP(S) URL" vs. "we have no way to reach this," and how it maps a
   resolved relative path back to a `gh api --hostname <host> repos/<owner>/<repo>/contents/<path>`
   call (owner/repo/branch need to come from the import's starting URL, not
-  be hardcoded to the PayPal repo used for testing).
+  be hardcoded to the Acme repo used for testing).
 - **Addendum B:** concurrency/cycle limits for transitive resolution (a
   schema graph with a cycle, or hundreds of transitively reachable files,
   needs a bound — check how `MAX_REF_DEPTH`/`MAX_SCHEMA_NESTING` already

@@ -206,7 +206,7 @@ add(js("user-event", "the user's `user event` schema (plan Task 14)", {
   description: "A user event containing user level customer id information used to link a user across different tenants.",
   properties: {
     component: { type: "string", description: "Name of the source component logging the user event(s).", minLength: 1, maxLength: 100, pattern: "^([A-Za-z0-9-_])+$", "x-securityClassification": { data_class: "class4", data_category: "Intrinsic" } },
-    tenant: { type: "string", description: "Name of the adjacency to PayPal.", minLength: 1, maxLength: 100, pattern: "^[a-z0-9_]+$", "x-securityClassification": { data_class: "class4", data_category: "PayPalCompany" } },
+    tenant: { type: "string", description: "Name of the adjacency to Acme.", minLength: 1, maxLength: 100, pattern: "^[a-z0-9_]+$", "x-securityClassification": { data_class: "class4", data_category: "OrgCompany" } },
     created_time: { description: "Event creation timestamp.", $ref: "common_components/v4/schema/json/openapi-2.0/date_time.json", "x-securityClassification": { data_class: "class4", data_category: "Intrinsic" } },
     user_links: { type: "array", description: "List of list of users and their customer ids along with tenant information.", minItems: 1, maxItems: 100, items: { $ref: "user_links.json" } },
   },

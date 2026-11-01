@@ -1,7 +1,7 @@
 # The browser suite (tests/e2e) as a release check. Long version: docs/testing/e2e.md ("CI").
 #
 # Prerequisite: `npm ci` must succeed on the runner. package.json has file:../typespec/packages/* dependencies and the lockfile
-# resolves from internal registries; a runner without that network and registry access, and without the sibling `typespec`
+# resolves from the public npm registry; a runner without the sibling `typespec`
 # repository built at ../typespec, fails at `npm ci`. See docs/testing/e2e.md ("Running it in CI").
 #
 #   pull request         `smoke` (Chromium, Firefox, WebKit). The only job that gates a merge: a maintainer requires its status

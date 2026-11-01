@@ -34,11 +34,11 @@ const USER_EVENT = {
     },
     tenant: {
       type: "string",
-      description: "Name of the adjacency to PayPal.",
+      description: "Name of the adjacency to Acme.",
       minLength: 1,
       maxLength: 100,
       pattern: "^[a-z0-9_]+$",
-      "x-securityClassification": { data_class: "class4", data_category: "PayPalCompany" },
+      "x-securityClassification": { data_class: "class4", data_category: "OrgCompany" },
     },
     created_time: {
       description: "Event creation timestamp.",
@@ -125,7 +125,7 @@ describe("user event schema: import", () => {
   });
 
   it("maps x-securityClassification to classification + data category", () => {
-    for (const [name, category] of [["component", "Intrinsic"], ["tenant", "PayPalCompany"], ["created_time", "Intrinsic"]]) {
+    for (const [name, category] of [["component", "Intrinsic"], ["tenant", "OrgCompany"], ["created_time", "Intrinsic"]]) {
       expect(row(name).classification).toBe("class4");
       expect(row(name).decorators.classification).toEqual({ level: "class4" });
       expect(row(name).decorators.governance).toEqual({ dataClass: "class4", dataCategory: category });
@@ -144,7 +144,7 @@ describe("user event schema: import", () => {
       "x-securityClassification": { data_class: "class4", data_category: "Intrinsic" },
     });
     expect(row("tenant").decorators.typespec.extensions.openapi).toEqual({
-      "x-securityClassification": { data_class: "class4", data_category: "PayPalCompany" },
+      "x-securityClassification": { data_class: "class4", data_category: "OrgCompany" },
     });
     expect(row("created_time").decorators.typespec.extensions.openapi).toEqual({
       "x-securityClassification": { data_class: "class4", data_category: "Intrinsic" },
@@ -198,7 +198,7 @@ describe("user event schema: emission with the real emitters", () => {
       "x-securityClassification": { data_class: "class4", data_category: "Intrinsic" },
     });
     expect(schema.properties.tenant).toMatchObject({
-      pattern: "^[a-z0-9_]+$", "x-securityClassification": { data_class: "class4", data_category: "PayPalCompany" },
+      pattern: "^[a-z0-9_]+$", "x-securityClassification": { data_class: "class4", data_category: "OrgCompany" },
     });
     expect(schema.required).toEqual(["tenant"]);
     expect(result.output.match(/x-securityClassification/g)).toHaveLength(2); // both extension spellings collapse into one key

@@ -240,7 +240,7 @@ describe("security 8: reasons do not leak", () => {
 
 describe("internal git hosts", () => {
   const PP_ROOT =
-    "https://github.paypal.com/ApiSpecifications-R/identity.CommonComponentsSpecification/blob/master/v1/schema/json/openapi-3.0/components/schemas/address.json";
+    "https://github.example.com/Acme/common-components/blob/master/v1/schema/json/openapi-3.0/components/schemas/address.json";
   const PP_DIR = "v1/schema/json/openapi-3.0/components/schemas";
 
   function gitDeps(files: Record<string, string>) {
@@ -261,7 +261,7 @@ describe("internal git hosts", () => {
     return { deps, calls };
   }
 
-  it("(d) resolves PayPal-shaped relative refs against the root file's own coordinates", async () => {
+  it("(d) resolves Acme-shaped relative refs against the root file's own coordinates", async () => {
     const { deps, calls } = gitDeps({
       [`${PP_DIR}/address_normalization_status.json`]: json({ enum: ["A"] }),
       [`${PP_DIR}/address_tags_type.json`]: json({ enum: ["B"] }),
@@ -275,14 +275,14 @@ describe("internal git hosts", () => {
     });
     const r = await resolveJsonSchemaRefs(PP_ROOT, root, deps);
     for (const c of calls) {
-      expect(c).toMatchObject({ host: "github.paypal.com", owner: "ApiSpecifications-R", repo: "identity.CommonComponentsSpecification", ref: "master" });
+      expect(c).toMatchObject({ host: "github.example.com", owner: "Acme", repo: "common-components", ref: "master" });
     }
     const paths = calls.map((c) => c.path).sort();
     // Standard URL resolution: ../../ from .../components/schemas/ lands on .../openapi-3.0/
     const portable = "v1/schema/json/openapi-3.0/common_components/v5/schema/json/openapi-3.0/components/schemas/address/address_portable.json";
     expect(paths).toEqual([`${PP_DIR}/address_normalization_status.json`, `${PP_DIR}/address_tags_type.json`, portable].sort());
     expect(r.resolved.size).toBe(3); // root + 2 siblings
-    const blob = (p: string) => `https://github.paypal.com/ApiSpecifications-R/identity.CommonComponentsSpecification/blob/master/${p}`;
+    const blob = (p: string) => `https://github.example.com/Acme/common-components/blob/master/${p}`;
     expect(r.resolved.has(blob(`${PP_DIR}/address_tags_type.json`))).toBe(true);
     expect(r.unreachable.has(blob(portable))).toBe(true);
   });
@@ -297,8 +297,8 @@ describe("internal git hosts", () => {
 
   it("accepts raw and API-style root URLs", async () => {
     const { deps, calls } = gitDeps({ "d/s.json": json({ a: 1 }) });
-    await resolveJsonSchemaRefs("https://github.paypal.com/o/r/raw/main/d/root.json", json({ a: { $ref: "s.json" } }), deps);
-    await resolveJsonSchemaRefs("https://github.paypal.com/api/v3/repos/o/r/contents/d/root.json?ref=dev", json({ a: { $ref: "s.json" } }), deps);
+    await resolveJsonSchemaRefs("https://github.example.com/o/r/raw/main/d/root.json", json({ a: { $ref: "s.json" } }), deps);
+    await resolveJsonSchemaRefs("https://github.example.com/api/v3/repos/o/r/contents/d/root.json?ref=dev", json({ a: { $ref: "s.json" } }), deps);
     expect(calls.map((c) => [c.owner, c.repo, c.ref, c.path])).toEqual([
       ["o", "r", "main", "d/s.json"],
       ["o", "r", "dev", "d/s.json"],
@@ -322,7 +322,7 @@ describe("internal git hosts", () => {
 
   it("does not use gh for a git-host ref reached over http:", async () => {
     const { deps, calls } = gitDeps({});
-    const r = await resolveJsonSchemaRefs(PP_ROOT, json({ a: { $ref: "http://github.paypal.com/o/r/blob/m/a.json" } }), deps);
+    const r = await resolveJsonSchemaRefs(PP_ROOT, json({ a: { $ref: "http://github.example.com/o/r/blob/m/a.json" } }), deps);
     expect(calls).toHaveLength(0);
     expect([...r.unreachable.values()][0]).toContain('"http"');
   });
@@ -381,11 +381,11 @@ describe("security 4: gh is spawned with an argument array", () => {
   it("passes owner/repo/ref/path as discrete argv elements to the gh binary", async () => {
     const { exec, calls } = fakeExec();
     const f = createGhFetchGitFile(exec, limits);
-    const out = await f("github.paypal.com", "o", "r", "master", "a/b c.json");
+    const out = await f("github.example.com", "o", "r", "master", "a/b c.json");
     expect(out).toBe('{"ok":true}');
     expect(calls[0]!.file).toBe("gh");
     expect(calls[0]!.args).toEqual([
-      "api", "--hostname", "github.paypal.com", "-H", "Accept: application/vnd.github.raw", "--",
+      "api", "--hostname", "github.example.com", "-H", "Accept: application/vnd.github.raw", "--",
       "repos/o/r/contents/a/b%20c.json?ref=master",
     ]);
   });
@@ -399,7 +399,7 @@ describe("security 4: gh is spawned with an argument array", () => {
   ])("refuses %s without ever spawning", async (_n, owner, repo, path) => {
     const { exec } = fakeExec();
     const f = createGhFetchGitFile(exec, limits);
-    await expect(f("github.paypal.com", owner, repo, "master", path)).rejects.toThrow();
+    await expect(f("github.example.com", owner, repo, "master", path)).rejects.toThrow();
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -414,8 +414,8 @@ describe("security 4: gh is spawned with an argument array", () => {
       createGhFetchGitFile(async () => {
         throw Object.assign(new Error(msg), { code, stderr: msg });
       }, limits);
-    await expect(mk("gh: Not Found (HTTP 404) /Users/bob/x")("github.paypal.com", "o", "r", "m", "a.json")).rejects.toThrow(/not found/i);
-    await expect(mk("gh: To get started with GitHub CLI, please run: gh auth login")("github.paypal.com", "o", "r", "m", "a.json")).rejects.toThrow(/auth/i);
-    await expect(mk("spawn gh ENOENT", "ENOENT")("github.paypal.com", "o", "r", "m", "a.json")).rejects.toThrow(/not available/i);
+    await expect(mk("gh: Not Found (HTTP 404) /Users/bob/x")("github.example.com", "o", "r", "m", "a.json")).rejects.toThrow(/not found/i);
+    await expect(mk("gh: To get started with GitHub CLI, please run: gh auth login")("github.example.com", "o", "r", "m", "a.json")).rejects.toThrow(/auth/i);
+    await expect(mk("spawn gh ENOENT", "ENOENT")("github.example.com", "o", "r", "m", "a.json")).rejects.toThrow(/not available/i);
   });
 });

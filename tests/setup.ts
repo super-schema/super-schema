@@ -6,3 +6,6 @@ import { vi } from "vitest";
 // any file that transitively imports a server-only-guarded module (directly
 // or via another module, e.g. a server action file) just works.
 vi.mock("server-only", () => ({}));
+
+// The git hosts the JSON Schema importer may fetch through `gh` (read once at module load).
+process.env.SCHEMA_IMPORT_GIT_HOSTS = "github.example.com";

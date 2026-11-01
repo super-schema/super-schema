@@ -8,7 +8,7 @@ function data(content: unknown) {
 }
 
 describe("JSON Schema importer: allOf merge semantics", () => {
-  it("1. root allOf with an external $ref base becomes extends + inline fields + warning (PayPal address)", () => {
+  it("1. root allOf with an external $ref base becomes extends + inline fields + warning (Acme address)", () => {
     const d = data({
       title: "address",
       type: "object",

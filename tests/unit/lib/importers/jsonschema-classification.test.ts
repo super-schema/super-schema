@@ -265,7 +265,7 @@ describe("classification import: allOf and x-classification", () => {
   });
 });
 
-const USER_EVENT = `{"type":"object","description":"A user event containing user level customer id information used to link a user across different tenants.","properties":{"component":{"type":"string","description":"Name of the source component logging the user event(s).","minLength":1,"maxLength":100,"pattern":"^([A-Za-z0-9-_])+$","x-securityClassification":{"data_class":"class4","data_category":"Intrinsic"}},"tenant":{"type":"string","description":"Name of the adjacency to PayPal.","minLength":1,"maxLength":100,"pattern":"^[a-z0-9_]+$","x-securityClassification":{"data_class":"class4","data_category":"PayPalCompany"}},"created_time":{"description":"Event creation timestamp.","$ref":"common_components/v4/schema/json/openapi-2.0/date_time.json","x-securityClassification":{"data_class":"class4","data_category":"Intrinsic"}},"user_links":{"type":"array","description":"List of list of users and their customer ids along with tenant information.","minItems":1,"maxItems":100,"items":{"$ref":"user_links.json"}}},"required":["user_links","created_time","tenant"]}`;
+const USER_EVENT = `{"type":"object","description":"A user event containing user level customer id information used to link a user across different tenants.","properties":{"component":{"type":"string","description":"Name of the source component logging the user event(s).","minLength":1,"maxLength":100,"pattern":"^([A-Za-z0-9-_])+$","x-securityClassification":{"data_class":"class4","data_category":"Intrinsic"}},"tenant":{"type":"string","description":"Name of the adjacency to Acme.","minLength":1,"maxLength":100,"pattern":"^[a-z0-9_]+$","x-securityClassification":{"data_class":"class4","data_category":"OrgCompany"}},"created_time":{"description":"Event creation timestamp.","$ref":"common_components/v4/schema/json/openapi-2.0/date_time.json","x-securityClassification":{"data_class":"class4","data_category":"Intrinsic"}},"user_links":{"type":"array","description":"List of list of users and their customer ids along with tenant information.","minItems":1,"maxItems":100,"items":{"$ref":"user_links.json"}}},"required":["user_links","created_time","tenant"]}`;
 
 describe("the user's `user event` schema", () => {
   const doc = data(parseJsonSchemaDocument(USER_EVENT));
@@ -278,7 +278,7 @@ describe("the user's `user event` schema", () => {
     expect(get("created_time").classification).toBe("class4");
     expect(get("created_time").governance?.dataCategory).toBe("Intrinsic");
     expect(get("tenant").classification).toBe("class4");
-    expect(get("tenant").governance?.dataCategory).toBe("PayPalCompany");
+    expect(get("tenant").governance?.dataCategory).toBe("OrgCompany");
     expect(get("user_links").classification).toBeUndefined();
     expect(get("user_links").governance?.dataClass).toBeUndefined();
   });
@@ -299,7 +299,7 @@ describe("the user's `user event` schema", () => {
     const tenant = fields.find((f) => f.name === "tenant")!;
     expect(tenant.classification).toBe("class4");
     const governance = (tenant.decorators as { governance?: Record<string, unknown> }).governance;
-    expect(governance).toMatchObject({ dataClass: "class4", dataCategory: "PayPalCompany" });
+    expect(governance).toMatchObject({ dataClass: "class4", dataCategory: "OrgCompany" });
     const unclassified = fields.find((f) => f.name === "user_links")!;
     expect(unclassified.classification).toBeNull();
   });

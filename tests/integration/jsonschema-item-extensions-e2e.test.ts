@@ -1,5 +1,5 @@
 /**
- * Item-level extensions end to end (spec "Item-level extensions", path C): the PayPal `links.items.x-visibility` case.
+ * Item-level extensions end to end (spec "Item-level extensions", path C): the Acme `links.items.x-visibility` case.
  * JSON Schema text -> import -> persisted field rows -> generated TypeSpec -> the official @typespec/json-schema and @typespec/openapi3
  * emitters. The extension that sat on the array's `items` must still be in the emitted schema (on the array property, where the field
  * carries it), next to the raw `$ref` of the items and the element constraints the IR cannot hold.
@@ -17,7 +17,7 @@ import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emit
 
 vi.mock("server-only", () => ({}));
 
-const PAYPAL_LIKE = {
+const ORG_LIKE = {
   title: "Payment",
   type: "object",
   description: "A payment with HATEOAS links.",
@@ -43,7 +43,7 @@ let rows: Row[];
 let warnings: string[];
 
 async function persist(): Promise<void> {
-  const parsed = parseJsonSchemaDocument(JSON.stringify(PAYPAL_LIKE));
+  const parsed = parseJsonSchemaDocument(JSON.stringify(ORG_LIKE));
   if (!parsed.success) throw new Error(parsed.error.message);
   warnings = parsed.data.warnings;
   const payload = buildImportAssetsPayload(toAssetImportResult(parsed.data), {

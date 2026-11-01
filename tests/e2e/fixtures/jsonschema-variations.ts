@@ -67,8 +67,8 @@ const j = (o: unknown) => JSON.stringify(o);
 
 export const VARIATIONS: Variation[] = [
   {
-    id: "paypal-address-ref-allof",
-    title: "PayPal-style address: in-document $ref and allOf",
+    id: "org-address-ref-allof",
+    title: "Acme-style address: in-document $ref and allOf",
     kind: "multi",
     entityName: "Account",
     text: j({
@@ -363,18 +363,18 @@ export const VARIATIONS: Variation[] = [
         email: {
           type: "string",
           format: "email",
-          "x-securityClassification": { data_class: "class4", data_category: "PayPalCompany" },
+          "x-securityClassification": { data_class: "class4", data_category: "OrgCompany" },
         },
         nickname: { type: "string" },
       },
       required: ["customer_id"],
     }),
-    review: ["customer_id", "class3", "class4", "PayPalCompany"],
+    review: ["customer_id", "class3", "class4", "OrgCompany"],
     required: ["customer_id"],
-    jsonSchema: ["x-securityClassification", "PayPalCompany", "class4"],
+    jsonSchema: ["x-securityClassification", "OrgCompany", "class4"],
     openapi: ["x-securityClassification", "class4"],
     rename: ["nickname", "alias"],
-    survives: ["x-securityClassification", "PayPalCompany", "class4"],
+    survives: ["x-securityClassification", "OrgCompany", "class4"],
     primaryKey: ["customer_id"],
   },
   {

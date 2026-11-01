@@ -50,7 +50,7 @@ describe("items of an array field", () => {
   });
 });
 
-describe("items that is a $ref (the PayPal links.items.x-visibility case)", () => {
+describe("items that is a $ref (the Acme links.items.x-visibility case)", () => {
   const doc = importDoc({
     title: "R", type: "object", required: ["links"],
     properties: { links: { type: "array", items: { $ref: "#/$defs/LinkDescription", "x-visibility": { extent: "EXTERNAL" } } } },

@@ -44,9 +44,9 @@ const entity = (d: MultiEntityImportResult, name: string) => d.entities.find((e)
 const field = (e: { fields: { name: string }[] }, name: string) => e.fields.find((f) => f.name === name)! as any;
 
 describe("importJsonSchemaFromUrl", () => {
-  it("(a) PayPal-shaped set: resolved enums by final name, dangling base recorded", async () => {
+  it("(a) Acme-shaped set: resolved enums by final name, dangling base recorded", async () => {
     const ROOT =
-      "https://github.paypal.com/ApiSpecifications-R/identity.CommonComponentsSpecification/blob/master/v1/schema/json/openapi-3.0/components/schemas/address.json";
+      "https://github.example.com/Acme/common-components/blob/master/v1/schema/json/openapi-3.0/components/schemas/address.json";
     const dir = "v1/schema/json/openapi-3.0/components/schemas/";
     const served: Record<string, string> = {
       [`${dir}address.json`]: json({
@@ -77,7 +77,7 @@ describe("importJsonSchemaFromUrl", () => {
         throw new Error("http must not be called");
       },
       lookup: PUBLIC,
-      gitImportConfig: { mode: "restricted", scopes: ["ApiSpecifications-R"] },
+      gitImportConfig: { mode: "restricted", scopes: ["Acme"] },
     });
     if (!r.success) throw new Error(r.error.message);
     const d = r.data;

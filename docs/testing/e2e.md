@@ -14,7 +14,7 @@ Before a release, on a machine with Docker running, **in this order**. The exit 
 
 - Docker running (Docker Desktop, Rancher Desktop, colima): `docker info`. The runner starts `postgres:16` and removes it again.
 - Node 22 or 20.9+, through nvm: `nvm install 22 && nvm use 22` in the checkout (`.nvmrc`), or `nvm use 20`. Node 24 runs with an "untested" warning; Node 25 and 26 are refused (exit 2).
-- `npm ci`, with the registry and the sibling repository it needs ([CI prerequisites](#ci-prerequisites-what-npm-ci-needs-on-a-runner) says what: the same applies on a developer machine).
+- `npm ci`, with the sibling repository it needs ([CI prerequisites](#ci-prerequisites-what-npm-ci-needs-on-a-runner) says what: the same applies on a developer machine).
 - The browsers: `npx playwright install chromium firefox webkit` once. Firefox and WebKit are needed only for the smoke tier's three browsers (a smoke run without them fails for those two projects); Chromium
   is the default, and Google Chrome is used instead when the machine has it.
 - The Playwright image, for the visual tier: `docker pull mcr.microsoft.com/playwright:v$(node -p "require('@playwright/test/package.json').version")-jammy` (about 2.5 GB; the runner never pulls it).
@@ -269,9 +269,7 @@ triggered anywhere yet), so treat what follows as what a maintainer has to set u
 1. **The `file:` packages.** `package.json` links the emitters of the sibling repository `typespec`: `@typespec/avro`, `@typespec/bigquery`, `@typespec/java-pojo`, `@typespec/postgres` and `@typespec/spanner`, all
    `file:../typespec/packages/<name>`, and (inside this repository) `@superschema/typespec-enterprise` as `file:vendor/typespec-enterprise`. `npm ci` links them, it does not build them: the app runs their `dist`.
    The sibling repository must be checked out at `../typespec` (next to the checkout) and **built** (`npm ci && npm run build` in each of those five packages) before `npm ci` here.
-2. **The registries.** `package-lock.json` resolves its packages through two internal registries: `artifactory.g.devqa.gcp.dev.paypalinc.com` (about 1,170 of them) and `us-central1-npm.pkg.dev` (about 210). A
-   runner has to reach both: a **self-hosted runner inside the network** (GitHub-hosted runners cannot), with an auth token for each as the secret `NPM_TOKEN`, written to an `.npmrc` by the job from the secret (never committed;
-   the repository has no `.npmrc`). The registry URLs and scopes are the ones of your own `~/.npmrc`.
+2. **The registry.** `package-lock.json` resolves every package through the public npm registry (`registry.npmjs.org`), so a runner needs no registry credentials or `.npmrc`.
 3. **Node.** `actions/setup-node` with Node 22 (the jobs do), and Docker on the runner (the runner starts a throwaway PostgreSQL; a self-hosted runner needs Docker installed and usable by the job's user).
 4. `.github/workflows/ci.yml` (the unit tests) has the same prerequisite for its own `npm ci`.
 
@@ -281,7 +279,7 @@ A job that does all of that: **UNTESTED**, to be adapted to the real runner labe
 # UNTESTED. Put these steps first in every job of e2e.yml (and ci.yml), before `npm ci`; replace every <placeholder>.
 jobs:
   smoke:
-    runs-on: [self-hosted, linux, <label of a runner inside the network that reaches both registries and has Docker>]
+    runs-on: [self-hosted, linux, <label of a runner that has Docker>]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -289,16 +287,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Registry access (an .npmrc written from the secret, never committed)
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          {
-            echo "@typespec:registry=<the internal registry of the @typespec packages, as in your ~/.npmrc>"
-            echo "registry=<the default internal registry, as in your ~/.npmrc>"
-            echo "//<host of the default registry>/:_authToken=${NPM_TOKEN}"
-            echo "//us-central1-npm.pkg.dev/<project>/<repository>/:_authToken=${NPM_TOKEN}"
-          } > "$HOME/.npmrc"
       - name: The sibling repository the app links (a file: dependency at ../typespec), built
         env:
           TYPESPEC_REPO_TOKEN: ${{ secrets.TYPESPEC_REPO_TOKEN }}   # read access to that repository
@@ -312,7 +300,7 @@ jobs:
       # ... the job continues as in e2e.yml: prisma generate, browsers, npm run test:e2e:release -- --tier smoke
 ```
 
-Until that exists, the supported way to run the release check is on a developer machine (the checklist above), which has the registry access and the sibling repository already.
+Until that exists, the supported way to run the release check is on a developer machine (the checklist above), which has the sibling repository already.
 
 ### Making `smoke` gate merges (branch protection)
 
@@ -385,7 +373,7 @@ collect the reports in one place, as the jobs do.
 - Do not run the regression shards of one job on one checkout at the same time without `--reuse-build` (they share `.next`). In CI every
   shard has a machine of its own.
 - Prerequisite: `npm ci` must succeed on the runner. `package.json` has `file:../typespec/packages/*` dependencies and the lockfile
-  resolves from internal registries; a runner without that network and registry access, and without the sibling `typespec` repository
+  resolves from the public npm registry; a runner without the sibling `typespec` repository
   built at `../typespec`, fails at `npm ci`. `ci.yml` needs the same, and this workflow adds nothing for it: if `npm ci` fails, it fails
   in both workflows, and the fix belongs to both. (The same note is at the top of `.github/workflows/e2e.yml`.)
 - `tests/unit/ci-e2e-workflow.test.ts` reads the workflow as YAML (read-only permissions, first-party actions only, a timeout on every

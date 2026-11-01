@@ -64,45 +64,45 @@ describe("Important 1: one malformed $ref does not abort the rest", () => {
 });
 
 describe("Important 2: git fetches are scoped to the root's organization", () => {
-  const PP = "https://github.paypal.com/ApiSpecifications-R/repoA/blob/master/d/root.json";
+  const PP = "https://github.example.com/Acme/repoA/blob/master/d/root.json";
   const ref = (u: string) => json({ a: { $ref: u } });
 
   it("allows another repo of the same owner", async () => {
     const { deps, git } = mk({ "z/x.json": json({ ok: 1 }) });
-    const r = await resolveJsonSchemaRefs(PP, ref("https://github.paypal.com/ApiSpecifications-R/repoB/blob/main/z/x.json"), deps);
-    expect(git).toEqual([["github.paypal.com", "ApiSpecifications-R", "repoB", "main", "z/x.json"]]);
+    const r = await resolveJsonSchemaRefs(PP, ref("https://github.example.com/Acme/repoB/blob/main/z/x.json"), deps);
+    expect(git).toEqual([["github.example.com", "Acme", "repoB", "main", "z/x.json"]]);
     expect(r.resolved.size).toBe(2);
   });
 
   it("refuses another owner with the documented reason and zero gh calls", async () => {
     const { deps, git } = mk({ "z/x.json": json({ ok: 1 }) });
-    const u = "https://github.paypal.com/OtherOrg/repoB/blob/main/z/x.json";
+    const u = "https://github.example.com/OtherOrg/repoB/blob/main/z/x.json";
     const r = await resolveJsonSchemaRefs(PP, ref(u), deps);
     expect(git).toHaveLength(0);
     expect(r.unreachable.get(u)).toBe("outside the root document's organization; not fetched");
   });
 
   it("extraGitScopes (host/owner and host/owner/repo) opt in", async () => {
-    const u = "https://github.paypal.com/OtherOrg/repoB/blob/main/z/x.json";
-    for (const scope of ["github.paypal.com/OtherOrg", "github.paypal.com/OtherOrg/repoB"]) {
+    const u = "https://github.example.com/OtherOrg/repoB/blob/main/z/x.json";
+    for (const scope of ["github.example.com/OtherOrg", "github.example.com/OtherOrg/repoB"]) {
       const { deps, git } = mk({ "z/x.json": json({ ok: 1 }) }, { extraGitScopes: [scope] });
       await resolveJsonSchemaRefs(PP, ref(u), deps);
       expect(git).toHaveLength(1);
     }
-    const { deps, git } = mk({}, { extraGitScopes: ["github.paypal.com/OtherOrg/repoC"] });
+    const { deps, git } = mk({}, { extraGitScopes: ["github.example.com/OtherOrg/repoC"] });
     await resolveJsonSchemaRefs(PP, ref(u), deps);
     expect(git).toHaveLength(0);
   });
 
   it("a plain-https root never triggers gh", async () => {
     const { deps, git, http } = mk({});
-    const r = await resolveJsonSchemaRefs(ROOT, ref("https://github.paypal.com/o/r/blob/m/a.json"), deps);
+    const r = await resolveJsonSchemaRefs(ROOT, ref("https://github.example.com/o/r/blob/m/a.json"), deps);
     expect(git).toHaveLength(0);
     expect(http).toHaveLength(0);
     expect([...r.unreachable.values()][0]).toMatch(/outside the root document's organization/);
   });
 
-  it.each(["https://github.paypal.com.evil.com/o/r/blob/m/a.json", "https://github.paypal.com./ApiSpecifications-R/r/blob/m/a.json"])(
+  it.each(["https://github.example.com.evil.com/o/r/blob/m/a.json", "https://github.example.com./Acme/r/blob/m/a.json"])(
     "lookalike host %s takes the plain https path with zero gh calls",
     async (u) => {
       const { deps, git, http } = mk({});
@@ -197,7 +197,7 @@ describe("gh failure reasons", () => {
     const f = createGhFetchGitFile(async () => {
       throw Object.assign(new Error("stdout maxBuffer length exceeded"), { killed: true, code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
     });
-    await expect(f("github.paypal.com", "o", "r", "m", "a.json")).rejects.toThrow(/size limit/);
+    await expect(f("github.example.com", "o", "r", "m", "a.json")).rejects.toThrow(/size limit/);
   });
 });
 

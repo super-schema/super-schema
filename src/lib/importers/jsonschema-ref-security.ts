@@ -11,8 +11,16 @@
  */
 import { isIP } from "node:net";
 
-/** Internal git hosts fetched through the authenticated `gh` CLI. */
-export const INTERNAL_GIT_HOSTS: readonly string[] = ["github.paypal.com"];
+/** Env var: comma-separated hostnames of the git hosts fetched through the authenticated `gh` CLI (default none = disabled). */
+export const GIT_HOSTS_ENV = "SCHEMA_IMPORT_GIT_HOSTS";
+
+export function parseGitHosts(raw: string | undefined): string[] {
+  if (typeof raw !== "string") return [];
+  return raw.split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+}
+
+/** Git hosts fetched through the authenticated `gh` CLI, read from SCHEMA_IMPORT_GIT_HOSTS. */
+export const INTERNAL_GIT_HOSTS: readonly string[] = parseGitHosts(process.env[GIT_HOSTS_ENV]);
 
 export interface Limits {
   maxFiles: number;
