@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { ChevronDown, ChevronRight, Clock, GitBranch, GitCompare, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock, GitCompare, Loader2 } from "lucide-react";
+import { VersioningIcon } from "@/components/icons/feature-icons";
 import { Button } from "@/components/ui/button";
 import type { VersionSnapshot, ChangeEntry } from "@/services/version-history/version.types";
 import { summarizeChanges } from "@/lib/diff/field-diff";
@@ -251,7 +252,7 @@ export function VersionHistoryPanel({
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/50">
         <div className="flex items-center gap-2">
-          <GitBranch className="w-4 h-4 text-muted-foreground" />
+          <VersioningIcon className="w-4 h-4 text-muted-foreground" />
           <h3 className="text-body font-medium text-foreground">
             Version History
           </h3>

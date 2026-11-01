@@ -1,8 +1,12 @@
 # Feature icons
 
 Eight SVG feature icons for Super Schema, alongside the three product-icon
-concepts in the parent directory. These files are assets for review; existing
-Lucide components in the application have not been replaced.
+concepts in the parent directory. The application renders the same geometry in
+[`feature-icons.tsx`](../../../../src/components/icons/feature-icons.tsx), with
+decorative SVGs that preserve the accessible names of their surrounding controls.
+The components are used in navigation, workspaces, creation menus, API and event
+states, generation actions, and version history. Generic action and status icons
+continue to use Lucide.
 
 [Preview sheet](preview.svg) · [PNG preview](preview.png)
 
@@ -47,6 +51,6 @@ references and lineage; Schema Generation represents a shared model producing
 multiple outputs. The [parent brief](../README.md) records the source documents.
 
 The preview shows each symbol at 16, 24, 32, and 48 px and on dark/light surfaces.
-SVG structure and links are checked, and the rendered sheet is reviewed. Actual
-application placement, interaction, and accessibility still need validation when
-these assets are integrated.
+SVG structure and links are checked, and the rendered sheet is reviewed.
+The browser layout suite checks that the product mark and browser icon load and
+that feature navigation keeps its accessible labels.

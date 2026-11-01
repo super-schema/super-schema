@@ -14,6 +14,7 @@ import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { useModKey } from "@/lib/platform";
 import { NotificationCenter } from "@/components/custom/NotificationCenter";
 import { TenantSwitcher } from "@/components/layout/TenantSwitcher";
+import { ProductMark } from "@/components/icons/product-mark";
 
 /**
  * `showAdmin`: the person administers the tenant in view or the platform (the server's reading of the policy, handed down by the dashboard layout), so the
@@ -31,8 +32,9 @@ export function TopBar({ showAdmin = false }: { showAdmin?: boolean } = {}) {
     >
       {/* Left: Logo + organization switcher */}
       <div className="flex items-center gap-space-3">
-        <span className="text-heading-3 text-primary font-semibold">
-          Super Schema
+        <span className="flex shrink-0 items-center gap-space-2 text-heading-3 text-primary font-semibold">
+          <ProductMark />
+          <span>Super Schema</span>
         </span>
         <TenantSwitcher />
       </div>

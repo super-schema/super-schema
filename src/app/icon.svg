@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <clipPath id="schema-fold">
+      <path d="M48 24h-8v-6H24v7l20 11q4 2 4 7v3q0 8-8 8H24q-8 0-8-8v-6h8v6h16v-5L20 30q-4-2-4-7v-5q0-8 8-8h16q8 0 8 8Z"/>
+    </clipPath>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="#14141C"/>
+  <g clip-path="url(#schema-fold)">
+    <path d="M0 0h64v64H0Z" fill="#A97FB7"/>
+    <path d="m0 15 64 35v14H0Z" fill="#F5C0C0"/>
+    <path d="m8 19.375 48 26.25" fill="none" stroke="#14141C" stroke-width="1.25"/>
+  </g>
+</svg>

@@ -2,7 +2,12 @@
 
 Three product/app-icon directions generated with the built-in image generation tool.
 Eight matching SVG feature icons are included in [features](features/README.md).
-These are assets for review; no application branding or favicon is replaced.
+Schema Fold is the selected product mark. Its production vector is
+[`src/app/icon.svg`](../../../src/app/icon.svg), shared by the header, auth
+screens, and Next.js browser-icon metadata. The PNGs remain the original concepts.
+GET and HEAD for this exact asset are public via
+[`public-assets.ts`](../../../src/lib/public-assets.ts); image-like page URLs
+and writes still pass through the session checks.
 
 ## Product brief
 
@@ -73,9 +78,10 @@ Exact prompts are preserved in [PROMPTS.md](PROMPTS.md).
 
 All three outputs are 1254 × 1254 RGBA PNGs. PNG chunk checksums, decompression,
 square dimensions, a transparent corner, and local documentation links were
-checked. The rendered outputs were visually reviewed. Application tests were
-not run because the changes contain only artwork and documentation.
+checked. The rendered outputs were visually reviewed. The concept-generation
+round contained only artwork and documentation. The later application integration
+uses SVG components and adds browser coverage for branding and navigation labels.
 
-The three product icons are alternatives, not a combined icon family. Select one direction
-before drawing production vector artwork, making small-size variants, or
-changing application branding. Trademark clearance has not been performed.
+The three product PNGs are alternatives, not a combined icon family. Schema Fold
+has been adapted to vector geometry and exact palette values for application use.
+Trademark clearance has not been performed.

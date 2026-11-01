@@ -6,7 +6,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Radio } from "lucide-react";
+import { Plus } from "lucide-react";
+import { EventIcon } from "@/components/icons/feature-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { EventListItem } from "@/features/events/event-page/load-events-list";
@@ -75,7 +76,7 @@ export function EventsList({ productId, domainSlug, productSlug, items, viewMode
     <div className="space-y-space-4" data-testid="events-tab">
       {items.length === 0 ? (
         <div data-testid="events-empty" className="flex flex-col items-center justify-center py-16 text-center">
-          <Radio className="mb-space-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />
+          <EventIcon className="mb-space-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />
           <h2 className="mb-space-2 text-heading-1 text-foreground">No events yet</h2>
           <p className="mb-space-6 max-w-md text-body text-muted-foreground">
             An event is the AsyncAPI document of what this product sends and receives: its servers, channels, messages and operations.

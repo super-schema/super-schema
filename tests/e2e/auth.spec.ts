@@ -504,6 +504,7 @@ test.describe("a visitor with a forged or stale session cookie", () => {
 
   test("a GET of a page address that ends like an image (/schemas/foo.png) meets the door: no session, no page; the favicon is public", { tag: ["@regression"] }, async ({
     request,
+    page,
   }) => {
     for (const path of ["/schemas/foo.png", "/schemas/billing/foo.svg", "/schemas/a/b/c.jpg", "/schemas/foo.PNG"]) {
       for (const cookie of [undefined, `authjs.session-token=${FORGED}`]) {
@@ -513,9 +514,13 @@ test.describe("a visitor with a forged or stale session cookie", () => {
       }
     }
     // The one listed public asset is served without a session (it is what the login page's tab shows).
-    const favicon = await request.get("/favicon.ico", { maxRedirects: 0, failOnStatusCode: false });
+    const favicon = await request.get("/icon.svg", { maxRedirects: 0, failOnStatusCode: false });
     expect(favicon.status()).toBe(200);
-    expect(favicon.headers()["content-type"]).toMatch(/image\//);
+    expect(favicon.headers()["content-type"]).toContain("image/svg+xml");
+    await openLogin(page);
+    const mark = page.locator('img[src="/icon.svg"]');
+    await expect(mark).toBeVisible();
+    await expect.poll(() => mark.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
   });
 
   test("odd spellings of the endpoint's address (//api, /API, an encoded letter, an encoded slash under /login) serve no data without a session", { tag: ["@regression"] }, async ({

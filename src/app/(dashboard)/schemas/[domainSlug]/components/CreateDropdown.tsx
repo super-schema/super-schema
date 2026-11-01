@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, Database, Globe, Hash, Plus, Puzzle, Radio } from "lucide-react";
+import { ChevronDown, Plus, Puzzle } from "lucide-react";
+import { EntityIcon, DataTypeIcon, ApiIcon, EventIcon } from "@/components/icons/feature-icons";
 import { Button } from "@/components/ui/button";
 import { NEW_PROPERTIES_DESCRIPTION, NEW_PROPERTIES_MENU } from "@/features/events/builder/labels";
 import { useModKey } from "@/lib/platform";
@@ -52,20 +53,20 @@ export function CreateDropdown({
 
   const entityItem: DropdownItem = {
     label: "New Entity",
-    icon: Database,
+    icon: EntityIcon,
     action: onNewEntity,
     description: "Schema entity with fields",
   };
   const customDataTypeItem: DropdownItem = {
     label: "New Custom Data Type",
-    icon: Hash,
+    icon: DataTypeIcon,
     action: onNewCustomDataType,
     description: "Enum, scalar or union",
   };
   const apiItem: DropdownItem | null = onNewApi
     ? {
         label: "New API",
-        icon: Globe,
+        icon: ApiIcon,
         action: onNewApi,
         description: "API service definition",
       }
@@ -77,7 +78,7 @@ export function CreateDropdown({
     description: string
   ): DropdownItem | null => (action ? { label, icon, action, description } : null);
   const eventItems = [
-    optional("New Event", Radio, onNewEvent, "AsyncAPI event specification"),
+    optional("New Event", EventIcon, onNewEvent, "AsyncAPI event specification"),
     optional(NEW_PROPERTIES_MENU, Puzzle, onNewTrait, NEW_PROPERTIES_DESCRIPTION),
   ].filter((item): item is DropdownItem => item !== null);
 

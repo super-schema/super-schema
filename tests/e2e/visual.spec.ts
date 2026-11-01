@@ -78,6 +78,9 @@ async function openAsAdmin(page: Page, baseURL: string | undefined, path: string
 /** The page, settled, against the snapshot called `name` (visual.spec.ts-snapshots/<name>-visual-linux.png). */
 async function expectSnapshot(page: Page, name: string): Promise<void> {
   await waitForQuietPage(page);
+  const mark = page.locator('img[src="/icon.svg"]');
+  await expect(mark).toBeVisible();
+  await expect.poll(() => mark.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
   await expect(page).toHaveScreenshot(`${name}.png`, { mask: volatile(page), maskColor: "#ff00ff" });
 }
 

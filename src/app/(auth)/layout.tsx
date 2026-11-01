@@ -1,3 +1,5 @@
+import { ProductMark } from "@/components/icons/product-mark";
+
 export default function AuthLayout({
   children,
 }: {
@@ -24,6 +26,10 @@ export default function AuthLayout({
 
       {/* Content */}
       <div className="relative z-10 w-full max-w-[420px] animate-auth-fade-up">
+        <div className="mb-space-6 flex items-center justify-center gap-space-2 text-heading-3 font-semibold text-primary">
+          <ProductMark />
+          <span>Super Schema</span>
+        </div>
         {children}
       </div>
     </div>

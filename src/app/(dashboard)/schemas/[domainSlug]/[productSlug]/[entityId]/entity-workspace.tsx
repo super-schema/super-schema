@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Zap, Upload } from "lucide-react";
+import { Upload } from "lucide-react";
+import { GenerationIcon } from "@/components/icons/feature-icons";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UnsavedChangesDialog } from "@/features/events/builder/UnsavedChangesDialog";
@@ -815,7 +816,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
           {fieldBusy ? "Saving field edits…" : isFieldDirty ? "Unsaved field edits" : versionState.hasUnpublishedChanges ? "Draft saved · unpublished changes" : versionState.latestVersionLabel ? `Published v${versionState.latestVersionLabel} · draft up to date` : "Draft saved · not published"}
         </p>
         {!readOnly_ && <Button type="button" variant="outline" size="sm" onClick={handleEmit} disabled={isEmitting || fieldBusy}>
-          <Zap data-icon="inline-start" aria-hidden="true" />{isEmitting ? "Generating…" : "Generate schemas"}
+          <GenerationIcon data-icon="inline-start" aria-hidden="true" />{isEmitting ? "Generating…" : "Generate schemas"}
         </Button>}
       </div>
 

@@ -6,8 +6,8 @@ import {
   Trash2,
   ChevronDown,
   ChevronRight,
-  Globe,
 } from "lucide-react";
+import { ApiIcon } from "@/components/icons/feature-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -390,7 +390,7 @@ export function ApiTab({
       {/* Operation list */}
       {operations.length === 0 && !isAdding && (
         <div data-testid="api-empty" className="text-center py-12 text-muted-foreground">
-          <Globe className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
+          <ApiIcon className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
           <p className="text-body-small">No API operations defined yet</p>
           <p className="text-caption mt-1">Add operations to define REST endpoints for this entity</p>
         </div>

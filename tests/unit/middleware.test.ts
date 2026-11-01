@@ -318,7 +318,7 @@ describe("the matcher and the shapes of an address", () => {
     // page address (`/schemas/[domainSlug]` is `/schemas/foo.png`): it meets the door like any other.
     ["/_next/static/x", "not matched"],
     ["/_next/image", "not matched"],
-    ["/favicon.ico", "pass"],
+    ["/icon.svg", "pass"],
     ["/a.png", "redirect /login"],
     ["/schemas/foo.png", "redirect /login"],
   ])("%s -> %s", async (path, expected) => {
@@ -343,12 +343,12 @@ describe("the matcher and the shapes of an address", () => {
       new NextRequest(url(path), { method: init.method ?? "POST", headers: init.headers, ...(init.multipart ? { body: multipart() } : {}) });
     const imageLike = ["/schemas/foo.png", "/schemas/billing/foo.svg", "/schemas/a/b/c.jpg", "/a.png", "/x.webp", "/schemas/foo.PNG", "/schemas/foo.gif", "/logo.png"];
 
-    it("the public assets are listed explicitly: the favicon, and no image of public/ (none is used by the app)", () => {
-      expect([...PUBLIC_ASSET_PATHS]).toEqual(["/favicon.ico"]);
+    it("the public asset is listed explicitly: the shared product mark and browser icon", () => {
+      expect([...PUBLIC_ASSET_PATHS]).toEqual(["/icon.svg"]);
       for (const path of PUBLIC_ASSET_PATHS) expect(path.startsWith("/") && !path.includes("*"), path).toBe(true);
     });
 
-    it.each([...imageLike, "/favicon.ico", "/schemas", "/", "/api/domains-tree"])("%s is matched, with or without the Next-Action header", (path) => {
+    it.each([...imageLike, "/icon.svg", "/schemas", "/", "/api/domains-tree"])("%s is matched, with or without the Next-Action header", (path) => {
       expect(matches(path), path).toBe(true);
       expect(matches(path, { "next-action": "40abc" }), path).toBe(true);
     });
@@ -357,7 +357,7 @@ describe("the matcher and the shapes of an address", () => {
       expect(matches(path), path).toBe(false);
     });
 
-    it.each([...imageLike, "/favicon.ico"])(
+    it.each([...imageLike, "/icon.svg"])(
       "a visitor without a session who POSTs to %s is refused: a Next-Action request gets 401, a multipart form is sent to /login",
       async (path) => {
         const action = await middleware(post(path, { headers: { "next-action": "40abc" } }));
@@ -396,11 +396,11 @@ describe("the matcher and the shapes of an address", () => {
     });
 
     it("does not let a look-alike of a listed asset through: another case, a suffix, a path under it, a query that names it", async () => {
-      for (const path of ["/Favicon.ico", "/favicon.ico.png", "/favicon.icox", "/x/favicon.ico", "/favicon.ico/x", "/%66avicon.ico"]) {
+      for (const path of ["/Icon.svg", "/icon.svg.png", "/icon.svgx", "/x/icon.svg", "/icon.svg/x", "/%69con.svg"]) {
         const response = await middleware(new NextRequest(url(path)));
         expect(response.headers.get("location"), path).not.toBeNull();
       }
-      const query = await middleware(new NextRequest(url("/schemas?x=/favicon.ico")));
+      const query = await middleware(new NextRequest(url("/schemas?x=/icon.svg")));
       expect(new URL(query.headers.get("location")!).pathname).toBe("/login");
     });
 

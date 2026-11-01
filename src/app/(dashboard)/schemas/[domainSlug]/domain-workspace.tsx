@@ -8,13 +8,10 @@ import {
   Plus,
   LayoutGrid,
   List,
-  Database,
-  Hash,
-  Globe,
-  Radio,
   Trash2,
   Pencil,
 } from "lucide-react";
+import { EntityIcon, DataTypeIcon, ApiIcon, EventIcon } from "@/components/icons/feature-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -59,10 +56,10 @@ const tabDomId = (id: DomainTab) => `product-tab-${id}`;
 const PANEL_DOM_ID = "product-tabpanel";
 
 const domainTabs: { icon: React.ComponentType<{ className?: string }>; label: string; id: DomainTab }[] = [
-  { icon: Database, label: "Entities", id: "entities" },
-  { icon: Radio, label: "Events", id: "events" },
-  { icon: Globe, label: "APIs", id: "apis" },
-  { icon: Hash, label: "Data Types", id: "data-types" },
+  { icon: EntityIcon, label: "Entities", id: "entities" },
+  { icon: EventIcon, label: "Events", id: "events" },
+  { icon: ApiIcon, label: "APIs", id: "apis" },
+  { icon: DataTypeIcon, label: "Data Types", id: "data-types" },
 ];
 
 interface EntityData {

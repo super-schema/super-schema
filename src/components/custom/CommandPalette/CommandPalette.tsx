@@ -12,11 +12,11 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import {
-  Database,
   Clock,
   Zap,
   ArrowRight,
 } from "lucide-react";
+import { EntityIcon } from "@/components/icons/feature-icons";
 import { Badge } from "@/components/ui/badge";
 import {
   getRecentEntityEntries,
@@ -278,7 +278,7 @@ export function CommandPalette({
                     onSelect={() => navigateToEntity(entity)}
                     className="gap-2 cursor-pointer"
                   >
-                    <Database className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <EntityIcon className="w-4 h-4 text-muted-foreground shrink-0" />
                     <span className="font-mono text-body-small">{entity.name}</span>
                     <div className="flex items-center gap-1.5 ml-auto">
                       {entity.status && (

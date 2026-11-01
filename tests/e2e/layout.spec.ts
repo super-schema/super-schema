@@ -47,6 +47,25 @@ test.describe("IDE Layout", () => {
     ).toBeVisible();
   });
 
+  test("product branding loads and feature icons preserve navigation labels", { tag: ["@regression"] }, async ({ authedPage: page }) => {
+    await openSchemas(page);
+
+    const mark = page.getByTestId("topbar").locator('img[src="/icon.svg"]');
+    await expect(mark).toBeVisible();
+    await expect(mark).toHaveAttribute("alt", "");
+    await expect.poll(() => mark.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+
+    const favicon = page.locator('head link[rel="icon"][type="image/svg+xml"]');
+    await expect(favicon).toHaveAttribute("href", /\/icon\.svg/);
+    const response = await page.request.get((await favicon.getAttribute("href"))!);
+    expect(response.ok()).toBe(true);
+    expect(response.headers()["content-type"]).toContain("image/svg+xml");
+
+    for (const [label, icon] of [["Schema Editor", "entities"], ["Lineage Graph", "relationships"], ["Governance", "governance"]]) {
+      await expect(page.getByRole("link", { name: label, exact: true }).locator(`svg[data-feature-icon="${icon}"]`)).toHaveAttribute("aria-hidden", "true");
+    }
+  });
+
   test("sidebar collapses and expands via double-click", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     await openSchemas(page);
 

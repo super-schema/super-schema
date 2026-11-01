@@ -3,14 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Database,
-  GitBranch,
-  ShieldCheck,
   ClipboardCheck,
   Settings,
   Rocket,
   BookOpen,
 } from "lucide-react";
+import { EntityIcon, RelationshipsIcon, GovernanceIcon } from "@/components/icons/feature-icons";
 import {
   Tooltip,
   TooltipContent,
@@ -19,10 +17,10 @@ import {
 } from "@/components/ui/tooltip";
 
 const navItems = [
-  { icon: Database, label: "Schema Editor", href: "/schemas" },
+  { icon: EntityIcon, label: "Schema Editor", href: "/schemas" },
   { icon: BookOpen, label: "Glossary", href: "/glossary" },
-  { icon: GitBranch, label: "Lineage Graph", href: "/lineage" },
-  { icon: ShieldCheck, label: "Governance", href: "/governance" },
+  { icon: RelationshipsIcon, label: "Lineage Graph", href: "/lineage" },
+  { icon: GovernanceIcon, label: "Governance", href: "/governance" },
   { icon: ClipboardCheck, label: "Compliance", href: "/compliance" },
   { icon: Rocket, label: "Deployments", href: "/deployments" },
 ];

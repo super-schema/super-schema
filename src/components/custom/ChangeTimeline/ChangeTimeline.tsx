@@ -4,17 +4,15 @@ import { useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
-  GitBranch,
   FileEdit,
   Palette,
   ArrowRightLeft,
-  Zap,
-  Shield,
   Clock,
   Plus,
   Pencil,
   Trash2,
 } from "lucide-react";
+import { VersioningIcon, GenerationIcon, GovernanceIcon } from "@/components/icons/feature-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { TimelineEntry, ChangeType } from "@/types/schemas/change-history";
@@ -33,12 +31,12 @@ function absoluteTime(timestamp: string): string {
 // --- Icons by change type ---
 
 const CHANGE_TYPE_ICON: Record<ChangeType, React.ReactNode> = {
-  version: <GitBranch className="w-4 h-4" />,
+  version: <VersioningIcon className="w-4 h-4" />,
   field_edit: <FileEdit className="w-4 h-4" />,
   decorator_change: <Palette className="w-4 h-4" />,
   status_change: <ArrowRightLeft className="w-4 h-4" />,
-  emission: <Zap className="w-4 h-4" />,
-  governance: <Shield className="w-4 h-4" />,
+  emission: <GenerationIcon className="w-4 h-4" />,
+  governance: <GovernanceIcon className="w-4 h-4" />,
   other: <Clock className="w-4 h-4" />,
 };
 

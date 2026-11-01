@@ -75,7 +75,7 @@ export async function middleware(req: NextRequest) {
 }
 
 /**
- * Only a GET or HEAD of one of the listed public assets (`/favicon.ico`, src/lib/public-assets.ts) is let through unchecked. The address
+ * Only a GET or HEAD of one of the listed public assets (`/icon.svg`, src/lib/public-assets.ts) is let through unchecked. The address
  * alone never decides for anything else: a page address can end like a file (`/schemas/foo.png` is `[domainSlug]`), a GET of it is a
  * page request, and a server action is POSTed to it, with a `Next-Action` header or, as a progressive-enhancement form, as a multipart
  * body that names the action and carries no such header.

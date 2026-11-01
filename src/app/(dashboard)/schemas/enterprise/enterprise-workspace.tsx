@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState, type KeyboardEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Database, FilePlus2, Hash, Puzzle } from "lucide-react";
+import { FilePlus2, Puzzle } from "lucide-react";
+import { EntityIcon, DataTypeIcon } from "@/components/icons/feature-icons";
 import { Button } from "@/components/ui/button";
 import { EntityCard } from "@/components/custom/EntityCard";
 import { assetHref } from "@/lib/navigation/asset-href";
@@ -32,9 +33,9 @@ export function normalizeEnterpriseTab(raw: string | null, fallback: EnterpriseT
   return fallback;
 }
 
-const TABS: { id: EnterpriseTab; label: string; icon: typeof Database }[] = [
-  { id: "entities", label: "Entities", icon: Database },
-  { id: "data-types", label: "Data Types", icon: Hash },
+const TABS: { id: EnterpriseTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: "entities", label: "Entities", icon: EntityIcon },
+  { id: "data-types", label: "Data Types", icon: DataTypeIcon },
   { id: "traits", label: PROPERTIES_TAB_LABEL, icon: Puzzle },
 ];
 

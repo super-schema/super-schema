@@ -9,13 +9,13 @@ import {
   Boxes,
   Code2,
   Server,
-  Zap,
   ChevronDown,
   Send,
   Check,
   AlertTriangle,
   Layers,
 } from "lucide-react";
+import { GenerationIcon } from "@/components/icons/feature-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -642,7 +642,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                     onClick={() => handleGenerate(selected.key)}
                     data-testid="schema-generate"
                   >
-                    {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                    {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GenerationIcon className="w-3.5 h-3.5" />}
                     {latestVersion ? "Regenerate" : "Generate"}
                   </Button>
                   <Button

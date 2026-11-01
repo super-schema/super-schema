@@ -4,17 +4,14 @@ import { Suspense, useCallback, useLayoutEffect, useMemo, useRef, useState, useT
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Building2,
-  Database,
   Folder,
   FolderOpen,
-  Globe,
-  Hash,
   Package,
   Puzzle,
-  Radio,
   RefreshCcw,
   Search,
 } from "lucide-react";
+import { EntityIcon, DataTypeIcon, ApiIcon, EventIcon } from "@/components/icons/feature-icons";
 import { Button } from "@/components/ui/button";
 import { PROPERTIES_TAB_LABEL } from "@/features/events/builder/labels";
 import { useDomainsTree } from "@/hooks/useDomainsTree";
@@ -300,7 +297,7 @@ function ExplorerSidebar({
                   active={inRoute && !activeTab && !isNonEntityDetail(pathname, base)}
                   count={product.entities.length}
                   expanded={entitiesExpanded}
-                  icon={Database}
+                  icon={EntityIcon}
                   label="Entities"
                   nodeKey={entitiesKey}
                   href={base}
@@ -317,7 +314,7 @@ function ExplorerSidebar({
                 testId={`product-${product.id}-data-types`}
                 active={pathname === base && isDataTypesTab(activeTab)}
                 count={product.counts.dataTypes}
-                icon={Hash}
+                icon={DataTypeIcon}
                 label="Data Types"
                 href={dataTypesHref}
                 pending={pendingTarget === dataTypesHref}
@@ -330,7 +327,7 @@ function ExplorerSidebar({
                 testId={`product-${product.id}-apis`}
                 active={pathname === base && activeTab === "apis"}
                 count={product.counts.apis}
-                icon={Globe}
+                icon={ApiIcon}
                 label="APIs"
                 href={apisHref}
                 pending={pendingTarget === apisHref}
@@ -343,7 +340,7 @@ function ExplorerSidebar({
                 testId={`product-${product.id}-events`}
                 active={(pathname === base && activeTab === "events") || isWithin(pathname, `${base}/${EVENT_PAGE_SEGMENT}`)}
                 count={product.counts.events}
-                icon={Radio}
+                icon={EventIcon}
                 label="Events"
                 href={eventsHref}
                 pending={pendingTarget === eventsHref}
@@ -397,7 +394,7 @@ function ExplorerSidebar({
                 testId={`domain-${domain.id}-data-types`}
                 active={pathname === base && isDataTypesTab(activeTab)}
                 count={domain.counts.dataTypes}
-                icon={Hash}
+                icon={DataTypeIcon}
                 label="Data Types"
                 href={dataTypesHref}
                 pending={pendingTarget === dataTypesHref}
@@ -410,7 +407,7 @@ function ExplorerSidebar({
                 testId={`domain-${domain.id}-apis`}
                 active={pathname === base && activeTab === "apis"}
                 count={domain.counts.apis}
-                icon={Globe}
+                icon={ApiIcon}
                 label="APIs"
                 href={apisHref}
                 pending={pendingTarget === apisHref}
@@ -468,7 +465,7 @@ function ExplorerSidebar({
                 testId="enterprise-data-types"
                 active={pathname === enterpriseHref && isDataTypesTab(activeTab)}
                 count={enterpriseDataTypes}
-                icon={Hash}
+                icon={DataTypeIcon}
                 label="Data Types"
                 href={enterpriseDataTypesHref}
                 pending={pendingTarget === enterpriseDataTypesHref}
@@ -499,7 +496,7 @@ function ExplorerSidebar({
                   active={inRoute && (!activeTab || activeTab === "entities") && !isNonEntityDetail(pathname, enterpriseHref)}
                   count={enterpriseEntities.length}
                   expanded={entitiesExpanded}
-                  icon={Database}
+                  icon={EntityIcon}
                   label="Entities"
                   nodeKey={ENTERPRISE_ENTITIES_KEY}
                   href={enterpriseHref}

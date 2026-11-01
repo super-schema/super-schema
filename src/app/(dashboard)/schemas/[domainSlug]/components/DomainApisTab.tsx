@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { ChevronDown, ChevronRight, Globe, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ApiIcon } from "@/components/icons/feature-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -270,7 +271,7 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
 
       {services.length === 0 && !isAddingService ? (
         <div className="text-center py-16 text-muted-foreground">
-          <Globe className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
+          <ApiIcon className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
           <p className="text-body-small">No API services defined yet</p>
           <p className="text-caption mt-1">
             Import an OpenAPI or TypeSpec file, or create a service to get started.
@@ -308,7 +309,7 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
                 ) : (
                   <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
                 )}
-                <Globe className="w-4 h-4 text-primary" />
+                <ApiIcon className="w-4 h-4 text-primary" />
                 <span className="font-mono text-body-small text-foreground font-medium">
                   {service.name}
                 </span>
@@ -526,7 +527,7 @@ function InheritedServicesSection({ group }: { group: InheritedServices }) {
       {group.services.map((service) => (
         <div key={service.id} className="rounded-lg border border-border/30 p-space-3">
           <div className="flex items-center gap-space-2 flex-wrap">
-            <Globe className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            <ApiIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
             <span className="font-mono text-body-small text-foreground font-medium">{service.name}</span>
             {service.basePath !== "/" && (
               <span className="font-mono text-caption text-muted-foreground">{service.basePath}</span>

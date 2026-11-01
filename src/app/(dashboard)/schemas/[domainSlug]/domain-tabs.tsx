@@ -3,7 +3,8 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ChevronRight, Globe, Layers, Package, Puzzle } from "lucide-react";
+import { ChevronRight, Package, Puzzle } from "lucide-react";
+import { DataTypeIcon, ApiIcon } from "@/components/icons/feature-icons";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { PROPERTIES_TAB_LABEL } from "@/features/events/builder/labels";
 import { TraitsTab } from "@/features/events/workspace/TraitsTab";
@@ -30,10 +31,10 @@ export function normalizeDomainTab(raw: string | null): DomainPageTab {
   return "products";
 }
 
-const TABS: { id: DomainPageTab; label: string; icon: typeof Package }[] = [
+const TABS: { id: DomainPageTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "products", label: "Products", icon: Package },
-  { id: "data-types", label: "Data Types", icon: Layers },
-  { id: "apis", label: "APIs", icon: Globe },
+  { id: "data-types", label: "Data Types", icon: DataTypeIcon },
+  { id: "apis", label: "APIs", icon: ApiIcon },
   { id: "traits", label: PROPERTIES_TAB_LABEL, icon: Puzzle },
 ];
 
