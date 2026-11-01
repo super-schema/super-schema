@@ -70,6 +70,9 @@ export function setValues(run) {
     // Registration is OPEN for the app under test (src/lib/auth/registration-mode.ts; the default is `invite`): the browser suite registers its own users through the
     // register page, and they hold no role. `invite` and `closed` are covered at the unit and action level (tests/unit/app/register-actions.test.ts).
     AUTH_REGISTRATION: "open",
+    // The git host the importer recognises (fetched through `gh`): the e2e git-import tests use https://github.example.com/... URLs, so it must be allowlisted
+    // for the restricted-mode refusal and the any-mode test to reach the git path. A developer's own value is dropped.
+    SCHEMA_IMPORT_GIT_HOSTS: "github.example.com",
     ...CLASSIFICATION_DEFAULTS, // "" is not their default (it warns and falls back), so the defaults themselves
   };
 }
