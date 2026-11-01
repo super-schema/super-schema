@@ -1,7 +1,8 @@
 # Super Schema icon concepts
 
 Three product/app-icon directions generated with the built-in image generation tool.
-These are concepts for review; no application branding or favicon is replaced.
+Eight matching SVG feature icons are included in [features](features/README.md).
+These are assets for review; no application branding or favicon is replaced.
 
 ## Product brief
 
@@ -45,6 +46,15 @@ Generated raster colors can vary; use the exact theme tokens for final vectors.
 more distinctive product identity. Canonical Hub communicates the one-to-many
 workflow most directly; Linked Layers emphasizes reuse and consistency.
 
+## Feature icons
+
+The [feature set](features/README.md) covers Entities, Data Types, API Contracts,
+Events, Governance, Versioning, Relationships, and Schema Generation. These are
+native SVGs with a shared 24 px grid, 1.75 px strokes, themeable color, and an
+optional accent. See the [preview sheet](features/preview.png) for dark/light
+treatments and 16, 24, and 32 px samples. They were authored directly to stay
+sharp at interface sizes and follow the application's existing line-icon style.
+
 ## Sources reviewed
 
 - [Universal Schema strategy](../../../ref/Universal%20Schema.md), executive summary and logical/implementation separation.
@@ -66,6 +76,6 @@ square dimensions, a transparent corner, and local documentation links were
 checked. The rendered outputs were visually reviewed. Application tests were
 not run because the changes contain only artwork and documentation.
 
-The assets are alternatives, not a combined icon family. Select one direction
+The three product icons are alternatives, not a combined icon family. Select one direction
 before drawing production vector artwork, making small-size variants, or
 changing application branding. Trademark clearance has not been performed.

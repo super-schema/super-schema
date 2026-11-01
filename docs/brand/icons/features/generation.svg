@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Schema generation">
+  <rect x="8" y="2" width="8" height="6" rx="1.5"/>
+  <path d="M12 8v9M4 17v-4h16v4" stroke="var(--icon-accent, currentColor)"/>
+  <rect x="2" y="17" width="4" height="4" rx="1"/>
+  <rect x="10" y="17" width="4" height="4" rx="1"/>
+  <rect x="18" y="17" width="4" height="4" rx="1"/>
+</svg>

@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" role="img" aria-labelledby="title desc">
+<title id="title">Super Schema feature icons</title>
+<desc id="desc">Eight scalable icons for entities, data types, API contracts, events, governance, versioning, relationships, and schema generation. Each card shows dark and light appearances and 16, 24, and 32 pixel sizes.</desc>
+<rect width="1200" height="800" fill="#14141C"/>
+<g font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif">
+<text x="56" y="63" font-size="30" font-weight="600" fill="#E3E1E4">Super Schema <tspan fill="#A97FB7">/ Feature icons</tspan></text>
+<text x="56" y="96" font-size="14" fill="#9A96A4">One model. Connected representations. · 24 px grid · 1.75 px stroke · SVG</text>
+<g transform="translate(56 132)">
+<rect width="260" height="280" rx="16" fill="#1C1C26" stroke="#333340"/>
+<g transform="translate(24 24) scale(2)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.5"/>
+  <path d="M10 8h6M10 12h6M10 16h4"/>
+  <path d="M7 8h.01M7 12h.01M7 16h.01" stroke="#F5C0C0"/></g>
+<rect x="184" y="20" width="56" height="56" rx="12" fill="#F8F8FA"/>
+<g transform="translate(200 36) scale(1)" fill="none" stroke="#8B5CA0" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.5"/>
+  <path d="M10 8h6M10 12h6M10 16h4"/>
+  <path d="M7 8h.01M7 12h.01M7 16h.01" stroke="#8B5CA0"/></g>
+<text x="24" y="110" font-size="18" font-weight="600" fill="#E3E1E4">Entities</text>
+<text x="24" y="138" font-size="11.5" fill="#9A96A4">Logical models and their fields</text>
+<path d="M24 168h212" stroke="#333340"/>
+<g transform="translate(24 196) scale(0.6666666666666666)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.5"/>
+  <path d="M10 8h6M10 12h6M10 16h4"/>
+  <path d="M7 8h.01M7 12h.01M7 16h.01" stroke="#F5C0C0"/></g><g transform="translate(100 192) scale(1)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.5"/>
+  <path d="M10 8h6M10 12h6M10 16h4"/>
+  <path d="M7 8h.01M7 12h.01M7 16h.01" stroke="#F5C0C0"/></g><g transform="translate(182 188) scale(1.3333333333333333)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.5"/>
+  <path d="M10 8h6M10 12h6M10 16h4"/>
+  <path d="M7 8h.01M7 12h.01M7 16h.01" stroke="#F5C0C0"/></g>
+<g font-size="10" fill="#9A96A4"><text x="48" y="208">16</text><text x="132" y="208">24</text><text x="222" y="208">32</text></g>
+<text x="24" y="253" font-size="11" fill="#9A96A4" font-family="ui-monospace, monospace">entities.svg</text>
+</g>
+<g transform="translate(332 132)">
+<rect width="260" height="280" rx="16" fill="#1C1C26" stroke="#333340"/>
+<g transform="translate(24 24) scale(2)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v4a3 3 0 0 1-2 3 3 3 0 0 1 2 3v4a2 2 0 0 0 2 2h1M16 3h1a2 2 0 0 1 2 2v4a3 3 0 0 0 2 3 3 3 0 0 0-2 3v4a2 2 0 0 1-2 2h-1"/>
+  <rect x="10" y="6" width="4" height="4" rx=".5"/>
+  <circle cx="12" cy="16" r="2" stroke="#F5C0C0"/></g>
+<rect x="184" y="20" width="56" height="56" rx="12" fill="#F8F8FA"/>
+<g transform="translate(200 36) scale(1)" fill="none" stroke="#8B5CA0" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v4a3 3 0 0 1-2 3 3 3 0 0 1 2 3v4a2 2 0 0 0 2 2h1M16 3h1a2 2 0 0 1 2 2v4a3 3 0 0 0 2 3 3 3 0 0 0-2 3v4a2 2 0 0 1-2 2h-1"/>
+  <rect x="10" y="6" width="4" height="4" rx=".5"/>
+  <circle cx="12" cy="16" r="2" stroke="#8B5CA0"/></g>
+<text x="24" y="110" font-size="18" font-weight="600" fill="#E3E1E4">Data types</text>
+<text x="24" y="138" font-size="11.5" fill="#9A96A4">Reusable typed definitions</text>
+<path d="M24 168h212" stroke="#333340"/>
+<g transform="translate(24 196) scale(0.6666666666666666)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v4a3 3 0 0 1-2 3 3 3 0 0 1 2 3v4a2 2 0 0 0 2 2h1M16 3h1a2 2 0 0 1 2 2v4a3 3 0 0 0 2 3 3 3 0 0 0-2 3v4a2 2 0 0 1-2 2h-1"/>
+  <rect x="10" y="6" width="4" height="4" rx=".5"/>
+  <circle cx="12" cy="16" r="2" stroke="#F5C0C0"/></g><g transform="translate(100 192) scale(1)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v4a3 3 0 0 1-2 3 3 3 0 0 1 2 3v4a2 2 0 0 0 2 2h1M16 3h1a2 2 0 0 1 2 2v4a3 3 0 0 0 2 3 3 3 0 0 0-2 3v4a2 2 0 0 1-2 2h-1"/>
+  <rect x="10" y="6" width="4" height="4" rx=".5"/>
+  <circle cx="12" cy="16" r="2" stroke="#F5C0C0"/></g><g transform="translate(182 188) scale(1.3333333333333333)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v4a3 3 0 0 1-2 3 3 3 0 0 1 2 3v4a2 2 0 0 0 2 2h1M16 3h1a2 2 0 0 1 2 2v4a3 3 0 0 0 2 3 3 3 0 0 0-2 3v4a2 2 0 0 1-2 2h-1"/>
+  <rect x="10" y="6" width="4" height="4" rx=".5"/>
+  <circle cx="12" cy="16" r="2" stroke="#F5C0C0"/></g>
+<g font-size="10" fill="#9A96A4"><text x="48" y="208">16</text><text x="132" y="208">24</text><text x="222" y="208">32</text></g>
+<text x="24" y="253" font-size="11" fill="#9A96A4" font-family="ui-monospace, monospace">data-types.svg</text>
+</g>
+<g transform="translate(608 132)">
+<rect width="260" height="280" rx="16" fill="#1C1C26" stroke="#333340"/>
+<g transform="translate(24 24) scale(2)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m7 5-5 7 5 7m10-14 5 7-5 7"/>
+  <path d="m14 4-4 16" stroke="#F5C0C0"/></g>
+<rect x="184" y="20" width="56" height="56" rx="12" fill="#F8F8FA"/>
+<g transform="translate(200 36) scale(1)" fill="none" stroke="#8B5CA0" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m7 5-5 7 5 7m10-14 5 7-5 7"/>
+  <path d="m14 4-4 16" stroke="#8B5CA0"/></g>
+<text x="24" y="110" font-size="18" font-weight="600" fill="#E3E1E4">API contracts</text>
+<text x="24" y="138" font-size="11.5" fill="#9A96A4">Typed service interfaces</text>
+<path d="M24 168h212" stroke="#333340"/>
+<g transform="translate(24 196) scale(0.6666666666666666)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m7 5-5 7 5 7m10-14 5 7-5 7"/>
+  <path d="m14 4-4 16" stroke="#F5C0C0"/></g><g transform="translate(100 192) scale(1)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m7 5-5 7 5 7m10-14 5 7-5 7"/>
+  <path d="m14 4-4 16" stroke="#F5C0C0"/></g><g transform="translate(182 188) scale(1.3333333333333333)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m7 5-5 7 5 7m10-14 5 7-5 7"/>
+  <path d="m14 4-4 16" stroke="#F5C0C0"/></g>
+<g font-size="10" fill="#9A96A4"><text x="48" y="208">16</text><text x="132" y="208">24</text><text x="222" y="208">32</text></g>
+<text x="24" y="253" font-size="11" fill="#9A96A4" font-family="ui-monospace, monospace">api-contracts.svg</text>
+</g>
+<g transform="translate(884 132)">
+<rect width="260" height="280" rx="16" fill="#1C1C26" stroke="#333340"/>
+<g transform="translate(24 24) scale(2)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2" stroke="#F5C0C0"/>
+  <path d="M8.5 8.5a5 5 0 0 0 0 7m7-7a5 5 0 0 1 0 7M5.5 5.5a9.2 9.2 0 0 0 0 13m13-13a9.2 9.2 0 0 1 0 13"/></g>
+<rect x="184" y="20" width="56" height="56" rx="12" fill="#F8F8FA"/>
+<g transform="translate(200 36) scale(1)" fill="none" stroke="#8B5CA0" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2" stroke="#8B5CA0"/>
+  <path d="M8.5 8.5a5 5 0 0 0 0 7m7-7a5 5 0 0 1 0 7M5.5 5.5a9.2 9.2 0 0 0 0 13m13-13a9.2 9.2 0 0 1 0 13"/></g>
+<text x="24" y="110" font-size="18" font-weight="600" fill="#E3E1E4">Events</text>
+<text x="24" y="138" font-size="11.5" fill="#9A96A4">Messages and channel contracts</text>
+<path d="M24 168h212" stroke="#333340"/>
+<g transform="translate(24 196) scale(0.6666666666666666)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2" stroke="#F5C0C0"/>
+  <path d="M8.5 8.5a5 5 0 0 0 0 7m7-7a5 5 0 0 1 0 7M5.5 5.5a9.2 9.2 0 0 0 0 13m13-13a9.2 9.2 0 0 1 0 13"/></g><g transform="translate(100 192) scale(1)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2" stroke="#F5C0C0"/>
+  <path d="M8.5 8.5a5 5 0 0 0 0 7m7-7a5 5 0 0 1 0 7M5.5 5.5a9.2 9.2 0 0 0 0 13m13-13a9.2 9.2 0 0 1 0 13"/></g><g transform="translate(182 188) scale(1.3333333333333333)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2" stroke="#F5C0C0"/>
+  <path d="M8.5 8.5a5 5 0 0 0 0 7m7-7a5 5 0 0 1 0 7M5.5 5.5a9.2 9.2 0 0 0 0 13m13-13a9.2 9.2 0 0 1 0 13"/></g>
+<g font-size="10" fill="#9A96A4"><text x="48" y="208">16</text><text x="132" y="208">24</text><text x="222" y="208">32</text></g>
+<text x="24" y="253" font-size="11" fill="#9A96A4" font-family="ui-monospace, monospace">events.svg</text>
+</g>
+<g transform="translate(56 428)">
+<rect width="260" height="280" rx="16" fill="#1C1C26" stroke="#333340"/>
+<g transform="translate(24 24) scale(2)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 4-5 7.5-8 9-3-1.5-8-5-8-9V6Z"/>
+  <path d="m8.5 12 2.5 2.5 4.5-5" stroke="#F5C0C0"/></g>
+<rect x="184" y="20" width="56" height="56" rx="12" fill="#F8F8FA"/>
+<g transform="translate(200 36) scale(1)" fill="none" stroke="#8B5CA0" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 4-5 7.5-8 9-3-1.5-8-5-8-9V6Z"/>
+  <path d="m8.5 12 2.5 2.5 4.5-5" stroke="#8B5CA0"/></g>
+<text x="24" y="110" font-size="18" font-weight="600" fill="#E3E1E4">Governance</text>
+<text x="24" y="138" font-size="11.5" fill="#9A96A4">Classification and validation rules</text>
+<path d="M24 168h212" stroke="#333340"/>
+<g transform="translate(24 196) scale(0.6666666666666666)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 4-5 7.5-8 9-3-1.5-8-5-8-9V6Z"/>
+  <path d="m8.5 12 2.5 2.5 4.5-5" stroke="#F5C0C0"/></g><g transform="translate(100 192) scale(1)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 4-5 7.5-8 9-3-1.5-8-5-8-9V6Z"/>
+  <path d="m8.5 12 2.5 2.5 4.5-5" stroke="#F5C0C0"/></g><g transform="translate(182 188) scale(1.3333333333333333)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 4-5 7.5-8 9-3-1.5-8-5-8-9V6Z"/>
+  <path d="m8.5 12 2.5 2.5 4.5-5" stroke="#F5C0C0"/></g>
+<g font-size="10" fill="#9A96A4"><text x="48" y="208">16</text><text x="132" y="208">24</text><text x="222" y="208">32</text></g>
+<text x="24" y="253" font-size="11" fill="#9A96A4" font-family="ui-monospace, monospace">governance.svg</text>
+</g>
+<g transform="translate(332 428)">
+<rect width="260" height="280" rx="16" fill="#1C1C26" stroke="#333340"/>
+<g transform="translate(24 24) scale(2)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10a9 9 0 1 1 .5 6M3 4v6h6"/>
+  <path d="M12 7v6l3 2" stroke="#F5C0C0"/></g>
+<rect x="184" y="20" width="56" height="56" rx="12" fill="#F8F8FA"/>
+<g transform="translate(200 36) scale(1)" fill="none" stroke="#8B5CA0" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10a9 9 0 1 1 .5 6M3 4v6h6"/>
+  <path d="M12 7v6l3 2" stroke="#8B5CA0"/></g>
+<text x="24" y="110" font-size="18" font-weight="600" fill="#E3E1E4">Versioning</text>
+<text x="24" y="138" font-size="11.5" fill="#9A96A4">Published schema history</text>
+<path d="M24 168h212" stroke="#333340"/>
+<g transform="translate(24 196) scale(0.6666666666666666)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10a9 9 0 1 1 .5 6M3 4v6h6"/>
+  <path d="M12 7v6l3 2" stroke="#F5C0C0"/></g><g transform="translate(100 192) scale(1)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10a9 9 0 1 1 .5 6M3 4v6h6"/>
+  <path d="M12 7v6l3 2" stroke="#F5C0C0"/></g><g transform="translate(182 188) scale(1.3333333333333333)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10a9 9 0 1 1 .5 6M3 4v6h6"/>
+  <path d="M12 7v6l3 2" stroke="#F5C0C0"/></g>
+<g font-size="10" fill="#9A96A4"><text x="48" y="208">16</text><text x="132" y="208">24</text><text x="222" y="208">32</text></g>
+<text x="24" y="253" font-size="11" fill="#9A96A4" font-family="ui-monospace, monospace">versioning.svg</text>
+</g>
+<g transform="translate(608 428)">
+<rect width="260" height="280" rx="16" fill="#1C1C26" stroke="#333340"/>
+<g transform="translate(24 24) scale(2)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="7" height="7" rx="1.5"/>
+  <rect x="15" y="14" width="7" height="7" rx="1.5"/>
+  <path d="M9 6.5h1a2 2 0 0 1 2 2v7a2 2 0 0 0 2 2h1" stroke="#F5C0C0"/></g>
+<rect x="184" y="20" width="56" height="56" rx="12" fill="#F8F8FA"/>
+<g transform="translate(200 36) scale(1)" fill="none" stroke="#8B5CA0" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="7" height="7" rx="1.5"/>
+  <rect x="15" y="14" width="7" height="7" rx="1.5"/>
+  <path d="M9 6.5h1a2 2 0 0 1 2 2v7a2 2 0 0 0 2 2h1" stroke="#8B5CA0"/></g>
+<text x="24" y="110" font-size="18" font-weight="600" fill="#E3E1E4">Relationships</text>
+<text x="24" y="138" font-size="11.5" fill="#9A96A4">Linked entities and lineage</text>
+<path d="M24 168h212" stroke="#333340"/>
+<g transform="translate(24 196) scale(0.6666666666666666)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="7" height="7" rx="1.5"/>
+  <rect x="15" y="14" width="7" height="7" rx="1.5"/>
+  <path d="M9 6.5h1a2 2 0 0 1 2 2v7a2 2 0 0 0 2 2h1" stroke="#F5C0C0"/></g><g transform="translate(100 192) scale(1)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="7" height="7" rx="1.5"/>
+  <rect x="15" y="14" width="7" height="7" rx="1.5"/>
+  <path d="M9 6.5h1a2 2 0 0 1 2 2v7a2 2 0 0 0 2 2h1" stroke="#F5C0C0"/></g><g transform="translate(182 188) scale(1.3333333333333333)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="7" height="7" rx="1.5"/>
+  <rect x="15" y="14" width="7" height="7" rx="1.5"/>
+  <path d="M9 6.5h1a2 2 0 0 1 2 2v7a2 2 0 0 0 2 2h1" stroke="#F5C0C0"/></g>
+<g font-size="10" fill="#9A96A4"><text x="48" y="208">16</text><text x="132" y="208">24</text><text x="222" y="208">32</text></g>
+<text x="24" y="253" font-size="11" fill="#9A96A4" font-family="ui-monospace, monospace">relationships.svg</text>
+</g>
+<g transform="translate(884 428)">
+<rect width="260" height="280" rx="16" fill="#1C1C26" stroke="#333340"/>
+<g transform="translate(24 24) scale(2)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="6" rx="1.5"/>
+  <path d="M12 8v9M4 17v-4h16v4" stroke="#F5C0C0"/>
+  <rect x="2" y="17" width="4" height="4" rx="1"/>
+  <rect x="10" y="17" width="4" height="4" rx="1"/>
+  <rect x="18" y="17" width="4" height="4" rx="1"/></g>
+<rect x="184" y="20" width="56" height="56" rx="12" fill="#F8F8FA"/>
+<g transform="translate(200 36) scale(1)" fill="none" stroke="#8B5CA0" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="6" rx="1.5"/>
+  <path d="M12 8v9M4 17v-4h16v4" stroke="#8B5CA0"/>
+  <rect x="2" y="17" width="4" height="4" rx="1"/>
+  <rect x="10" y="17" width="4" height="4" rx="1"/>
+  <rect x="18" y="17" width="4" height="4" rx="1"/></g>
+<text x="24" y="110" font-size="18" font-weight="600" fill="#E3E1E4">Schema generation</text>
+<text x="24" y="138" font-size="11.5" fill="#9A96A4">One model, multiple formats</text>
+<path d="M24 168h212" stroke="#333340"/>
+<g transform="translate(24 196) scale(0.6666666666666666)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="6" rx="1.5"/>
+  <path d="M12 8v9M4 17v-4h16v4" stroke="#F5C0C0"/>
+  <rect x="2" y="17" width="4" height="4" rx="1"/>
+  <rect x="10" y="17" width="4" height="4" rx="1"/>
+  <rect x="18" y="17" width="4" height="4" rx="1"/></g><g transform="translate(100 192) scale(1)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="6" rx="1.5"/>
+  <path d="M12 8v9M4 17v-4h16v4" stroke="#F5C0C0"/>
+  <rect x="2" y="17" width="4" height="4" rx="1"/>
+  <rect x="10" y="17" width="4" height="4" rx="1"/>
+  <rect x="18" y="17" width="4" height="4" rx="1"/></g><g transform="translate(182 188) scale(1.3333333333333333)" fill="none" stroke="#A97FB7" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="6" rx="1.5"/>
+  <path d="M12 8v9M4 17v-4h16v4" stroke="#F5C0C0"/>
+  <rect x="2" y="17" width="4" height="4" rx="1"/>
+  <rect x="10" y="17" width="4" height="4" rx="1"/>
+  <rect x="18" y="17" width="4" height="4" rx="1"/></g>
+<g font-size="10" fill="#9A96A4"><text x="48" y="208">16</text><text x="132" y="208">24</text><text x="222" y="208">32</text></g>
+<text x="24" y="253" font-size="11" fill="#9A96A4" font-family="ui-monospace, monospace">generation.svg</text>
+</g>
+<text x="56" y="756" font-size="12" fill="#9A96A4">Monochrome by default. Optional accent inherits the project palette. Light samples use a single high-contrast violet.</text>
+</g></svg>
