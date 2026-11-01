@@ -2,18 +2,24 @@
 
 Three product/app-icon directions generated with the built-in image generation tool.
 Eight matching SVG feature icons are included in [features](features/README.md).
-Schema Fold is the selected product mark. Its production vector is
+**Canonical Hub is the primary product logo**, selected by the project owner.
+The exact uploaded artwork is preserved in [`primary-logo.png`](primary-logo.png).
+Its compact production vector is
 [`src/app/icon.svg`](../../../src/app/icon.svg), shared by the header, auth
-screens, and Next.js browser-icon metadata. The PNGs remain the original concepts.
+screens, and Next.js browser-icon metadata. The compact vector preserves the
+brace tile and three branching nodes while keeping the mark sharp at interface
+and favicon sizes. The numbered PNGs remain the original concepts.
 GET and HEAD for this exact asset are public via
 [`public-assets.ts`](../../../src/lib/public-assets.ts); image-like page URLs
 and writes still pass through the session checks.
 
 ## Product brief
 
-Super Schema gives technical users a workspace for defining logical data models
-and producing technology-specific schema representations. The design direction
-is **one model, connected representations**.
+Super Schema gives teams a shared workspace for business definitions, governance
+context, logical data models, and technology-specific schema representations.
+The primary logo connects a shared schema definition to its downstream
+representations, expressing the logical-to-physical relationship and consistency
+that the project aims to support.
 
 The original strategy describes a canonical logical schema separated from its
 implementation formats. The current workbench and event documents describe
@@ -47,9 +53,9 @@ Generated raster colors can vary; use the exact theme tokens for final vectors.
 | Schema Fold | A distinctive S built from structured, connected planes. | [PNG](02-schema-fold.png) |
 | Linked Layers | Reusable schema definitions remain connected across representations. | [PNG](03-linked-layers.png) |
 
-**Starting recommendation: Schema Fold.** Its compact S silhouette offers a
-more distinctive product identity. Canonical Hub communicates the one-to-many
-workflow most directly; Linked Layers emphasizes reuse and consistency.
+**Selected: Canonical Hub.** Schema Fold and Linked Layers remain archived
+alternatives. Use the branching primary mark for product branding and the
+existing line glyphs for individual features.
 
 ## Feature icons
 
@@ -82,6 +88,7 @@ checked. The rendered outputs were visually reviewed. The concept-generation
 round contained only artwork and documentation. The later application integration
 uses SVG components and adds browser coverage for branding and navigation labels.
 
-The three product PNGs are alternatives, not a combined icon family. Schema Fold
-has been adapted to vector geometry and exact palette values for application use.
+The three product PNGs are alternatives, not a combined icon family. Canonical
+Hub has been adapted to compact vector geometry for application use. The uploaded
+primary PNG is retained unchanged as the source artwork.
 Trademark clearance has not been performed.
