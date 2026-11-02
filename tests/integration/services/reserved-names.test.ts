@@ -34,7 +34,7 @@ afterAll(async () => {
 
 const failure = <T>(r: { success: boolean; error?: { code: string; message: string } } & T) => (r.success ? null : r.error);
 
-describe.sequential("entities", () => {
+describe("entities", { concurrent: false }, () => {
   it("creating an entity named like a parser-unsafe key is refused, and nothing is created", async () => {
     const result = await createEntity({ name: UNSAFE, domainId: scope.domain.id, description: "" }, ctx);
     expect(failure(result)).toEqual({ code: "VALIDATION_ERROR", message: MESSAGE });
@@ -61,7 +61,7 @@ describe.sequential("entities", () => {
   }, 60_000);
 });
 
-describe.sequential("events and traits", () => {
+describe("events and traits", { concurrent: false }, () => {
   it("creating an event named like a parser-unsafe key is refused; renaming one to it too", async () => {
     expect(failure(await createEvent(scope.product.id, { name: UNSAFE }, ctx))).toEqual({ code: "VALIDATION_ERROR", message: MESSAGE });
     const created = await createEvent(scope.product.id, { name: `evt-${stamp()}` }, ctx);

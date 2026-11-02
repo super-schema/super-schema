@@ -95,7 +95,7 @@ async function seedEvent(format: Format, pinned: boolean, target: { entityId: st
 
 const errorsOf = <T extends { severity: string }>(list: T[]): T[] => list.filter((d) => d.severity === "error");
 
-describe.sequential("an entity field named like a parser-unsafe key, through the real emit and publish path", () => {
+describe("an entity field named like a parser-unsafe key, through the real emit and publish path", { concurrent: false }, () => {
   it("JSON Schema payload: the field reaches the document as a property and the emission returns ONE clear error that names it", async () => {
     const event = await seedEvent("json-schema", false);
 
@@ -137,7 +137,7 @@ describe.sequential("an entity field named like a parser-unsafe key, through the
   }, 120_000);
 });
 
-describe.sequential("an entity NAMED like a parser-unsafe key, referenced from a payload", () => {
+describe("an entity NAMED like a parser-unsafe key, referenced from a payload", { concurrent: false }, () => {
   it("JSON Schema payload: the name is a definition key, and the user is told to rename the ENTITY, not a field", async () => {
     const event = await seedEvent("json-schema", true, { entityId: holder.id, versionId: holder.versionId });
 

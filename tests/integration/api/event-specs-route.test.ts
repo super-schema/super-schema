@@ -105,7 +105,7 @@ afterAll(async () => {
   }
 });
 
-describe.sequential("GET /api/v1/event-specs/:id (real DB, real emission service, self-contained events)", () => {
+describe("GET /api/v1/event-specs/:id (real DB, real emission service, self-contained events)", { concurrent: false }, () => {
   it("defaults to the latest published version, as YAML, from the stored document", async () => {
     const res = await call(published.id);
     expect(res.status).toBe(200);

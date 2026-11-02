@@ -179,7 +179,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe.sequential("emitEventDraft / emitEventDocumentPreview / emitEventStoredVersion", () => {
+describe("emitEventDraft / emitEventDocumentPreview / emitEventStoredVersion", { concurrent: false }, () => {
   it("emits an AsyncAPI document for a draft with one pinned message", async () => {
     const event = await seedEvent(orderDocument());
     const { renderer, calls } = stubRenderer();
@@ -416,7 +416,7 @@ describe.sequential("emitEventDraft / emitEventDocumentPreview / emitEventStored
 
 });
 
-describe.sequential("event document rendering plan", () => {
+describe("event document rendering plan", { concurrent: false }, () => {
   it("renders payload, Kafka key, headers and trait headers in the right formats and as the right subjects", async () => {
     const doc = orderDocument();
     doc.messages[0].keyPin = pin(orderKey.entity, orderKey.version);
@@ -478,7 +478,7 @@ describe.sequential("event document rendering plan", () => {
   }, 60_000);
 });
 
-describe.sequential("loadEventSnapshot / resolveEventSnapshot", () => {
+describe("loadEventSnapshot / resolveEventSnapshot", { concurrent: false }, () => {
   it("loads the event, library traits, external items and the latest version", async () => {
     const doc = externalDocument(externalVersion.id);
     doc.traits = [{ key: "cloud-events", kind: "MESSAGE", libraryTraitId: libraryTrait.id }];
@@ -674,7 +674,7 @@ async function importedEntity(scope: typeof own, name: string, metadata: Prisma.
 const autoChannel = (key: string, messageKeys: string[]): EventDocument["channels"][number] =>
   ({ key, address: `projects/acme/topics/${key}`, protocol: "googlepubsub", serverKeys: [], messageKeys });
 
-describe.sequential("entity formats (R4 Auto) and emitAll through the snapshot", () => {
+describe("entity formats (R4 Auto) and emitAll through the snapshot", { concurrent: false }, () => {
   it("loads the recorded source format of every payload entity — usable ones only, own tenant only", async () => {
     const avroEntity = await importedEntity(own, "AvroImported", { sourceFormat: "avro", tags: ["core"] });
     const jsonEntity = await importedEntity(own, "JsonImported", { sourceFormat: "json-schema" });

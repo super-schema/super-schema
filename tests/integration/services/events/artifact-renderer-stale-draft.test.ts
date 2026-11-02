@@ -19,7 +19,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe.sequential("draft artifact source (B-I4)", () => {
+describe("draft artifact source (B-I4)", { concurrent: false }, () => {
   it("renders the NEW field of a stale-flagged entity, the stored source of a fresh one, and follows later edits (drafts are never cached)", async () => {
     const ctx = await testContext(prisma);
     const sc = await createProductScope(prisma, ctx, "stale");

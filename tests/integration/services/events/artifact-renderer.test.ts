@@ -77,7 +77,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe.sequential("artifact renderer — real @typespec emitters", () => {
+describe("artifact renderer — real @typespec emitters", { concurrent: false }, () => {
   it("renders Avro, inlined JSON Schema and root-first Protobuf for a published, classified + tagged version with a referenced entity; drafts too", async () => {
     const frozen = await prisma.entityVersion.findUniqueOrThrow({ where: { id: orderVersionId }, select: { resolvedSource: true } });
     // The fixture is only meaningful if the frozen text really carries the overlay the renderer must project away.
