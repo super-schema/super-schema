@@ -10,6 +10,7 @@
 
 import { useState } from "react";
 import type { CreateBusinessConceptInput } from "@/types/schemas/business-concept";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
 interface CreateConceptDialogProps {
   open: boolean;
@@ -74,16 +75,21 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
       tags,
     };
 
-    const result = await onSubmit(input);
-    setSubmitting(false);
-
-    if (result && "error" in result && result.error) {
-      setError(result.error);
-      return;
+    try {
+      const result = await onSubmit(input);
+      if (result && "error" in result && result.error) {
+        setError(result.error);
+        return;
+      }
+      reset();
+      onClose();
+    } catch (e: unknown) {
+      // A rejected action (network, serialization, an unwrapped server throw) must not leave the button stuck on "Creating...".
+      console.error("[create-concept-dialog] create concept failed", e);
+      setError(GENERIC_ACTION_ERROR);
+    } finally {
+      setSubmitting(false);
     }
-
-    reset();
-    onClose();
   };
 
   return (

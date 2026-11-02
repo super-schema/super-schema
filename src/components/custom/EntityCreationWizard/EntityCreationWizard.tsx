@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { TemplateSelector, type CreationMethod } from "./TemplateSelector";
 import { StandardsBrowser } from "./StandardsBrowser";
@@ -28,6 +28,7 @@ import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { isReservedRenameNote } from "@/lib/reserved-field-names";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { levelLabel } from "@/lib/levels";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
 // ── State Machine ────────────────────────────────────────────────────
 
@@ -150,7 +151,9 @@ export function EntityCreationWizard({
 
   // ── Standards handler ─────────────────────────────────────────────
 
-  const handleStandardSelect = useCallback((template: StandardTemplate) => {
+  // Not memoized: goToPreview reads `state.method` from the render it belongs to. A memoized handler keeps the first render's
+  // (null) method, and Back from the review then lands on a step that renders nothing.
+  function handleStandardSelect(template: StandardTemplate) {
     const fields: PreviewField[] = template.fields.map((f) => ({
       tempId: makeTempId(),
       name: f.name,
@@ -161,7 +164,7 @@ export function EntityCreationWizard({
     }));
 
     goToPreview(template.entityName, template.description, fields);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }
 
   // ── NL handler ────────────────────────────────────────────────────
 
@@ -391,9 +394,6 @@ export function EntityCreationWizard({
       return;
     }
 
-    setIsCreating(true);
-    setError(null);
-
     const fields: CreateFieldInput[] = state.fields.map((f) => {
       // Preserve complex-type metadata (reference target, array element type,
       // imported map/enum/governance decorators) so references/arrays resolve in
@@ -430,39 +430,47 @@ export function EntityCreationWizard({
         : {}),
     };
 
-    // Enterprise entities go straight to their own page; product entities return
-    // to the product they were created in.
-    if (!product) {
-      const result = await createTenantEntityAction(entityInput);
-      setIsCreating(false);
-      if ("error" in result) {
-        setError(result.error);
+    setIsCreating(true);
+    setError(null);
+
+    try {
+      // Enterprise entities go straight to their own page; product entities return
+      // to the product they were created in.
+      if (!product) {
+        const result = await createTenantEntityAction(entityInput);
+        if ("error" in result) {
+          setError(result.error);
+          return;
+        }
+        invalidateDomainsTree();
+        router.push(
+          assetHref({ kind: "entity", slug: result.entity.slug, domainSlug: null, productSlug: null })
+        );
+        router.refresh();
         return;
       }
-      invalidateDomainsTree();
-      router.push(
-        assetHref({ kind: "entity", slug: result.entity.slug, domainSlug: null, productSlug: null })
-      );
-      router.refresh();
-      return;
-    }
 
-    const result = await createEntityWithFieldsAction(product.domainId, entityInput, product.productId);
+      const result = await createEntityWithFieldsAction(product.domainId, entityInput, product.productId);
 
-    setIsCreating(false);
-
-    if (result?.error) {
-      setError(result.error);
-    } else {
-      invalidateDomainsTree();
-      // An imported entity opens on its own page (the user reviews what was kept and what is pending there, and generates from
-      // it); a blank or generated one returns to the product page. The entity route takes the id as well as the slug.
-      router.push(
-        state.importedEntity && result?.entityId
-          ? assetHref({ kind: "entity", slug: result.entityId, domainSlug: product.domainSlug, productSlug: product.productSlug })
-          : assetHref({ kind: "product", domainSlug: product.domainSlug, productSlug: product.productSlug })
-      );
-      router.refresh();
+      if (result?.error) {
+        setError(result.error);
+      } else {
+        invalidateDomainsTree();
+        // An imported entity opens on its own page (the user reviews what was kept and what is pending there, and generates from
+        // it); a blank or generated one returns to the product page. The entity route takes the id as well as the slug.
+        router.push(
+          state.importedEntity && result?.entityId
+            ? assetHref({ kind: "entity", slug: result.entityId, domainSlug: product.domainSlug, productSlug: product.productSlug })
+            : assetHref({ kind: "product", domainSlug: product.domainSlug, productSlug: product.productSlug })
+        );
+        router.refresh();
+      }
+    } catch (e: unknown) {
+      // A rejected action (network, serialization, an unwrapped server throw) must not leave the wizard stuck on "Creating...".
+      console.error("[entity-creation-wizard] create entity failed", e);
+      setError(GENERIC_ACTION_ERROR);
+    } finally {
+      setIsCreating(false);
     }
   }
 

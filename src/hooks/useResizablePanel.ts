@@ -22,23 +22,32 @@ export function useResizablePanel({
   const lastWidthRef = useRef(defaultWidth);
   const isDraggingRef = useRef(false);
 
-  // Restore from localStorage on mount
+  // Restore from localStorage on mount. These effects run in the dashboard shell: storage that refuses access, or a stored
+  // value that is not valid JSON, must not take the page down. The panel then keeps its default size.
   useEffect(() => {
-    const stored = localStorage.getItem(`panel-width-${panelId}`);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      setWidth(parsed.width);
-      setIsCollapsed(parsed.collapsed);
-      lastWidthRef.current = parsed.width;
+    try {
+      const stored = localStorage.getItem(`panel-width-${panelId}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        setWidth(parsed.width);
+        setIsCollapsed(parsed.collapsed);
+        lastWidthRef.current = parsed.width;
+      }
+    } catch {
+      // Unreadable storage: the default size stays.
     }
   }, [panelId]);
 
   // Persist to localStorage
   useEffect(() => {
-    localStorage.setItem(
-      `panel-width-${panelId}`,
-      JSON.stringify({ width, collapsed: isCollapsed })
-    );
+    try {
+      localStorage.setItem(
+        `panel-width-${panelId}`,
+        JSON.stringify({ width, collapsed: isCollapsed })
+      );
+    } catch {
+      // A refused write only means the size is not remembered.
+    }
   }, [width, isCollapsed, panelId]);
 
   const handleMouseDown = useCallback(

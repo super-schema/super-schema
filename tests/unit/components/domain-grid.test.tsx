@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DomainGrid } from "@/app/(dashboard)/schemas/domain-grid";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
 const { createDomainActionMock, deleteDomainActionMock, refreshMock } = vi.hoisted(() => ({
   createDomainActionMock: vi.fn(),
@@ -297,5 +298,24 @@ describe("DomainGrid", () => {
 
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("re-enables the create form with the generic message when the create action rejects", async () => {
+    createDomainActionMock.mockRejectedValueOnce(new Error("Failed to fetch"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    renderWithQueryClient(<DomainGrid domains={[]} />);
+
+    fireEvent.click(screen.getByTestId("create-domain-button"));
+    fireEvent.change(screen.getByTestId("domain-name-input"), { target: { value: "Payments" } });
+    fireEvent.click(screen.getByTestId("create-domain-submit"));
+
+    expect((await screen.findByTestId("create-domain-error")).textContent).toBe(GENERIC_ACTION_ERROR);
+    const submit = screen.getByTestId("create-domain-submit") as HTMLButtonElement;
+    expect(submit.disabled).toBe(false);
+    expect(submit.textContent).toBe("Create");
+    // The form stays open, so the user can retry.
+    expect(screen.getByTestId("create-domain-form")).toBeDefined();
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });

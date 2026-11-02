@@ -191,4 +191,30 @@ describe("Recent Entity Tracking", () => {
     expect(legacy.slug).toBeUndefined();
     expect(hasStoredEntityLocation(legacy)).toBe(false);
   });
+
+  it("does not throw when storage refuses writes (private browsing, full quota), so an entity page keeps rendering", () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: () => null,
+        setItem: () => {
+          throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+        },
+        removeItem: () => {
+          throw new DOMException("The operation is insecure.", "SecurityError");
+        },
+        clear: () => undefined,
+      },
+    });
+
+    expect(() =>
+      trackRecentEntity({
+        entityId: "e1",
+        domainSlug: "core",
+        entityName: "Customer",
+        domainName: "Core",
+      })
+    ).not.toThrow();
+    expect(() => clearRecentEntities()).not.toThrow();
+  });
 });

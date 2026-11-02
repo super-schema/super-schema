@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { EntityCreationWizard } from "@/components/custom/EntityCreationWizard/EntityCreationWizard";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
@@ -80,6 +81,19 @@ describe("EntityCreationWizard with a TENANT target", () => {
     expect(mocks.push).not.toHaveBeenCalled();
   });
 
+  it("recovers when the create action rejects: the generic message shows and Create is enabled again", async () => {
+    mocks.createTenantEntityAction.mockRejectedValueOnce(new Error("Failed to fetch"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    render(<EntityCreationWizard target={{ level: "TENANT", tenantId: "tenant-1" }} />);
+    startBlankAndCreate("Customer");
+
+    expect((await screen.findByTestId("wizard-error")).textContent).toBe(GENERIC_ACTION_ERROR);
+    const create = screen.getByRole("button", { name: "Create Entity" }) as HTMLButtonElement;
+    expect(create.disabled).toBe(false);
+    expect(mocks.push).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("addresses the Enterprise and does not offer AI generation, which needs a domain", () => {
     render(<EntityCreationWizard target={{ level: "TENANT", tenantId: "tenant-1" }} />);
     expect(screen.getByText("Enterprise")).toBeDefined();
@@ -101,6 +115,19 @@ describe("EntityCreationWizard with a PRODUCT target", () => {
     );
     expect(mocks.createTenantEntityAction).not.toHaveBeenCalled();
     await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/schemas/payments/checkout"));
+  });
+
+  it("recovers when the create action rejects: the generic message shows and Create is enabled again", async () => {
+    mocks.createEntityWithFieldsAction.mockRejectedValueOnce(new Error("Failed to fetch"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    startBlankAndCreate("Order");
+
+    expect((await screen.findByTestId("wizard-error")).textContent).toBe(GENERIC_ACTION_ERROR);
+    const create = screen.getByRole("button", { name: "Create Entity" }) as HTMLButtonElement;
+    expect(create.disabled).toBe(false);
+    expect(mocks.push).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("offers every creation method", () => {

@@ -59,18 +59,28 @@ export function trackRecentEntity(entry: RecentEntityEntry): void {
   // Update ID list (backward compat)
   const ids = getRecentEntityIds().filter((id) => id !== entry.entityId);
   ids.unshift(entry.entityId);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(ids.slice(0, MAX_RECENT)));
 
   // Update full entries list
   const entries = getRecentEntityEntries().filter(
     (e) => e.entityId !== entry.entityId
   );
   entries.unshift(entry);
-  localStorage.setItem(ENTRIES_KEY, JSON.stringify(entries.slice(0, MAX_RECENT)));
+
+  // Tracking runs from an entity page's effect: a refused write (private browsing, full quota) must not fail that page.
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(ids.slice(0, MAX_RECENT)));
+    localStorage.setItem(ENTRIES_KEY, JSON.stringify(entries.slice(0, MAX_RECENT)));
+  } catch {
+    // Recent entities are a convenience: without storage the list is simply not kept.
+  }
 }
 
 export function clearRecentEntities(): void {
   if (typeof window === "undefined") return;
-  localStorage.removeItem(STORAGE_KEY);
-  localStorage.removeItem(ENTRIES_KEY);
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(ENTRIES_KEY);
+  } catch {
+    // Storage is unavailable, so there is nothing to clear.
+  }
 }

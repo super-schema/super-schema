@@ -20,8 +20,13 @@ const FONT_SCALE_CHANGE_EVENT = "super-schema:font-scale-change";
 
 function getStoredScale(): FontScale {
   if (typeof window === "undefined") return "medium";
-  const stored = localStorage.getItem(FONT_SCALE_STORAGE_KEY);
-  return isFontScale(stored) ? stored : "medium";
+  // Read during render (useSyncExternalStore), so a storage that refuses access (private browsing, blocked site data) must not throw here.
+  try {
+    const stored = localStorage.getItem(FONT_SCALE_STORAGE_KEY);
+    return isFontScale(stored) ? stored : "medium";
+  } catch {
+    return "medium";
+  }
 }
 
 function getServerScale(): FontScale {
@@ -29,7 +34,8 @@ function getServerScale(): FontScale {
 }
 
 function isFontScale(value: string | null): value is FontScale {
-  return value != null && value in fontScaleValues;
+  // An own-property check: `in` also accepts inherited names such as "constructor", which would then be applied as a scale.
+  return value != null && Object.hasOwn(fontScaleValues, value);
 }
 
 function subscribeToFontScale(callback: () => void) {
@@ -75,7 +81,11 @@ export function useFontSize() {
   }, [scale]);
 
   const setScale = useCallback((next: FontScale) => {
-    localStorage.setItem(FONT_SCALE_STORAGE_KEY, next);
+    try {
+      localStorage.setItem(FONT_SCALE_STORAGE_KEY, next);
+    } catch {
+      // Storage can refuse the write (private browsing, blocked site data): the scale then reads back as the stored one, as theme.tsx does.
+    }
     applyScale(next);
     window.dispatchEvent(new CustomEvent(FONT_SCALE_CHANGE_EVENT));
   }, []);

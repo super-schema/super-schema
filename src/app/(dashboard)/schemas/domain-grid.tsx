@@ -10,6 +10,7 @@ import { DomainCard } from "@/components/custom/DomainCard";
 import { DomainDeletionDialog } from "@/components/custom/DomainDeletionDialog";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import type { DomainDeletionImpact } from "@/types/domain-deletion";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 import { createDomainAction, deleteDomainAction } from "./actions";
 
 interface DomainData {
@@ -52,13 +53,20 @@ export function DomainGrid({ domains, canDeleteDomains = false }: DomainGridProp
   async function handleCreate(formData: FormData) {
     setCreateError(null);
     setIsCreating(true);
-    const result = await createDomainAction(formData);
-    setIsCreating(false);
-    if (result.error) {
-      setCreateError(result.error);
-    } else {
-      invalidateDomainsTree();
-      setShowCreate(false);
+    try {
+      const result = await createDomainAction(formData);
+      if (result.error) {
+        setCreateError(result.error);
+      } else {
+        invalidateDomainsTree();
+        setShowCreate(false);
+      }
+    } catch (e: unknown) {
+      // A rejected action (network, serialization, an unwrapped server throw) must not leave the form stuck on "Creating...".
+      console.error("[domain-grid] create domain failed", e);
+      setCreateError(GENERIC_ACTION_ERROR);
+    } finally {
+      setIsCreating(false);
     }
   }
 
