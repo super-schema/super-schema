@@ -114,7 +114,7 @@ The migration `20261101120000_webhook_endpoint_tenant` adds the column and backf
 
 **Destinations.** An endpoint URL must be `https`, and its address must be public: a loopback, private, link-local, shared (CGNAT), multicast, documentation or other reserved address is refused, IPv4 or IPv6. An IPv4-mapped (`::ffff:`) or NAT64 (`64:ff9b::/96`) address is judged by the IPv4 address it carries. A URL is checked when an endpoint is created or its URL is changed, and every delivery checks the address it connects to, so a name that later resolves to a private address is not called. A redirect is not followed (a 3xx answer is a failed delivery), a delivery times out after 10 seconds, and a refused destination is recorded as one failed delivery that is not retried.
 
-**Development only.** `WEBHOOK_ALLOW_PRIVATE_TARGETS=true` (or `1`) lets a delivery reach `http:` URLs and private or loopback addresses, so a receiver on the developer's machine can be tested. Never set it in production: an endpoint URL could then steer the server into its own network. `docs/testing/known-defects.md` (KD-027) still describes the endpoint policy as not built; this section describes the current behaviour.
+**Development only.** `WEBHOOK_ALLOW_PRIVATE_TARGETS=true` (or `1`) lets a delivery reach `http:` URLs and private or loopback addresses, so a receiver on the developer's machine can be tested. Never set it in production: an endpoint URL could then steer the server into its own network.
 
 ## Trusting the host (`UntrustedHost`) and the proxy (`AUTH_TRUST_PROXY`)
 

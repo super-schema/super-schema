@@ -190,15 +190,6 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - cost to fix: decide where a request is raised (a breaking publish, a classification change) and call it there, in the same transaction as the
   publish, and where the gate is asked (before an emission); this is a product decision, not a fix.
 
-## KD-027: the URL of a webhook endpoint has no policy
-
-- status: no-test (a security note, not something a test can call wrong; the other half of this entry, the signing secret in every list, is fixed: the list and an update carry no `secret`, only the answer of the creation does, and `api-v1.spec.ts` pins that)
-- symptom: the endpoint URL is any URL that `z.string().url()` accepts: `http://127.0.0.1:5432`, a cloud metadata address and `file:` URLs are all accepted, and
-  `dispatchEvent` then makes the server `fetch` it (a server-side request forgery surface for whoever may create an endpoint: a platform administrator or an
-  `ADMIN` API key). Endpoints are global: they belong to no tenant.
-- where: `src/services/webhook.service.ts` (`CreateWebhookEndpointInputSchema` in `src/types/schemas/webhook.ts`, `sendWebhookRequest`).
-- cost to fix: allow `https:` only (and `http:` for a configured allow-list), refuse private and link-local addresses at the time of the request, not only of the URL's text.
-
 ## KD-028: the REST API's rate limit is per process, and only three routes have one
 
 - status: no-test (a limit of the design: the limiter is a `Map` in the process, and nothing in the suite can start a second instance to show it)

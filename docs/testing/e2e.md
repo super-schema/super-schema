@@ -427,7 +427,7 @@ may use the webhook routes and a viewer's may not), the run's API key (`Authoriz
 `API_KEY_TENANT_ID` blank; the release runner makes the key up per run, starts the app with it as `API_KEY` and gives the browser run the same value as `E2E_API_KEY`; against a
 server you started yourself, set both to one value), and nobody; the webhook test also signs in a viewer and a user with no role, made for it. Every test sends a client address
 of its own in `X-Forwarded-For` (the run sets `AUTH_TRUST_PROXY=1`, without which the app ignores the header), so the allowance of requests that do not authenticate (20 a minute per
-address) never couples two tests; the run lifts the per-principal allowance of an authenticated caller (`API_RATE_LIMIT_PER_MINUTE`, scripts/e2e-env.mjs). What the spec found and could not fix is in [known-defects.md](known-defects.md) (KD-027: a webhook URL has no policy; KD-028: the limit is per process). The rest of what it
+address) never couples two tests; the run lifts the per-principal allowance of an authenticated caller (`API_RATE_LIMIT_PER_MINUTE`, scripts/e2e-env.mjs). What the spec found and could not fix is in [known-defects.md](known-defects.md) (KD-028: the limit is per process). The rest of what it
 first found was fixed with the access-control work: a key can create an endpoint, a session carries its roles, the schemas routes are scoped to a tenant and a role, no list
 carries a signing secret, the rate limit trusts the proxy's word only and answers in the API's envelope.
 
