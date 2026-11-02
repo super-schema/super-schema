@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use Super Schema, or build on it, please cite it as below."
+type: software
+title: "Super Schema"
+abstract: >-
+  A self-hosted schema management platform: design the logical shape of your
+  data once and generate JSON Schema, OpenAPI, Avro, Protobuf, Java and
+  database DDL from it through TypeSpec, with AsyncAPI event contracts and
+  built-in governance.
+authors:
+  - given-names: Jay
+    family-names: Sen
+    email: jaysen@apache.org
+repository-code: "https://github.com/super-schema/super-schema"
+url: "https://super-schema.github.io/"
+license: Apache-2.0
+version: 0.1.0
+keywords:
+  - schema management
+  - data modeling
+  - TypeSpec
+  - JSON Schema
+  - OpenAPI
+  - Avro
+  - Protobuf
+  - AsyncAPI
+  - data governance

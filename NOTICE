@@ -1,0 +1,10 @@
+Super Schema
+Copyright 2026 Jay Sen <jaysen@apache.org>
+
+This product was originally created and developed by Jay Sen.
+Project home: https://github.com/super-schema/super-schema
+Website:      https://super-schema.github.io/
+
+This product includes software derived from pglite-prisma-adapter
+(https://github.com/lucasthevenet/pglite-utils), Copyright (c) Lucas Thevenet,
+licensed under the MIT License.

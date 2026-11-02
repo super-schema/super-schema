@@ -15,6 +15,7 @@ with governance built in.
 [Report a bug](https://github.com/super-schema/super-schema/issues)
 
 [![CI](https://github.com/super-schema/super-schema/actions/workflows/ci.yml/badge.svg)](https://github.com/super-schema/super-schema/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%3E%3D20.9%20%3C25-339933?logo=node.js&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js)
 ![TypeSpec](https://img.shields.io/badge/TypeSpec-1.x-0078D4)
@@ -399,6 +400,9 @@ Contributions are welcome. Before you open a pull request:
    check that it applies on PGlite too.
 5. Document new environment variables in `.env.example` and the relevant guide.
 
+By submitting a contribution, you agree that it's licensed under the
+[Apache License 2.0](LICENSE) (section 5 of the license).
+
 ## Security
 
 Please **don't open a public issue** for a security vulnerability. Report it privately, either
@@ -408,8 +412,26 @@ and you'll get an acknowledgement.
 
 ## License
 
-A license hasn't been chosen yet. Until a `LICENSE` file is added, all rights are reserved by
-the author.
+Super Schema is licensed under the [Apache License 2.0](LICENSE). You may use, modify, and
+distribute it, including in commercial and closed-source products, as long as you follow the
+license terms:
+
+- **Keep the attribution.** If you distribute Super Schema or a work derived from it, include
+  the license and the contents of the [`NOTICE`](NOTICE) file, which credits the project and
+  its author.
+- **Mark your changes.** Modified files must say that you changed them.
+- **Use a different name.** The license grants no rights to the name or logo. Forks and
+  derived products need their own name; see the [trademark policy](TRADEMARKS.md).
+
+Third-party code included in this repository keeps its own license. See the end of
+[`LICENSE`](LICENSE).
+
+### Credit and citation
+
+If you build on Super Schema, please credit the project and its author where your users can
+see it, for example: "Based on [Super Schema](https://github.com/super-schema/super-schema)
+by Jay Sen". To cite it, use GitHub's **Cite this repository** button, which reads
+[`CITATION.cff`](CITATION.cff).
 
 ## Author
 
