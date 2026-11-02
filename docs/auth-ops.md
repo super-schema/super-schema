@@ -1,7 +1,7 @@
 # Authentication: what to configure and what to know before you run it
 
 Short and operational. It covers sign-in (registration modes, passwords, throttling, invitation and reset links, sessions), the first administrator,
-the scoped roles and user management, the REST API key, the tenant of the audit trail, and how to roll back the access-control migration. Identity
+the scoped roles and user management, the REST API key, the secrets the database keeps (the Git credential, the webhook signing secret), the tenant of the audit trail, and how to roll back the access-control migration. Identity
 providers an administrator can add next to the local accounts (Google, GitHub, Microsoft Entra ID, Okta, Keycloak, a generic OpenID Connect issuer; none
 by default) are in [`auth.md`](auth.md), with the settings, the rules, the risk of linking existing users and worked examples. What is not covered, and
 the known defects behind it, is at the end of this file.
@@ -21,6 +21,7 @@ the known defects behind it, is at the end of this file.
 | `API_KEY_ROLE` | The role the key holds: `VIEWER`, `AUTHOR`, `STEWARD`, `COMPLIANCE_OFFICER` or `ADMIN`. A value that is not a role turns the key off. | `ADMIN` |
 | `AUTH_PROVIDERS`, `AUTH_PROVIDER_<KEY>_*` | Identity providers. See [`auth.md`](auth.md). | None |
 | `AUTH_SECRET_1` to `_3` | Auth.js's secret rotation names. Auth.js reads them only when no secret is set; the middleware never does, so rotation is not supported. | Not used |
+| `SECRETS_ENCRYPTION_KEY` | The key that seals the stored Git credential and webhook signing secret: 32 random bytes in base64 (`openssl rand -base64 32`). See [Stored secrets](#stored-secrets-the-git-credential-and-the-webhook-signing-secret). | Unset: the key is derived from `AUTH_SECRET` |
 
 ## The secret
 
@@ -50,7 +51,57 @@ A secret is per deployment and per environment: a secret that is shared between 
 secret of its own, and the middleware reads only `AUTH_SECRET` and `NEXTAUTH_SECRET`. With the rotation names alone the middleware has no
 secret and **fails closed**: every request bounces to `/login`, and a production server refuses to start. To change the secret, change
 `AUTH_SECRET` (or `NEXTAUTH_SECRET`) and restart: every session is signed out (users log in again). The throttle counts restart too: the e-mail and
-address hashes in `auth_events` are keyed with the secret, so after the change no earlier failure is found.
+address hashes in `auth_events` are keyed with the secret, so after the change no earlier failure is found. **Unless `SECRETS_ENCRYPTION_KEY` is
+set, the change also makes the stored Git credential and webhook signing secrets unreadable** (see the next section).
+
+## Stored secrets: the Git credential and the webhook signing secret
+
+Two secrets are kept in the database, and both are sealed (AES-256-GCM, `src/lib/crypto/secret-box.ts`), so a copy of the database (a backup, a
+replica, a read-only SQL session) does not hold them in clear text (a token written into a repository URL is the exception, see below, and values
+stored before this change are plain until they are written again):
+
+| Secret | Where | Shown again? |
+| --- | --- | --- |
+| Git repository credential (a personal access token or an SSH key) | `git_config.authCredential` | Never: the API answers the configuration without it |
+| Webhook signing secret | `webhook_endpoints.secret` | Once, in the answer of the creation. The list and an update never carry it |
+
+**The key.** `SECRETS_ENCRYPTION_KEY` is 32 random bytes in base64 (`openssl rand -base64 32`). Every server that reads or writes these rows needs the
+same key. When it is not set, the key is derived from `AUTH_SECRET` (`NEXTAUTH_SECRET` when that is not set), which the app requires anyway.
+
+- **Changing the session secret then makes every secret sealed since this change unreadable** (a value still in plain text is not affected). A
+  webhook delivery fails with the error "cannot be opened" in its delivery list (it is retried like any other failure, and never sent unsigned).
+  The Git credential has to be entered again. There is no tool that re-keys stored values, and a webhook secret cannot be shown again: delete the
+  endpoint and create it again.
+- Set `SECRETS_ENCRYPTION_KEY` before the first secret is stored. It keeps the two rotations apart: rotating `AUTH_SECRET` then leaves the stored
+  secrets alone. Changing `SECRETS_ENCRYPTION_KEY` later makes them unreadable in the same way, and no tool re-keys them.
+- Storing a secret is refused, with the variable to set in the answer, when neither key source is set. A secret already stored stays unreadable
+  until its key is back.
+- A malformed `SECRETS_ENCRYPTION_KEY` (not 32 random bytes in base64) refuses the same way, with the reason. An update of a webhook endpoint still
+  goes through: its plain secret stays as it is, and the server log names the variable on one line (never the value).
+
+**Values stored before this change** are plain text, and they keep working as they are. The Git credential is sealed the next time the configuration
+is saved; enabling or disabling the export does not rewrite it. A webhook secret is sealed the next time its endpoint is updated (a change of its URL,
+events or active flag; the secret itself does not change), so an endpoint that is never updated keeps its plain secret until it is created again. No
+migration is run.
+
+**The repository URL holds no token.** A configuration is refused when its URL has a password in it, or a user name in any scheme but ssh
+(`https://<token>@host/...`, `ssh://user:password@host/...`): the token goes in the credential field, which is sealed. An ssh account name
+(`ssh://git@host/...`) and the scp form (`git@host:path`) are allowed, since they name an account and no secret. A URL saved with a token before this
+change still shows that token to the administrators who read the configuration, until the configuration is saved again with a URL that has none.
+Rotate that token.
+
+**The audit trail.** From this change on, no audit entry holds the Git credential: the entries of a configuration record a projection without it, and
+the audit writer replaces the value under any credential-looking key (by name, at any depth, in the before and after states). The writer does not
+look inside a text value, so a token in a text field such as the repository URL is kept out by the refusal above instead. The audit trail is
+immutable (a trigger refuses `UPDATE` and `DELETE`), so the entries written before this change still hold the credential that was saved with them, in
+clear text, and any repository URL saved with a token in it. Those rows are not rewritten.
+
+**The connection test.** `testConnection` for a Git configuration does not reach the repository, and it never reports a connection: its answer
+says "Not verified". Nothing in this build sends a file to a Git host either: the export and pull request paths record their work and do not push,
+and they still write a sync status of SUCCESS for it (see `src/services/git.service.ts`). So a `lastSyncStatus` of SUCCESS written before this change
+is not evidence that a host was reached: the old connection test wrote it without contacting anything.
+
+No secret is written to a log or to an error message: the errors and the warning name the variable or the field, never the value.
 
 ## Trusting the host (`UntrustedHost`) and the proxy (`AUTH_TRUST_PROXY`)
 

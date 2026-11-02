@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Mock Prisma
@@ -330,9 +330,23 @@ describe("Git Service — Pure Helpers", () => {
 // Service function tests (mocked Prisma)
 // ---------------------------------------------------------------------------
 
+const TEST_SECRETS_KEY = Buffer.alloc(32, 7).toString("base64");
+
+/** The last audit_log row the service wrote: its action and the state it recorded. */
+function lastAuditEntry(): { action: string; afterState: unknown; beforeState: unknown } {
+  const calls = vi.mocked(prisma.auditLog.create).mock.calls;
+  return (calls[calls.length - 1][0] as unknown as { data: { action: string; afterState: unknown; beforeState: unknown } }).data;
+}
+
 describe("Git Service — Service Functions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The credential is sealed on the way in: a key is needed (SECRETS_ENCRYPTION_KEY, or the session secret).
+    vi.stubEnv("SECRETS_ENCRYPTION_KEY", TEST_SECRETS_KEY);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   describe("configureRepository", () => {
@@ -480,23 +494,220 @@ describe("Git Service — Service Functions", () => {
       // withAudit creates an audit log entry
       expect(vi.mocked(prisma.auditLog.create)).toHaveBeenCalled();
     });
+
+    it("stores the credential sealed, never as it was typed", async () => {
+      vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.gitConfig.create).mockImplementationOnce((async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "gc-1",
+        ...data,
+        lastSyncAt: null,
+        lastSyncStatus: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })) as never);
+
+      await configureRepository(
+        {
+          repositoryUrl: "https://github.com/org/repo",
+          authMethod: "PERSONAL_ACCESS_TOKEN",
+          authCredential: "ghp_typed_token_for_storage_test",
+          branch: "main",
+          basePath: "schemas/",
+          prReviewMode: "BREAKING_ONLY",
+        },
+        adminCtx
+      );
+
+      const stored = vi.mocked(prisma.gitConfig.create).mock.calls[0][0].data.authCredential;
+      expect(stored).toMatch(/^enc:v1:/);
+      expect(stored).not.toContain("ghp_typed_token_for_storage_test");
+    });
+
+    it("the audit entry of a configuration holds no credential, sealed or plain", async () => {
+      vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.gitConfig.create).mockImplementationOnce((async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "gc-1",
+        ...data,
+        lastSyncAt: null,
+        lastSyncStatus: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })) as never);
+
+      const result = await configureRepository(
+        {
+          repositoryUrl: "https://github.com/org/repo",
+          authMethod: "PERSONAL_ACCESS_TOKEN",
+          authCredential: "ghp_plain_token_for_audit_test",
+          branch: "main",
+          basePath: "schemas/",
+          prReviewMode: "BREAKING_ONLY",
+        },
+        adminCtx
+      );
+
+      expect(result.success).toBe(true);
+      const sealed = vi.mocked(prisma.gitConfig.create).mock.calls[0][0].data.authCredential;
+      const entry = lastAuditEntry();
+      expect(entry.action).toBe("CONFIGURE_GIT");
+      expect(entry.afterState).toMatchObject({ id: "gc-1", repositoryUrl: "https://github.com/org/repo" });
+      expect(entry.afterState).not.toHaveProperty("authCredential");
+      expect(JSON.stringify(entry)).not.toContain("ghp_plain_token_for_audit_test");
+      expect(JSON.stringify(entry)).not.toContain(sealed);
+    });
+
+    it("the audit entry of an update holds no credential either", async () => {
+      vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue({ id: "gc-existing" } as never);
+      vi.mocked(prisma.gitConfig.update).mockImplementationOnce((async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "gc-existing",
+        repositoryUrl: "https://github.com/org/new-repo",
+        branch: "develop",
+        basePath: "schemas/",
+        authMethod: "SSH_KEY",
+        prReviewMode: "ALWAYS",
+        enabled: false,
+        lastSyncAt: null,
+        lastSyncStatus: null,
+        createdBy: "user-admin",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...data,
+      })) as never);
+
+      await configureRepository(
+        {
+          repositoryUrl: "https://github.com/org/new-repo",
+          authMethod: "SSH_KEY",
+          authCredential: "-----BEGIN OPENSSH PRIVATE KEY----- plain-key-for-update-test",
+          branch: "develop",
+          basePath: "schemas/",
+          prReviewMode: "ALWAYS",
+        },
+        adminCtx
+      );
+
+      const entry = lastAuditEntry();
+      expect(entry.action).toBe("CONFIGURE_GIT");
+      expect(entry.afterState).not.toHaveProperty("authCredential");
+      expect(JSON.stringify(entry)).not.toContain("plain-key-for-update-test");
+    });
+
+    it("refuses a repository URL that carries a token, in any scheme, and names the credential field: nothing is stored or audited", async () => {
+      for (const repositoryUrl of [
+        "https://x-access-token:ghp_in_the_url_only@github.com/org/repo",
+        "https://ghp_in_the_url_only@github.com/org/repo",
+        "git+https://ghp_in_the_url_only@github.com/org/repo.git",
+        "ssh://git:ghp_in_the_url_only@github.com/org/repo.git",
+      ]) {
+        const result = await configureRepository(
+          {
+            repositoryUrl,
+            authMethod: "PERSONAL_ACCESS_TOKEN",
+            authCredential: "ghp_in_the_url_only",
+            branch: "main",
+            basePath: "schemas/",
+            prReviewMode: "BREAKING_ONLY",
+          },
+          adminCtx
+        );
+
+        expect(result.success, repositoryUrl).toBe(false);
+        if (!result.success) {
+          expect(result.error.code).toBe("VALIDATION_ERROR");
+          expect(result.error.message).toContain("credential field");
+          expect(JSON.stringify(result.error)).not.toContain("ghp_in_the_url_only");
+        }
+      }
+      expect(vi.mocked(prisma.gitConfig.create)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.gitConfig.update)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.auditLog.create)).not.toHaveBeenCalled();
+    });
+
+    it("accepts a repository address without a token: https without user information, an ssh account, the scp form", async () => {
+      for (const repositoryUrl of [
+        "https://github.com/org/repo",
+        "ssh://git@github.com/org/repo.git",
+        "git+ssh://git@github.com/org/repo.git",
+        "git@github.com:org/repo.git",
+      ]) {
+        vi.mocked(prisma.gitConfig.findFirst).mockResolvedValueOnce(null);
+        vi.mocked(prisma.gitConfig.create).mockResolvedValueOnce({
+          id: "gc-1",
+          repositoryUrl,
+          branch: "main",
+          basePath: "schemas/",
+          authMethod: "PERSONAL_ACCESS_TOKEN",
+          authCredential: "enc:v1:stored",
+          prReviewMode: "BREAKING_ONLY",
+          enabled: false,
+          lastSyncAt: null,
+          lastSyncStatus: null,
+          createdBy: "user-admin",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } as never);
+
+        const result = await configureRepository(
+          {
+            repositoryUrl,
+            authMethod: "PERSONAL_ACCESS_TOKEN",
+            authCredential: "ghp_plain_for_address_test",
+            branch: "main",
+            basePath: "schemas/",
+            prReviewMode: "BREAKING_ONLY",
+          },
+          adminCtx
+        );
+
+        expect(result.success, repositoryUrl).toBe(true);
+      }
+    });
+
+    it("with no key at all, saving the configuration is refused with the reason, and nothing is stored or audited", async () => {
+      vi.stubEnv("SECRETS_ENCRYPTION_KEY", "");
+      vi.stubEnv("AUTH_SECRET", "");
+      vi.stubEnv("NEXTAUTH_SECRET", "");
+
+      const result = await configureRepository(
+        {
+          repositoryUrl: "https://github.com/org/repo",
+          authMethod: "PERSONAL_ACCESS_TOKEN",
+          authCredential: "ghp_no_key_for_save_test",
+          branch: "main",
+          basePath: "schemas/",
+          prReviewMode: "BREAKING_ONLY",
+        },
+        adminCtx
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("INTERNAL_ERROR");
+        expect(result.error.message).toContain("SECRETS_ENCRYPTION_KEY");
+      }
+      expect(vi.mocked(prisma.gitConfig.create)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.gitConfig.update)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.auditLog.create)).not.toHaveBeenCalled();
+    });
   });
 
   describe("testConnection", () => {
-    it("returns connected: true for valid config", async () => {
+    it("does not report a connection it did not make: the answer is not verified, and no sync status is written", async () => {
       vi.mocked(prisma.gitConfig.findUnique).mockResolvedValue({
         id: "gc-1",
         repositoryUrl: "https://github.com/org/repo",
-        authCredential: "token",
+        authCredential: "enc:v1:stored",
       } as never);
-      vi.mocked(prisma.gitConfig.update).mockResolvedValue({} as never);
 
       const result = await testConnection("gc-1", adminCtx);
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.connected).toBe(true);
+        expect(result.data.connected).toBe(false);
+        expect(result.data.verified).toBe(false);
+        expect(result.data.error).toMatch(/^Not verified/);
       }
+      expect(vi.mocked(prisma.gitConfig.update)).not.toHaveBeenCalled();
     });
 
     it("returns connected: false for missing credentials", async () => {
@@ -611,6 +822,32 @@ describe("Git Service — Service Functions", () => {
       }
     });
 
+    it("the audit entry holds no credential, even when the row still holds a plain one", async () => {
+      vi.mocked(prisma.gitConfig.findUnique).mockResolvedValue({ id: "gc-1" } as never);
+      vi.mocked(prisma.gitConfig.update).mockResolvedValue({
+        id: "gc-1",
+        repositoryUrl: "https://github.com/org/repo",
+        branch: "main",
+        basePath: "schemas/",
+        authMethod: "PERSONAL_ACCESS_TOKEN",
+        authCredential: "ghp_plain_row_for_enable_test",
+        prReviewMode: "BREAKING_ONLY",
+        enabled: true,
+        lastSyncAt: null,
+        lastSyncStatus: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as never);
+
+      await enableExport("gc-1", adminCtx);
+
+      const entry = lastAuditEntry();
+      expect(entry.action).toBe("ENABLE_GIT_EXPORT");
+      expect(entry.afterState).toMatchObject({ id: "gc-1", enabled: true });
+      expect(entry.afterState).not.toHaveProperty("authCredential");
+      expect(JSON.stringify(entry)).not.toContain("ghp_plain_row_for_enable_test");
+    });
+
     it("rejects non-Admin users", async () => {
       const result = await enableExport("gc-1", authorCtx);
 
@@ -646,6 +883,31 @@ describe("Git Service — Service Functions", () => {
       if (result.success) {
         expect(result.data.enabled).toBe(false);
       }
+    });
+
+    it("the audit entry holds no credential", async () => {
+      vi.mocked(prisma.gitConfig.findUnique).mockResolvedValue({ id: "gc-1" } as never);
+      vi.mocked(prisma.gitConfig.update).mockResolvedValue({
+        id: "gc-1",
+        repositoryUrl: "https://github.com/org/repo",
+        branch: "main",
+        basePath: "schemas/",
+        authMethod: "PERSONAL_ACCESS_TOKEN",
+        authCredential: "enc:v1:sealed-row-for-disable-test",
+        prReviewMode: "BREAKING_ONLY",
+        enabled: false,
+        lastSyncAt: null,
+        lastSyncStatus: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as never);
+
+      await disableExport("gc-1", adminCtx);
+
+      const entry = lastAuditEntry();
+      expect(entry.action).toBe("DISABLE_GIT_EXPORT");
+      expect(entry.afterState).not.toHaveProperty("authCredential");
+      expect(JSON.stringify(entry)).not.toContain("enc:v1:sealed-row-for-disable-test");
     });
   });
 

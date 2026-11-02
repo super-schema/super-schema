@@ -10,6 +10,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { ctxCan } from "@/lib/access";
 import { isServiceUserId } from "@/lib/access/api-key";
 import { prisma } from "@/lib/db";
+import { isSealedSecret, openSecret, sealLegacySecret, sealSecret, SecretBoxError, type SecretField } from "@/lib/crypto/secret-box";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import {
@@ -50,10 +51,14 @@ export async function _getDeliveries(): Promise<WebhookDelivery[]> {
 const RETRY_DELAYS_MS = [10_000, 60_000, 300_000];
 const MAX_ATTEMPTS = 4; // 1 initial + 3 retries
 
+/** The signing secret is stored sealed (src/lib/crypto/secret-box.ts); a value stored before sealing is plain and still signs. */
+const SIGNING_SECRET: SecretField = "WebhookEndpoint.secret";
+
 // ---------------------------------------------------------------------------
 // Prisma row → app type mappers
 // ---------------------------------------------------------------------------
 
+/** A stored endpoint. `secret` is the stored value: sealed (or, before sealing, plain). Nothing but the signing reads it opened. */
 type EndpointRow = {
   id: string;
   url: string;
@@ -65,24 +70,15 @@ type EndpointRow = {
   updatedAt: Date;
 };
 
-/** The whole endpoint, secret included: for the dispatcher (it signs with it) and the answer of the creation, which shows it once. */
-function toWebhookEndpoint(row: EndpointRow): WebhookEndpoint {
-  return {
-    id: row.id,
-    url: row.url,
-    events: row.events,
-    secret: row.secret,
-    active: row.active,
-    createdBy: row.createdBy,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  };
+/** The endpoint as every other answer shows it: no signing secret (KD-027). Reads no secret, so it needs no key. */
+function toEndpointSummary(row: EndpointRow): WebhookEndpointSummary {
+  const { id, url, events, active, createdBy, createdAt, updatedAt } = row;
+  return { id, url, events, active, createdBy, createdAt, updatedAt };
 }
 
-/** The endpoint as every other answer shows it: no signing secret (KD-027). */
-function toEndpointSummary(row: EndpointRow): WebhookEndpointSummary {
-  const { secret: _secret, ...summary } = toWebhookEndpoint(row);
-  return summary;
+/** The whole endpoint with its signing secret opened: for the test helper of the store. Throws when the stored secret cannot be opened. */
+function toWebhookEndpoint(row: EndpointRow): WebhookEndpoint {
+  return { ...toEndpointSummary(row), secret: openSecret(row.secret, SIGNING_SECRET) };
 }
 
 function toWebhookDelivery(row: {
@@ -133,19 +129,35 @@ export async function createEndpoint(
     });
   }
 
+  const secret = crypto.randomBytes(32).toString("hex");
+  let sealedSecret: string;
+  try {
+    sealedSecret = sealSecret(secret, SIGNING_SECRET);
+  } catch (sealError) {
+    // With no key the secret is not stored, so the endpoint is not made: an endpoint that cannot sign is not left behind.
+    return err({
+      code: "INTERNAL_ERROR",
+      message: sealError instanceof Error ? sealError.message : "The signing secret cannot be stored",
+      suggestedFix:
+        sealError instanceof SecretBoxError
+          ? "Set SECRETS_ENCRYPTION_KEY, or AUTH_SECRET, then try again (docs/auth-ops.md)."
+          : "Try again.",
+    });
+  }
+
   const row = await prisma.webhookEndpoint.create({
     data: {
       url: parsed.data.url,
       events: parsed.data.events,
-      secret: crypto.randomBytes(32).toString("hex"),
+      secret: sealedSecret,
       active: parsed.data.active,
       // The API key's principal is no user row (a foreign key would refuse it): an endpoint it makes has no creator.
       createdBy: isServiceUserId(ctx.userId) ? null : ctx.userId,
     },
   });
 
-  // The one answer that carries the signing secret: it is not shown again.
-  return ok(toWebhookEndpoint(row));
+  // The one answer that carries the signing secret, in plain text: it is not shown again. The store keeps only the sealed value.
+  return ok({ ...toEndpointSummary(row), secret });
 }
 
 export async function updateEndpoint(
@@ -180,6 +192,12 @@ export async function updateEndpoint(
   if (parsed.data.url !== undefined) data.url = parsed.data.url;
   if (parsed.data.events !== undefined) data.events = parsed.data.events;
   if (parsed.data.active !== undefined) data.active = parsed.data.active;
+  // A signing secret stored before sealing is sealed by this write (the value does not change). With no key, or a malformed one, it stays as
+  // it is and the update still goes through (sealLegacySecret says so in the log when the key is malformed).
+  if (!isSealedSecret(existing.secret)) {
+    const sealed = sealLegacySecret(existing.secret, SIGNING_SECRET);
+    if (sealed !== undefined) data.secret = sealed;
+  }
 
   const updated = await prisma.webhookEndpoint.update({
     where: { id },
@@ -273,18 +291,21 @@ export function computeHmacSignature(
 // ---------------------------------------------------------------------------
 
 async function sendWebhookRequest(
-  endpoint: WebhookEndpoint,
+  endpoint: EndpointRow,
   payload: WebhookPayload,
   attempt: number
 ): Promise<WebhookDelivery> {
   const payloadString = JSON.stringify(payload);
-  const signature = computeHmacSignature(endpoint.secret, payloadString);
 
   let statusCode: number | null = null;
   let error: string | null = null;
   let nextRetryAt: Date | null = null;
 
   try {
+    // The secret is opened where it signs. One that cannot be opened fails this delivery like any other error (recorded, retried), and
+    // nothing is sent unsigned: the receiver could not check it. Its error names the field, never the value.
+    const signature = computeHmacSignature(openSecret(endpoint.secret, SIGNING_SECRET), payloadString);
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10_000);
 
@@ -348,7 +369,7 @@ export async function dispatchEvent(payload: WebhookPayload): Promise<void> {
 
     await Promise.allSettled(
       matchingEndpoints.map((endpoint) =>
-        sendWebhookRequest(toWebhookEndpoint(endpoint), payload, 1)
+        sendWebhookRequest(endpoint, payload, 1)
       )
     );
 
@@ -387,6 +408,6 @@ export async function processRetryQueue(): Promise<void> {
     if (!endpoint || !endpoint.active) continue;
 
     const payload = delivery.payload as unknown as WebhookPayload;
-    await sendWebhookRequest(toWebhookEndpoint(endpoint), payload, delivery.attempt + 1);
+    await sendWebhookRequest(endpoint, payload, delivery.attempt + 1);
   }
 }

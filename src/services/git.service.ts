@@ -28,6 +28,7 @@ import { domainLabel } from "@/lib/entity-placement";
 import { getSchemaTargetCatalog, getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { TENANT_PLACEHOLDER } from "@/lib/references/entity-reference";
 import { withoutSchemaVersions } from "@/lib/references/closure";
+import { SecretBoxError, sealSecret } from "@/lib/crypto/secret-box";
 
 // ---------------------------------------------------------------------------
 // Pure helper functions (no I/O — unit-testable)
@@ -607,9 +608,13 @@ export async function configureRepository(
   }
 
   try {
+    // The credential is sealed before anything is written: with no key configured nothing is stored, and the answer says so.
+    const sealedCredential = sealSecret(parsed.data.authCredential, "GitConfig.authCredential");
+
     // Check if a config already exists
     const existing = await prisma.gitConfig.findFirst();
 
+    // The audit entry records the redacted projection (no credential, sealed or not): what withAudit stores is what fn returns.
     const config = await withAudit({
       action: "CONFIGURE_GIT",
       entityType: "GitConfig",
@@ -617,51 +622,67 @@ export async function configureRepository(
       userId: ctx.userId,
       fn: async () => {
         if (existing) {
-          return prisma.gitConfig.update({
-            where: { id: existing.id },
+          return toGitConfigResponse(
+            await prisma.gitConfig.update({
+              where: { id: existing.id },
+              data: {
+                repositoryUrl: parsed.data.repositoryUrl,
+                branch: parsed.data.branch,
+                basePath: parsed.data.basePath,
+                authMethod: parsed.data.authMethod,
+                authCredential: sealedCredential,
+                prReviewMode: parsed.data.prReviewMode,
+                enabled: false,
+              },
+            })
+          );
+        }
+        return toGitConfigResponse(
+          await prisma.gitConfig.create({
             data: {
               repositoryUrl: parsed.data.repositoryUrl,
               branch: parsed.data.branch,
               basePath: parsed.data.basePath,
               authMethod: parsed.data.authMethod,
-              authCredential: parsed.data.authCredential,
+              authCredential: sealedCredential,
               prReviewMode: parsed.data.prReviewMode,
               enabled: false,
+              createdBy: ctx.userId,
             },
-          });
-        }
-        return prisma.gitConfig.create({
-          data: {
-            repositoryUrl: parsed.data.repositoryUrl,
-            branch: parsed.data.branch,
-            basePath: parsed.data.basePath,
-            authMethod: parsed.data.authMethod,
-            authCredential: parsed.data.authCredential,
-            prReviewMode: parsed.data.prReviewMode,
-            enabled: false,
-            createdBy: ctx.userId,
-          },
-        });
+          })
+        );
       },
     });
 
-    return ok(toGitConfigResponse(config));
+    return ok(config);
   } catch (e: unknown) {
     return err({
       code: "INTERNAL_ERROR",
       message: e instanceof Error ? e.message : "Failed to configure Git",
-      suggestedFix: "Check the repository URL and credentials.",
+      suggestedFix:
+        e instanceof SecretBoxError
+          ? "Set SECRETS_ENCRYPTION_KEY, or AUTH_SECRET, then try again (docs/auth-ops.md)."
+          : "Check the repository URL and credentials.",
     });
   }
 }
 
+const GIT_NOT_VERIFIED =
+  "Not verified: this build does not contact the Git repository, so the connection was not tested. Only the configuration was checked.";
+
 /**
  * Test the connection to the configured Git repository.
+ *
+ * It does NOT reach the remote, and it never says the repository was reached. The stored credential is sent to no Git host in this build: the
+ * schema importers fetch the hosts listed in SCHEMA_IMPORT_GIT_HOSTS through the operator's `gh` login (execFile, argv, a timeout:
+ * src/lib/importers/jsonschema-ref-resolver.ts), and the exports and pull requests are recorded, not pushed (`exportAll`, `exportWithReview`).
+ * A real check would be new code: the credential handed to a child process (never on a command line, never in a log), its own timeout, and its
+ * own host allowlist. So the answer is "not verified", and the sync status is left as it was: a SUCCESS here would report a check nobody made.
  */
 export async function testConnection(
   configId: string,
   ctx: ServiceContext
-): Promise<Result<{ connected: boolean; error?: string }>> {
+): Promise<Result<{ connected: boolean; verified: boolean; error?: string }>> {
   if (!ctxCan(ctx, "git.manage")) {
     return err({
       code: "FORBIDDEN",
@@ -680,39 +701,15 @@ export async function testConnection(
     });
   }
 
-  // In a real implementation, this would attempt `git ls-remote` or similar
-  // For now, we validate the configuration is present
-  try {
-    if (!config.repositoryUrl || !config.authCredential) {
-      return ok({
-        connected: false,
-        error: "Repository URL or credentials missing",
-      });
-    }
-
-    await prisma.gitConfig.update({
-      where: { id: configId },
-      data: {
-        lastSyncAt: new Date(),
-        lastSyncStatus: "SUCCESS",
-      },
-    });
-
-    return ok({ connected: true });
-  } catch (e: unknown) {
-    await prisma.gitConfig.update({
-      where: { id: configId },
-      data: {
-        lastSyncAt: new Date(),
-        lastSyncStatus: "FAILED",
-      },
-    });
-
+  if (!config.repositoryUrl || !config.authCredential) {
     return ok({
       connected: false,
-      error: e instanceof Error ? e.message : "Connection test failed",
+      verified: false,
+      error: "Repository URL or credentials missing",
     });
   }
+
+  return ok({ connected: false, verified: false, error: GIT_NOT_VERIFIED });
 }
 
 /**
@@ -827,20 +824,17 @@ export async function enableExport(
     });
   }
 
+  // The audit entry records the redacted projection (see configureRepository). The credential column is not written here, so this update cannot
+  // put back a credential saved meanwhile; a legacy plain value is sealed by the save that sets it (configureRepository).
   const updated = await withAudit({
     action: "ENABLE_GIT_EXPORT",
     entityType: "GitConfig",
     entityId: configId,
     userId: ctx.userId,
-    fn: async () => {
-      return prisma.gitConfig.update({
-        where: { id: configId },
-        data: { enabled: true },
-      });
-    },
+    fn: async () => toGitConfigResponse(await prisma.gitConfig.update({ where: { id: configId }, data: { enabled: true } })),
   });
 
-  return ok(toGitConfigResponse(updated));
+  return ok(updated);
 }
 
 /**
@@ -867,20 +861,17 @@ export async function disableExport(
     });
   }
 
+  // The audit entry records the redacted projection (see configureRepository). The credential column is not written here, so this update cannot
+  // put back a credential saved meanwhile; a legacy plain value is sealed by the save that sets it (configureRepository).
   const updated = await withAudit({
     action: "DISABLE_GIT_EXPORT",
     entityType: "GitConfig",
     entityId: configId,
     userId: ctx.userId,
-    fn: async () => {
-      return prisma.gitConfig.update({
-        where: { id: configId },
-        data: { enabled: false },
-      });
-    },
+    fn: async () => toGitConfigResponse(await prisma.gitConfig.update({ where: { id: configId }, data: { enabled: false } })),
   });
 
-  return ok(toGitConfigResponse(updated));
+  return ok(updated);
 }
 
 /**

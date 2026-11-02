@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---------------------------------------------------------------------------
 // In-memory stores for the Prisma mock
@@ -167,10 +167,19 @@ const makeEndpointInput = (
   ...overrides,
 });
 
+const TEST_SECRETS_KEY = Buffer.alloc(32, 9).toString("base64");
+const OTHER_SECRETS_KEY = Buffer.alloc(32, 10).toString("base64");
+
 describe("Webhook Service", () => {
   beforeEach(async () => {
     await _resetStore();
     vi.restoreAllMocks();
+    // The signing secret is stored sealed: a key is needed (SECRETS_ENCRYPTION_KEY, or the session secret).
+    vi.stubEnv("SECRETS_ENCRYPTION_KEY", TEST_SECRETS_KEY);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   describe("createEndpoint", () => {
@@ -692,6 +701,172 @@ describe("Webhook Service", () => {
       if (!created.success) throw new Error("the endpoint was not created");
       const result = await getDeliveries(created.data.id, adminCtx);
       expect(result).toEqual({ success: true, data: [] });
+    });
+  });
+
+  describe("the signing secret at rest", () => {
+    const payload = {
+      event: "governance.request.created",
+      timestamp: "2025-01-01T00:00:00Z",
+      data: {},
+    };
+
+    it("the row keeps a sealed secret, and only the creation answer shows the plain one", async () => {
+      const created = await createEndpoint(makeEndpointInput(), adminCtx);
+      if (!created.success) throw new Error("create failed");
+
+      expect(created.data.secret).toMatch(/^[0-9a-f]{64}$/);
+      expect(endpoints[0].secret).toMatch(/^enc:v1:/);
+      expect(endpoints[0].secret).not.toContain(created.data.secret);
+    });
+
+    it("a sealed secret signs deliveries with the value the creation answered", async () => {
+      const created = await createEndpoint(makeEndpointInput(), adminCtx);
+      if (!created.success) throw new Error("create failed");
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("OK", { status: 200 }));
+
+      await dispatchEvent(payload);
+
+      const body = fetchSpy.mock.calls[0][1]?.body as string;
+      expect((fetchSpy.mock.calls[0][1]?.headers as Record<string, string>)["X-Webhook-Signature"]).toBe(
+        `sha256=${computeHmacSignature(created.data.secret, body)}`
+      );
+    });
+
+    it("a legacy plain secret (stored before sealing) still signs, with no migration", async () => {
+      endpoints.push({
+        id: "whep_legacy",
+        url: "https://legacy.example.com/hook",
+        events: ["governance.request.created"],
+        secret: "legacy-plain-secret",
+        active: true,
+        createdBy: "admin-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("OK", { status: 200 }));
+
+      await dispatchEvent(payload);
+
+      const body = fetchSpy.mock.calls[0][1]?.body as string;
+      expect((fetchSpy.mock.calls[0][1]?.headers as Record<string, string>)["X-Webhook-Signature"]).toBe(
+        `sha256=${computeHmacSignature("legacy-plain-secret", body)}`
+      );
+    });
+
+    it("a secret that cannot be opened is a failed delivery: nothing is sent unsigned, and the error holds no secret", async () => {
+      const created = await createEndpoint(makeEndpointInput(), adminCtx);
+      if (!created.success) throw new Error("create failed");
+      vi.stubEnv("SECRETS_ENCRYPTION_KEY", OTHER_SECRETS_KEY);
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("OK", { status: 200 }));
+
+      await dispatchEvent(payload);
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      const [failed] = await _getDeliveries();
+      expect(failed.endpointId).toBe(created.data.id);
+      expect(failed.statusCode).toBeNull();
+      expect(failed.error).toContain("cannot be opened");
+      expect(failed.nextRetryAt).not.toBeNull();
+      expect(failed.error).not.toContain(created.data.secret);
+      expect(failed.error).not.toContain(endpoints[0].secret);
+    });
+
+    it("an endpoint whose secret cannot be opened does not stop the others: the rest are still sent", async () => {
+      const first = await createEndpoint(makeEndpointInput({ url: "https://first.example.com/hook" }), adminCtx);
+      if (!first.success) throw new Error("create failed");
+      vi.stubEnv("SECRETS_ENCRYPTION_KEY", OTHER_SECRETS_KEY);
+      const second = await createEndpoint(makeEndpointInput({ url: "https://second.example.com/hook" }), adminCtx);
+      if (!second.success) throw new Error("create failed");
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("OK", { status: 200 }));
+
+      await dispatchEvent(payload);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(fetchSpy.mock.calls[0][0]).toBe("https://second.example.com/hook");
+      const failed = (await _getDeliveries()).filter((d) => d.error !== null);
+      expect(failed.map((d) => d.endpointId)).toEqual([first.data.id]);
+    });
+
+    it("a legacy plain secret is sealed on the endpoint's next update, and keeps signing with the same value", async () => {
+      endpoints.push({
+        id: "whep_legacy",
+        url: "https://legacy.example.com/hook",
+        events: ["governance.request.created"],
+        secret: "legacy-plain-secret",
+        active: true,
+        createdBy: "admin-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const updated = await updateEndpoint("whep_legacy", { active: true }, adminCtx);
+
+      expect(updated.success).toBe(true);
+      expect(endpoints[0].secret).toMatch(/^enc:v1:/);
+      expect((await _getEndpoints())[0].secret).toBe("legacy-plain-secret");
+    });
+
+    it("without a key, updating an endpoint with a legacy secret still succeeds, and the secret stays as it was", async () => {
+      endpoints.push({
+        id: "whep_legacy",
+        url: "https://legacy.example.com/hook",
+        events: ["governance.request.created"],
+        secret: "legacy-plain-secret",
+        active: true,
+        createdBy: "admin-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      vi.stubEnv("SECRETS_ENCRYPTION_KEY", "");
+      vi.stubEnv("AUTH_SECRET", "");
+      vi.stubEnv("NEXTAUTH_SECRET", "");
+
+      const updated = await updateEndpoint("whep_legacy", { active: false }, adminCtx);
+
+      expect(updated.success).toBe(true);
+      expect(endpoints[0].secret).toBe("legacy-plain-secret");
+    });
+
+    it("a malformed SECRETS_ENCRYPTION_KEY does not block an update: the legacy secret stays plain, and the log names the variable, never the value", async () => {
+      endpoints.push({
+        id: "whep_legacy",
+        url: "https://legacy.example.com/hook",
+        events: ["governance.request.created"],
+        secret: "legacy-plain-secret",
+        active: true,
+        createdBy: "admin-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.stubEnv("SECRETS_ENCRYPTION_KEY", "not-a-key!");
+
+      const updated = await updateEndpoint("whep_legacy", { active: false }, adminCtx);
+
+      expect(updated.success).toBe(true);
+      expect(endpoints[0].secret).toBe("legacy-plain-secret");
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = String(warn.mock.calls[0][0]);
+      expect(line).toContain("SECRETS_ENCRYPTION_KEY");
+      expect(line).not.toContain("not-a-key!");
+      expect(line).not.toContain("legacy-plain-secret");
+      warn.mockRestore();
+    });
+
+    it("with no key at all, creating an endpoint is refused with the reason, and nothing is stored", async () => {
+      vi.stubEnv("SECRETS_ENCRYPTION_KEY", "");
+      vi.stubEnv("AUTH_SECRET", "");
+      vi.stubEnv("NEXTAUTH_SECRET", "");
+
+      const result = await createEndpoint(makeEndpointInput(), adminCtx);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("INTERNAL_ERROR");
+        expect(result.error.message).toContain("SECRETS_ENCRYPTION_KEY");
+      }
+      expect(endpoints).toHaveLength(0);
     });
   });
 });

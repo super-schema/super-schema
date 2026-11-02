@@ -57,6 +57,8 @@ beforeEach(() => {
   delete process.env.API_KEY;
   delete process.env.API_KEY_ROLE;
   delete process.env.API_KEY_TENANT_ID;
+  // A webhook's signing secret is sealed before it is stored: the run needs a key for it (the session secret would do too).
+  process.env.SECRETS_ENCRYPTION_KEY = Buffer.alloc(32, 5).toString("base64");
   h.activeTenant.mockResolvedValue("t1");
   h.prisma.entity.findMany.mockResolvedValue([ENTITY]);
   h.prisma.entity.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => (where.id === ENTITY.id ? ENTITY : null));

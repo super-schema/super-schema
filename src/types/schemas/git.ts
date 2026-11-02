@@ -31,8 +31,28 @@ export type PrReviewMode = z.infer<typeof PrReviewModeSchema>;
 // Inputs
 // ---------------------------------------------------------------------------
 
+/**
+ * Whether a repository URL carries a credential in its user information. Such a token would be stored in clear text in the repository row,
+ * returned with the configuration and copied into the audit trail, so it goes in the credential field instead, which is sealed. A password is a
+ * secret in any scheme. A user name is the token-as-user-name form (`https://<token>@host/...`) in every scheme but ssh, where it names an account
+ * (`ssh://git@host/...`): the scp form (`git@host:path`) has no URL user information at all and stays allowed.
+ */
+function carriesUrlCredentials(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.password !== "") return true;
+  return url.username !== "" && !/ssh/i.test(url.protocol);
+}
+
 export const ConfigureRepositoryInputSchema = z.object({
-  repositoryUrl: z.string().min(1, "Repository URL is required"),
+  repositoryUrl: z
+    .string()
+    .min(1, "Repository URL is required")
+    .refine((value) => !carriesUrlCredentials(value), "Keep the credential out of the repository URL: enter it in the credential field."),
   branch: z.string().min(1).default("main"),
   basePath: z.string().min(1).default("schemas/"),
   authMethod: GitAuthMethodSchema,
