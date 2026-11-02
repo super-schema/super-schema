@@ -73,13 +73,6 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   Published Versions list above names the user correctly: "Admin").
 - where: `change-history.service.ts` builds the summary from the action and entity type, and sets no `userName` on audit entries.
 
-## KD-008: saving an entity's description gives no sign that it was saved
-
-- status: no-test (UX)
-- symptom: no toast and no "Saved" flash; a page load straight after the click can still read the old description (the action is
-  in flight). The suite waits for the server action's answer (`afterServerAction`).
-- where: `InlineEntityMeta.tsx` (the description's Save does not call `onMetaSaved`).
-
 ## KD-010: in the new-field form Escape closes the form, not the suggestion list
 
 - status: no-test (UX)
