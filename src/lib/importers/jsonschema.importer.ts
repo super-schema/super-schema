@@ -1905,8 +1905,13 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       field.danglingRef = { ref: resolved.originalType, reason: DANGLING_REASON };
     }
 
-    // Array element type (+ reference / enum target of the element).
-    const items = sources.find((s) => s.items)?.items;
+    // Array element type (+ reference / enum target of the element). A nullable wrapper is the field itself, so the element is searched in its
+    // schemas too: its allOf members, and the definitions they `$ref` (a named array behind `X | null`), as the field's own sources are.
+    // Only an array or a map has an element or a value: the search (and its definition visits, charged to the budget) is not made for other fields.
+    const collection = resolved.type === "array" || resolved.type === "map";
+    const wrapperSources = collection ? wrappers.flatMap((wrapper) => schemaSources(wrapper)) : [];
+    const elementSources = collection ? [...sources, ...wrapperSources, ...inlineDefinitionSources(wrapperSources, ctx)] : [];
+    const items = elementSources.find((s) => s.items)?.items;
     if (resolved.type === "array" && items && !Array.isArray(items)) {
       const item = resolveSchemaType(items as JsonSchemaNode, ctx);
       field.arrayElementType = item.type;
@@ -1925,7 +1930,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     }
 
     // Map value type (+ reference / enum target of the value). The value schema IS the type now, so it is no longer an ignored keyword.
-    const valueSchema = resolved.type === "map" ? sources.find((s) => isMapSchema(s))?.additionalProperties : undefined;
+    const valueSchema = resolved.type === "map" ? elementSources.find((s) => isMapSchema(s))?.additionalProperties : undefined;
     if (isSchemaObject(valueSchema)) {
       const value = resolveSchemaType(valueSchema, ctx);
       field.mapKeyType = "string";
