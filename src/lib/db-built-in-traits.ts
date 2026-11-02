@@ -6,6 +6,7 @@
 // and the start goes on. A name that something else in a tenant already holds is neither: it is reported and left alone.
 
 import { getDbProvider, getPgliteDataDir } from "./db-provider";
+import { assertPgliteDataDirOpenable } from "./pglite-data-version";
 
 /** How long a PostgreSQL connection may take before the step gives up (the dev start must stay fast). */
 const CONNECT_TIMEOUT_MS = 5_000;
@@ -33,7 +34,7 @@ export async function installBuiltInTraits({ strict }: { strict: boolean }): Pro
     let adapter: ConstructorParameters<typeof PrismaClient>[0]["adapter"];
     if (getDbProvider() === "pglite") {
       const [{ PGlite }, { PrismaPGlite }] = await Promise.all([import("@electric-sql/pglite"), import("./pglite-adapter")]);
-      const pglite = new PGlite(getPgliteDataDir());
+      const pglite = new PGlite(assertPgliteDataDirOpenable(getPgliteDataDir()));
       close = () => pglite.close();
       adapter = new PrismaPGlite(pglite);
     } else {

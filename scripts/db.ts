@@ -18,12 +18,13 @@ import "dotenv/config";
 import { installBuiltInTraits } from "../src/lib/db-built-in-traits";
 import { getDbProvider, getPgliteDataDir } from "../src/lib/db-provider";
 import { applyPgliteMigrations } from "../src/lib/pglite-migrate";
+import { assertPgliteDataDirOpenable } from "../src/lib/pglite-data-version";
 
 const mode = process.argv[2] === "deploy" ? "deploy" : "ensure";
 
 async function runPglite(): Promise<void> {
   const { PGlite } = await import("@electric-sql/pglite");
-  const db = new PGlite(getPgliteDataDir());
+  const db = new PGlite(assertPgliteDataDirOpenable(getPgliteDataDir()));
   const applied = await applyPgliteMigrations(db);
   await db.close();
   console.log(

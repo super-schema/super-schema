@@ -73,6 +73,7 @@ npm run dev
 | `npm run db:generate` | `prisma generate` |
 | `npm run db:deploy` | PGlite: apply pending migrations in-process · PostgreSQL: `prisma migrate deploy`. Then, for either, install the built-in message properties into every tenant. A failure fails the command (exit 1): the production step does not finish without them |
 | `npm run db:migrate` | `prisma migrate dev` — **author** a new migration (PostgreSQL only, see below) |
+| `npm run db:pglite-upgrade` | Moves a PGlite data directory made by PGlite 0.4 (PostgreSQL 17) to PostgreSQL 18; see [Upgrading a PGlite 0.4 database](#upgrading-a-pglite-04-database) |
 | `npm run db:seed` | `tsx prisma/seed.ts` (provider-aware) |
 | `npm run db:studio` | `prisma studio` |
 
@@ -239,6 +240,34 @@ docker compose -f .docker/docker-compose.yml up --build
   `file:../typespec/packages/*` emitter links point at a sibling checkout that the build context does not contain (KD-040 in
   `docs/testing/known-defects.md`). Even with a built image, generating a schema target does not work in it, because the emitter packages are
   not in the runtime image (KD-040).
+
+## Upgrading a PGlite 0.4 database
+
+PGlite 0.5 embeds **PostgreSQL 18**; PGlite 0.4 embedded PostgreSQL 17. PostgreSQL's on-disk format changes between
+major versions, so a data directory made before the upgrade (`./data/pglite`, or `PGLITE_DATA_DIR`) can't be opened
+any more. `npm run dev`, `npm run db:deploy` and the app refuse it before PGlite opens it, with this message:
+
+```text
+The PGlite data directory ./data/pglite was made by PostgreSQL 17, and this PGlite embeds PostgreSQL 18, which cannot open it.
+Run `npm run db:pglite-upgrade` to move it to PostgreSQL 18 ...
+```
+
+Stop the app, then run:
+
+```bash
+npm run db:pglite-upgrade
+```
+
+It installs PGlite 0.4.6 and its `pg_dump` (`@electric-sql/pglite-tools` 0.3.6) into a temporary directory (never into
+the checkout, so it needs npm and network access), dumps the database to SQL with them, and restores the SQL into a new
+directory with the current PGlite. Nothing is deleted: the old directory is renamed to `<dir>.pg17-backup-<time>` and
+the dump is kept next to it as `<dir>.pg17-dump-<time>.sql`. Delete both once the app works. If the restore fails, the
+old directory is put back as it was. A directory that holds nothing you need can simply be deleted instead: the next
+`npm run dev` makes a new, empty one.
+
+PostgreSQL deployments (`DB_PROVIDER=postgresql`, the Docker image) aren't affected.
+
+---
 
 ## Vendored adapter
 

@@ -9,6 +9,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { PrismaPGlite } from "./pglite-adapter";
 
 import { getDbProvider, getPgliteDataDir } from "./db-provider";
+import { assertPgliteDataDirOpenable } from "./pglite-data-version";
 
 let pgliteClient: PGlite | undefined;
 
@@ -18,7 +19,7 @@ let pgliteClient: PGlite | undefined;
  */
 export function getPgliteClient(): PGlite {
   if (!pgliteClient) {
-    pgliteClient = new PGlite(getPgliteDataDir());
+    pgliteClient = new PGlite(assertPgliteDataDirOpenable(getPgliteDataDir()));
   }
   return pgliteClient;
 }
