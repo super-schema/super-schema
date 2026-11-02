@@ -197,7 +197,7 @@ async function createProductEntity(params: {
                 ...(linked && { fields: { create: linked.fields.map(mapFieldCreateInput) } }),
               },
             });
-            await relinkDanglingFields(tx, { productId, entity: { id: row.id, name } });
+            await relinkDanglingFields(tx, { productId, entity: { id: row.id, name }, actor: { userId, tenantId: scope.tenantId } });
             return row;
           },
         });
@@ -1404,7 +1404,12 @@ export async function createDomainAssetsFromImportAction(
         });
         result.enumsCreated++;
         // entities imported before this enum that pointed at its file by name are linked to it now
-        if (domainScope.data.domainId) await relinkDanglingFieldsToEnum(tx, { domainId: domainScope.data.domainId, enum: { name, values: sharedEnum.values } });
+        if (domainScope.data.domainId)
+          await relinkDanglingFieldsToEnum(tx, {
+            domainId: domainScope.data.domainId,
+            enum: { name, values: sharedEnum.values },
+            actor: { userId: currentUserId, tenantId },
+          });
       }
 
       for (const scalar of payload.customScalars) {

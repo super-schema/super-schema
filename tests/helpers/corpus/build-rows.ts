@@ -66,7 +66,7 @@ async function persist(result: TypeSpecImportResult, rootName: string): Promise<
   });
   const recorded: Array<{ name: string; metadata?: Record<string, unknown>; description?: string; fields: { create: Row[] } }> = [];
   const create = vi.fn(async ({ data }: { data: (typeof recorded)[number] }) => { recorded.push(data); return { id: `id-${data.name}` }; });
-  const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
+  const tx = { auditLog: { create: vi.fn(async () => ({})) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
   const skipped: string[] = [];
   await createImportedEntities(tx, {
     entities: payload.entities as unknown as ImportedEntityInput[],

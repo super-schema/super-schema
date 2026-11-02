@@ -22,6 +22,7 @@ const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable } = vi.hoisted(() 
       create: vi.fn(),
       findFirst: vi.fn(),
     },
+    auditLog: { create: vi.fn() },
     field: { findMany: vi.fn(async () => []) },
     entity: {
       create: vi.fn(),

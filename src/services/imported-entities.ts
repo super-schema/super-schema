@@ -13,7 +13,7 @@ import { isPlainObject } from "@/lib/editable-fields";
 import { genericExtensionEntries, setOwn } from "@/lib/compiler/governance-decorators";
 import { generateSlug } from "@/lib/slug";
 import { entityNameMessage } from "@/lib/entity-name";
-import { EXTENDS_METADATA_KEY, linkImportedEntity, relinkDanglingFields } from "@/services/imported-links";
+import { EXTENDS_METADATA_KEY, auditInTransaction, linkImportedEntity, relinkDanglingFields } from "@/services/imported-links";
 
 export interface ImportedEntityInput {
   name: string;
@@ -178,7 +178,10 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
       },
     });
 
-    await relinkDanglingFields(tx, { productId, entity: { id: row.id, name } });
+    // The creation is recorded like every other entity creation (an Entity CREATE row, under the importing user), in this transaction.
+    const actor = { userId: ownerId, tenantId: productScope.tenantId };
+    await auditInTransaction(tx, actor, { action: "CREATE", entityType: "Entity", entityId: "pending", afterState: row });
+    await relinkDanglingFields(tx, { productId, entity: { id: row.id, name }, actor });
     refs.set(entity.name, { id: row.id, productId });
     // whatever else in the import still calls it by the name the file gave it (a service of the same import) finds it too
     const original = originals.get(name);

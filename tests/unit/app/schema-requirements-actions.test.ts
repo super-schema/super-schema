@@ -107,6 +107,13 @@ describe("setEntityPrimaryKeyAction", () => {
     expect(h.revalidatePath).toHaveBeenCalledWith("/schemas");
   });
 
+  it("records the key it leaves as the entity's UPDATE state, not the transaction's row counts", async () => {
+    await actions.setEntityPrimaryKeyAction("ent-1", ["tenant", "seq"]);
+    expect(p.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "UPDATE", entityType: "Entity", entityId: "ent-1", afterState: { primaryKey: ["tenant", "seq"] } }),
+    });
+  });
+
   it("returns a generic failure (no database text) when the write throws", async () => {
     p.$transaction.mockRejectedValue(new Error("Invalid `prisma.field.updateMany()` invocation in /Users/dev/x.ts"));
     const result = await actions.setEntityPrimaryKeyAction("ent-1", ["tenant"]);

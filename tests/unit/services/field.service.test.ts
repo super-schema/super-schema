@@ -220,6 +220,16 @@ describe("Field Service", () => {
       await reorderFields("ent-1", ["fld-1"], mockCtx);
       expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(MARK_DRAFT_CHANGED_SQL, "ent-1");
     });
+
+    it("records the REORDER row under the entity's tenant (its id is the entity's, so the tenant is not found from a field)", async () => {
+      vi.mocked(prisma.field.findMany).mockResolvedValue([{ id: "fld-1", sortOrder: 0 }] as never);
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ tenantId: "tenant-1" } as never);
+      vi.mocked(prisma.$transaction).mockResolvedValue([]);
+      await reorderFields("ent-1", ["fld-1"], mockCtx);
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ action: "REORDER", entityType: "Field", entityId: "ent-1", tenantId: "tenant-1" }),
+      });
+    });
   });
 
   /**

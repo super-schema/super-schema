@@ -61,6 +61,15 @@ describe("later publishes", () => {
     expect(!low.success && low.error.code).toBe("BUMP_TOO_LOW");
     expect(planPublish(s)).toMatchObject({ success: true, data: { label: "3.0", changeKind: "MAJOR" } });
   });
+
+  it("suggests MAJOR for a re-pointed reference and refuses MINOR", () => {
+    const toCustomer = f("customer", { type: "reference", decorators: { referencedEntityId: "cust", referencedEntityName: "Customer" } });
+    const toVendor = f("customer", { type: "reference", decorators: { referencedEntityId: "vend", referencedEntityName: "Vendor" } });
+    const s = state({ latest: published([ID, toCustomer]), currentFields: [ID, toVendor] });
+    expect(analyzePublish(s).suggestedBump).toBe("MAJOR");
+    const low = planPublish(s, "MINOR");
+    expect(!low.success && low.error.code).toBe("BUMP_TOO_LOW");
+  });
 });
 
 describe("blockers and pins", () => {

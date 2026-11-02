@@ -202,6 +202,16 @@ function evaluateModifiedField(field: DiffField): ClassificationReason[] {
         });
         break;
 
+      case "referenceTarget":
+        // Another entity: consumers and the generated schemas type the field by a different model.
+        reasons.push({
+          changeType: "breaking",
+          severity: "high",
+          reason: `Re-pointed reference "${field.fieldName}" from "${prop.before ?? "none"}" to "${prop.after ?? "none"}" — consumers and generated schemas now type it as another entity`,
+          fieldName: field.fieldName,
+        });
+        break;
+
       case "decorators":
         reasons.push({
           changeType: "non-breaking",

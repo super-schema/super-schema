@@ -22,6 +22,7 @@ const { mockAuth, mockPrisma, mockTx } = await vi.hoisted(async () => {
     mockTx: {
       ...registry,
       modelDefinition: { create: vi.fn(), findFirst: vi.fn() },
+      auditLog: { create: vi.fn() },
       decoratorDefinition: { create: vi.fn(), findFirst: vi.fn() },
       field: { findMany: vi.fn(async () => []) },
       entity: { ...registry.entity, create: vi.fn(), findFirst: vi.fn() },

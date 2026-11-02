@@ -65,7 +65,7 @@ describe("persisting", () => {
       created.push(data);
       return { id: `id-${data.name}` };
     });
-    const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) } } as unknown as Prisma.TransactionClient;
+    const tx = { auditLog: { create: vi.fn(async () => ({})) }, field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) } } as unknown as Prisma.TransactionClient;
     await createImportedEntities(tx, {
       entities: payload.entities as unknown as ImportedEntityInput[],
       productScope: { tenantId: "t", domainId: "d", productId: "p" },

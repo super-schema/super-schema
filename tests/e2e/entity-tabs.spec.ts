@@ -597,10 +597,10 @@ test.describe("the field studio and the right panel", () => {
     const tab = await openVersionsTab(page);
     const log = tab.getByTestId(ID.changeHistory);
     await expect(log).toBeVisible();
-    // A version was published: the empty state is gone, and the publish is one entry of the log.
+    // A version was published: the empty state is gone. The log lists the field added before the publish, and the publish itself.
     await expect(log.getByTestId(ID.timelineEmpty)).toHaveCount(0);
     await expect(log.getByTestId("change-timeline")).toBeVisible();
-    await expect(log.locator('[data-testid^="timeline-audit-"]')).toHaveCount(1);
+    await expect(log.locator('[data-testid^="timeline-audit-"]').filter({ hasText: "Added a new field" })).toHaveCount(1);
     // The filter bar is hidden until asked for, and narrows by change type.
     await expect(log.getByTestId("filter-bar")).toHaveCount(0);
     await log.getByRole("button", { name: "Filters" }).click();

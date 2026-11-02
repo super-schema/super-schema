@@ -106,6 +106,11 @@ export function classifyForAvro(
             details.push(
               `Classification change on "${field.fieldName}" — metadata only`
             );
+          } else if (prop.property === "referenceTarget") {
+            details.push(
+              `Re-pointed reference on "${field.fieldName}": ${prop.before ?? "none"} → ${prop.after ?? "none"} — breaking (the field is typed by another record)`
+            );
+            changeType = "breaking";
           }
           // Other property changes are non-breaking for Avro
         }

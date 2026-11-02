@@ -2,7 +2,7 @@
 // Links an imported entity to entities that ALREADY exist in its product (the other files of a schema folder, imported one by one):
 // - a field whose `$ref` points at a file that is not part of the document keeps a dangling marker; when the product has an entity of
 //   that name the marker is replaced by a real reference (and, the other way round, a new entity picks up the dangling fields that name it);
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { readDanglingMarker } from "@/lib/field-dangling";
 import { withoutReferenceKeys, writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
@@ -106,14 +106,40 @@ export async function linkImportedEntity(
 /** The entity metadata key that holds the NAME of the entity this one extends (an `allOf` base of another file). */
 export const EXTENDS_METADATA_KEY = "extends";
 
+/** The acting user and tenant an audit row written by these helpers is recorded under (what `withAudit` takes from its caller). */
+export type AuditActor = { userId: string; tenantId: string };
+
+/**
+ * Writes an audit row through the caller's transaction, so it commits or rolls back with the write it records. The row has the shape
+ * `withAudit` writes (the states, the acting tenant). Used where the write runs inside a transaction that `withAudit`'s own client cannot join.
+ */
+export async function auditInTransaction(
+  tx: Prisma.TransactionClient,
+  actor: AuditActor,
+  entry: { action: "CREATE" | "UPDATE"; entityType: "Entity" | "Field"; entityId: string; beforeState?: object; afterState: object },
+): Promise<void> {
+  await tx.auditLog.create({
+    data: {
+      action: entry.action,
+      entityType: entry.entityType,
+      entityId: entry.entityId,
+      userId: actor.userId,
+      tenantId: actor.tenantId,
+      beforeState: entry.beforeState !== undefined ? (entry.beforeState as Prisma.InputJsonValue) : Prisma.JsonNull,
+      afterState: entry.afterState as Prisma.InputJsonValue,
+    },
+  });
+}
+
 /**
  * After an imported entity is created: the product's fields that still point at its name as a dangling reference are linked to it
- * (files imported in any order end up linked). Returns how many fields were linked.
+ * (files imported in any order end up linked). Each linked field is audited (an UPDATE of the field, under `actor`). Returns how many
+ * fields were linked.
  */
-export async function relinkDanglingFields(tx: Prisma.TransactionClient, args: { productId: string; entity: Target }): Promise<number> {
+export async function relinkDanglingFields(tx: Prisma.TransactionClient, args: { productId: string; entity: Target; actor: AuditActor }): Promise<number> {
   const candidates = await tx.field.findMany({
     where: { entity: { productId: args.productId }, decorators: { path: ["referencedEntityName"], equals: args.entity.name }, entityId: { not: args.entity.id } },
-    select: { id: true, decorators: true },
+    select: { id: true, entityId: true, name: true, type: true, decorators: true },
   });
   const dangling = candidates.filter((row) => readDanglingMarker(row.decorators) !== undefined);
   if (dangling.length === 0) return 0;
@@ -121,7 +147,15 @@ export async function relinkDanglingFields(tx: Prisma.TransactionClient, args: {
   if (!place) return 0;
   for (const row of dangling) {
     const decorators = row.decorators as Record<string, unknown>;
-    await tx.field.update({ where: { id: row.id }, data: { decorators: linkedDecorators(decorators, args.entity, place) as Prisma.InputJsonObject } });
+    const linked = linkedDecorators(decorators, args.entity, place) as Prisma.InputJsonObject;
+    await tx.field.update({ where: { id: row.id }, data: { decorators: linked } });
+    await auditInTransaction(tx, args.actor, {
+      action: "UPDATE",
+      entityType: "Field",
+      entityId: row.id,
+      beforeState: row,
+      afterState: { ...row, decorators: linked },
+    });
   }
   return dangling.length;
 }
@@ -130,10 +164,10 @@ export async function relinkDanglingFields(tx: Prisma.TransactionClient, args: {
  * After a shared enum is created: the domain's entities' fields that still point at its name as a dangling reference become enum fields
  * of it (files imported in any order end up linked). Returns how many fields were linked.
  */
-export async function relinkDanglingFieldsToEnum(tx: Prisma.TransactionClient, args: { domainId: string; enum: EnumTarget }): Promise<number> {
+export async function relinkDanglingFieldsToEnum(tx: Prisma.TransactionClient, args: { domainId: string; enum: EnumTarget; actor: AuditActor }): Promise<number> {
   const candidates = await tx.field.findMany({
     where: { entity: { domainId: args.domainId }, decorators: { path: ["referencedEntityName"], equals: args.enum.name } },
-    select: { id: true, name: true, type: true, decorators: true },
+    select: { id: true, entityId: true, name: true, type: true, decorators: true },
   });
   let linked = 0;
   for (const row of candidates) {
@@ -143,6 +177,13 @@ export async function relinkDanglingFieldsToEnum(tx: Prisma.TransactionClient, a
     const next = linkFieldToEnum(input, args.enum);
     if (next === input) continue;
     await tx.field.update({ where: { id: row.id }, data: { type: next.type, decorators: next.decorators as Prisma.InputJsonObject } });
+    await auditInTransaction(tx, args.actor, {
+      action: "UPDATE",
+      entityType: "Field",
+      entityId: row.id,
+      beforeState: row,
+      afterState: { ...row, type: next.type, decorators: next.decorators },
+    });
     linked += 1;
   }
   return linked;

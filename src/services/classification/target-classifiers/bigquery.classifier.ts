@@ -77,6 +77,11 @@ export function classifyForBigQuery(
               );
               changeType = "breaking";
             }
+          } else if (prop.property === "referenceTarget") {
+            details.push(
+              `Re-pointed reference on "${field.fieldName}": ${prop.before ?? "none"} → ${prop.after ?? "none"} — breaking (the column's record type changes)`
+            );
+            changeType = "breaking";
           }
           // Other property changes are non-breaking for BigQuery
         }

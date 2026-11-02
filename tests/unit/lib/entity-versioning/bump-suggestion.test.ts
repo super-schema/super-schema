@@ -42,3 +42,27 @@ describe("suggestBump", () => {
     expect(suggestBump([ID], [ID, f("tenant", { nullable: false })]).bump).toBe("MAJOR");
   });
 });
+
+describe("suggestBump for a reference", () => {
+  /** A reference field pointing at the entity `id` named `name` (the decorators `writeFieldReference` stores), plus `extra` decorators. */
+  const ref = (id: string, name: string, extra: Record<string, unknown> = {}) =>
+    f("customer", {
+      type: "reference",
+      decorators: { referencedEntityId: id, referencedEntityName: name, referencedQualifiedName: `Sales/Orders/${name}`, referencedEntity: name, ...extra },
+    });
+
+  it("suggests MAJOR when the reference is re-pointed at another entity, and says why", () => {
+    const s = suggestBump([ID, ref("cust", "Customer")], [ID, ref("vend", "Vendor")]);
+    expect(s.bump).toBe("MAJOR");
+    expect(s.reasons.some((r) => r.includes('Re-pointed reference "customer" from "Sales / Orders / Customer" to "Sales / Orders / Vendor"'))).toBe(true);
+  });
+
+  it("suggests MINOR when a legacy name-only reference gains the id of the entity it already named", () => {
+    const legacy = f("customer", { type: "reference", decorators: { referencedEntityName: "Customer" } });
+    expect(suggestBump([ID, legacy], [ID, ref("cust", "Customer")]).bump).toBe("MINOR");
+  });
+
+  it("suggests MINOR when only the version pin of the reference changes", () => {
+    expect(suggestBump([ID, ref("cust", "Customer")], [ID, ref("cust", "Customer", { referencedEntityVersion: "2.1" })]).bump).toBe("MINOR");
+  });
+});

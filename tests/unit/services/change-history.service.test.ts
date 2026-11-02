@@ -295,6 +295,33 @@ describe("Change History Service", () => {
         expect(result.data.entries[0].userId).toBe("user-1");
       }
     });
+
+    it("reads every audit row about the entity: its own, its fields' (the entity is in their state) and its creation, of its tenant", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({
+        metadata: null,
+        tenantId: "tenant-1",
+      } as never);
+      vi.mocked(prisma.auditLog.findMany).mockResolvedValue([] as never);
+
+      await getChangeHistory("ent-1", mockCtx);
+
+      const query = vi.mocked(prisma.auditLog.findMany).mock.calls[0][0] as unknown as { where: unknown; orderBy: unknown };
+      expect(query.where).toEqual({
+        AND: [
+          { OR: [{ tenantId: "tenant-1" }, { tenantId: null }] },
+          {
+            OR: [
+              { entityId: "ent-1" },
+              { entityType: "Field", beforeState: { path: ["entityId"], equals: "ent-1" } },
+              { entityType: "Field", afterState: { path: ["entityId"], equals: "ent-1" } },
+              { entityType: "Entity", entityId: "pending", afterState: { path: ["id"], equals: "ent-1" } },
+            ],
+          },
+        ],
+      });
+      // Rows written in the same millisecond keep a stable order (the id decides), so a page never repeats or skips one.
+      expect(query.orderBy).toEqual([{ timestamp: "desc" }, { id: "desc" }]);
+    });
   });
 
   describe("sortByTimestampDesc", () => {

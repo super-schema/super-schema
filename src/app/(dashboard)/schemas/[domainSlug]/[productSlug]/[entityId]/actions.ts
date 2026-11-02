@@ -1341,13 +1341,16 @@ export async function setEntityPrimaryKeyAction(entityId: string, fieldNames: st
       userId: access.principal.userId,
       tenantId: access.resource.tenantId,
       beforeState: { primaryKey: existing.filter((field) => field.isKey).map((field) => field.name) } as unknown as object,
-      fn: () =>
-        prisma.$transaction([
+      fn: async () => {
+        await prisma.$transaction([
           // A key is never null: left optional it makes JSON Schema / OpenAPI / Avro / Protobuf / Java refuse the entity (`no-optional-key`).
           prisma.field.updateMany({ where: { entityId, name: { in: fieldNames } }, data: { isKey: true, nullable: false } }),
           prisma.field.updateMany({ where: { entityId, name: { notIn: fieldNames } }, data: { isKey: false } }),
           prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
-        ]),
+        ]);
+        // The state the entry records is the key it leaves (the transaction's row counts are not a state of the entity).
+        return { primaryKey: fieldNames };
+      },
     });
 
     revalidatePath("/schemas");

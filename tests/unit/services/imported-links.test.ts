@@ -46,20 +46,43 @@ describe("linkImportedEntity", () => {
 describe("relinkDanglingFields", () => {
   it("links the product's dangling fields that name the new entity, and only those", async () => {
     const update = vi.fn().mockResolvedValue({});
+    const auditCreate = vi.fn().mockResolvedValue({});
     const db = {
       field: {
         findMany: vi.fn().mockResolvedValue([
-          { id: "f1", decorators: dangling("Address") },
-          { id: "f2", decorators: { referencedEntityName: "Address", referencedEntityId: "x" } },
+          { id: "f1", entityId: "e-other", name: "tax", type: "reference", decorators: dangling("Address") },
+          { id: "f2", entityId: "e-other", name: "ship", type: "reference", decorators: { referencedEntityName: "Address", referencedEntityId: "x" } },
         ]),
         update,
       },
       product: { findUnique: vi.fn().mockResolvedValue({ name: "customer", domain: { name: "CDS" } }) },
+      auditLog: { create: auditCreate },
     };
-    expect(await relinkDanglingFields(db as never, { productId: "p", entity: { id: "ad", name: "Address" } })).toBe(1);
+    expect(
+      await relinkDanglingFields(db as never, { productId: "p", entity: { id: "ad", name: "Address" }, actor: { userId: "u1", tenantId: "t1" } })
+    ).toBe(1);
     expect(update).toHaveBeenCalledTimes(1);
     expect(update.mock.calls[0][0]).toMatchObject({ where: { id: "f1" }, data: { decorators: { referencedEntityId: "ad" } } });
     expect(update.mock.calls[0][0].data.decorators).not.toHaveProperty("danglingRef");
+  });
+
+  it("records each relinked field as an UPDATE of that field, under the acting user and tenant, with its states", async () => {
+    const auditCreate = vi.fn().mockResolvedValue({});
+    const db = {
+      field: {
+        findMany: vi.fn().mockResolvedValue([{ id: "f1", entityId: "e-other", name: "tax", type: "reference", decorators: dangling("Address") }]),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      product: { findUnique: vi.fn().mockResolvedValue({ name: "customer", domain: { name: "CDS" } }) },
+      auditLog: { create: auditCreate },
+    };
+    await relinkDanglingFields(db as never, { productId: "p", entity: { id: "ad", name: "Address" }, actor: { userId: "u1", tenantId: "t1" } });
+
+    expect(auditCreate).toHaveBeenCalledTimes(1);
+    const { data } = auditCreate.mock.calls[0][0];
+    expect(data).toMatchObject({ action: "UPDATE", entityType: "Field", entityId: "f1", userId: "u1", tenantId: "t1" });
+    expect(data.beforeState).toMatchObject({ id: "f1", entityId: "e-other", name: "tax", decorators: dangling("Address") });
+    expect(data.afterState).toMatchObject({ id: "f1", decorators: { referencedEntityId: "ad" } });
   });
 });
 
@@ -116,17 +139,30 @@ describe("a dangling reference to an enum file", () => {
 
   it("relinks the domain's dangling fields when the enum is created afterwards", async () => {
     const update = vi.fn().mockResolvedValue({});
+    const auditCreate = vi.fn().mockResolvedValue({});
     const db = {
       field: {
         findMany: vi.fn().mockResolvedValue([
-          { id: "f1", name: "o", type: "reference", decorators: dangling("Orthography") },
-          { id: "f2", name: "p", type: "reference", decorators: { referencedEntityName: "Orthography", referencedEntityId: "x" } },
+          { id: "f1", entityId: "e-other", name: "o", type: "reference", decorators: dangling("Orthography") },
+          { id: "f2", entityId: "e-other", name: "p", type: "reference", decorators: { referencedEntityName: "Orthography", referencedEntityId: "x" } },
         ]),
         update,
       },
+      auditLog: { create: auditCreate },
     };
-    expect(await relinkDanglingFieldsToEnum(db as never, { domainId: "d1", enum: ORTHOGRAPHY })).toBe(1);
+    expect(await relinkDanglingFieldsToEnum(db as never, { domainId: "d1", enum: ORTHOGRAPHY, actor: { userId: "u1", tenantId: "t1" } })).toBe(1);
     expect(update).toHaveBeenCalledTimes(1);
     expect(update.mock.calls[0][0]).toMatchObject({ where: { id: "f1" }, data: { type: "enum", decorators: { enumName: "Orthography" } } });
+
+    // the change of the field's own row is recorded too, so the entity's Change Log shows it
+    expect(auditCreate).toHaveBeenCalledTimes(1);
+    expect(auditCreate.mock.calls[0][0].data).toMatchObject({
+      action: "UPDATE",
+      entityType: "Field",
+      entityId: "f1",
+      userId: "u1",
+      tenantId: "t1",
+      afterState: { id: "f1", type: "enum", decorators: { enumName: "Orthography" } },
+    });
   });
 });

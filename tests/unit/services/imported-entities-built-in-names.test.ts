@@ -14,7 +14,7 @@ function run(
 ) {
   const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
   const findMany = vi.fn(async (arg?: { select?: { slug?: boolean } }) => (arg?.select?.slug === true ? existing : []));
-  const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany } } as unknown as Prisma.TransactionClient;
+  const tx = { auditLog: { create: vi.fn(async () => ({})) }, field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany } } as unknown as Prisma.TransactionClient;
   const skipped: string[] = [];
   const notes: string[] = [];
   const refs = new Map<string, { id: string; productId: string }>();
@@ -81,7 +81,7 @@ describe("createImportedEntities: a built-in type name", () => {
 
   it("makes a child's parentEntityId the renamed parent", async () => {
     const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-    const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) } } as unknown as Prisma.TransactionClient;
+    const tx = { auditLog: { create: vi.fn(async () => ({})) }, field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) } } as unknown as Prisma.TransactionClient;
     await createImportedEntities(tx, {
       entities: [
         { name: "Record", fields: [] },
@@ -115,7 +115,7 @@ describe("createImportedEntities: a built-in type name", () => {
 
   it("works without a note channel (a caller that does not pass one still gets the rename)", async () => {
     const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-    const tx = { field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) } } as unknown as Prisma.TransactionClient;
+    const tx = { auditLog: { create: vi.fn(async () => ({})) }, field: { findMany: vi.fn(async () => []) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) } } as unknown as Prisma.TransactionClient;
     const created = await createImportedEntities(tx, {
       entities: [{ name: "Map", fields: [] }],
       productScope: { tenantId: "t", domainId: "d", productId: "p" }, productId: "p", ownerId: "u",

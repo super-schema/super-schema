@@ -229,6 +229,32 @@ describe("Classification Service", () => {
       expect(result.changeType).toBe("breaking");
       expect(result.severity).toBe("medium");
     });
+
+    it("classifies re-pointing a reference as breaking (high) in the core rules and in every target", () => {
+      const diff = makeDiffResult([
+        {
+          fieldName: "customer",
+          changeType: "modified",
+          versionA: makeFieldSnapshot({ name: "customer", type: "reference" }),
+          versionB: makeFieldSnapshot({ name: "customer", type: "reference" }),
+          changedProperties: [
+            { property: "referenceTarget", category: "reference", before: "Customer", after: "Vendor" },
+          ],
+        },
+      ]);
+
+      const result = classifyFromDiff(diff);
+      expect(result.changeType).toBe("breaking");
+      expect(result.severity).toBe("high");
+      expect(result.reasons).toEqual([
+        'Re-pointed reference "customer" from "Customer" to "Vendor" — consumers and generated schemas now type it as another entity',
+      ]);
+      expect(result.perTarget.map((t) => [t.target, t.changeType])).toEqual([
+        ["bigquery", "breaking"],
+        ["avro", "breaking"],
+        ["openapi", "breaking"],
+      ]);
+    });
   });
 
   // ---------------------------------------------------------------------------

@@ -78,6 +78,11 @@ export function classifyForOpenAPI(
             details.push(
               `Classification change on "${field.fieldName}" — may require API documentation update`
             );
+          } else if (prop.property === "referenceTarget") {
+            details.push(
+              `Re-pointed reference on "${field.fieldName}": ${prop.before ?? "none"} → ${prop.after ?? "none"} — breaking (the property's schema is another entity's)`
+            );
+            changeType = "breaking";
           }
           // Other property changes are non-breaking for OpenAPI
         }

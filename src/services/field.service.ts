@@ -271,11 +271,15 @@ export async function reorderFields(
     sortOrder: f.sortOrder,
   }));
 
+  // The row is about the entity (its id is the entity's, not a field's), so its tenant is the entity's: a field lookup cannot find it.
+  const owner = await prisma.entity.findUnique({ where: { id: entityId }, select: { tenantId: true } });
+
   await withAudit({
     action: "REORDER",
     entityType: "Field",
     entityId,
     userId: ctx.userId,
+    tenantId: owner?.tenantId ?? null,
     beforeState: beforeState as unknown as object,
     fn: async () => {
       // All sortOrder writes + the draft / stale-source mark in ONE atomic batch (see createField).

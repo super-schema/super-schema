@@ -31,7 +31,7 @@ export async function importAndPersist(schema: unknown, name = "Evt"): Promise<I
   });
   payload.entities[0].name = name;
   const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-  const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
+  const tx = { auditLog: { create: vi.fn(async () => ({})) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
   await createImportedEntities(tx, {
     entities: [payload.entities[0] as unknown as ImportedEntityInput],
     productScope: { tenantId: "t", domainId: "d", productId: "p" },

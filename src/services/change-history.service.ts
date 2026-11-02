@@ -6,6 +6,7 @@
  */
 
 import { prisma } from "@/lib/db";
+import type { Prisma } from "@/generated/prisma/client";
 import { withoutStoredSchemaVersions } from "@/lib/access/schema-version-redaction";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
@@ -223,6 +224,28 @@ export function paginate(
 }
 
 /**
+ * The audit rows about an entity, as its change log reads them. Its own rows carry its id. A field's rows carry the field's id (an edit, a
+ * delete) or the placeholder "pending" (a create), so every field row is found through the entity its state names. The entity's own creation
+ * carries the placeholder too, and its state names its id. Only the rows of the entity's tenant are read, and the rows no tenant owns (written
+ * before the tenant column, or whose tenant could not be found when they were written).
+ */
+function entityAuditWhere(entityId: string, tenantId: string): Prisma.AuditLogWhereInput {
+  return {
+    AND: [
+      { OR: [{ tenantId }, { tenantId: null }] },
+      {
+        OR: [
+          { entityId },
+          { entityType: "Field", beforeState: { path: ["entityId"], equals: entityId } },
+          { entityType: "Field", afterState: { path: ["entityId"], equals: entityId } },
+          { entityType: "Entity", entityId: "pending", afterState: { path: ["id"], equals: entityId } },
+        ],
+      },
+    ],
+  };
+}
+
+/**
  * Get the unified change history for an entity.
  *
  * Merges version snapshots from entity metadata and audit log entries,
@@ -238,7 +261,7 @@ export async function getChangeHistory(
   // 1. Get version history from entity metadata
   const entity = await prisma.entity.findUnique({
     where: { id: entityId },
-    select: { metadata: true },
+    select: { metadata: true, tenantId: true },
   });
 
   if (!entity) {
@@ -260,10 +283,9 @@ export async function getChangeHistory(
   let auditEntries: TimelineEntry[] = [];
   try {
     const auditRecords = await prisma.auditLog.findMany({
-      where: {
-        entityId,
-      },
-      orderBy: { timestamp: "desc" },
+      where: entityAuditWhere(entityId, entity.tenantId),
+      // Rows written in the same millisecond are ordered by id, so the pages of the timeline neither repeat nor skip one.
+      orderBy: [{ timestamp: "desc" }, { id: "desc" }],
     });
     auditEntries = auditRecordsToTimeline(auditRecords);
   } catch {

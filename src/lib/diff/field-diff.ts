@@ -6,9 +6,13 @@
  */
 
 import type { FieldSnapshot, ChangeEntry, DiffField, DiffResult, PropertyChange } from "@/services/version-history/version.types";
+import { describeEntityRef, holdsEntityReference, qualifiedName, readFieldReference, withoutReferenceKeys } from "@/lib/references/entity-reference";
 
-/** Properties to compare when detecting modifications */
-const COMPARABLE_PROPERTIES: (keyof FieldSnapshot)[] = [
+/**
+ * Properties to compare when detecting modifications. `referenceTarget` is not a stored column: it is the entity a reference field points at
+ * (see `referenceRetargeted`), a change of its own, so re-pointing a reference is never read as a cosmetic decorators edit.
+ */
+const COMPARABLE_PROPERTIES = [
   "name",
   "type",
   "precision",
@@ -21,7 +25,10 @@ const COMPARABLE_PROPERTIES: (keyof FieldSnapshot)[] = [
   "aliases",
   "decorators",
   "sortOrder",
-];
+  "referenceTarget",
+] as const;
+
+type ComparableProperty = (typeof COMPARABLE_PROPERTIES)[number];
 
 /**
  * Deep equality check for JSON-serializable values.
@@ -108,9 +115,7 @@ export function computeFieldDiff(
 
     const changedProperties: string[] = [];
     for (const prop of COMPARABLE_PROPERTIES) {
-      const prevVal = previousField[prop];
-      const currVal = currentField[prop];
-      if (!deepEqual(prevVal, currVal)) {
+      if (propertyDiffers(previousField, currentField, prop)) {
         changedProperties.push(prop);
       }
     }
@@ -139,6 +144,97 @@ export function computeFieldDiff(
   return changes;
 }
 
+/** A decorators value as an object: anything that is not a plain object reads as none. */
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+/**
+ * The entity a reference names in its decorators: its id (absent on a name-only or id-less reference), its name, its qualified name (absent
+ * on a name-only reference) and how it reads in a change (`shown`).
+ */
+type PointedEntity = { id?: string; name?: string; qualified?: string; shown?: string };
+
+function pointedEntity(decorators: unknown): PointedEntity {
+  const ref = readFieldReference(decorators);
+  if (ref === undefined) {
+    const id = asRecord(decorators).referencedEntityId;
+    return typeof id === "string" && id !== "" ? { id, shown: id } : {};
+  }
+  if ("legacyName" in ref) {
+    return ref.entityId !== undefined
+      ? { id: ref.entityId, name: ref.legacyName, shown: ref.legacyName }
+      : { name: ref.legacyName, shown: `${ref.legacyName} (by name)` };
+  }
+  return { id: ref.entityId, name: ref.entity, qualified: qualifiedName(ref), shown: describeEntityRef(ref) };
+}
+
+/**
+ * Whether a reference field now points at another entity. Two references that both name their entity by id are the same target when the ids
+ * are. A legacy name-only reference that gained the id of the entity it already named (the upgrade) is the same target too. Any other
+ * change of the target counts, including a reference that lost its id: it no longer names the entity it named, so the entity it means
+ * is looked up by name again. A field that does not hold a reference on both sides is not re-pointed; its type change is the change.
+ */
+function referenceRetargeted(before: FieldSnapshot, after: FieldSnapshot): boolean {
+  if (!holdsEntityReference(before.type, before.decorators) || !holdsEntityReference(after.type, after.decorators)) return false;
+  const was = pointedEntity(before.decorators);
+  const now = pointedEntity(after.decorators);
+  if (was.id !== undefined && now.id !== undefined) return was.id !== now.id;
+  // A reference that lost its id no longer names the entity it named (conservative: it is a change).
+  if (was.id !== undefined) return true;
+  // Without ids, the qualified name tells two same-named entities of different products apart; a name-only side has only its name.
+  if (was.qualified !== undefined && now.qualified !== undefined) return was.qualified !== now.qualified;
+  return was.name !== now.name;
+}
+
+/**
+ * What `referenceTarget` reports as a value: the entity the reference points at by its qualified name (`domain / product / entity`, so two
+ * same-named entities read apart), marked when the reference names it by name only; the id when there is no name; none for a field that
+ * holds no reference.
+ */
+function referenceTargetLabel(field: FieldSnapshot): string | null {
+  if (!holdsEntityReference(field.type, field.decorators)) return null;
+  return pointedEntity(field.decorators).shown ?? null;
+}
+
+/**
+ * A field's type as a change reports it: an array or a map keeps its element (or value) type in its decorators, so that type is part of the
+ * field's type (`array<string>`, `map<reference>`). Changing it is a type change, not a decorators edit.
+ */
+function fieldType(field: FieldSnapshot): string {
+  const d = asRecord(field.decorators);
+  if (field.type === "array" && typeof d.arrayElementType === "string" && d.arrayElementType !== "") return `array<${d.arrayElementType}>`;
+  if (field.type === "map" && typeof d.mapValueType === "string" && d.mapValueType !== "") return `map<${d.mapValueType}>`;
+  return field.type;
+}
+
+/**
+ * Whether the decorators changed in a way that is not a re-point. A re-pointed reference rewrites its target's keys (and drops its pin), which
+ * `referenceTarget` reports on its own; `decorators` keeps every other edit, and the pin of a reference that stays on its target.
+ */
+function decoratorsDiffer(before: FieldSnapshot, after: FieldSnapshot): boolean {
+  if (deepEqual(before.decorators, after.decorators)) return false;
+  const onlyTheTargetMoved =
+    referenceRetargeted(before, after) &&
+    deepEqual(withoutReferenceKeys(asRecord(before.decorators)), withoutReferenceKeys(asRecord(after.decorators)));
+  return !onlyTheTargetMoved;
+}
+
+/** Whether one comparable property differs between the two snapshots of a field. */
+function propertyDiffers(before: FieldSnapshot, after: FieldSnapshot, prop: ComparableProperty): boolean {
+  if (prop === "referenceTarget") return referenceRetargeted(before, after);
+  if (prop === "decorators") return decoratorsDiffer(before, after);
+  if (prop === "type") return fieldType(before) !== fieldType(after);
+  return !deepEqual(before[prop], after[prop]);
+}
+
+/** The value of one comparable property of a field, as a change reports it. */
+function propertyValue(field: FieldSnapshot, prop: ComparableProperty): unknown {
+  if (prop === "referenceTarget") return referenceTargetLabel(field);
+  if (prop === "type") return fieldType(field);
+  return field[prop];
+}
+
 /**
  * Compute property-level changes between two field snapshots.
  * Returns an array of PropertyChange entries for each differing property.
@@ -150,9 +246,7 @@ function computePropertyChanges(
   const propertyChanges: PropertyChange[] = [];
 
   for (const prop of COMPARABLE_PROPERTIES) {
-    const prevVal = before[prop];
-    const currVal = after[prop];
-    if (!deepEqual(prevVal, currVal)) {
+    if (propertyDiffers(before, after, prop)) {
       // Determine category based on property name
       let category = "field";
       if (prop === "decorators") {
@@ -161,12 +255,14 @@ function computePropertyChanges(
         category = "governance";
       } else if (prop === "aliases") {
         category = "metadata";
+      } else if (prop === "referenceTarget") {
+        category = "reference";
       }
       propertyChanges.push({
         property: prop,
         category,
-        before: prevVal,
-        after: currVal,
+        before: propertyValue(before, prop),
+        after: propertyValue(after, prop),
       });
     }
   }
