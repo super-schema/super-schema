@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { assertPgliteDataDirOpenable, PGLITE_POSTGRES_MAJOR, pgliteDataDirProblem } from "@/lib/pglite-data-version";
+import { assertPgliteDataDirOpenable, PGLITE_POSTGRES_MAJOR, pgliteDataDirProblem, pgliteFilesystemDir } from "@/lib/pglite-data-version";
 
 const made: string[] = [];
 function dataDir(pgVersion?: string): string {
@@ -38,7 +38,15 @@ describe("pgliteDataDirProblem", () => {
   });
 
   it("never looks at a directory that is not on disk", () => {
-    expect(pgliteDataDirProblem("memory://shadow")).toBeNull();
-    expect(pgliteDataDirProblem("idb://superschema")).toBeNull();
+    for (const dataDir of ["memory://shadow", "idb://superschema", "opfs-ahp://superschema", "memfs2opfs://superschema", ""]) {
+      expect(pgliteFilesystemDir(dataDir), dataDir).toBeNull();
+      expect(pgliteDataDirProblem(dataDir), dataDir).toBeNull();
+    }
+  });
+
+  it("checks a file:// directory as PGlite opens it (the scheme stripped), so a PostgreSQL 17 one is refused too", () => {
+    const dir = dataDir("17");
+    expect(pgliteFilesystemDir(`file://${dir}`)).toBe(dir);
+    expect(pgliteDataDirProblem(`file://${dir}`)).toContain("npm run db:pglite-upgrade");
   });
 });

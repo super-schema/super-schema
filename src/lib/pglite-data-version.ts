@@ -13,9 +13,18 @@ import path from "node:path";
 /** The PostgreSQL major version that the installed @electric-sql/pglite (0.5.x) embeds. */
 export const PGLITE_POSTGRES_MAJOR = "18";
 
-/** A `dataDir` that is a directory on disk (not `memory://`, `idb://`, `opfs-ahp://`, ...). */
-function isFilesystemDir(dataDir: string): boolean {
-  return !/^[a-z][a-z0-9+.-]*:\/\//i.test(dataDir);
+/** The schemes PGlite opens somewhere other than the local disk. */
+const NON_FILESYSTEM_SCHEMES = ["memory://", "idb://", "opfs-ahp://", "memfs2opfs://"];
+
+/**
+ * The directory on disk that PGlite opens for `dataDir`, or null when it opens none. This mirrors PGlite's own parsing (its dataDir
+ * resolver): `file://` is stripped, the browser and memory schemes are not on disk, and any other value, even one that looks like a URL, is
+ * a path. scripts/pglite-upgrade.mjs repeats this rule.
+ */
+export function pgliteFilesystemDir(dataDir: string): string | null {
+  if (!dataDir || NON_FILESYSTEM_SCHEMES.some((scheme) => dataDir.startsWith(scheme))) return null;
+  const dir = dataDir.startsWith("file://") ? dataDir.slice("file://".length) : dataDir;
+  return dir || null;
 }
 
 /**
@@ -23,8 +32,9 @@ function isFilesystemDir(dataDir: string): boolean {
  * is not on disk, or was made by the PostgreSQL major this PGlite embeds.
  */
 export function pgliteDataDirProblem(dataDir: string): string | null {
-  if (!isFilesystemDir(dataDir)) return null;
-  const versionFile = path.join(dataDir, "PG_VERSION");
+  const dir = pgliteFilesystemDir(dataDir);
+  if (dir === null) return null;
+  const versionFile = path.join(dir, "PG_VERSION");
   if (!existsSync(versionFile)) return null;
   const major = readFileSync(versionFile, "utf8").trim();
   if (major === PGLITE_POSTGRES_MAJOR) return null;

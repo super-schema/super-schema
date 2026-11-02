@@ -21,13 +21,20 @@ const OLD_PGLITE = "@electric-sql/pglite@0.4.6";
 const OLD_PGLITE_TOOLS = "@electric-sql/pglite-tools@0.3.6";
 const NEW_MAJOR = "18";
 
-const dataDir = path.resolve(process.env.PGLITE_DATA_DIR?.trim() || "./data/pglite");
-const versionFile = path.join(dataDir, "PG_VERSION");
-
 function fail(message) {
   console.error(`[pglite-upgrade] ${message}`);
   process.exit(1);
 }
+
+// The directory as PGlite opens it (pgliteFilesystemDir in src/lib/pglite-data-version.ts: `file://` stripped; memory and browser schemes
+// are not on disk, so there is nothing here to upgrade).
+const configured = process.env.PGLITE_DATA_DIR?.trim() || "./data/pglite";
+if (["memory://", "idb://", "opfs-ahp://", "memfs2opfs://"].some((scheme) => configured.startsWith(scheme))) {
+  console.log(`[pglite-upgrade] PGLITE_DATA_DIR=${configured} is not a directory on disk: nothing to upgrade.`);
+  process.exit(0);
+}
+const dataDir = path.resolve(configured.startsWith("file://") ? configured.slice("file://".length) : configured);
+const versionFile = path.join(dataDir, "PG_VERSION");
 
 if (!existsSync(versionFile)) {
   console.log(`[pglite-upgrade] ${dataDir} holds no PGlite database: nothing to upgrade.`);
@@ -48,7 +55,12 @@ const work = mkdtempSync(path.join(os.tmpdir(), "pglite-upgrade-"));
 try {
   console.log(`[pglite-upgrade] installing ${OLD_PGLITE} and ${OLD_PGLITE_TOOLS} into ${work} ...`);
   writeFileSync(path.join(work, "package.json"), JSON.stringify({ private: true, type: "module" }));
-  execFileSync("npm", ["install", "--no-audit", "--no-fund", "--ignore-scripts", OLD_PGLITE, OLD_PGLITE_TOOLS], { cwd: work, stdio: "inherit" });
+  // npm is npm.cmd on Windows, which only a shell can start; the arguments are constants.
+  execFileSync("npm", ["install", "--no-audit", "--no-fund", "--ignore-scripts", OLD_PGLITE, OLD_PGLITE_TOOLS], {
+    cwd: work,
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  });
 
   // Run the dump inside the temporary directory, so its imports resolve to the old PGlite and not to this checkout's.
   writeFileSync(
@@ -68,21 +80,32 @@ try {
   const sql = readFileSync(dumpFile, "utf8");
   if (!sql.includes("PostgreSQL database dump complete")) throw new Error(`the dump ${dumpFile} is incomplete; ${dataDir} was left as it was.`);
 
+  const { PGlite } = await import("@electric-sql/pglite");
   renameSync(dataDir, backupDir);
   console.log(`[pglite-upgrade] restoring into a new ${dataDir} (PostgreSQL ${NEW_MAJOR}) ...`);
-  const { PGlite } = await import("@electric-sql/pglite");
-  const db = new PGlite(dataDir);
+  let db;
   try {
+    db = new PGlite(dataDir);
     await db.exec(sql);
     const tables = await db.query("SELECT count(*)::int AS n FROM pg_catalog.pg_tables WHERE schemaname = 'public'");
     console.log(`[pglite-upgrade] done: ${tables.rows[0].n} tables restored.`);
-  } catch (error) {
     await db.close();
-    rmSync(dataDir, { recursive: true, force: true });
-    renameSync(backupDir, dataDir);
-    throw new Error(`the restore failed, and ${dataDir} was put back as it was: ${error instanceof Error ? error.message : String(error)}`);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    // close() rejects too when PGlite failed to start (it waits for the start), so it must not stand between the failure and the rollback.
+    await db?.close().catch(() => {});
+    try {
+      rmSync(dataDir, { recursive: true, force: true });
+      renameSync(backupDir, dataDir);
+    } catch (rollbackError) {
+      const why = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+      throw new Error(
+        `the restore failed (${cause}), and putting the old directory back failed too (${why}): your PostgreSQL 17 data is in ${backupDir} ` +
+          `(and dumped in ${dumpFile}); move it back to ${dataDir} by hand.`,
+      );
+    }
+    throw new Error(`the restore failed, and ${dataDir} was put back as it was (the dump is kept in ${dumpFile}): ${cause}`);
   }
-  await db.close();
   console.log(`[pglite-upgrade] the old directory is ${backupDir} and the dump is ${dumpFile}; delete them once the app works.`);
 } catch (error) {
   process.exitCode = 1;

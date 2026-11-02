@@ -130,9 +130,20 @@ class PGliteTransaction
     debug("[js::rollback]");
     // Awaited: PGlite 0.5.5+ rejects any operation on a transaction once its callback has returned, so an un-awaited ROLLBACK could
     // reject after `txDeferred` ends the callback (an unhandled rejection). After it, PGlite sees the transaction closed and skips COMMIT.
-    await this.client.rollback();
-    this.txDeferred.resolve();
-    return await this.txResultPromise;
+    let failure: unknown;
+    let failed = false;
+    try {
+      await this.client.rollback();
+    } catch (error) {
+      failure = error;
+      failed = true;
+    }
+    // The callback is released either way, or PGlite's exclusive transaction lock is held for good. A failed ROLLBACK leaves PGlite's
+    // transaction open: resolving would make it COMMIT, so the callback is rejected instead, and PGlite's error path issues ROLLBACK again.
+    if (failed) this.txDeferred.reject(failure);
+    else this.txDeferred.resolve();
+    await this.txResultPromise;
+    if (failed) this.onError(failure);
   }
 }
 

@@ -262,7 +262,7 @@ It installs PGlite 0.4.6 and its `pg_dump` (`@electric-sql/pglite-tools` 0.3.6) 
 the checkout, so it needs npm and network access), dumps the database to SQL with them, and restores the SQL into a new
 directory with the current PGlite. Nothing is deleted: the old directory is renamed to `<dir>.pg17-backup-<time>` and
 the dump is kept next to it as `<dir>.pg17-dump-<time>.sql`. Delete both once the app works. If the restore fails, the
-old directory is put back as it was. A directory that holds nothing you need can simply be deleted instead: the next
+old directory is put back as it was; if even that fails, the error names the backup and the dump. A directory that holds nothing you need can simply be deleted instead: the next
 `npm run dev` makes a new, empty one.
 
 PostgreSQL deployments (`DB_PROVIDER=postgresql`, the Docker image) aren't affected.
