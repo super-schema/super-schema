@@ -309,7 +309,8 @@ describe("the stale-source backfill never flags what the generator writes", () =
 /** A one-entity closure (the publish gate's input) holding the given fields, the shape closure-source.test.ts builds. */
 function closureOf(fields: PrismaFieldInput[]): { entities: ClosureEntity[] } {
   const ref = { entityId: "e1", domain: "Sales", product: "Orders", entity: "Ticket" };
-  const key = field({ name: "id", type: "uuid", isKey: true });
+  // "uuid" is a string FORMAT in the app, never a stored type: an unknown stored type is no longer silently compiled as string.
+  const key = field({ name: "id", type: "string", isKey: true });
   return {
     entities: [
       {
