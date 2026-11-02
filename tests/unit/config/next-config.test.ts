@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import nextConfig from "../../../next.config";
@@ -15,6 +15,21 @@ describe("next.config — in-process TypeSpec compiler", () => {
     const host = readFileSync(path.join(process.cwd(), "node_modules/@typespec/compiler/dist/src/core/node-host.js"), "utf8");
     // If a compiler upgrade drops the computed import, the external-package entry above can be reconsidered.
     expect(host).toMatch(/getJsImport:\s*\(path\)\s*=>\s*import\(pathToFileURL\(path\)\.href\)/);
+  });
+});
+
+describe("next.config — embedded PGlite", () => {
+  it("keeps @electric-sql/pglite a server-external package", () => {
+    // PGlite reads its WASM with fs.readFile(new URL("./pglite.wasm", import.meta.url)); bundled by Turbopack, that URL is not a Node URL
+    // and fs refuses it, so a production build on DB_PROVIDER=pglite could not open its database.
+    expect(nextConfig.serverExternalPackages).toContain("@electric-sql/pglite");
+  });
+
+  it("still reads its WASM through import.meta.url, which is why it cannot be bundled", () => {
+    const dist = path.join(process.cwd(), "node_modules/@electric-sql/pglite/dist");
+    const sources = readdirSync(dist).filter((name) => name.endsWith(".js")).map((name) => readFileSync(path.join(dist, name), "utf8"));
+    // If a PGlite upgrade stops locating its files this way, the external-package entry above can be reconsidered.
+    expect(sources.some((source) => source.includes('new URL("./pglite.wasm",import.meta.url)'))).toBe(true);
   });
 });
 
