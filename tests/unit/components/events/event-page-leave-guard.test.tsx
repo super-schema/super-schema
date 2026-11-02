@@ -118,6 +118,8 @@ describe("EventPage leave guard: a clean draft", () => {
     fireEvent.click(screen.getByTestId("leave-stay"));
     fireEvent.click(button("builder-save"));
     await waitFor(() => expect(button("builder-save").disabled).toBe(true));
+    // The guard's listeners come off in an effect cleanup: React 19.3 can run it after the render that disables Save, so let it run first.
+    await act(async () => {});
     expect(click(eventsCrumb()).prevented).toBe(false);
   });
 });
