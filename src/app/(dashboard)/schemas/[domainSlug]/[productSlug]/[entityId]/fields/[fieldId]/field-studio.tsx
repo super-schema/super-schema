@@ -92,6 +92,15 @@ function decoratorsToSave(
   return decorators;
 }
 
+/**
+ * The typespec with its @key mirror (`identity.key`) set from the column: `Field.isKey` is what the generator and the source sync read,
+ * and the quick editor and the primary-key dialog set only the column, so the mirror can be missing or stale.
+ */
+function withKeyFromColumn(typespec: TypeSpecDecorators, isKey: boolean): TypeSpecDecorators {
+  if (Boolean(typespec.identity?.key) === isKey) return typespec;
+  return { ...typespec, identity: { ...typespec.identity, key: isKey } };
+}
+
 /** How a person reads what a reference field points at: `domain / product / entity`, or the name of a name-only reference. */
 function referenceLabel(pick: ReferencePick | null, decorators: Record<string, unknown>): string | undefined {
   if (pick) return pick.referencedQualifiedName ? describeQualifiedName(pick.referencedQualifiedName) : pick.referencedEntityName;
@@ -104,6 +113,9 @@ type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 const PANEL_STORAGE_KEY = (fieldId: string) =>
   `field-studio-panels-${fieldId}`;
+
+/** The failure shown when the server did not answer at all (a dropped connection, a deployment that replaced the action). */
+const UNREACHABLE_MESSAGE = "Could not reach the server, so the change is not saved yet.";
 
 export function FieldStudio({ field, entity, domain, referenceTargets }: FieldStudioProps) {
   const router = useRouter();
@@ -118,13 +130,14 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
     : assetHref({ kind: "enterprise" });
   const [fieldName, setFieldName] = useState(field.name);
   const [fieldType, setFieldType] = useState(field.type);
-  const [isOptional, setIsOptional] = useState(field.nullable);
+  // A key is never optional (the checkbox is disabled for one, and the save writes it required).
+  const [isOptional, setIsOptional] = useState(field.nullable && !field.isKey);
   const [fieldNumber, setFieldNumber] = useState<number | null>(field.fieldNumber);
   const [fieldClassification, setFieldClassification] = useState<string | null>(field.classification);
 
-  // TypeSpec decorators state
+  // TypeSpec decorators state; the @key checkbox shows the column (the mirror in the decorators follows it)
   const existingTypespec = (field.decorators?.typespec as TypeSpecDecorators) ?? {};
-  const [typespec, setTypespec] = useState<TypeSpecDecorators>(existingTypespec);
+  const [typespec, setTypespec] = useState<TypeSpecDecorators>(() => withKeyFromColumn(existingTypespec, field.isKey));
 
   // Save status
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
@@ -138,14 +151,16 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
     },
     []
   );
-  const pendingRef = useRef(false);
-  const savingRef = useRef(false);
+  // Autosave bookkeeping (see `save`): how many edits there have been, the last edit a successful save carried, and the save in flight.
+  const editRevisionRef = useRef(0);
+  const savedRevisionRef = useRef(0);
+  const inFlightRef = useRef<Promise<string | null> | null>(null);
 
   // Refs to track current values for save (fixes stale closure P1 + P2)
   // The target picked for the `reference` type (written by the next save while the type is still `reference`).
   const [reference, setReference] = useState<ReferencePick | null>(null);
-  const currentRef = useRef({ fieldName, fieldType, isOptional, typespec, fieldNumber, fieldClassification, reference });
-  currentRef.current = { fieldName, fieldType, isOptional, typespec, fieldNumber, fieldClassification, reference };
+  const currentRef = useRef({ fieldName, fieldType, isOptional, typespec, fieldNumber, fieldClassification, reference, decorators: field.decorators });
+  currentRef.current = { fieldName, fieldType, isOptional, typespec, fieldNumber, fieldClassification, reference, decorators: field.decorators };
 
   // Panel state from localStorage — loaded after mount to keep SSR and hydration identical.
   const [expandedPanels, setExpandedPanels] = useState<number[]>([0]);
@@ -177,72 +192,108 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
     }
   }, [expandedPanels, field.id, panelsHydrated]);
 
-  // Save function — reads from refs to avoid stale closures
-  const doSave = useCallback(async () => {
-    if (savingRef.current) return; // Prevent concurrent saves
-    savingRef.current = true;
+  // Autosave. A save sends the whole field as it is when it goes out: the controls and the typespec from the latest render, the decorators
+  // from the latest props. One send is in flight at a time. An edit made meanwhile bumps `editRevisionRef`, and the loop sends again once
+  // the send settles, so "Saved" shows only when every edit so far is persisted. A refused or failed send is shown with Retry; if an edit
+  // is queued behind it, that edit goes out next instead. An unsent edit waits for the next edit, Retry, Cmd+S or Done.
+  const cancelScheduledSave = useCallback(() => {
+    if (saveTimeoutRef.current !== null) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+  }, []);
+
+  /** "Saved" for two seconds, then idle. The timer is cleared on unmount and by the next save: it must not fire after either. */
+  const showSaved = useCallback(() => {
+    setSaveStatus("saved");
+    if (idleTimerRef.current !== null) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => {
+      idleTimerRef.current = null;
+      setSaveStatus("idle");
+    }, 2000);
+  }, []);
+
+  /** Sends what is unsaved. Resolves to the failure to show, or to null once every edit so far is persisted. */
+  const save = useCallback((): Promise<string | null> => {
+    if (inFlightRef.current) return inFlightRef.current;
+    if (editRevisionRef.current === savedRevisionRef.current) return Promise.resolve(null);
     if (idleTimerRef.current !== null) {
       clearTimeout(idleTimerRef.current);
       idleTimerRef.current = null;
     }
+    setSaveError(null);
     setSaveStatus("saving");
-    pendingRef.current = false;
-
-    const { fieldName: name, fieldType: type, isOptional: nullable, typespec: ts, fieldNumber: fn, fieldClassification: cls, reference: picked } = currentRef.current;
-    const decorators = decoratorsToSave(field.decorators, ts, type, picked);
-
-    const result = await updateFieldAction(field.id, {
-      name,
-      type,
-      nullable,
-      fieldNumber: fn,
-      classification: cls,
-      decorators,
+    // Starts on a later tick, so `inFlightRef` holds this run before the loop can clear it.
+    const run = Promise.resolve().then(async (): Promise<string | null> => {
+      for (;;) {
+        if (editRevisionRef.current === savedRevisionRef.current) {
+          inFlightRef.current = null;
+          showSaved();
+          return null;
+        }
+        const sent = editRevisionRef.current;
+        const { fieldName: name, fieldType: type, isOptional: nullable, typespec: ts, fieldNumber: fn, fieldClassification: cls, reference: picked, decorators: stored } = currentRef.current;
+        // This send carries every edit so far, so the timer armed for one of them is done: it is cancelled as the send starts. A timer armed by
+        // a later edit is not touched (it is armed after this point), so no scheduled save is dropped without being sent.
+        cancelScheduledSave();
+        let failure: string | null = null;
+        try {
+          const result = await updateFieldAction(field.id, {
+            name,
+            type,
+            nullable,
+            // The @key checkbox is Field.isKey, and the decorator mirror (identity.key) goes with it. The whole field is sent, as for every
+            // control: a key set elsewhere after the studio opened is written back as the checkbox shows it.
+            isKey: ts.identity?.key === true,
+            fieldNumber: fn,
+            classification: cls,
+            decorators: decoratorsToSave(stored, ts, type, picked),
+          });
+          if (!result.success) failure = result.error || UNREACHABLE_MESSAGE;
+        } catch (error) {
+          console.error("[field-studio] save failed", error);
+          failure = UNREACHABLE_MESSAGE;
+        }
+        if (failure === null) {
+          savedRevisionRef.current = sent;
+        } else if (editRevisionRef.current === sent) {
+          // No edit came in while this send was in flight: the refusal is the state to show, and the edit waits for Retry, Cmd+S, Done or
+          // the next edit.
+          inFlightRef.current = null;
+          setSaveError(failure);
+          setSaveStatus("error");
+          return failure;
+        }
+        // Otherwise an edit came in meanwhile: it goes out next, and the failure is shown only if that send fails too.
+      }
     });
-
-    savingRef.current = false;
-
-    if (result.error) {
-      setSaveError(result.error);
-      setSaveStatus("error");
-    } else {
-      setSaveError(null);
-      setSaveStatus("saved");
-      // The "saved" flash goes back to idle by itself; the timer is cleared on unmount and by the next save (it must not fire after either).
-      idleTimerRef.current = setTimeout(() => {
-        idleTimerRef.current = null;
-        setSaveStatus("idle");
-      }, 2000);
-    }
-  }, [field.id, field.decorators]);
+    inFlightRef.current = run;
+    return run;
+  }, [field.id, showSaved, cancelScheduledSave]);
 
   const scheduleSave = useCallback(() => {
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-    pendingRef.current = true;
-    saveTimeoutRef.current = setTimeout(doSave, 500);
-  }, [doSave]);
+    editRevisionRef.current += 1;
+    cancelScheduledSave();
+    saveTimeoutRef.current = setTimeout(() => {
+      saveTimeoutRef.current = null;
+      void save();
+    }, 500);
+  }, [cancelScheduledSave, save]);
 
+  // Cmd+S and Retry: sends what is unsaved now (a send in flight is joined, and it sends the newest edit once it settles). With nothing
+  // unsaved there is no request, and "Saved" confirms the state the page shows.
   const saveImmediate = useCallback(() => {
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = null;
+    if (inFlightRef.current === null && editRevisionRef.current === savedRevisionRef.current) {
+      showSaved();
+      return;
     }
-    doSave();
-  }, [doSave]);
+    void save();
+  }, [save, showSaved]);
 
-  // "Done — Back to Entity" handler: flush pending save, then navigate back
+  // "Done — Back to Entity" handler: flush pending save, then navigate back. A save that is refused or fails keeps the studio open, with its message.
   const handleDone = useCallback(async () => {
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = null;
-    }
-    if (pendingRef.current || savingRef.current) {
-      await doSave();
-    }
-    router.push(entityHref);
-  }, [doSave, router, entityHref]);
+    if ((await save()) === null) router.push(entityHref);
+  }, [save, router, entityHref]);
 
   // Cmd+S / Ctrl+S immediate save
   useEffect(() => {
@@ -256,19 +307,34 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [saveImmediate]);
 
-  // Flush on unmount / navigation — reads from ref for current values
+  // A server refresh after a save hands the page new decorators: an edit not yet sent goes out now, through the same queue (a save in
+  // flight is joined, so nothing is sent twice at once). Nothing is cancelled without being sent.
+  useEffect(() => {
+    if (editRevisionRef.current === savedRevisionRef.current) return;
+    void save();
+  }, [field.decorators, save]);
+
+  // Leaving the page sends an edit not yet persisted at once, rather than dropping it with the timer. Nothing is shown on this page any
+  // more, so a save that is refused is reported as a toast.
   useEffect(() => {
     return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
-      if (pendingRef.current) {
-        const { fieldName: name, fieldType: type, isOptional: nullable, typespec: ts, fieldNumber: fn, fieldClassification: cls, reference: picked } = currentRef.current;
-        const decorators = decoratorsToSave(field.decorators, ts, type, picked);
-        updateFieldAction(field.id, { name, type, nullable, fieldNumber: fn, classification: cls, decorators });
-      }
+      const unsent = editRevisionRef.current !== savedRevisionRef.current;
+      cancelScheduledSave();
+      if (!unsent) return;
+      void save().then((failure) => {
+        if (failure !== null) toast.error(`Changes to "${currentRef.current.fieldName}" were not saved`, { description: failure });
+      });
     };
-  }, [field.id, field.decorators]);
+  }, [cancelScheduledSave, save]);
+
+  // A tab closed or reloaded with an edit not yet persisted would lose it: the browser asks first.
+  useEffect(() => {
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      if (editRevisionRef.current !== savedRevisionRef.current) e.preventDefault();
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
 
   // Update a typespec panel and trigger save
   function updateTypespec(
@@ -420,7 +486,10 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
       {/* What the server said when the save failed (a refused name, for one): a sentence of its own, under the header row, that wraps. */}
       {saveStatus === "error" && saveError && (
         <p role="alert" className="mb-space-6 max-w-prose whitespace-normal break-words text-body-small text-destructive">
-          {saveError}
+          {saveError}{" "}
+          <button type="button" onClick={saveImmediate} className="underline underline-offset-2">
+            Retry
+          </button>
         </p>
       )}
 

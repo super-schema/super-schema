@@ -372,6 +372,21 @@ export async function updateFieldAction(
     // An edit that resolves an unresolved external reference (the type changes away from it, or its target changes) clears the marker.
     const nextDecorators = decoratorsAfterFieldEdit(existing, { type: typeof rest.type === "string" ? rest.type : undefined, decorators });
 
+    // A key must be able to identify a row (the rule of the primary-key dialog). An edit that makes the field a key, or changes the type of a
+    // key, is refused when the field it leaves cannot be one. It is judged as the field will be after this edit, so a reference this save
+    // resolves is not dangling. A key stored that way before is not refused by an unrelated edit (a rename, or unticking it).
+    const keyAfter = typeof rest.isKey === "boolean" ? rest.isKey : existing.isKey;
+    const keyMadeOrRetyped = (rest.isKey === true && !existing.isKey) || (typeof rest.type === "string" && rest.type !== existing.type);
+    if (keyAfter && keyMadeOrRetyped) {
+      const typeAfter = typeof rest.type === "string" ? rest.type : existing.type;
+      const reason = primaryKeyIneligibility({
+        name: typeof rest.name === "string" ? rest.name : existing.name,
+        type: typeAfter,
+        dangling: activeDanglingRef(typeAfter, (nextDecorators ?? existing.decorators) as Record<string, unknown> | null) !== undefined,
+      });
+      if (reason) return { error: reason, code: "VALIDATION_ERROR" as const };
+    }
+
     await withAudit({
       action: "UPDATE",
       entityType: "Field",

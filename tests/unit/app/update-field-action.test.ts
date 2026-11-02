@@ -293,3 +293,79 @@ describe("updateFieldAction drops the reference (target, id, pin) of a field tha
     expect(written().decorators).toMatchObject({ referencedEntityVersion: "1.2", referencedEntityId: "e-addr" });
   });
 });
+
+/**
+ * A key must identify a row: the rule the primary-key dialog and the generation requirements apply (`primaryKeyIneligibility`). The
+ * studio's @key checkbox and the quick editor both write `isKey`, so the save refuses an edit that makes the field a key, or changes the
+ * type of a key, into one that cannot be. A key already stored that way is not refused by an unrelated edit.
+ */
+describe("updateFieldAction: a key must be able to identify a row", () => {
+  const written = () => mockPrisma.field.update.mock.calls[0][0].data as Record<string, unknown>;
+  const refusal = (name: string, type: string) => ({
+    error: `Field "${name}" has type ${type} and cannot be a primary key; choose a scalar field.`,
+    code: "VALIDATION_ERROR",
+  });
+  const DANGLING_ORDER = {
+    ...OWN_FIELD,
+    name: "order",
+    type: "reference",
+    decorators: { referencedEntityName: "date_time", danglingRef: { ref: "common/date_time.json" } },
+  };
+
+  it("ticking @key on an array field is refused with the reason, and nothing is written", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue({ ...OWN_FIELD, name: "tags", type: "array", isKey: false, decorators: {} });
+    expect(await update("fld-1", { isKey: true, nullable: false })).toEqual(refusal("tags", "array"));
+    expect(mockPrisma.field.update).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("ticking @key on a map, object, json or union field is refused the same way", async () => {
+    for (const type of ["map", "object", "json", "union"]) {
+      mockPrisma.field.findUnique.mockResolvedValue({ ...OWN_FIELD, name: "x", type, isKey: false, decorators: {} });
+      expect(await update("fld-1", { isKey: true })).toEqual(refusal("x", type));
+    }
+    expect(mockPrisma.field.update).not.toHaveBeenCalled();
+  });
+
+  it("ticking @key on an unresolved reference is refused: the reference has to be resolved first", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue({ ...DANGLING_ORDER, isKey: false });
+    expect(await update("fld-1", { isKey: true })).toEqual({
+      error: 'Field "order" is an unresolved reference and cannot be a primary key; resolve the reference first.',
+      code: "VALIDATION_ERROR",
+    });
+    expect(mockPrisma.field.update).not.toHaveBeenCalled();
+  });
+
+  it("a key set in the same save that resolves its reference is allowed: the field is judged as it will be saved", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue({ ...DANGLING_ORDER, isKey: false });
+    expect(
+      await update("fld-1", { isKey: true, decorators: { referencedEntityName: "Customer", danglingRef: { ref: "common/date_time.json" } } }),
+    ).toEqual({ success: true });
+    expect(written()).toMatchObject({ isKey: true });
+    expect(written().decorators).not.toHaveProperty("danglingRef");
+  });
+
+  it("changing the type of a key to an ineligible type is refused", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue({ ...OWN_FIELD, name: "email", type: "string", isKey: true, decorators: {} });
+    expect(await update("fld-1", { type: "map", isKey: true })).toEqual(refusal("email", "map"));
+    expect(mockPrisma.field.update).not.toHaveBeenCalled();
+  });
+
+  it("a key stored as an array before this rule is still renamed: an unrelated edit is not refused", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue({ ...OWN_FIELD, name: "tags", type: "array", isKey: true, decorators: {} });
+    expect(await update("fld-1", { name: "labels", isKey: true, nullable: false })).toEqual({ success: true });
+    expect(written()).toMatchObject({ name: "labels", isKey: true });
+  });
+
+  it("unticking @key on an array field is allowed", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue({ ...OWN_FIELD, name: "tags", type: "array", isKey: true, decorators: {} });
+    expect(await update("fld-1", { isKey: false })).toEqual({ success: true });
+    expect(written()).toMatchObject({ isKey: false });
+  });
+
+  it("a key of an ineligible type that changes to a scalar type is allowed", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue({ ...OWN_FIELD, name: "tags", type: "array", isKey: true, decorators: {} });
+    expect(await update("fld-1", { type: "string", isKey: true })).toEqual({ success: true });
+    expect(written()).toMatchObject({ type: "string", isKey: true });
+  });
+});
