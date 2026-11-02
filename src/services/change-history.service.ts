@@ -22,11 +22,25 @@ import type {
 const DEFAULT_PAGE_SIZE = 50;
 
 /**
+ * A drag reorder of an entity's fields: the entity's own UPDATE entry carries the field order (`fieldOrder`) in its state.
+ */
+function isFieldReorder(action: string, entityType: string, afterState: unknown): boolean {
+  return (
+    action.toUpperCase() === "UPDATE" &&
+    entityType === "Entity" &&
+    afterState !== null &&
+    typeof afterState === "object" &&
+    Array.isArray((afterState as { fieldOrder?: unknown }).fieldOrder)
+  );
+}
+
+/**
  * Infer the change type from an audit log action string.
  */
-function inferChangeType(action: string, entityType: string): ChangeType {
+function inferChangeType(action: string, entityType: string, afterState: unknown): ChangeType {
   const a = action.toUpperCase();
 
+  if (isFieldReorder(action, entityType, afterState)) return "field_edit";
   if (a === "CREATE_VERSION" || a.includes("VERSION")) return "version";
   if (a.includes("EMIT") || a === "GENERATE" || a === "EMISSION_FAILED") return "emission";
   if (a.includes("STATUS") || a.includes("DEPRECAT") || a.includes("RETIRE"))
@@ -53,11 +67,12 @@ function buildAuditSummary(
   action: string,
   entityType: string,
   _beforeState: unknown,
-  _afterState: unknown
+  afterState: unknown
 ): string {
   const a = action.toUpperCase();
 
   if (a === "CREATE_VERSION") return "Created a new version snapshot";
+  if (isFieldReorder(action, entityType, afterState)) return "Reordered fields";
   if (a === "CREATE" && entityType === "Field") return "Added a new field";
   if (a === "UPDATE" && entityType === "Field") return "Updated a field";
   if (a === "DELETE" && entityType === "Field") return "Deleted a field";
@@ -131,7 +146,7 @@ function auditRecordsToTimeline(
     id: `audit-${a.id}`,
     timestamp: a.timestamp.toISOString(),
     entryType: "audit" as const,
-    changeType: inferChangeType(a.action, a.entityType),
+    changeType: inferChangeType(a.action, a.entityType, a.afterState),
     summary: buildAuditSummary(
       a.action,
       a.entityType,

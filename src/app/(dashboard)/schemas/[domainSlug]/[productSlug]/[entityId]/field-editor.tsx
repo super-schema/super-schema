@@ -29,6 +29,7 @@ import {
 import { DATA_TYPE_HIERARCHY } from "@/lib/data-types";
 import { classificationFilterOptions, matchesClassificationFilter } from "@/lib/classification-counts";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { canNavigate } from "@/lib/navigation/before-navigate";
 import {
   getFieldNameSuggestions,
   type AutocompleteSuggestion,
@@ -87,6 +88,11 @@ interface FieldEditorProps {
   ) => Promise<{ field?: { id: string; slug?: string } } | void>;
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
   onDeleteField: (id: string) => Promise<void>;
+  /**
+   * Saves the order of the fields (`reorderFieldsAction`): every field id, first to last. Resolves true when it was saved; false, or a throw,
+   * puts the saved order back on screen.
+   */
+  onReorderFields: (orderedIds: string[]) => Promise<boolean>;
   onFieldSelect?: (fieldId: string) => void;
   selectedFieldId?: string | null;
   /** The pin control of reference fields (published versions of the referenced entity, pin / unpin). Keep it referentially stable. */
@@ -110,6 +116,7 @@ export function FieldEditor({
   onAddField,
   onUpdateField,
   onDeleteField,
+  onReorderFields,
   onFieldSelect,
   selectedFieldId,
   referenceControls,
@@ -148,9 +155,18 @@ export function FieldEditor({
     return Array.from(cats.entries());
   }, []);
 
+  // A drop shows its order at once and is saved as one list (`onReorderFields`). The shown order belongs to the `fields` it was made from: once
+  // the page hands over its fields again (the save's re-render) they are the truth. A save that does not go through puts the saved order back.
+  const [drop, setDrop] = useState<{ from: FieldData[]; ids: string[] } | null>(null);
+  const displayedFields = useMemo(() => {
+    if (!drop || drop.from !== fields) return fields;
+    const byId = new Map(fields.map((f) => [f.id, f]));
+    return drop.ids.flatMap((id) => byId.get(id) ?? []);
+  }, [fields, drop]);
+
   // Apply client-side filters
   const filteredFields = useMemo(() => {
-    let result = fields;
+    let result = displayedFields;
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -178,11 +194,14 @@ export function FieldEditor({
     }
 
     return result;
-  }, [fields, searchQuery, typeFilter, classificationFilter, completenessFilter]);
+  }, [displayedFields, searchQuery, typeFilter, classificationFilter, completenessFilter]);
 
   const navigateToFieldStudio = useCallback(
     (fieldId: string) => {
-      router.push(assetHref({ kind: "field", entitySlug: entitySlug || entityId, fieldId, domainSlug, productSlug }));
+      const href = assetHref({ kind: "field", entitySlug: entitySlug || entityId, fieldId, domainSlug, productSlug });
+      // The studio is a navigation like any other: a page with unsaved edits asks first (`canNavigate`), and the studio opens only when nothing vetoed it.
+      if (!canNavigate(href)) return;
+      router.push(href);
     },
     [router, entitySlug, entityId, domainSlug, productSlug]
   );
@@ -292,9 +311,12 @@ export function FieldEditor({
       const fieldSlugOrId = r?.field?.slug || r?.field?.id;
       resetDialog();
       if (fieldSlugOrId) {
+        const href = assetHref({ kind: "field", entitySlug: entitySlug || entityId, fieldId: fieldSlugOrId, domainSlug, productSlug });
+        // Opening the studio is guarded here too: unsaved edits on the page are asked about first, and a veto leaves the page as it is.
+        if (!canNavigate(href)) return;
         // Use window.location for hard navigation — router.push gets killed by
         // revalidatePath re-rendering the parent server component
-        window.location.href = assetHref({ kind: "field", entitySlug: entitySlug || entityId, fieldId: fieldSlugOrId, domainSlug, productSlug });
+        window.location.href = href;
         return; // Don't reset isCreating — we're navigating away
       }
     } catch {
@@ -329,32 +351,34 @@ export function FieldEditor({
     useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS)
   );
 
-  const fieldIds = useMemo(() => fields.map((f) => f.id), [fields]);
+  const fieldIds = useMemo(() => displayedFields.map((f) => f.id), [displayedFields]);
 
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
 
-      const oldIndex = fields.findIndex((f) => f.id === active.id);
-      const newIndex = fields.findIndex((f) => f.id === over.id);
+      const oldIndex = displayedFields.findIndex((f) => f.id === active.id);
+      const newIndex = displayedFields.findIndex((f) => f.id === over.id);
       if (oldIndex === -1 || newIndex === -1) return;
 
-      // Build the reordered list
-      const reordered = [...fields];
+      // The new order is shown at once and saved as one list of ids (one write, one revalidation on the server).
+      const reordered = [...displayedFields];
       const [moved] = reordered.splice(oldIndex, 1);
       reordered.splice(newIndex, 0, moved);
+      const next = { from: fields, ids: reordered.map((f) => f.id) };
+      setDrop(next);
 
-      // Update sortOrder for all fields that changed position
-      const updates: Promise<void>[] = [];
-      for (let i = 0; i < reordered.length; i++) {
-        if (reordered[i].sortOrder !== i) {
-          updates.push(onUpdateField(reordered[i].id, { sortOrder: i }));
-        }
+      let saved = false;
+      try {
+        saved = await onReorderFields(next.ids);
+      } catch {
+        saved = false;
       }
-      await Promise.all(updates);
+      // Not saved: the saved order comes back, unless a newer drop has already replaced this one.
+      if (!saved) setDrop((current) => (current === next ? null : current));
     },
-    [fields, onUpdateField]
+    [fields, displayedFields, onReorderFields]
   );
 
   return (

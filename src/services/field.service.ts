@@ -255,6 +255,15 @@ export async function reorderFields(
     });
   }
 
+  // A repeated id keeps the count and the membership checks true while another field gets no position.
+  if (new Set(fieldIds).size !== fieldIds.length) {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: "The reorder request names a field more than once",
+      suggestedFix: "Include every field ID for this entity exactly once in the reorder array.",
+    });
+  }
+
   const entityFieldIds = new Set(fields.map((f) => f.id));
   for (const fid of fieldIds) {
     if (!entityFieldIds.has(fid)) {

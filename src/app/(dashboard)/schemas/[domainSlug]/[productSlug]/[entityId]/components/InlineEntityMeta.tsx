@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, type MutableRefObject } from "react";
 import { Plus, X, Check, User, Clock, ChevronDown, ChevronUp, Pencil } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { updateEntityMetadataAction, updateEntityDescriptionAction } from "../actions";
+import { errorMessage } from "@/lib/error-message";
 import {
   formatRetentionSummary,
   migrateSimpleRetention,
@@ -25,13 +27,19 @@ interface InlineEntityMetaProps {
   isReadOnly: boolean;
   onGovernanceClick?: () => void;
   onMetaSaved?: () => void;
+  /** Reports whether the tags, owner or description have edits that are not saved (the page guards them). */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** Saves the pending tags, owner and description for the page's leave guard; resolves true when everything was saved. */
+  saveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
+  /** Drops the pending tags, owner and description edits. */
+  discardRef?: MutableRefObject<(() => void) | null>;
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMetaSaved }: InlineEntityMetaProps) {
+export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMetaSaved, onDirtyChange, saveRef, discardRef }: InlineEntityMetaProps) {
   const meta = (entity.metadata ?? {}) as Record<string, unknown>;
 
   // Resolve retention policy (migrate old string format if needed)
@@ -52,10 +60,14 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
   const [owner, setOwner] = useState<string>(originalOwner);
   const [description, setDescription] = useState(entity.description ?? "");
 
-  // Sync state when entity prop changes (e.g. after save + revalidation)
-  useEffect(() => {
+  // Sync state when the saved tags change (e.g. after save + revalidation). Keyed on the content: a refresh that brings the same tags as a new
+  // array must not wipe an unsaved draft.
+  const savedTagsKey = JSON.stringify(originalTags);
+  const [syncedTagsKey, setSyncedTagsKey] = useState(savedTagsKey);
+  if (syncedTagsKey !== savedTagsKey) {
+    setSyncedTagsKey(savedTagsKey);
     setTags(originalTags);
-  }, [originalTags]);
+  }
 
   useEffect(() => {
     setOwner(originalOwner);
@@ -106,21 +118,77 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
     return false;
   }, [tags, owner, originalTags, originalOwner]);
 
-  // Save metadata (tags + owner)
-  async function handleMetaSave() {
+  // The description is an unsaved edit while its editor holds other text than the saved description.
+  const isDescriptionDirty = isEditingDesc && descInput !== description;
+  const hasEdits = isMetaDirty || isDescriptionDirty;
+
+  // The page guards unsaved edits: it hears about them (before the next event can be handled), and this report goes away with the component.
+  useLayoutEffect(() => {
+    onDirtyChange?.(hasEdits);
+  }, [hasEdits, onDirtyChange]);
+  useLayoutEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  // Save metadata (tags + owner). False when it was not saved: the draft stays, and the message says why.
+  async function saveMeta(): Promise<boolean> {
     setIsSaving(true);
     try {
-      await updateEntityMetadataAction(entity.id, {
+      const result = await updateEntityMetadataAction(entity.id, {
         tags,
         owner: owner || null,
       });
+      if (result.error) {
+        toast.error(result.error);
+        return false;
+      }
       onMetaSaved?.();
-    } catch {
-      // Error state could be added here
+      return true;
+    } catch (error) {
+      toast.error(`Could not save the tags and owner: ${errorMessage(error)}`);
+      return false;
     } finally {
       setIsSaving(false);
     }
   }
+
+  // Save the description. False when it was not saved: the editor stays open with the text. A saved description is a draft change like the
+  // tags: the page marks its draft and flashes "Saved".
+  async function saveDescription(text: string): Promise<boolean> {
+    try {
+      const result = await updateEntityDescriptionAction(entity.id, text);
+      if (result.error) {
+        toast.error(result.error);
+        return false;
+      }
+      setDescription(text);
+      setIsEditingDesc(false);
+      onMetaSaved?.();
+      return true;
+    } catch (error) {
+      toast.error(`Could not save the description: ${errorMessage(error)}`);
+      return false;
+    }
+  }
+
+  // The page's guard saves what is pending (the tags and owner, the description being edited), or drops it.
+  async function saveEdits(): Promise<boolean> {
+    if (isMetaDirty && !(await saveMeta())) return false;
+    if (isDescriptionDirty && !(await saveDescription(descInput))) return false;
+    return true;
+  }
+  function discardEdits() {
+    handleMetaDiscard();
+    setIsEditingDesc(false);
+  }
+
+  // The page saves and discards through these refs. They always hold this render's functions.
+  useLayoutEffect(() => {
+    if (saveRef) saveRef.current = saveEdits;
+    if (discardRef) discardRef.current = discardEdits;
+  });
+  useLayoutEffect(() => () => {
+    if (saveRef) saveRef.current = null;
+    if (discardRef) discardRef.current = null;
+  }, [saveRef, discardRef]);
 
   // Discard metadata changes
   function handleMetaDiscard() {
@@ -235,11 +303,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
               Cancel
             </button>
             <button
-              onClick={async () => {
-                setDescription(descInput);
-                setIsEditingDesc(false);
-                await updateEntityDescriptionAction(entity.id, descInput);
-              }}
+              onClick={() => void saveDescription(descInput)}
               className="px-2 py-0.5 text-caption text-primary hover:text-primary/80 rounded font-medium"
               data-testid="entity-description-save"
             >
@@ -394,7 +458,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
             </Button>
             <Button
               size="sm"
-              onClick={handleMetaSave}
+              onClick={() => void saveMeta()}
               disabled={isSaving}
               className="h-5 px-1.5 text-[10px]"
               data-testid="meta-save-btn"

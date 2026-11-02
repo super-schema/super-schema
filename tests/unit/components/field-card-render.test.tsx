@@ -168,6 +168,7 @@ describe("FieldEditor field list", () => {
         onAddField={vi.fn(async () => ({ success: true }) as never)}
         onUpdateField={async () => {}}
         onDeleteField={async () => {}}
+        onReorderFields={async () => true}
         {...overrides}
       />
     );

@@ -267,9 +267,10 @@ export async function addFieldAction(
 }
 
 /**
- * Editable columns of an entity field (the quick editor, the field studio and drag-reorder send exactly these; `sortOrder`
- * is the reorder). `id`, `entityId` (the move-to-another-entity column), `slug` (derived from `name` here), the timestamps
- * and everything else are deliberately absent: an update that names anything else is rejected with VALIDATION_ERROR.
+ * Editable columns of an entity field (the quick editor and the field studio send exactly these). The drag reorder is `reorderFieldsAction`,
+ * which sets every position at once; a single `sortOrder` update is still accepted. `id`, `entityId` (the move-to-another-entity column),
+ * `slug` (derived from `name` here), the timestamps and everything else are deliberately absent: an update that names anything else is
+ * rejected with VALIDATION_ERROR.
  */
 const FIELD_EDITABLE = {
   name: isString,
@@ -401,6 +402,63 @@ export async function updateFieldAction(
       return { error: holder === undefined ? `A field with that name already exists` : `Field "${holder}" already exists` };
     }
     return { ...unexpectedFailure("updateFieldAction", e) };
+  }
+}
+
+/**
+ * Set the order of an entity's fields in one write (the drag reorder). `orderedFieldIds` lists EVERY field of the entity, first to last, and
+ * each field takes its index as `sortOrder` (every field is written, in one batch). Judged over the entity like the other field actions
+ * (`entity.write` in the active tenant), before any field is read. An order that is not exactly the entity's own fields (one missing,
+ * repeated or foreign) is refused and nothing is written. The positions and the draft mark are one atomic batch, and the page is revalidated once.
+ */
+export async function reorderFieldsAction(entityId: string, orderedFieldIds: string[]) {
+  if (!isStringArray(orderedFieldIds)) return { error: "The field order must be a list of field ids", code: "VALIDATION_ERROR" };
+
+  try {
+    const access = await guardSubject("entity.write", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+
+    const stored = await prisma.field.findMany({
+      where: { entityId },
+      orderBy: { sortOrder: "asc" },
+      select: { id: true, sortOrder: true },
+    });
+    const storedSortOrder = new Map(stored.map((f) => [f.id, f.sortOrder]));
+    const requested = new Set(orderedFieldIds);
+    // Every field of the entity, once: a missing, repeated or foreign id would leave the order undefined.
+    if (requested.size !== orderedFieldIds.length || requested.size !== stored.length || orderedFieldIds.some((id) => !storedSortOrder.has(id))) {
+      // The page holds a list from before a field was added or removed by someone else: the page reloads, and the move is tried again.
+      return {
+        error: "The field list has changed since this page was loaded. It is being reloaded; try the move again.",
+        code: "VALIDATION_ERROR",
+      };
+    }
+
+    if (orderedFieldIds.every((id, index) => storedSortOrder.get(id) === index)) return { success: true };
+
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Entity",
+      entityId,
+      userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
+      beforeState: { fieldOrder: stored.map((f) => f.id) },
+      fn: async () => {
+        // Every field is written, not only the ones that moved: the stored order was read above, outside this batch, so a subset written
+        // from it could leave two fields on one position when another reorder committed in between. Each batch is then a complete order,
+        // and the last one to commit is the order. The positions and the draft + stale-source mark are ONE atomic batch (see addFieldAction).
+        await prisma.$transaction([
+          ...orderedFieldIds.map((id, index) => prisma.field.update({ where: { id }, data: { sortOrder: index } })),
+          prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
+        ]);
+        return { fieldOrder: orderedFieldIds };
+      },
+    });
+
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("reorderFieldsAction", e) };
   }
 }
 

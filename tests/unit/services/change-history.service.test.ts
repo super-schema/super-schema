@@ -189,6 +189,38 @@ describe("Change History Service", () => {
       }
     });
 
+    it("lists a drag reorder of the fields as a field edit, not as an unclassified entity update", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ metadata: {} } as never);
+      vi.mocked(prisma.auditLog.findMany).mockResolvedValue([
+        makeAuditRecord({
+          id: "a1",
+          action: "UPDATE",
+          entityType: "Entity",
+          timestamp: new Date("2024-01-15T10:00:00Z"),
+          beforeState: { fieldOrder: ["f1", "f2"] },
+          afterState: { fieldOrder: ["f2", "f1"] },
+        }),
+        makeAuditRecord({
+          id: "a2",
+          action: "UPDATE",
+          entityType: "Entity",
+          timestamp: new Date("2024-01-16T10:00:00Z"),
+          beforeState: { name: "Customer" },
+          afterState: { name: "Client" },
+        }),
+      ] as never);
+
+      const result = await getChangeHistory("ent-1", mockCtx);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const [later, earlier] = result.data.entries;
+        expect(later.changeType).toBe("other");
+        expect(earlier.changeType).toBe("field_edit");
+        expect(earlier.summary).toBe("Reordered fields");
+      }
+    });
+
     it("gracefully handles audit_log query failure", async () => {
       const versions = [
         makeVersionSnapshot(1, "2024-01-01T00:00:00Z"),

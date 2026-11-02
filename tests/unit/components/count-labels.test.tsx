@@ -164,6 +164,7 @@ describe("field editor", () => {
         onAddField={async () => ({})}
         onUpdateField={async () => {}}
         onDeleteField={async () => {}}
+        onReorderFields={async () => true}
       />
     );
     expect(screen.getByText(/ of 1 field complete$/)).toBeTruthy();

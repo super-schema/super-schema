@@ -11,6 +11,7 @@ import {
   markEntityDeployedAction,
   checkTargetDriftAction,
 } from "../actions";
+import { errorMessage } from "@/lib/error-message";
 
 interface EntityDeploymentsTabProps {
   entityId: string;
@@ -24,42 +25,56 @@ export function EntityDeploymentsTab({ entityId, entityName }: EntityDeployments
 
   const load = useCallback(async () => {
     setIsLoading(true);
-    const res = await getEntityDeploymentStatusAction(entityId);
-    if ("error" in res) {
-      toast.error(res.error);
+    try {
+      const res = await getEntityDeploymentStatusAction(entityId);
+      if ("error" in res) {
+        toast.error(res.error);
+        return;
+      }
+      setStatuses(res.data);
+    } catch (error) {
+      // The spinner must end whatever the action did, or the tab reads "Loading deployments…" for the rest of the session.
+      toast.error(`Could not load deployments: ${errorMessage(error)}`);
+    } finally {
       setIsLoading(false);
-      return;
     }
-    setStatuses(res.data);
-    setIsLoading(false);
   }, [entityId]);
 
   useEffect(() => {
     // Fetch once on mount; state updates occur after the async result resolves.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
   async function handleMarkDeployed(targetId: string, environment: string) {
-    const res = await markEntityDeployedAction(entityId, targetId, environment);
-    if ("error" in res) {
-      toast.error(res.error);
+    try {
+      const res = await markEntityDeployedAction(entityId, targetId, environment);
+      if ("error" in res) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`Marked deployed to ${environment}`);
+    } catch (error) {
+      toast.error(`Could not mark deployed to ${environment}: ${errorMessage(error)}`);
       return;
     }
-    toast.success(`Marked deployed to ${environment}`);
     await load();
   }
 
   async function handleCheckDrift(targetId: string) {
     setCheckingTargetId(targetId);
-    const res = await checkTargetDriftAction(entityId, targetId);
-    setCheckingTargetId(null);
-    if ("error" in res) {
-      toast.error(res.error);
-      return;
+    try {
+      const res = await checkTargetDriftAction(entityId, targetId);
+      if ("error" in res) {
+        toast.error(res.error);
+        return;
+      }
+      setStatuses(res.data);
+      toast.success("Drift check complete");
+    } catch (error) {
+      toast.error(`Could not check drift: ${errorMessage(error)}`);
+    } finally {
+      setCheckingTargetId(null);
     }
-    setStatuses(res.data);
-    toast.success("Drift check complete");
   }
 
   return (

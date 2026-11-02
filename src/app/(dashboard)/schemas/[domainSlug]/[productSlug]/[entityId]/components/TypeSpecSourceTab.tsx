@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
 import { Loader2, Save, FileCode, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import {
   type TypeSpecSourceSaveResult,
 } from "../actions";
 import { useReferencePick } from "./useReferencePick";
+import { errorMessage } from "@/lib/error-message";
 
 interface TypeSpecSourceTabProps {
   entityId: string;
@@ -17,9 +18,15 @@ interface TypeSpecSourceTabProps {
   readOnly?: boolean;
   /** Called after a successful save (the draft changed). */
   onSaved?: () => void;
+  /** Reports whether the source has edits that are not saved (the page guards them). Called with false when this tab goes away. */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** Saves the source for the page's leave guard; resolves true when it was applied. */
+  saveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
+  /** Drops the unsaved edits: the source goes back to the saved text. */
+  discardRef?: MutableRefObject<(() => void) | null>;
 }
 
-export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: TypeSpecSourceTabProps) {
+export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved, onDirtyChange, saveRef, discardRef }: TypeSpecSourceTabProps) {
   const [source, setSource] = useState("");
   const [savedSource, setSavedSource] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -32,6 +39,8 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
   // row to save the pick on: it is kept here, by field name, and goes with the retry of the save (the server accepts it only when it is
   // one of the entities the name matches).
   const picks = useRef<Record<string, string>>({});
+  // The save in progress, if any: the page's guard and the Save button share it.
+  const saveAttempt = useRef<Promise<boolean> | null>(null);
   const { resolveReferences, dialog: referenceDialog } = useReferencePick({
     savePick: (request, picked) => {
       if (!picked.entityId) return "This entity has no id, so the choice cannot be saved.";
@@ -42,21 +51,25 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
 
   const load = useCallback(async () => {
     setIsLoading(true);
-    const res = await getTypeSpecSourceAction(entityId);
-    if ("error" in res) {
-      toast.error(res.error);
+    try {
+      const res = await getTypeSpecSourceAction(entityId);
+      if ("error" in res) {
+        toast.error(res.error);
+        return;
+      }
+      setSource(res.source);
+      setSavedSource(res.source);
+      setWasGenerated(res.generated);
+    } catch (error) {
+      // The spinner must end whatever the action did, or the tab shows "Compiling current fields…" for the rest of the session.
+      toast.error(`Could not load the TypeSpec source: ${errorMessage(error)}`);
+    } finally {
       setIsLoading(false);
-      return;
     }
-    setSource(res.source);
-    setSavedSource(res.source);
-    setWasGenerated(res.generated);
-    setIsLoading(false);
   }, [entityId]);
 
   useEffect(() => {
     // Fetch once on mount; state updates occur after the async result resolves.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
@@ -64,33 +77,69 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
   const errors = diagnostics.filter((d) => d.severity === "error");
   const warnings = diagnostics.filter((d) => d.severity === "warning");
 
-  async function handleSave() {
-    setIsSaving(true);
-    setDiagnostics([]);
-    picks.current = {};
-    // `needsReference` is looked at before the result's own error: the dialog asks, the pick is kept, and the save runs once more.
-    const result = await resolveReferences(() => compileAndApplyTypeSpecSourceAction(entityId, source, picks.current));
-    setIsSaving(false);
-    // Cancelled: nothing was saved and nothing went wrong.
-    if (result === null) return;
-    setDiagnostics(result.diagnostics);
+  // The page's guard asks about an unsaved source. Leaving this tab takes the source with it, so the page stops guarding it then. (Layout
+  // effects: the guard sees an edit before the next event can be handled.)
+  useLayoutEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+  useLayoutEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
-    if (!result.success) {
-      toast.error(result.error ?? "TypeSpec did not compile — see diagnostics below");
-      return;
-    }
+  /** Saves the source through the compiler. True when it was applied. A save already running is the one answered. */
+  function save(): Promise<boolean> {
+    if (saveAttempt.current) return saveAttempt.current;
+    const attempt = (async (): Promise<boolean> => {
+      setIsSaving(true);
+      setDiagnostics([]);
+      picks.current = {};
+      try {
+        // `needsReference` is looked at before the result's own error: the dialog asks, the pick is kept, and the save runs once more.
+        const result = await resolveReferences(() => compileAndApplyTypeSpecSourceAction(entityId, source, picks.current));
+        // Cancelled: nothing was saved and nothing went wrong.
+        if (result === null) return false;
+        setDiagnostics(result.diagnostics);
 
-    setSavedSource(source);
-    setLastApplied(result.applied ?? null);
-    setWasGenerated(false);
-    onSaved?.();
-    const { added = 0, updated = 0, removed = [] } = result.applied ?? {};
-    toast.success(
-      `TypeSpec compiled and applied — ${added} added, ${updated} updated${
-        removed.length > 0 ? `, ${removed.length} removed` : ""
-      }`
-    );
+        if (!result.success) {
+          toast.error(result.error ?? "TypeSpec did not compile — see diagnostics below");
+          return false;
+        }
+
+        setSavedSource(source);
+        setLastApplied(result.applied ?? null);
+        setWasGenerated(false);
+        onSaved?.();
+        const { added = 0, updated = 0, removed = [] } = result.applied ?? {};
+        toast.success(
+          `TypeSpec compiled and applied — ${added} added, ${updated} updated${
+            removed.length > 0 ? `, ${removed.length} removed` : ""
+          }`
+        );
+        return true;
+      } catch (error) {
+        // A rejected save must not leave Save stuck on "Compiling…": the button comes back, and the source stays as typed.
+        toast.error(`Could not save the TypeSpec source: ${errorMessage(error)}`);
+        return false;
+      } finally {
+        setIsSaving(false);
+        saveAttempt.current = null;
+      }
+    })();
+    saveAttempt.current = attempt;
+    return attempt;
   }
+
+  function discardSource() {
+    setSource(savedSource);
+  }
+
+  // The page's guard saves and discards through these refs. They always hold this render's functions.
+  useLayoutEffect(() => {
+    if (saveRef) saveRef.current = save;
+    if (discardRef) discardRef.current = discardSource;
+  });
+  useLayoutEffect(() => () => {
+    if (saveRef) saveRef.current = null;
+    if (discardRef) discardRef.current = null;
+  }, [saveRef, discardRef]);
 
   function handleExport() {
     const blob = new Blob([savedSource], { type: "text/plain" });
@@ -129,7 +178,7 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
             Export .tsp
           </Button>
           {!readOnly && (
-            <Button size="sm" onClick={handleSave} disabled={isSaving || !isDirty} className="gap-1.5" data-testid="typespec-save">
+            <Button size="sm" onClick={() => void save()} disabled={isSaving || !isDirty} className="gap-1.5" data-testid="typespec-save">
               {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
               {isSaving ? "Compiling…" : "Save"}
             </Button>

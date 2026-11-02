@@ -23,6 +23,7 @@ import {
   compareVersionsAction,
   getChangeHistoryAction,
   setFieldReferenceAction,
+  reorderFieldsAction,
 } from "./actions";
 import { deleteEntityAction } from "../../actions";
 import { SchemasTab } from "./components/SchemasTab";
@@ -38,6 +39,7 @@ import type {
 } from "@/components/custom/TypeMappingOverrideDialog";
 import { ChangeHistoryView } from "@/components/custom/ChangeHistoryView";
 import type { ChangeHistoryFilters } from "@/types/schemas/change-history";
+import { errorMessage } from "@/lib/error-message";
 import { formatDateTime } from "@/lib/date-format";
 import { isReadOnly } from "@/lib/entity-lifecycle";
 import { trackRecentEntity } from "@/lib/recent-entities";
@@ -92,9 +94,20 @@ function normalizeView(value: string | null, level: "TENANT" | "PRODUCT"): ViewT
   return VIEW_GROUPS.some((group) => group.tabs.some(([id]) => id === value)) ? value as ViewTab : "editor";
 }
 
-/** Message for a thrown value (server actions reject on network or server failures). */
-function errorMessage(e: unknown): string {
-  return e instanceof Error && e.message ? e.message : "Unexpected error";
+/**
+ * An editor's unsaved edits as the page sees them: `dirty` (state, so the guard renders from it), `dirtyRef` (what the handlers that run outside a
+ * render read), and the save and discard the guard's dialog calls, which the editor registers through `saveRef` / `discardRef`.
+ */
+function useEditorDraft() {
+  const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(false);
+  const onDirtyChange = useCallback((value: boolean) => {
+    setDirty(value);
+    dirtyRef.current = value;
+  }, []);
+  const saveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const discardRef = useRef<(() => void) | null>(null);
+  return useMemo(() => ({ dirty, dirtyRef, onDirtyChange, saveRef, discardRef }), [dirty, onDirtyChange]);
 }
 
 interface FieldData {
@@ -283,6 +296,11 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     fieldDirtyRef.current = dirty;
   }, []);
 
+  // Unsaved edits outside the field panel, guarded like its edits: the TypeSpec source (its tab) and the inline tags, owner and description
+  // (above the tabs). Each reports its state and answers the guard's save and discard (see `saveDrafts` and `discardDrafts`).
+  const typeSpecDraft = useEditorDraft();
+  const metaDraft = useEditorDraft();
+
   // Refs for keyboard shortcut save/discard delegation
   const fieldSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const fieldDiscardRef = useRef<(() => void) | null>(null);
@@ -296,8 +314,12 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     setPanelSaving(saving);
   }, []);
   const [guardError, setGuardError] = useState<string | null>(null);
+  // The guard's dialog is saving the other drafts (see `saveDrafts`).
+  const [savingDrafts, setSavingDrafts] = useState(false);
   const fieldSaveAttempt = useRef<Promise<boolean> | null>(null);
-  const { pending: pendingLeave } = useLeaveGuard(isFieldDirty || fieldBusy, { queryKey: "tab" });
+  // Any unsaved edit on the page keeps the guard up: its questions for navigation and its reload prompt.
+  const hasUnsavedEdits = isFieldDirty || typeSpecDraft.dirty || metaDraft.dirty;
+  const { pending: pendingLeave } = useLeaveGuard(hasUnsavedEdits || fieldBusy, { queryKey: "tab" });
   const pendingDecision = pendingAction ?? pendingLeave;
 
   const requestAction = useCallback((run: () => void | Promise<void>, destination = "continue") => {
@@ -305,7 +327,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
       try { void Promise.resolve(run()).catch((error) => toast.error(errorMessage(error))); }
       catch (error) { toast.error(errorMessage(error)); }
     };
-    if (!fieldDirtyRef.current && !panelSavingRef.current && !fieldSaveAttempt.current) {
+    if (!fieldDirtyRef.current && !typeSpecDraft.dirtyRef.current && !metaDraft.dirtyRef.current && !panelSavingRef.current && !fieldSaveAttempt.current) {
       execute();
       return;
     }
@@ -325,7 +347,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         setPendingAction(null);
       },
     });
-  }, []);
+  }, [typeSpecDraft, metaDraft]);
 
   const saveField = useCallback((): Promise<boolean> => {
     if (fieldSaveAttempt.current) return fieldSaveAttempt.current;
@@ -371,6 +393,39 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     return true;
   }, [handleFieldDirtyChange]);
 
+  // The guard's dialog saves every unsaved editor of the page: the field panel, then the TypeSpec source, then the inline details. False when
+  // one of them could not be saved: the dialog stays, with the message.
+  const saveDrafts = useCallback(async (): Promise<boolean> => {
+    setSavingDrafts(true);
+    try {
+      if (fieldDirtyRef.current && !(await saveField())) return false;
+      const drafts = [
+        { draft: typeSpecDraft, failure: "The TypeSpec source could not be saved. Stay to review your edits, or retry saving." },
+        { draft: metaDraft, failure: "The tags, owner or description could not be saved. Stay to review your edits, or retry saving." },
+      ];
+      for (const { draft, failure } of drafts) {
+        if (draft.dirtyRef.current && !(await draft.saveRef.current?.())) {
+          setGuardError(failure);
+          return false;
+        }
+      }
+      return true;
+    } finally {
+      setSavingDrafts(false);
+    }
+  }, [saveField, typeSpecDraft, metaDraft]);
+
+  // Discards every unsaved editor of the page, the same choice for each. False when the field panel could not drop its edits (a save is running).
+  const discardDrafts = useCallback((): boolean => {
+    if (fieldDirtyRef.current && !discardField()) return false;
+    for (const draft of [typeSpecDraft, metaDraft]) {
+      if (!draft.dirtyRef.current) continue;
+      draft.discardRef.current?.();
+      draft.onDirtyChange(false);
+    }
+    return true;
+  }, [discardField, typeSpecDraft, metaDraft]);
+
   const applyView = useCallback((tab: ViewTab, history: "push" | "replace" | "none" = "replace") => {
     activeTabRef.current = tab;
     setActiveTab(tab);
@@ -385,8 +440,8 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
 
   // The leave guard cancels view traversals before the history index moves. Stay never rewrites a traversed entry.
   useEffect(() => {
-    if (requestedView !== activeTabRef.current && !isFieldDirty && !fieldBusy) applyView(requestedView, "none");
-  }, [requestedView, isFieldDirty, fieldBusy, applyView]);
+    if (requestedView !== activeTabRef.current && !hasUnsavedEdits && !fieldBusy) applyView(requestedView, "none");
+  }, [requestedView, hasUnsavedEdits, fieldBusy, applyView]);
 
   const selectedField = selectedFieldId
     ? fields.find((f) => f.id === selectedFieldId) ?? null
@@ -745,31 +800,33 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [handleEmit, saveField, readOnly_, isEmitting, fieldBusy, activeTab]);
 
-  // Navigation guard: beforeunload when dirty
+  // Navigation guard: beforeunload when any editor has unsaved edits
   useEffect(() => {
     function handleBeforeUnload(e: BeforeUnloadEvent) {
-      if (fieldDirtyRef.current) {
+      if (fieldDirtyRef.current || typeSpecDraft.dirtyRef.current || metaDraft.dirtyRef.current) {
         e.preventDefault();
       }
     }
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, []);
+  }, [typeSpecDraft, metaDraft]);
+
+  const unsavedWhat = typeSpecDraft.dirty || metaDraft.dirty ? "This entity has unsaved edits." : "This field has unsaved edits.";
 
   return (
     <>
     <UnsavedChangesDialog
       pending={pendingDecision}
-      saving={fieldBusy}
+      saving={fieldBusy || savingDrafts}
       error={guardError}
       description={pendingDecision?.destination === "generate"
-        ? "This field has unsaved edits. Save them before generating schemas, or discard them to generate from the saved draft."
-        : "This field has unsaved edits. Save them before continuing, discard them, or stay here."}
+        ? `${unsavedWhat} Save them before generating schemas, or discard them to generate from the saved draft.`
+        : `${unsavedWhat} Save them before continuing, discard them, or stay here.`}
       saveLabel={pendingDecision?.destination === "generate" ? "Save and generate" : "Save and continue"}
       discardLabel={pendingDecision?.destination === "generate" ? "Discard and generate" : "Discard and continue"}
-      onSaveAndLeave={saveField}
-      onDiscardAndLeave={discardField}
-      onStay={() => { if (!fieldBusy) { pendingDecision?.stay(); setGuardError(null); } }}
+      onSaveAndLeave={saveDrafts}
+      onDiscardAndLeave={discardDrafts}
+      onStay={() => { if (!fieldBusy && !savingDrafts) { pendingDecision?.stay(); setGuardError(null); } }}
     />
     <Dialog
       open={deleteConfirmOpen}
@@ -813,7 +870,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
 
       <div className="mb-space-4 flex flex-wrap items-center justify-between gap-space-3 rounded-lg border border-border px-space-3 py-space-2">
         <p role="status" aria-live="polite" data-testid="workspace-draft-status" className="text-body-small text-muted-foreground">
-          {fieldBusy ? "Saving field edits…" : isFieldDirty ? "Unsaved field edits" : versionState.hasUnpublishedChanges ? "Draft saved · unpublished changes" : versionState.latestVersionLabel ? `Published v${versionState.latestVersionLabel} · draft up to date` : "Draft saved · not published"}
+          {fieldBusy ? "Saving field edits…" : isFieldDirty ? "Unsaved field edits" : typeSpecDraft.dirty ? "Unsaved TypeSpec source edits" : metaDraft.dirty ? "Unsaved tag, owner or description edits" : versionState.hasUnpublishedChanges ? "Draft saved · unpublished changes" : versionState.latestVersionLabel ? `Published v${versionState.latestVersionLabel} · draft up to date` : "Draft saved · not published"}
         </p>
         {!readOnly_ && <Button type="button" variant="outline" size="sm" onClick={handleEmit} disabled={isEmitting || fieldBusy}>
           <GenerationIcon data-icon="inline-start" aria-hidden="true" />{isEmitting ? "Generating…" : "Generate schemas"}
@@ -826,6 +883,9 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         isReadOnly={readOnly_}
         onGovernanceClick={() => handleTabChange("governance")}
         onMetaSaved={handleMetaSaved}
+        onDirtyChange={metaDraft.onDirtyChange}
+        saveRef={metaDraft.saveRef}
+        discardRef={metaDraft.discardRef}
       />
 
       {/* Right panel router (renders nothing itself, pushes content via context) */}
@@ -912,6 +972,25 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
                   if (result?.error) toast.error(result.error);
                   else markDraftDirty();
                 }}
+                onReorderFields={async (orderedIds) => {
+                  try {
+                    const result = await reorderFieldsAction(entity.id, orderedIds);
+                    if (result.error) {
+                      toast.error(result.error);
+                      // The page may hold an older list (a field added or removed elsewhere): reload it, so the shown order is the stored one.
+                      router.refresh();
+                      return false;
+                    }
+                    setTypeSpecTrigger((n) => n + 1);
+                    markDraftDirty();
+                    return true;
+                  } catch {
+                    toast.error("Could not change the field order. Try again.");
+                    // The save may have been written before it failed (the audit entry did not go through): reload to show the stored order.
+                    router.refresh();
+                    return false;
+                  }
+                }}
               />
             </>
           )
@@ -942,6 +1021,9 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
             entityId={entity.id}
             entityName={entity.name}
             readOnly={readOnly_}
+            onDirtyChange={typeSpecDraft.onDirtyChange}
+            saveRef={typeSpecDraft.saveRef}
+            discardRef={typeSpecDraft.discardRef}
             onSaved={() => {
               markDraftDirty();
               // Refresh data while preserving the source tab, selected field and URL.

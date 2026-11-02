@@ -131,6 +131,7 @@ describe("the New Field form", () => {
         onAddField={onAddField as never}
         onUpdateField={async () => {}}
         onDeleteField={async () => {}}
+        onReorderFields={async () => true}
       />,
     );
   }

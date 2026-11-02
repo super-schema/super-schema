@@ -25,6 +25,7 @@ function renderEditor(onAddField: (name: string, type: string) => Promise<unknow
       onAddField={onAddField as never}
       onUpdateField={async () => {}}
       onDeleteField={async () => {}}
+      onReorderFields={async () => true}
     />,
   );
 }

@@ -189,6 +189,22 @@ describe("Field Service", () => {
         expect(result.error.code).toBe("VALIDATION_ERROR");
       }
     });
+
+    it("refuses an order that names one field twice, before any write (the list would leave another field without a position)", async () => {
+      vi.mocked(prisma.field.findMany).mockResolvedValue([
+        { id: "fld-1", sortOrder: 0 },
+        { id: "fld-2", sortOrder: 1 },
+        { id: "fld-3", sortOrder: 2 },
+      ] as never);
+
+      const result = await reorderFields("ent-1", ["fld-1", "fld-1", "fld-2"], mockCtx);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("VALIDATION_ERROR");
+      }
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
   });
 
   describe("draft tracking", () => {
