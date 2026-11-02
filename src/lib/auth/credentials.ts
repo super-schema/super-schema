@@ -15,6 +15,8 @@
 import { prisma } from "@/lib/db";
 import { verifyPassword } from "@/lib/auth/password-hash";
 import { normalizeEmail } from "@/lib/auth/password-policy";
+import { UNTRUSTED_IP } from "@/lib/auth/client-ip";
+import { loginBackoffMs, noteUnaddressedAttempt, waitFor } from "@/lib/auth/login-backoff";
 import { recordAuthEvent, reserveLoginAttempt, settleAuthEvent, type AuthEventOutcome, type LoginReservation } from "@/lib/auth/throttle";
 
 export type PasswordLogin = { id: string; email: string; name: string | null };
@@ -40,13 +42,24 @@ async function settleLogin(reservation: LoginReservation, outcome: "success" | "
  * @param input.password what was typed
  * @param input.ip the client address bucket of the request (`clientIp`)
  * @returns the user to sign in, or null
+ *
+ * Without a client address (`UNTRUSTED_IP`) every sign-in shares one bucket, which is never locked: a sign-in like that waits first (a bounded wait
+ * that grows with the failed ones in this process, src/lib/auth/login-backoff.ts), the same for every outcome, and each one that fails is counted.
  */
 export async function authenticateWithPassword(input: { email: unknown; password: unknown; ip: string }): Promise<PasswordLogin | null> {
+  const unaddressed = input.ip === UNTRUSTED_IP;
+  if (unaddressed) await waitFor(loginBackoffMs());
+  const user = await decideSignIn(input);
+  if (!user && unaddressed) noteUnaddressedAttempt();
+  return user;
+}
+
+async function decideSignIn(input: { email: unknown; password: unknown; ip: string }): Promise<PasswordLogin | null> {
   const email = normalizeEmail(typeof input.email === "string" ? input.email : "");
   const password = typeof input.password === "string" ? input.password : "";
   const { ip } = input;
 
-  // Nothing to look up: still the same work (and a failure against the address, so a flood of empty forms is limited too).
+  // Nothing to look up: still the same work (and a failure against the address: a flood of empty forms is limited per address when a proxy is trusted).
   if (email === "" || password === "") {
     await verifyPassword(password, null);
     await recordLogin({ ip, outcome: "failure", ...(email !== "" ? { email } : {}) });

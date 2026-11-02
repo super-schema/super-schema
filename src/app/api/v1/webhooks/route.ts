@@ -23,7 +23,7 @@ export const GET = withApiAuth("platform.admin", async (_request, api) => {
     console.error("GET /api/v1/webhooks error:", e);
     return apiServerError();
   }
-});
+}, { rateLimit: true });
 
 export const POST = withApiAuth("platform.admin", async (request, api) => {
   try {
@@ -38,4 +38,4 @@ export const POST = withApiAuth("platform.admin", async (request, api) => {
     console.error("POST /api/v1/webhooks error:", e);
     return apiServerError();
   }
-});
+}, { rateLimit: true });

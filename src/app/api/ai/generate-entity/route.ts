@@ -61,5 +61,16 @@ export const POST = withApiAuth(
 
     return NextResponse.json({ suggestion: result.data });
   },
-  { respond: APP_ERRORS, allowApiKey: false }
+  {
+    respond: APP_ERRORS,
+    allowApiKey: false,
+    // Every suggestion is a paid provider call: a signed-in user gets the same allowance as the REST API's principal, and the refusal is the app's
+    // own shape (`error` as a string, which the client reads), not the REST envelope.
+    rateLimit: true,
+    respondLimited: ({ retryAfterSeconds }) =>
+      NextResponse.json(
+        { error: `Too many suggestions in a short time. Try again in ${retryAfterSeconds} seconds.` },
+        { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } }
+      ),
+  }
 );

@@ -24,7 +24,7 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/active-tenant", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/active-tenant")>()), getActiveTenantId: h.activeTenant }));
-vi.mock("@/app/api/v1/rate-limit", () => ({ checkRateLimit: () => null }));
+vi.mock("@/app/api/v1/rate-limit", () => ({ checkPrincipalRateLimit: () => null, checkFailedAuthRateLimit: () => null }));
 // The destination check resolves names: the stand-in addresses here (example.invalid) are not looked up.
 vi.mock("@/lib/webhook-transport", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/webhook-transport")>()),

@@ -12,10 +12,11 @@ import { planDocumentArtifacts, resolveDocument, type ExternalItems, type Messag
 import { isLibraryTrait, type DocExternalRef, type DocumentProblem, type EventDocument } from "@/lib/events/document/types";
 import { referenceableItems } from "@/lib/events/external-refs";
 import { isJsonObject } from "@/lib/events/inputs";
+import { RUNS_PER_PRINCIPAL } from "@/lib/emission/emission-admission";
 import type { EntityPin, FrozenTrait } from "@/lib/events/types";
 import type { PlaceReader } from "@/lib/access/entity-reader";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
-import type { ArtifactRenderer, ArtifactSubject } from "./artifact-renderer";
+import type { ArtifactRenderer, ArtifactSubject, RenderRun } from "./artifact-renderer";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -164,7 +165,7 @@ export async function loadEventSnapshot(db: Db, eventId: string, override?: Even
 const USER_FACING_RENDER_CODES = new Set([
   "NOT_FOUND", "UNRESOLVED_REFERENCE", "UNPUBLISHED_REFERENCE", "ROOT_MODEL_NOT_FOUND", "ROOT_SCHEMA_NOT_FOUND",
   "SCHEMA_BUNDLE_UNRESOLVED", "REFERENCE_CLOSURE_TOO_LARGE", "CONFLICTING_PINS", "TYPESPEC_DECLARATION_CONFLICT",
-  "TYPESPEC_IMPORT_NOT_ALLOWED", "TYPESPEC_PARSE_ERROR", "PROTO_NOT_SELF_CONTAINED", "AVRO_NAME_CONFLICT", "EMITTER_TIMEOUT",
+  "TYPESPEC_IMPORT_NOT_ALLOWED", "TYPESPEC_PARSE_ERROR", "PROTO_NOT_SELF_CONTAINED", "AVRO_NAME_CONFLICT", "EMITTER_TIMEOUT", "EMITTER_BUSY",
   "UNSUPPORTED_FORMAT",
   "AVRO_SYMBOL_COLLISION", "AVRO_INVALID_SYMBOL", "ENUM_NO_VALUES", "ROOT_MESSAGE_NOT_FOUND", "REFERENCE_NOT_READABLE",
 ]);
@@ -204,6 +205,66 @@ function problemDiagnostics(error: ServiceError): Diagnostic[] {
 
 type Rendered = { artifact?: SchemaArtifact; diagnostics: Diagnostic[] };
 
+/** One trait headers render: what it is, where its diagnostics point, and where its artifact is stored (a library trait by id, a local one by key). */
+interface TraitHeaderTarget {
+  what: string;
+  pointer: string;
+  subject: ArtifactSubject;
+  unpinned: boolean;
+  library: boolean;
+  key: string;
+}
+
+/**
+ * Every trait headers render a resolve starts, in document order: each local trait with a headers pin, and each library trait once (by its id) whose
+ * frozen headers subject is known. The one plan `resolveEventSnapshot` renders and `countEventRenders` counts.
+ */
+function traitHeaderTargets(snapshot: EventSnapshot): TraitHeaderTarget[] {
+  const targets: TraitHeaderTarget[] = [];
+  const seenLibraryTraits = new Set<string>();
+  // Read inside the event's own tenant, as every pin of the document is (`loadEventSnapshot` reads the event's rows there too).
+  const tenant = snapshot.event.tenantId;
+  snapshot.document.traits.forEach((t, i) => {
+    const what = `Trait ${t.key} headers`;
+    if (!isLibraryTrait(t)) {
+      const { key, headers } = t;
+      if (headers) targets.push({ what, pointer: `/traits/${i}/headers`, subject: pinSubject(headers, tenant), unpinned: headers.entityVersionId === null, library: false, key });
+      return;
+    }
+    const { libraryTraitId } = t;
+    if (seenLibraryTraits.has(libraryTraitId)) return;
+    seenLibraryTraits.add(libraryTraitId);
+    const frozen = snapshot.libraryTraits.get(libraryTraitId);
+    const subject = frozen ? traitHeadersSubject(frozen, tenant) : null;
+    if (subject) targets.push({ what, pointer: `/traits/${i}`, subject, unpinned: false, library: true, key: libraryTraitId });
+  });
+  return targets;
+}
+
+/**
+ * How many renders one resolve of this snapshot starts (the plan `resolveEventSnapshot` renders): one per payload format of each message, one per key
+ * format of a message with a key pin, one for a headers pin, and one per trait headers render. The caller's compiler share is charged by it.
+ */
+export function countEventRenders(snapshot: EventSnapshot): number {
+  const plan = planDocumentArtifacts(snapshot.document, snapshot.entityFormats, { emitAll: true });
+  let count = traitHeaderTargets(snapshot).length;
+  for (const m of snapshot.document.messages) {
+    const need = plan.get(m.key);
+    if (!need) continue;
+    count += need.payloadFormats.length + (m.keyPin ? need.keyFormats.length : 0) + (m.headers ? 1 : 0);
+  }
+  return count;
+}
+
+/**
+ * The units of the caller's compiler share one resolve of this snapshot takes: one per render (`countEventRenders`), but never more than the whole
+ * share. A document that needs more renders than a share holds takes all of it, so no other call of the same caller runs meanwhile; its renders then
+ * wait in the renderer's bounded queue. (A per-call unit, as before, let one caller queue many documents' renders at once.)
+ */
+export function eventRenderShare(snapshot: EventSnapshot): number {
+  return Math.min(RUNS_PER_PRINCIPAL, Math.max(1, countEventRenders(snapshot)));
+}
+
 /**
  * Render every artifact the document needs, then build the `ResolvedEventSpec`. Every diagnostic produced here points into the
  * DRAFT document (`/messages/0/payload`, `/traits/1/headers`, `/externalRefs/2`, …); the assembler's and the validators'
@@ -222,14 +283,24 @@ export async function resolveEventSnapshot(
   renderer: ArtifactRenderer,
   version: string,
   /** The caller's read scope (a preview): every rendered schema must reach only entities it covers. Omitted: the closure is not checked. */
-  canRead?: PlaceReader
-): Promise<{ resolved: ResolvedEventSpec | null; diagnostics: Diagnostic[] }> {
+  canRead?: PlaceReader,
+  run?: RenderRun
+): Promise<{ resolved: ResolvedEventSpec | null; diagnostics: Diagnostic[]; busy?: true }> {
   const doc = snapshot.document;
   // Every pin and every library trait's headers is read inside the event's own tenant (`loadEventSnapshot` reads the event's rows there too).
   const tenant = snapshot.event.tenantId;
+  // Set when a render was refused because the compiler (or the render queue) was busy: the document is not at fault, so no diagnostic is made;
+  // the whole resolve is answered "try again" (`busy`) instead of a document with errors.
+  let busy = false;
   const render = async (subject: ArtifactSubject, format: PayloadFormat, what: string, pointer: string): Promise<Rendered> => {
-    const r = await renderer.render(subject, format, canRead);
-    if (!r.success) return { diagnostics: [renderDiagnostic(what, format, r.error, pointer)] };
+    const r = await renderer.render(subject, format, canRead, run);
+    if (!r.success) {
+      if (r.error.code === "EMITTER_BUSY") {
+        busy = true;
+        return { diagnostics: [] };
+      }
+      return { diagnostics: [renderDiagnostic(what, format, r.error, pointer)] };
+    }
     const diagnostics: Diagnostic[] = [];
     for (const w of r.data.warnings) diagnostics.push(diagnostic("warning", "TYPESPEC_DUPLICATE_DECLARATION", `${what}: ${w}`, pointer));
     for (const n of r.data.notes ?? []) diagnostics.push(diagnostic("warning", n.code, `${what}: ${n.message}`, pointer));
@@ -265,33 +336,18 @@ export async function resolveEventSnapshot(
 
   const localTraitHeaders = new Map<string, SchemaArtifact>();
   const libraryTraitHeaders = new Map<string, SchemaArtifact>();
-  type HeaderJob = { what: string; pointer: string; subject: ArtifactSubject; unpinned: boolean; store: (artifact: SchemaArtifact) => void };
-  const headerJobs: HeaderJob[] = [];
-  const seenLibraryTraits = new Set<string>();
-  doc.traits.forEach((t, i) => {
-    const what = `Trait ${t.key} headers`;
-    if (!isLibraryTrait(t)) {
-      const { key, headers } = t;
-      if (headers) {
-        headerJobs.push({ what, pointer: `/traits/${i}/headers`, subject: pinSubject(headers, tenant), unpinned: headers.entityVersionId === null, store: (a) => { if (!localTraitHeaders.has(key)) localTraitHeaders.set(key, a); } });
-      }
-      return;
-    }
-    const { libraryTraitId } = t;
-    if (seenLibraryTraits.has(libraryTraitId)) return;
-    seenLibraryTraits.add(libraryTraitId);
-    const frozen = snapshot.libraryTraits.get(libraryTraitId);
-    const subject = frozen ? traitHeadersSubject(frozen, tenant) : null;
-    if (subject) headerJobs.push({ what, pointer: `/traits/${i}`, subject, unpinned: false, store: (a) => { libraryTraitHeaders.set(libraryTraitId, a); } });
-  });
-  const traitJobs = headerJobs.map(async (job): Promise<Diagnostic[]> => {
+  const traitJobs = traitHeaderTargets(snapshot).map(async (job): Promise<Diagnostic[]> => {
     const r = await render(job.subject, "json-schema", job.what, job.pointer);
-    if (r.artifact) job.store(r.artifact);
+    if (r.artifact) {
+      if (job.library) libraryTraitHeaders.set(job.key, r.artifact);
+      else if (!localTraitHeaders.has(job.key)) localTraitHeaders.set(job.key, r.artifact);
+    }
     return [...(job.unpinned ? [unpublishedPin(job.what, job.pointer)] : []), ...r.diagnostics];
   });
 
   const [messageDiagnostics, traitDiagnostics] = await Promise.all([Promise.all(messageJobs), Promise.all(traitJobs)]);
   const diagnostics = [...messageDiagnostics.flat(), ...traitDiagnostics.flat()];
+  if (busy) return { resolved: null, diagnostics: [], busy: true };
 
   const resolved = resolveDocument({
     doc, productSlug: snapshot.event.productSlug, version,

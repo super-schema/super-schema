@@ -51,7 +51,8 @@ import {
   type FieldTargetTypeOverride,
   type SchemaTargetTypeOverrides,
 } from "@/lib/schema-targets/field-type-overrides";
-import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
+import { getSchemaTargetCatalog, getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
+import { admitCompilerRuns, COMPILER_BUSY_MESSAGE, SHARE_IN_USE_MESSAGE } from "@/lib/emission/emission-admission";
 import type { FieldTypeMapping, SchemaVersion, SchemaVersionResolution, SchemaVersionsMap } from "@/types/schema-version";
 import {
   getTargetRequirements,
@@ -578,8 +579,18 @@ export async function emitEntityAction(entityId: string) {
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     const { emitEntity } = await import("@/lib/emission/emission.service");
     const { pickRequestOfRefusal } = await import("@/lib/emission/closure-generation");
+    // One compiler run per enabled target, within the caller's share (src/lib/emission/emission-admission.ts): refused at once when it is used up.
+    const share = admitCompilerRuns(access.principal.userId, getSchemaTargetCatalog().filter((t) => t.enabledInSchemaTab).length);
+    if (!share) return { error: SHARE_IN_USE_MESSAGE, code: "RATE_LIMITED" as const };
     // The preview emits the entity with everything it references, limited to what the caller's roles cover (KD-045): otherwise it comes back refused.
-    const result = await emitEntity(entityId, entityReader(access.principal.assignments));
+    let result: Awaited<ReturnType<typeof emitEntity>>;
+    try {
+      result = await emitEntity(entityId, entityReader(access.principal.assignments));
+    } finally {
+      share();
+    }
+    // The compiler's queue was full: a retry, not a preview of an invalid schema.
+    if (result.busy) return { error: COMPILER_BUSY_MESSAGE, code: "EMITTER_BUSY" as const };
     // A run that completed with no invalid target is an emission: its owner and the endpoints of `emission.completed` hear of it, after the answer.
     if (result.success && !result.refusal && result.summary.totalTargets > 0) {
       runAfterResponse("Emission notification", () => notifyEntityEmitted(entityId, result.summary.totalTargets, contextOf(access.principal), "preview"));
@@ -1642,7 +1653,16 @@ async function generateSchema(entityId: string, target: string, opts: { mode?: R
 
     if (targetDefinition.runtime === "native") {
       const { emitEntity } = await import("@/lib/emission/emission.service");
-      const result = await emitEntity(entityId, entityReader(access.principal.assignments));
+      // `emitEntity` emits every enabled target, so it takes one unit of the share for each (src/lib/emission/emission-admission.ts), like the preview does.
+      const share = admitCompilerRuns(access.principal.userId, getSchemaTargetCatalog().filter((t) => t.enabledInSchemaTab).length);
+      if (!share) return { error: SHARE_IN_USE_MESSAGE, code: "RATE_LIMITED" as const };
+      let result: Awaited<ReturnType<typeof emitEntity>>;
+      try {
+        result = await emitEntity(entityId, entityReader(access.principal.assignments));
+      } finally {
+        share();
+      }
+      if (result.busy) return { error: COMPILER_BUSY_MESSAGE, code: "EMITTER_BUSY" as const };
       const nativeTargetOutput = result.targets[target];
       if (!nativeTargetOutput) {
         return { error: `No output found for target "${target}"` };
@@ -1665,14 +1685,30 @@ async function generateSchema(entityId: string, target: string, opts: { mode?: R
           }
           return { ...failureOf(closureFailure(loaded.error), "generateSchemaAction") };
         }
-        officialResult = await emitClosureTarget(loaded.data, targetDefinition.key);
+        // One compiler run for this target, within the caller's share (src/lib/emission/emission-admission.ts).
+        const share = admitCompilerRuns(access.principal.userId, 1);
+        if (!share) return { error: SHARE_IN_USE_MESSAGE, code: "RATE_LIMITED" as const };
+        try {
+          officialResult = await emitClosureTarget(loaded.data, targetDefinition.key);
+        } finally {
+          share();
+        }
         closureRun = { files: officialResult.files, resolution: describeResolution(loaded.data, mode), upgrades: loaded.data.upgrades };
       } else {
         const { emitOfficialTypeSpecTargetForEntity } = await import(
           "@/lib/typespec-official/emitter.service"
         );
-        officialResult = await emitOfficialTypeSpecTargetForEntity(entityId, target, { tenantId: await getActiveTenantId(), mode, reader: entityReader(access.principal.assignments) });
+        // One compiler run for this target, within the caller's share (src/lib/emission/emission-admission.ts).
+        const share = admitCompilerRuns(access.principal.userId, 1);
+        if (!share) return { error: SHARE_IN_USE_MESSAGE, code: "RATE_LIMITED" as const };
+        try {
+          officialResult = await emitOfficialTypeSpecTargetForEntity(entityId, target, { tenantId: await getActiveTenantId(), mode, reader: entityReader(access.principal.assignments) });
+        } finally {
+          share();
+        }
       }
+      // The compiler's queue was full: a retry, and no emission failure is recorded (the Health card counts those).
+      if (officialResult.busy) return { error: COMPILER_BUSY_MESSAGE, code: "EMITTER_BUSY" as const };
       if (officialResult.validationStatus === "INVALID") {
         // A diagnostic that means "an input is missing" slipped past the pre-check: still a question, not an error string.
         const slipped = officialResult.errors.flatMap((error) => structuredDiagnostics(error.message));

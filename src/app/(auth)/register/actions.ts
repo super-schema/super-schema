@@ -6,6 +6,8 @@ import { prisma } from "@/lib/db";
 import { INVALID_LINK_MESSAGE, REGISTRATION_CLOSED_MESSAGE } from "@/lib/auth/messages";
 import { hashPassword } from "@/lib/auth/password-hash";
 import { normalizeEmail, validatePassword } from "@/lib/auth/password-policy";
+import { UNTRUSTED_IP } from "@/lib/auth/client-ip";
+import { loginBackoffMs, noteUnaddressedAttempt, waitFor } from "@/lib/auth/login-backoff";
 import { registrationMode } from "@/lib/auth/registration-mode";
 import { requestIp, reserveAttempt } from "@/lib/auth/request-guard";
 import { acceptInvitationAction } from "../invite/[token]/actions";
@@ -68,8 +70,15 @@ async function registerOpen(formData: FormData): Promise<RegisterState | undefin
   const policy = validatePassword(password, { email });
   if (!policy.ok) return { fieldErrors: { password: policy.message } };
 
+  // Without a client address every registration shares one address, which is never locked: a lock there would let one anonymous client refuse every
+  // sign-up (throttle.ts). Such a registration waits instead, as a sign-in without an address does (login-backoff.ts): it is slowed, never refused.
   const ip = await requestIp();
-  if (await reserveAttempt("register", ip)) return { error: "Too many attempts. Try again in a few minutes." };
+  if (ip === UNTRUSTED_IP) {
+    await waitFor(loginBackoffMs());
+    noteUnaddressedAttempt();
+  } else if (await reserveAttempt("register", ip)) {
+    return { error: "Too many attempts. Try again in a few minutes." };
+  }
 
   try {
     const passwordHash = await hashPassword(password);

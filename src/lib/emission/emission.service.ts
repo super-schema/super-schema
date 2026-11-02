@@ -11,7 +11,7 @@ import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compile
 import { compileEntity } from "@/lib/compiler/compiler.service";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import type { EmissionResult, TargetOutput } from "./emission.types";
-import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
+import { emitOfficialTypeSpecTargetFromData, type EmitterRunOptions } from "@/lib/typespec-official/emitter.service";
 import { getSchemaTargetCatalog, type SchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { baseNameOf, loadInheritedFields, loadReferenceClosure, withInheritedFields, withoutSchemaVersions, type ClosureReader, type ReferenceClosure, type ResolveMode } from "@/lib/references/closure";
 import type { ServiceError } from "@/types/result";
@@ -43,6 +43,11 @@ export interface EntityTargetsEmission {
    * targets are emitted as usual. A non-interactive caller (API routes, CI) returns this as a structured error.
    */
   refusal?: ServiceError;
+  /**
+   * Set when at least one target was not emitted because the compiler was busy (`EMITTER_BUSY`, src/lib/typespec-official/emitter.service.ts):
+   * the caller answers "try again" for the whole request, and does not record the targets as invalid.
+   */
+  busy?: true;
 }
 
 /**
@@ -61,6 +66,8 @@ export interface EntityTargetsEmission {
  * `reader` (KD-045) is who may read what: the closure refuses (`refusal`, code `REFERENCE_NOT_READABLE`) when it reaches an entity the caller's
  * roles do not cover, before any source or file is built from it. It is REQUIRED, so a new caller has to say whose roles decide
  * (`entityReader(principal.assignments)`); the entity itself is the caller's, authorized before this runs.
+ *
+ * `run.signal` cancels the compiler runs of this call (a client that went away): a run not yet started starts nothing, a running one is killed.
  */
 export async function emitTargetsForEntity(
   db: DbClient,
@@ -68,7 +75,8 @@ export async function emitTargetsForEntity(
   fields: PrismaFieldInput[],
   targets: SchemaTargetDefinition[],
   mode: ResolveMode,
-  reader: ClosureReader
+  reader: ClosureReader,
+  run: Pick<EmitterRunOptions, "signal"> = {}
 ): Promise<EntityTargetsEmission> {
   let closure: ReferenceClosure | undefined;
   let refusal: ServiceError | undefined;
@@ -93,16 +101,22 @@ export async function emitTargetsForEntity(
         if (dbRefusal) return { target, result: { output: "", validationStatus: "INVALID", warnings: [], errors: [{ message: dbRefusal.message }] } };
         // The stored schema versions are never emission input (and can be large): the DB target gets the entity without them.
         const standalone = { ...entity, metadata: withoutSchemaVersions(entity.metadata) };
-        return { target, result: await emitOfficialTypeSpecTargetFromData(standalone, dbFields, target.key) };
+        return { target, result: await emitOfficialTypeSpecTargetFromData(standalone, dbFields, target.key, run) };
       }
       if (!closure) {
         const message = refusal?.message ?? "The reference closure could not be built.";
         return { target, result: { output: "", validationStatus: "INVALID", warnings: [], errors: [{ message }] } };
       }
-      return { target, result: await emitClosureTarget(closure, target.key) };
+      return { target, result: await emitClosureTarget(closure, target.key, run) };
     })
   );
-  return { results, ...(closure ? { resolution: describeResolution(closure, mode) } : {}), ...(refusal ? { refusal } : {}) };
+  const busy = results.some(({ result }) => result.busy === true);
+  return {
+    results,
+    ...(closure ? { resolution: describeResolution(closure, mode) } : {}),
+    ...(refusal ? { refusal } : {}),
+    ...(busy ? { busy: true as const } : {}),
+  };
 }
 
 /**
@@ -188,6 +202,7 @@ export async function emitEntity(entityId: string, reader: ClosureReader): Promi
     typespec: generateTypeSpec(compileEntity(prismaEntity, prismaFields)),
     targets,
     ...(emission.refusal ? { refusal: emission.refusal } : {}),
+    ...(emission.busy ? { busy: true as const } : {}),
     success: invalidCount === 0,
     summary: {
       totalTargets: enabledTargets.length,

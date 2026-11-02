@@ -20,7 +20,6 @@ import {
   THROTTLE_MAX_FAILURES,
   THROTTLE_WINDOW_MS,
   UNTRUSTED_IP,
-  UNTRUSTED_IP_MAX_FAILURES,
   hashEmail,
   hashIp,
   isThrottled,
@@ -29,6 +28,7 @@ import {
   reserveLoginAttempt,
   settleAuthEvent,
 } from "@/lib/auth/throttle";
+import { isBlocked } from "@/lib/auth/request-guard";
 
 const db = () => holder.db!.prisma;
 const MINUTE = 60_000;
@@ -169,10 +169,9 @@ describe("e-mail and address are independent", () => {
   }, 60_000);
 });
 
-describe("without a trusted proxy every request shares one address bucket", () => {
-  it("that bucket does not lock at 5 (five typos by five people would lock everybody out) but at 100, and the e-mail still locks at 5", async () => {
-    expect(UNTRUSTED_IP_MAX_FAILURES).toBe(100);
-    // 5 failures of five different e-mails in the shared bucket: nobody is locked.
+describe("without a trusted proxy the unknown address is not a client, so it locks nobody out", () => {
+  it("the e-mail still locks at 5, and five failures of five e-mails from the unknown address lock none of them", async () => {
+    // 5 failures of five different e-mails from the unknown address: nobody is locked.
     for (let i = 1; i <= 5; i++) await fail(`user${i}@example.test`, UNTRUSTED_IP);
     expect((await throttled("fresh@example.test", UNTRUSTED_IP)).throttled).toBe(false);
     // The e-mail dimension is unchanged.
@@ -180,11 +179,41 @@ describe("without a trusted proxy every request shares one address bucket", () =
     expect((await throttled("victim@example.test", UNTRUSTED_IP)).throttled).toBe(false);
     await fail("victim@example.test", UNTRUSTED_IP);
     expect((await throttled("victim@example.test", UNTRUSTED_IP)).throttled).toBe(true);
-    // 100 failures in the bucket in all: now it locks, for everyone.
+  }, 60_000);
+
+  it("a hundred failures from the unknown address lock no password sign-in, no provider sign-in and no invitation or reset link (no shared ceiling)", async () => {
+    // One hundred failures of each kind, all from the unknown address: the old shared ceiling would have locked every one of them.
+    const kinds = ["login", "reset_consume", "invite_accept", "provider_refused:no-account"];
     await db().authEvent.createMany({
-      data: Array.from({ length: UNTRUSTED_IP_MAX_FAILURES }, () => ({ kind: "login", ipHash: hashIp(UNTRUSTED_IP), outcome: "failure", createdAt: NOW })),
+      data: kinds.flatMap((kind) =>
+        Array.from({ length: 100 }, () => ({ kind, ipHash: hashIp(UNTRUSTED_IP), outcome: kind.startsWith("provider_") ? "refused" : "failure", createdAt: NOW })),
+      ),
     });
-    expect((await throttled("fresh@example.test", UNTRUSTED_IP)).throttled).toBe(true);
+    expect((await throttled("fresh@example.test", UNTRUSTED_IP, "login")).throttled).toBe(false);
+    expect(await reserveLoginAttempt({ email: "fresh@example.test", ip: UNTRUSTED_IP }, NOW)).toMatchObject({ locked: false });
+    expect((await throttled(undefined, UNTRUSTED_IP, "reset_consume")).throttled).toBe(false);
+    expect((await throttled(undefined, UNTRUSTED_IP, "invite_accept")).throttled).toBe(false);
+    expect(await isThrottled({ ip: UNTRUSTED_IP, kind: "provider_refused" }, NOW)).toEqual({ throttled: false });
+  }, 60_000);
+
+  it("100 dead reset links from the unknown address never block a valid one: the gate in front of the token says 'not blocked'", async () => {
+    // The gate (`isBlocked`) runs BEFORE the token is looked at: a locked gate answers every visitor with the dead-link words, the valid one too.
+    // `isBlocked` reads the clock itself, so the failures are written at the real time (a row of NOW would be outside its window).
+    const justNow = new Date();
+    await db().authEvent.createMany({
+      data: Array.from({ length: 100 }, () => ({ kind: "reset_consume", ipHash: hashIp(UNTRUSTED_IP), outcome: "failure", createdAt: justNow })),
+    });
+    expect(await isBlocked("reset_consume", UNTRUSTED_IP)).toBe(false);
+    expect(await isBlocked("invite_accept", UNTRUSTED_IP)).toBe(false);
+  }, 60_000);
+
+  it("registration has no shared lock without a trusted proxy: a hundred attempts from the unknown address refuse no sign-up (the wait of login-backoff.ts is its only brake)", async () => {
+    await db().authEvent.createMany({
+      data: Array.from({ length: 100 }, () => ({ kind: "register", ipHash: hashIp(UNTRUSTED_IP), outcome: "attempt", createdAt: NOW })),
+    });
+    expect((await throttled(undefined, UNTRUSTED_IP, "register")).throttled).toBe(false);
+    expect(await reserveCountedAttempt("register", { ip: UNTRUSTED_IP }, NOW)).toMatchObject({ locked: false });
+    expect(await reserveCountedAttempt("register", { ip: UNTRUSTED_IP }, NOW)).toMatchObject({ locked: false });
   }, 60_000);
 });
 
@@ -296,15 +325,6 @@ describe("refused sign-ins through an identity provider are throttled per addres
     expect(await db().authEvent.count({ where: { outcome: "refused" } })).toBe(before);
   }, 60_000);
 
-  it("the shared bucket without a trusted proxy has the same ceiling as the password login's (100)", async () => {
-    await db().authEvent.createMany({
-      data: Array.from({ length: UNTRUSTED_IP_MAX_FAILURES - 1 }, () => ({ kind: "provider_refused:no-account", ipHash: hashIp(UNTRUSTED_IP), outcome: "refused", createdAt: NOW })),
-    });
-    expect(await isThrottled({ ip: UNTRUSTED_IP, kind: "provider_refused" }, NOW)).toEqual({ throttled: false });
-    await refuse("no-account", UNTRUSTED_IP);
-    expect((await isThrottled({ ip: UNTRUSTED_IP, kind: "provider_refused" }, NOW)).throttled).toBe(true);
-  }, 60_000);
-
   it("a row says the reason in its kind, the outcome refused, and holds hashes only", async () => {
     await refuse("email-unverified", "203.0.113.5", "Ada@Example.test");
     const [row] = await db().authEvent.findMany();
@@ -360,7 +380,7 @@ describe("a password attempt takes its place before it is tried (reserveLoginAtt
     expect((await reserveLoginAttempt({ email: "user5@example.test", ip: "198.51.100.41" }, NOW)).locked).toBe(false);
   }, 60_000);
 
-  it("the shared bucket of an unknown address keeps its ceiling of 100: five attempts of five people are not refused", async () => {
+  it("an unknown address refuses no password attempt by itself, however many failures it has made", async () => {
     for (let i = 0; i < 5; i++) expect((await reserveLoginAttempt({ email: `user${i}@example.test`, ip: UNTRUSTED_IP }, NOW)).locked).toBe(false);
   }, 60_000);
 

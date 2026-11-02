@@ -19,6 +19,7 @@ import { sanitizeSchemaPatterns } from "@/lib/events/safe-pattern";
 import type { EntityPin } from "@/lib/events/types";
 import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
+import { admitCompilerRuns, compilerBusyError, shareInUseError } from "@/lib/emission/emission-admission";
 import { getSharedArtifactRenderer, type ArtifactRenderer, type ArtifactSubject } from "./artifact-renderer";
 import { guardRead, requireId } from "./service-guards";
 
@@ -76,6 +77,9 @@ export async function renderPinJsonSchema(
   if (!owned.success) return owned;
 
   // The caller's read scope covers the whole closure, as in the preview: a schema reaching an entity the caller's roles do not cover renders nothing.
+  // The render runs under one unit of the caller's compiler share (src/lib/emission/emission-admission.ts): refused at once otherwise.
+  const share = admitCompilerRuns(ctx.userId, 1);
+  if (!share) return err(shareInUseError());
   let rendered: Awaited<ReturnType<ArtifactRenderer["render"]>>;
   try {
     rendered = await (deps.renderer ?? getSharedArtifactRenderer(ctx.prisma)).render(
@@ -85,7 +89,10 @@ export async function renderPinJsonSchema(
     );
   } catch (e: unknown) {
     return renderFailed("the renderer threw", e instanceof Error ? e.message : String(e));
+  } finally {
+    share();
   }
+  if (!rendered.success && rendered.error.code === "EMITTER_BUSY") return err(compilerBusyError());
   if (!rendered.success) return renderFailed(`render failed (${rendered.error.code})`, rendered.error.message);
   const artifact = rendered.data.artifact;
   if (artifact.format !== "json-schema" || !isJsonObject(artifact.schema)) return renderFailed("not a JSON Schema artifact", `format ${artifact.format}`);

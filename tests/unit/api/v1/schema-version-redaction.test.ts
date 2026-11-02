@@ -19,7 +19,7 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/active-tenant", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/active-tenant")>()), getActiveTenantId: h.activeTenant }));
-vi.mock("@/app/api/v1/rate-limit", () => ({ checkRateLimit: () => null }));
+vi.mock("@/app/api/v1/rate-limit", () => ({ checkPrincipalRateLimit: () => null, checkFailedAuthRateLimit: () => null }));
 
 import { GET } from "@/app/api/v1/schemas/[id]/route";
 

@@ -53,6 +53,9 @@ export const CLASSIFICATION_DEFAULTS = {
 export function setValues(run) {
   return {
     API_KEY: run.apiKey,
+    // The allowance of an AUTHENTICATED principal (src/app/api/v1/rate-limit.ts): the API key is one principal and the admin's session another, so the
+    // browser suite's few hundred calls a minute would all share 100 a minute. The run lifts it far above that; the default is unit-tested (rate-limit.test.ts).
+    API_RATE_LIMIT_PER_MINUTE: "100000",
     DB_PROVIDER: "postgresql",
     DATABASE_URL: run.databaseUrl,
     E2E_DATABASE_URL: run.databaseUrl,
@@ -62,10 +65,10 @@ export function setValues(run) {
     AUTH_SECRET: run.authSecret,
     AUTH_URL: run.baseUrl,
     AUTH_TRUST_HOST: "true",
-    // The client address of the sign-in throttle and of the REST API's rate limit comes from X-Forwarded-For ONLY when this is 1 (src/lib/auth/throttle.ts
-    // `clientIp`). The run trusts it: tests/e2e/api-v1.spec.ts sends an address of its own per test so the 100-a-minute limit never couples two tests. A request
-    // with no header (the browser's) reaches the app with the socket's own loopback address, which `clientIp` treats as the one shared bucket (ceiling 100), as
-    // without the setting. A developer's own value is dropped (the AUTH_ prefix).
+    // The client address of the sign-in throttle and of the REST API's failed-authentication allowance comes from X-Forwarded-For ONLY when this is 1
+    // (src/lib/auth/client-ip.ts `clientIp`). The run trusts it: tests/e2e/api-v1.spec.ts sends an address of its own per test, so the 20-a-minute allowance of
+    // failed requests never couples two tests. A request with no header (the browser's) reaches the app with the socket's own loopback address, which `clientIp`
+    // treats as no client at all, as without the setting. A developer's own value is dropped (the AUTH_ prefix).
     AUTH_TRUST_PROXY: "1",
     // Registration is OPEN for the app under test (src/lib/auth/registration-mode.ts; the default is `invite`): the browser suite registers its own users through the
     // register page, and they hold no role. `invite` and `closed` are covered at the unit and action level (tests/unit/app/register-actions.test.ts).
@@ -145,6 +148,8 @@ export const HERMETIC_BLANKED_NAMES = Object.freeze([
   "SCHEMA_CLASSIFICATION_VALUE_MAP",
   // src/lib/importers/safe-yaml.ts: the size a YAML document may have before it is parsed (empty = its default, 512 KiB)
   "SCHEMA_IMPORT_MAX_YAML_BYTES",
+  // src/lib/typespec-official/emitter.service.ts: how many tsp compiler runs the app starts at once (empty = half the cores, at least one)
+  "TSP_MAX_CONCURRENT_RUNS",
   // src/lib/event-specs/validation: the parser worker pool (empty = its defaults; ASYNCAPI_PARSER_IN_PROCESS=1 would move the parser into the server process)
   "ASYNCAPI_PARSER_IN_PROCESS",
   "ASYNCAPI_PARSER_WORKER",

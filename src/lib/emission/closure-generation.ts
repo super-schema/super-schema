@@ -7,7 +7,7 @@
 import type { ClosureError, ReferenceClosure, ResolveMode } from "@/lib/references/closure";
 import { describeEntityRef, type EntityRef } from "@/lib/references/entity-reference";
 import { bundleEmittedFiles, emitClosure, type Closure, type EmittedFile } from "@/lib/typespec-official/closure-emit";
-import { resultFromEmissionError, type OfficialTypeSpecTargetResult } from "@/lib/typespec-official/emitter.service";
+import { resultFromEmissionError, type EmitterRunOptions, type OfficialTypeSpecTargetResult } from "@/lib/typespec-official/emitter.service";
 import type { TargetId } from "@/lib/schema-targets/catalog";
 import type { ServiceError } from "@/types/result";
 import type { SchemaVersionResolution } from "@/types/schema-version";
@@ -132,8 +132,8 @@ export function describeResolution(
  * Emits one closure target as a target result: `output` is the bundled `===== path =====` string of `files` (what a schema version
  * stores as `output`), and an emission that failed is an INVALID result carrying the emitter's own messages. Never throws.
  */
-export async function emitClosureTarget(closure: Closure, targetKey: TargetId): Promise<ClosureTargetResult> {
-  const emitted = await emitClosure(closure, targetKey);
+export async function emitClosureTarget(closure: Closure, targetKey: TargetId, run: EmitterRunOptions = {}): Promise<ClosureTargetResult> {
+  const emitted = await emitClosure(closure, targetKey, run);
   if (!emitted.success) return resultFromEmissionError(emitted.error);
   const { files, warnings } = emitted.data;
   return { output: bundleEmittedFiles(files), files, validationStatus: warnings.length > 0 ? "WARNING" : "VALID", warnings, errors: [] };

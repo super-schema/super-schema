@@ -10,17 +10,22 @@ import { entityReader, type PlaceReader } from "@/lib/access/entity-reader";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { isJsonObject } from "@/lib/events/inputs";
+import { admitCompilerRuns, compilerBusyError, shareInUseError } from "@/lib/emission/emission-admission";
 import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import { getSharedArtifactRenderer, type ArtifactRenderer } from "./artifact-renderer";
-import { DRAFT_VERSION, loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
+import { DRAFT_VERSION, eventRenderShare, loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
 import { validatePinRefs } from "./pin-refs";
 import { assertOwnedEvent, guardRead, requireId } from "./service-guards";
 
-/** Collaborators of an emission, replaceable in tests: the artifact renderer and the validators run on the assembled document. */
+/**
+ * Collaborators of an emission, replaceable in tests: the artifact renderer and the validators run on the assembled document. `signal` is the
+ * caller's: when it aborts (a client went away) the compiler runs of the draft's renders that are still queued start nothing, and a running one is killed.
+ */
 export interface EmitDeps {
   renderer?: ArtifactRenderer;
   validators?: EventSpecValidator[];
+  signal?: AbortSignal;
 }
 
 let sharedValidators: EventSpecValidator[] | undefined;
@@ -49,18 +54,30 @@ export interface EventEmission {
   diagnostics: Diagnostic[];
 }
 
-/** Render, resolve, assemble and validate one snapshot as the draft (`info.version` = "draft"). `canRead` checks every schema it reaches (a preview). */
+/**
+ * Render, resolve, assemble and validate one snapshot as the draft (`info.version` = "draft"). The renders run under the caller's compiler share
+ * (src/lib/emission/emission-admission.ts), one unit per render (`eventRenderShare`): a caller over its share is refused at once, and nothing is
+ * rendered. A busy compiler or render queue is answered `EMITTER_BUSY` (a retry), not as a document with errors. `canRead` checks every schema
+ * the renders reach (a preview).
+ */
 async function emitSnapshot(ctx: ServiceContext, snapshot: EventSnapshot, deps: EmitDeps, canRead?: PlaceReader): Promise<Result<EventEmission>> {
-  const draft = await resolveEventSnapshot(snapshot, deps.renderer ?? getSharedArtifactRenderer(ctx.prisma), DRAFT_VERSION, canRead);
-  if (!draft.resolved) return ok({ document: null, json: null, yaml: null, diagnostics: normalizeDiagnostics(draft.diagnostics) });
-  const out = await emitResolved(draft.resolved, snapshot.event.specType, deps);
-  if (!out.success) return out;
-  return ok({
-    document: out.data.document,
-    json: out.data.json,
-    yaml: out.data.yaml,
-    diagnostics: normalizeDiagnostics([...draft.diagnostics, ...out.data.diagnostics]),
-  });
+  const share = admitCompilerRuns(ctx.userId, eventRenderShare(snapshot));
+  if (!share) return err(shareInUseError());
+  try {
+    const draft = await resolveEventSnapshot(snapshot, deps.renderer ?? getSharedArtifactRenderer(ctx.prisma), DRAFT_VERSION, canRead, { signal: deps.signal });
+    if (draft.busy) return err(compilerBusyError());
+    if (!draft.resolved) return ok({ document: null, json: null, yaml: null, diagnostics: normalizeDiagnostics(draft.diagnostics) });
+    const out = await emitResolved(draft.resolved, snapshot.event.specType, deps);
+    if (!out.success) return out;
+    return ok({
+      document: out.data.document,
+      json: out.data.json,
+      yaml: out.data.yaml,
+      diagnostics: normalizeDiagnostics([...draft.diagnostics, ...out.data.diagnostics]),
+    });
+  } finally {
+    share();
+  }
 }
 
 /** The saved draft, rendered from the pinned entity versions (an unpinned pin renders the entity's current draft) and emitted. */

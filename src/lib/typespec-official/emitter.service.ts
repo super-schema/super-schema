@@ -25,6 +25,7 @@ import { withUnionFieldsAsString } from "@/lib/compiler/union-fields";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import { checkTypeSpecImports, TYPESPEC_IMPORT_NOT_ALLOWED } from "@/lib/typespec/import-guard";
 import { bundleFileContents } from "./bundle";
+import { Semaphore, SemaphoreCancelledError, SemaphoreFullError, SemaphoreWaitTimeoutError } from "@/lib/concurrency/semaphore";
 
 const execFileAsync = promisify(execFile);
 
@@ -36,7 +37,22 @@ export interface OfficialTypeSpecTargetResult {
   validationStatus: ValidationStatus;
   warnings: string[];
   errors: ValidationError[];
+  /**
+   * Set when the target was NOT emitted because the compiler was busy (`EMITTER_BUSY`): the result is INVALID as usual, but the caller
+   * must answer "try again" (503), not "the schema is invalid", and must not record it as an emission failure.
+   */
+  busy?: true;
 }
+
+/** How one `tsp` run is held: its timeout, the signal that cancels it, and a hook that runs when it gets its slot (its timeout starts then). */
+export interface EmitterRunOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  onStart?: () => void;
+}
+
+/** The `busy` flag of a failed run: set only for a run refused because the compiler is busy. */
+const busyFlag = (error: ServiceError): { busy?: true } => (error.code === "EMITTER_BUSY" ? { busy: true } : {});
 
 export async function emitOfficialTypeSpecTargetForEntity(
   entityId: string,
@@ -126,7 +142,8 @@ export function resolveEmittableTarget(targetKey: string): { target: SchemaTarge
 export async function emitOfficialTypeSpecTargetFromData(
   entity: PrismaEntityInput,
   fields: PrismaFieldInput[],
-  targetKey: string
+  targetKey: string,
+  run: EmitterRunOptions = {}
 ): Promise<OfficialTypeSpecTargetResult> {
   const resolved = resolveEmittableTarget(targetKey);
   if ("error" in resolved) return invalidResult(resolved.error);
@@ -137,7 +154,7 @@ export async function emitOfficialTypeSpecTargetFromData(
   // stand-alone source. Loaded lazily: closure-emit imports this module for the runner and the source builders.
   if (target.closureEmission) {
     const { emitClosure, standaloneClosure, bundleEmittedFiles } = await import("./closure-emit");
-    const emitted = await emitClosure(standaloneClosure(entity, fields), target.key);
+    const emitted = await emitClosure(standaloneClosure(entity, fields), target.key, run);
     if (!emitted.success) return resultFromEmissionError(emitted.error);
     const { files, warnings } = emitted.data;
     return { output: bundleEmittedFiles(files), validationStatus: warnings.length > 0 ? "WARNING" : "VALID", warnings, errors: [] };
@@ -159,7 +176,7 @@ export async function emitOfficialTypeSpecTargetFromData(
     return { output: "", validationStatus: "INVALID", warnings: built.warnings, errors: built.errors.map((message) => ({ message })) };
   }
   const options = buildEmitterOptions(target.key, "entity");
-  const result = await runTypeSpecEmitter(target.packageName ?? "", built.source, options, isDbTypeSpecTarget(target.key));
+  const result = await runTypeSpecEmitter(target.packageName ?? "", built.source, options, isDbTypeSpecTarget(target.key), run);
   if (built.warnings.length === 0) return result;
   return {
     ...result,
@@ -191,6 +208,7 @@ export function resultFromEmissionError(error: ServiceError): OfficialTypeSpecTa
     validationStatus: "INVALID",
     warnings: strings(details.warnings),
     errors: (messages.length > 0 ? messages : [error.message]).map((message) => ({ message })),
+    ...busyFlag(error),
   };
 }
 
@@ -442,6 +460,34 @@ async function findUninstalledLibrary(specifiers: readonly string[]): Promise<st
   return null;
 }
 
+/** The env var that sets how many `tsp` runs may run at once in this process (a positive whole number; anything else is the default). */
+export const TSP_MAX_CONCURRENT_RUNS_ENV = "TSP_MAX_CONCURRENT_RUNS";
+
+/** How many runs may wait for a slot at once. A run beyond that is refused at once (`EMITTER_BUSY`), so a flood cannot queue without bound. */
+export const TSP_MAX_WAITING_RUNS = 200;
+
+/**
+ * The longest a run waits for a slot. Past it the run is refused (`EMITTER_BUSY`, answered 503 by the REST routes): a request must not stay
+ * open behind a queue that does not move. Normal load clears well inside it; the clock of the run itself starts only when its process starts.
+ */
+export const TSP_MAX_WAIT_MS = 60_000;
+
+/**
+ * How many `tsp` runs may run at once in this process: `TSP_MAX_CONCURRENT_RUNS` when it is a positive whole number, else half the cores (at
+ * least one). A run is a Node process of roughly 100 MB that is CPU bound, so more of them at once only make every run slower.
+ */
+export function tspMaxConcurrentRuns(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  parallelism: number = os.availableParallelism(),
+): number {
+  const configured = (env[TSP_MAX_CONCURRENT_RUNS_ENV] ?? "").trim();
+  if (/^[1-9][0-9]*$/.test(configured)) return Number(configured);
+  return Math.max(1, Math.floor(parallelism / 2));
+}
+
+/** The slots of every `tsp` run of this process (src/lib/concurrency/semaphore.ts). Built once, when this module loads, with the limit then set. */
+const tspRuns = new Semaphore(tspMaxConcurrentRuns(), { maxWaiting: TSP_MAX_WAITING_RUNS });
+
 /**
  * Run one TypeSpec emitter in a throw-away workspace; every file it wrote, sorted by path. Never throws: a
  * workspace that cannot be created, a failed compile and a `tsp` that outlives `timeoutMs` (SIGKILL) are errors.
@@ -456,7 +502,7 @@ export async function runTypeSpecEmitterFiles(
   packageName: string,
   source: string,
   emitterOptions: Record<string, unknown>,
-  runOptions: { timeoutMs?: number } = {}
+  runOptions: EmitterRunOptions = {}
 ): Promise<Result<EmittedFile[]>> {
   const run = await runTypeSpecEmitterWithWarnings(packageName, source, emitterOptions, runOptions);
   return run.success ? ok(run.data.files) : err(run.error);
@@ -473,7 +519,7 @@ export async function runTypeSpecEmitterWithWarnings(
   packageName: string,
   source: string,
   emitterOptions: Record<string, unknown>,
-  runOptions: { timeoutMs?: number } = {}
+  runOptions: EmitterRunOptions = {}
 ): Promise<Result<EmitterRun>> {
   const imports = checkTypeSpecImports(source);
   if (!imports.success) return imports;
@@ -485,6 +531,42 @@ export async function runTypeSpecEmitterWithWarnings(
       details: { specifier: uninstalled },
     });
   }
+  if (runOptions.signal?.aborted) return cancelledRun(packageName);
+  // A run takes its slot before its workspace is made: a run that waits holds no temp directory, and its timeout (inside the run) starts when
+  // its process starts (`onStart`), not while it waits. A run refused by a full waiting line is answered at once and starts no process. A run
+  // whose caller goes away leaves the line at once; a run that waits longer than TSP_MAX_WAIT_MS is refused as busy.
+  try {
+    return await tspRuns.run(() => runTypeSpecInWorkspace(packageName, source, emitterOptions, runOptions), {
+      signal: runOptions.signal,
+      maxWaitMs: TSP_MAX_WAIT_MS,
+    });
+  } catch (error) {
+    if (error instanceof SemaphoreFullError) {
+      return err({ code: "EMITTER_BUSY", message: `The TypeSpec compiler is busy: ${error.waiting} runs are already waiting. Try again in a moment.` });
+    }
+    if (error instanceof SemaphoreWaitTimeoutError) {
+      return err({ code: "EMITTER_BUSY", message: "The TypeSpec compiler is busy: no slot freed up in time. Try again in a moment." });
+    }
+    if (error instanceof SemaphoreCancelledError) return cancelledRun(packageName);
+    throw error;
+  }
+}
+
+/** A run whose caller went away (its signal is aborted): an error that starts no process, or stops the one that is running. */
+function cancelledRun(packageName: string): Result<EmitterRun> {
+  return err({ code: "EMITTER_CANCELLED", message: `Emitter "${packageName}" was cancelled by its caller.` });
+}
+
+/** One `tsp` run in its own workspace, which is removed afterwards. The caller holds a slot of `tspRuns` for the whole of it. */
+async function runTypeSpecInWorkspace(
+  packageName: string,
+  source: string,
+  emitterOptions: Record<string, unknown>,
+  runOptions: EmitterRunOptions
+): Promise<Result<EmitterRun>> {
+  // The slot is held now: this is the moment the run starts (its timeout is armed by `onStart`), and a run cancelled while it waited starts nothing.
+  if (runOptions.signal?.aborted) return cancelledRun(packageName);
+  runOptions.onStart?.();
   let workspace: string;
   try {
     workspace = await fs.mkdtemp(path.join(os.tmpdir(), "superschema-tsp-"));
@@ -518,11 +600,13 @@ export async function runTypeSpecEmitterWithWarnings(
       "utf8"
     );
 
+    // `signal` stops the process when the caller goes away (the child is killed with SIGKILL, like a timeout).
     const { stdout, stderr } = await execFileAsync(getTspBinaryPath(), ["compile", mainFile, "--config", configFile, "--pretty", "false"], {
       cwd: workspace,
       maxBuffer: 10 * 1024 * 1024,
       timeout: timeoutMs,
       killSignal: "SIGKILL",
+      signal: runOptions.signal,
     });
 
     const files = await collectTextFiles(outputDir);
@@ -531,6 +615,7 @@ export async function runTypeSpecEmitterWithWarnings(
     }
     return ok({ files, warnings: warningDiagnostics(`${stdout}\n${stderr}`) });
   } catch (error) {
+    if (runOptions.signal?.aborted) return cancelledRun(packageName);
     if (typeof error === "object" && error !== null && (error as { killed?: boolean }).killed === true) {
       return err({ code: "EMITTER_TIMEOUT", message: `Emitter "${packageName}" did not finish within ${timeoutMs} ms and was killed.` });
     }
@@ -557,10 +642,11 @@ async function runTypeSpecEmitter(
   packageName: string,
   source: string,
   emitterOptions: Record<string, unknown>,
-  surfaceWarnings = false
+  surfaceWarnings = false,
+  runOptions: EmitterRunOptions = {}
 ): Promise<OfficialTypeSpecTargetResult> {
-  const run = await runTypeSpecEmitterWithWarnings(packageName, source, emitterOptions);
-  if (!run.success) return invalidResult(emitterFailureMessage(packageName, run.error));
+  const run = await runTypeSpecEmitterWithWarnings(packageName, source, emitterOptions, runOptions);
+  if (!run.success) return { ...invalidResult(emitterFailureMessage(packageName, run.error)), ...busyFlag(run.error) };
   const result = targetResultFromFiles(packageName, run.data.files);
   if (!surfaceWarnings || run.data.warnings.length === 0 || result.validationStatus === "INVALID") return result;
   return {

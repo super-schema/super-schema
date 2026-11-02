@@ -91,7 +91,7 @@ describe("emitTargetsForEntity", () => {
     const run = await emitTargetsForEntity(db, ENTITY, [], [target("bigquery")], "draft", everything);
     expect(findMany).not.toHaveBeenCalled();
     expect(h.emitClosure).not.toHaveBeenCalled();
-    expect(h.emitStandalone).toHaveBeenCalledWith(ENTITY, [], "bigquery");
+    expect(h.emitStandalone).toHaveBeenCalledWith(ENTITY, [], "bigquery", {});
     expect(run.results[0].result).toEqual({ output: "DDL", validationStatus: "VALID", warnings: [], errors: [] });
     expect(run.resolution).toBeUndefined();
   });
@@ -100,7 +100,7 @@ describe("emitTargetsForEntity", () => {
     const { db } = fakeDb([{ id: "a", name: "A" }]);
     const withVersions = { ...ENTITY, metadata: { tags: ["t"], schemaVersions: { bigquery: [{ version: 1, output: "x" }] } } } as typeof ENTITY;
     await emitTargetsForEntity(db, withVersions, [], [target("bigquery")], "draft", everything);
-    expect(h.emitStandalone).toHaveBeenCalledWith({ ...ENTITY, metadata: { tags: ["t"] } }, [], "bigquery");
+    expect(h.emitStandalone).toHaveBeenCalledWith({ ...ENTITY, metadata: { tags: ["t"] } }, [], "bigquery", {});
     expect(withVersions.metadata).toHaveProperty("schemaVersions"); // the caller's entity is untouched
   });
 

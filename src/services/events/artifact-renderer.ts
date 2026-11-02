@@ -16,10 +16,15 @@ import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import {
   DEFAULT_EMITTER_TIMEOUT_MS,
+  TSP_MAX_WAITING_RUNS,
+  TSP_MAX_WAIT_MS,
   injectProtobufFieldNumbers,
   runTypeSpecEmitterFiles,
+  type EmitterRunOptions,
   type EmittedFile,
 } from "@/lib/typespec-official/emitter.service";
+import { Semaphore, SemaphoreCancelledError, SemaphoreFullError, SemaphoreWaitTimeoutError } from "@/lib/concurrency/semaphore";
+import { COMPILER_BUSY_MESSAGE } from "@/lib/emission/emission-admission";
 import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "@/lib/typespec-official/avro-source";
 import { projectTypeSpecSourceForProtobuf } from "@/lib/typespec-official/protobuf-source";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
@@ -44,18 +49,24 @@ export interface RenderedArtifact {
    */
   notes?: Array<{ code: string; message: string }>;
 }
+/** What one caller adds to a render: the signal that cancels the compiler runs of the render (a client that went away). */
+export interface RenderRun {
+  signal?: AbortSignal;
+}
 export interface ArtifactRenderer {
   /**
    * `canRead`, when given, is the caller's read scope: a closure member it does not cover refuses the render (`REFERENCE_NOT_READABLE`), before any
    * render is served from the cache. Without it the closure is not checked (saved drafts, publish).
+   * `run` is honoured for a DRAFT only: a draft is never cached, so it belongs to one caller. A version render is cached and shared by every
+   * caller, so it is not cancelled for one of them.
    */
-  render(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader): Promise<Result<RenderedArtifact>>;
+  render(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader, run?: RenderRun): Promise<Result<RenderedArtifact>>;
 }
 export type EmitFiles = (
   packageName: string,
   source: string,
   options: Record<string, unknown>,
-  run?: { timeoutMs?: number }
+  run?: EmitterRunOptions
 ) => Promise<Result<EmittedFile[]>>;
 
 export interface ProgramPart {
@@ -370,21 +381,19 @@ function foreignProtoImports(proto: string): string[] {
   return [...foreign];
 }
 
-/** At most `max` tasks run at once; a finishing task hands its slot straight to the next waiter (a rejecting task releases it too). */
-function createLimiter(max: number) {
-  let active = 0;
-  const waiting: Array<() => void> = [];
-  return async function limit<T>(task: () => Promise<T>): Promise<T> {
-    if (active >= max) await new Promise<void>((resolve) => waiting.push(resolve));
-    else active++;
-    try {
-      return await task();
-    } finally {
-      const next = waiting.shift();
-      if (next) next();
-      else active--;
-    }
-  };
+/**
+ * Runs one render in the renderer's queue (`queue`, at most its limit at a time, a waiting line of `maxWaiting`). A render beyond the line, or one
+ * that waited longer than `maxWaitMs`, is answered `EMITTER_BUSY` and starts nothing; a render whose signal aborts before it has its turn leaves
+ * the line at once (`EMITTER_CANCELLED`) and starts nothing either. The slot is given back on every way the render ends (Semaphore.run).
+ */
+async function inRenderQueue<T>(queue: Semaphore, maxWaitMs: number, task: () => Promise<Result<T>>, signal?: AbortSignal): Promise<Result<T>> {
+  try {
+    return await queue.run(task, { signal, maxWaitMs });
+  } catch (error) {
+    if (error instanceof SemaphoreFullError || error instanceof SemaphoreWaitTimeoutError) return err({ code: "EMITTER_BUSY", message: COMPILER_BUSY_MESSAGE });
+    if (error instanceof SemaphoreCancelledError) return err({ code: "EMITTER_CANCELLED", message: "The render was cancelled by its caller." });
+    throw error;
+  }
 }
 
 export interface ArtifactRendererOptions {
@@ -394,6 +403,10 @@ export interface ArtifactRendererOptions {
   maxEntries?: number;
   /** Concurrent `tsp` processes (default 2 — typespec-cli times out under heavier parallel load). */
   concurrency?: number;
+  /** Renders that may wait for a turn at once (default: TSP_MAX_WAITING_RUNS); one beyond that is answered `EMITTER_BUSY` at once. */
+  maxWaiting?: number;
+  /** The longest a render waits for its turn (default: TSP_MAX_WAIT_MS); past it the render is answered `EMITTER_BUSY`. */
+  maxWaitMs?: number;
   /** A `tsp` run is killed after this long (default 120 000 ms); the render then fails with `EMITTER_TIMEOUT`. */
   emitTimeoutMs?: number;
 }
@@ -401,21 +414,31 @@ export interface ArtifactRendererOptions {
 /** The emitter kills its own process at `emitTimeoutMs`; this guard only frees the slot if an emitter fails to honour it. */
 const EMIT_TIMEOUT_GRACE_MS = 5_000;
 
+/**
+ * Runs one emitter with the timeout of its RUN: the guard's clock starts when the emitter reports it has started (`onStart`, which the `tsp`
+ * runs call once they hold their slot), not when the render asks for it. A render that waits in the compiler's queue is not timed out for
+ * the wait; an emitter that never reports a start (a refused run, an injected emitter that never runs one) is answered by its own result.
+ */
 async function emitWithTimeout(
   emitFiles: EmitFiles,
   packageName: string,
   source: string,
   options: Record<string, unknown>,
-  timeoutMs: number
+  timeoutMs: number,
+  signal?: AbortSignal
 ): Promise<Result<EmittedFile[]>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let giveUp: (result: Result<EmittedFile[]>) => void = () => undefined;
   const timedOut = new Promise<Result<EmittedFile[]>>((resolve) => {
+    giveUp = resolve;
+  });
+  const onStart = () => {
     timer = setTimeout(
-      () => resolve(err({ code: "EMITTER_TIMEOUT", message: `Emitter "${packageName}" did not finish within ${timeoutMs} ms` })),
+      () => giveUp(err({ code: "EMITTER_TIMEOUT", message: `Emitter "${packageName}" did not finish within ${timeoutMs} ms` })),
       timeoutMs + EMIT_TIMEOUT_GRACE_MS
     );
-  });
-  const emitted = Promise.resolve().then(() => emitFiles(packageName, source, options, { timeoutMs }));
+  };
+  const emitted = Promise.resolve().then(() => emitFiles(packageName, source, options, { timeoutMs, onStart, ...(signal && { signal }) }));
   emitted.catch(() => undefined); // a late rejection after the timeout won must not become an unhandled rejection
   try {
     return await Promise.race([emitted, timedOut]);
@@ -436,10 +459,11 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
   const emitFiles = options.emitFiles ?? runTypeSpecEmitterFiles;
   const maxEntries = options.maxEntries ?? 256;
   const timeoutMs = options.emitTimeoutMs ?? DEFAULT_EMITTER_TIMEOUT_MS;
-  const limit = createLimiter(options.concurrency ?? 2);
+  const queue = new Semaphore(options.concurrency ?? 2, { maxWaiting: options.maxWaiting ?? TSP_MAX_WAITING_RUNS });
+  const maxWaitMs = options.maxWaitMs ?? TSP_MAX_WAIT_MS;
   const cache = new Map<string, Promise<Result<RenderedArtifact>>>();
 
-  async function renderUncached(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader): Promise<Result<RenderedArtifact>> {
+  async function renderUncached(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader, run?: RenderRun): Promise<Result<RenderedArtifact>> {
     const program = await loadProgram(options.db, subject, canRead);
     if (!program.success) return program;
     const parts = [program.data.root, ...program.data.deps];
@@ -478,8 +502,15 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
       });
     }
     const source = buildTargetSource(format, combined.data, program.data);
-    const files = await limit(() => emitWithTimeout(emitFiles, packageName, source, emitterOptions(format, program.data.root.rootModel), timeoutMs));
+    const files = await inRenderQueue(
+      queue,
+      maxWaitMs,
+      () => emitWithTimeout(emitFiles, packageName, source, emitterOptions(format, program.data.root.rootModel), timeoutMs, run?.signal),
+      run?.signal,
+    );
     if (!files.success) {
+      // A busy compiler or render queue is a "try again", not a render failure: it is not wrapped, so the caller can answer it as busy.
+      if (files.error.code === "EMITTER_BUSY") return err({ code: "EMITTER_BUSY", message: files.error.message });
       return err({ code: "ARTIFACT_RENDER_FAILED", message: `${label} → ${format}: ${files.error.message}`, details: { cause: files.error.code } });
     }
     const artifact = pickEmittedArtifact(format, files.data, program.data.root.rootModel);
@@ -489,9 +520,9 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
   }
 
   /** Never rejects: whatever a loader, the combiner, the emitter or the picker throws is an `ARTIFACT_RENDER_FAILED` result. */
-  async function renderSafely(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader): Promise<Result<RenderedArtifact>> {
+  async function renderSafely(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader, run?: RenderRun): Promise<Result<RenderedArtifact>> {
     try {
-      return await renderUncached(subject, format, canRead);
+      return await renderUncached(subject, format, canRead, run);
     } catch (error) {
       return renderFailure(subject, format, error);
     }
@@ -512,12 +543,12 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
   }
 
   return {
-    async render(subject, format, canRead) {
+    async render(subject, format, canRead, run) {
       // Fail closed: a subject without its tenant (a caller that is not typed) would otherwise read every tenant's rows.
       if (typeof subject.tenantId !== "string" || subject.tenantId === "") {
         return err({ code: "NOT_FOUND", message: `${describeSubject(subject)} not found` });
       }
-      if (subject.kind === "draft") return renderSafely(subject, format, canRead);
+      if (subject.kind === "draft") return renderSafely(subject, format, canRead, run);
       let key: string;
       try {
         const keyed = await versionCacheKey(subject, format);

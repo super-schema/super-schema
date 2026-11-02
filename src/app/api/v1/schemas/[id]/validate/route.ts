@@ -13,25 +13,28 @@
 
 import { withApiAuth } from "@/lib/access/api";
 import { entityReader } from "@/lib/access/entity-reader";
-import { checkRateLimit } from "@/app/api/v1/rate-limit";
 import { isUsableId, unusableIdNotFound } from "@/app/api/v1/request";
 import {
   apiSuccess,
   apiError,
+  apiBusy,
+  apiCompilerSharesInUse,
   apiServerError,
 } from "@/app/api/v1/error-handler";
 import { getEntityById } from "@/services/entity.service";
 import { prisma } from "@/lib/db";
 import { emitTargetsForEntity } from "@/lib/emission/emission.service";
+import { admitCompilerRuns } from "@/lib/emission/emission-admission";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import type {
   PrismaEntityInput,
   PrismaFieldInput,
 } from "@/lib/compiler/compiler.service";
 
-// The rate limit comes first, before the credential is looked at (a request without one counts too); then who, which tenant and whether any role
-// reaches `entity.read`; `getEntityById` then answers one NOT_FOUND for an entity that is missing, of another tenant or that no role covers.
-export const POST = withApiAuth<{ id: string }>("entity.read", async (_request, api, { params }) => {
+// The credential is checked first (who, which tenant, whether any role reaches `entity.read`), then the rate limit (`rateLimit`: a request that does not
+// authenticate counts against its address, an authenticated one against its principal). `getEntityById` then answers one NOT_FOUND for an entity that
+// is missing, of another tenant or that no role covers.
+export const POST = withApiAuth<{ id: string }>("entity.read", async (request, api, { params }) => {
   try {
     const { id } = await params;
     if (!isUsableId(id)) return unusableIdNotFound("entity", id);
@@ -56,7 +59,17 @@ export const POST = withApiAuth<{ id: string }>("entity.read", async (_request, 
     // Run emission pipeline (validation is part of emission). The closure only holds what the caller's roles cover: an entity the schema refers to that
     // they may not read refuses the whole request (403 REFERENCE_NOT_READABLE) before anything is built from it (KD-045).
     const enabledTargets = getSchemaTargetCatalog().filter((t) => t.enabledInSchemaTab);
-    const run = await emitTargetsForEntity(prisma, prismaEntity, prismaFields, enabledTargets, "draft", entityReader(api.principal.assignments));
+    // The caller's share of the compiler: one run per target, refused at once (429) when it is used up (src/lib/emission/emission-admission.ts).
+    const share = admitCompilerRuns(api.principal.userId, enabledTargets.length);
+    if (!share) return apiCompilerSharesInUse();
+    let run: Awaited<ReturnType<typeof emitTargetsForEntity>>;
+    try {
+      run = await emitTargetsForEntity(prisma, prismaEntity, prismaFields, enabledTargets, "draft", entityReader(api.principal.assignments), { signal: request.signal });
+    } finally {
+      share();
+    }
+    // The compiler refused runs because its queue is full: a 503, never `valid: false` (a CI gate would fail a schema for the server's load).
+    if (run.busy) return apiBusy();
     if (run.refusal) return apiError(run.refusal);
     const results = run.results.map(({ target, result }) => ({
       target: target.key,
@@ -93,5 +106,5 @@ export const POST = withApiAuth<{ id: string }>("entity.read", async (_request, 
     console.error("POST /api/v1/schemas/:id/validate error:", e);
     return apiServerError();
   }
-}, { before: (request) => checkRateLimit(request) });
+}, { rateLimit: true });
 

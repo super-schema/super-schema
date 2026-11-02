@@ -165,7 +165,8 @@ describe("generateSchemaAction: needs input", () => {
   it("does not look at fields or ask for a target without requirements: a closure target emits its closure, not the single entity", async () => {
     const result = await actions.generateSchemaAction("ent-1", "avro");
     expect(result).toMatchObject({ success: true });
-    expect(h.emitClosure).toHaveBeenCalledWith(expect.objectContaining({ entities: [expect.objectContaining({ entityId: "ent-1" })] }), "avro");
+    // the third argument is the run's options (`emitClosureTarget`'s default `{}`: no signal, no timeout of its own)
+    expect(h.emitClosure).toHaveBeenCalledWith(expect.objectContaining({ entities: [expect.objectContaining({ entityId: "ent-1" })] }), "avro", expect.anything());
     expect(h.emitOfficial).not.toHaveBeenCalled();
     expect(p.field.findMany).toHaveBeenCalledTimes(1); // the closure's own read of the root's fields, no requirement shape
   });

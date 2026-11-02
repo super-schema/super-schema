@@ -11,10 +11,10 @@
  *     (`INVALID_CREDENTIALS_MESSAGE`). Which rule refused is in the event, not in the answer, the words or the time it took beyond what the database does.
  *   - A refusal is an `auth_events` row: kind `provider_refused:<reason>`, outcome `refused`, the e-mail and the address as keyed hashes only
  *     (`recordAuthEvent`). A success is `provider_login` / `success` and `users.lastLoginAt`.
- *   - Throttled per client address with the Task 4 bucket (`isThrottled`, kind `provider_refused`: 5 refusals in 15 minutes, the shared ceiling without a
- *     trusted proxy). A locked address is refused before anything is read, and the throttle failing to answer refuses (fail closed). The address is the
- *     request's own (`requestIp`: `X-Forwarded-For` only with `AUTH_TRUST_PROXY=1`); the callback runs inside the route handler of the request, so the
- *     headers are there. Without them the shared bucket is used.
+ *   - Throttled per client address with the Task 4 bucket (`isThrottled`, kind `provider_refused`: 5 refusals in 15 minutes). A locked address is refused
+ *     before anything is read, and the throttle failing to answer refuses (fail closed). The address is the request's own (`requestIp`:
+ *     `X-Forwarded-For` only with `AUTH_TRUST_PROXY=1`); the callback runs inside the route handler of the request, so the headers are there. Without a
+ *     trusted proxy the address is `UNTRUSTED_IP`, which counts for nothing here: one caller must not be able to refuse every provider sign-in.
  *   - A database that cannot answer refuses and logs: "nobody found" because of an error must never mean "let through". Recording an event is best effort
  *     and never changes the answer.
  *
@@ -89,7 +89,7 @@ export async function authorizeProviderSignIn(
   try {
     ip = await deps.clientIp();
   } catch {
-    // No request in scope: the shared bucket (the callback always runs inside a request; this is a unit test or a misuse).
+    // No request in scope: the placeholder address (the callback always runs inside a request; this is a unit test or a misuse).
   }
 
   let locked: boolean;

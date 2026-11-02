@@ -55,4 +55,4 @@ export const GET = withApiAuth("entity.read", async (request, api) => {
     console.error("GET /api/v1/schemas error:", e);
     return apiServerError();
   }
-});
+}, { rateLimit: true });

@@ -124,10 +124,10 @@ Rows of `auth_events` (e-mail and client address as keyed hashes, never the valu
 
 `SELECT kind, outcome, count(*) FROM auth_events WHERE kind LIKE 'provider_%' GROUP BY 1, 2;` says what is being refused and why, without saying who.
 
-**Throttle:** **5 refused provider sign-ins in 15 minutes from one client address** lock that address for provider sign-ins (every reason counts); without `AUTH_TRUST_PROXY=1` all requests share one bucket
-with the ceiling of 100, as for the password login. The lock does not touch the password login. A locked address is refused before anything is looked up, with the same answer; a throttle that cannot
+**Throttle:** **5 refused provider sign-ins in 15 minutes from one client address** lock that address for provider sign-ins (every reason counts); without `AUTH_TRUST_PROXY=1`
+there is no client address and the refusals are not counted at all (one caller must not be able to refuse every provider sign-in), as for the password login. The lock does not touch the password login. A locked address is refused before anything is looked up, with the same answer; a throttle that cannot
 be read refuses. The e-mail is not limited here: what a refusal means is that the provider vouched for the person already. The cost: someone with any account at an enabled public provider can use
-five refusals to lock provider sign-ins from their own address (or, without a trusted proxy, with enough of them, from everywhere); the password login is not affected.
+five refusals to lock provider sign-ins from their own address; the password login is not affected.
 
 ## Worked example 1: Google (UNTESTED against Google)
 

@@ -13,7 +13,9 @@ the known defects behind it, is at the end of this file.
 | `AUTH_SECRET` / `NEXTAUTH_SECRET` | Signs every session; the whole authentication boundary. `AUTH_SECRET` wins when both are set. | A production server refuses to start without one of at least 32 characters that is not a known placeholder |
 | `AUTH_URL` / `NEXTAUTH_URL` | The public origin of the app. `AUTH_URL` also makes the `Host` header trusted; `NEXTAUTH_URL` alone does not. | Unset |
 | `AUTH_TRUST_HOST` | `true` or `1` trusts the `Host` header (behind a reverse proxy you control). | Production does not trust the header unless `AUTH_URL` is set; development and test always do |
-| `AUTH_TRUST_PROXY` | Exactly `1`: the client address is the left-most `X-Forwarded-For` entry (sign-in throttle and REST rate limit). | Off: every request is in one shared bucket |
+| `AUTH_TRUST_PROXY` | Exactly `1`: the client address is the left-most `X-Forwarded-For` entry (the sign-in throttle, the invitation and reset links, the provider refusals, and the REST API's limit on requests that do not authenticate). | Off: there is no client address. Sign-in is limited per e-mail only, and a sign-in without an address is slowed (never refused) once failures pile up in the process. Invitation, reset and provider refusals are then not limited at all. Open registration without an address is slowed like a sign-in without one, never refused, and the REST API's failed requests share one allowance of 20 a minute (see Throttling). A production start logs a warning when this is off |
+| `API_RATE_LIMIT_PER_MINUTE` | A positive whole number: the requests a minute one authenticated caller (the API key, or a signed-in user) may make to the rate-limited `/api/v1` routes. | 100 |
+| `TSP_MAX_CONCURRENT_RUNS` | A positive whole number: how many TypeSpec compiler runs (`tsp`, about 100 MB each) run at once in this process. The rest wait, up to 200 waiting and at most 60 seconds each; a run beyond either is answered `EMITTER_BUSY` (the REST API answers 503 with `Retry-After`). A timeout covers a run, not its wait. | Half the CPU cores, at least 1 |
 | `AUTH_REGISTRATION` | `open`, `invite` or `closed`. | `invite`; an unknown value is `invite` |
 | `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` | The administrator the seed creates. Set both or neither. | Unset: the seed creates `admin@admin.com` only when `NODE_ENV` is not `production` |
 | `API_KEY` | Enables `Authorization: Bearer <key>` on `/api/v1/*`. | Off |
@@ -126,14 +128,13 @@ Without either, nothing can log in. Development and test always trust it. Differ
 no (Auth.js reads any set value as yes), `NEXTAUTH_URL` alone does not trust the host, and the `VERCEL` / `CF_PAGES` platform defaults are not applied (set `AUTH_URL`
 or `AUTH_TRUST_HOST=true` there). The e2e release runner sets both for its own app.
 
-**The client address** (`AUTH_TRUST_PROXY`, used by the sign-in throttle, below, and by the REST API's rate limit: 100 requests a minute per address on `emit`, `validate` and
-`event-specs`). Set `AUTH_TRUST_PROXY=1` (exactly `1`; `true` is not read) only when a reverse proxy in front of the app **sets
+**The client address** (`AUTH_TRUST_PROXY`, used by the sign-in throttle, below, and by the REST API's limit on requests that do not authenticate, under "The REST API key"). Set `AUTH_TRUST_PROXY=1` (exactly `1`; `true` is not read) only when a reverse proxy in front of the app **sets
 `X-Forwarded-For` itself and overwrites whatever the client sent** (nginx `proxy_set_header X-Forwarded-For $remote_addr;`, most cloud load balancers). The app then
 takes the **left-most** entry as the client address (a loopback address, 127.0.0.0/8 or `::1`, counts as no address: `next start` writes the socket's own address into the header when a request
-carries none, so with the setting on and no proxy in front everybody would otherwise be one client with a ceiling of five). If the proxy appends instead of overwriting, a client can write that header and choose its own bucket:
-leave the setting off. Without it every request is in one shared bucket (see "Throttling"), and **a header a REST API caller makes up buys no fresh rate-limit
-allowance** (KD-028: the limiter used to read `X-Forwarded-For` unconditionally). The 429 answer of the REST API is its own error envelope,
-`{ "success": false, "error": { "code": "RATE_LIMITED", "message": ..., "details": { "retryAfter": <seconds> } } }`, with `Retry-After` and `X-RateLimit-*` headers. The limiter is
+carries none, so with the setting on and no proxy in front every request would be taken for one unknown client, which counts for nothing). If the proxy appends instead of overwriting, a client can write that header and choose its own bucket:
+leave the setting off. Without it there is no client address (see "Throttling" and "The REST API key"), and **a header a caller makes up buys no allowance at all**
+(KD-028: the limiter used to read `X-Forwarded-For` unconditionally). The 429 answer of the REST API is its own error envelope,
+`{ "success": false, "error": { "code": "RATE_LIMITED", "message": ..., "details": { "retryAfter": <seconds> } } }`, with `Retry-After` and `X-RateLimit-*` headers. The limiters are
 in memory, per process.
 
 ## Registration and the first administrator: read this before you expose it
@@ -212,14 +213,28 @@ inserts that follow (no scheduler). No screen clears a lock: it lifts when its w
 
 | Endpoint | What counts | Limit |
 | --- | --- | --- |
-| Sign-in | failures, per e-mail hash **and**, independently, per client-address hash | 5 in 15 minutes each; a success resets the e-mail's count (not the address's); an attempt refused because of the lock is recorded but does not count. An attempt takes its place BEFORE its password is compared (a `pending` row that counts as a failure until it is settled), so requests that arrive together cannot all be tried: at most 5 passwords per e-mail and window |
-| `/register` (open mode) | every attempt, counted from the moment it takes its place (before the password is hashed) | 5 in 15 minutes per client address |
-| `/invite/<token>` and `/reset/<token>` | dead-link failures (a wrong, expired or used token), not a password the policy refused | 5 in 15 minutes per client address; a locked address gets the same "not valid or expired" answer |
-| Sign-in through an identity provider ([`auth.md`](auth.md)) | refusals by the provider policy (`provider_refused:<reason>` rows), whatever the reason | 5 in 15 minutes per client address (the shared ceiling without a trusted proxy); the password login is not locked by it; a locked address is refused with the same generic answer |
+| Sign-in | failures, per e-mail hash **and**, independently, per client-address hash | 5 in 15 minutes each; a success resets the e-mail's count (not the address's); an attempt refused because of the lock is recorded but does not count. An attempt takes its place BEFORE its password is compared (a `pending` row that counts as a failure until it is settled), so requests that arrive together cannot all be tried: at most 5 passwords per e-mail and window. Without a trusted proxy the address is not counted, so the e-mail limit is the only lock; the slowing described below applies to such sign-ins |
+| `/register` (open mode) | every attempt, counted from the moment it takes its place (before the password is hashed) | 5 in 15 minutes per client address, with a trusted proxy only. Without one, nothing is locked and nothing is refused: a registration without an address waits, like a sign-in without one (point 2 below) |
+| `/invite/<token>` and `/reset/<token>` | dead-link failures (a wrong, expired or used token), not a password the policy refused | 5 in 15 minutes per client address, with a trusted proxy only. Without one, a dead link is recorded but not counted, the address is never locked, and nothing is refused: a token is 32 random bytes, so there is nothing to guess, and a shared lock would turn away every valid link. A locked address gets the same "not valid or expired" answer, and the token is not looked at |
+| Sign-in through an identity provider ([`auth.md`](auth.md)) | refusals by the provider policy (`provider_refused:<reason>` rows), whatever the reason | 5 in 15 minutes per client address, with a trusted proxy only. Without one, a refusal is recorded but not counted, so nothing is locked; the e-mail is never limited (the provider vouched for the person already). A locked address is refused with the same generic answer as a wrong password; the password login is not locked by it |
 
-Without `AUTH_TRUST_PROXY=1` every request is in **one shared address bucket**, so it has a higher ceiling (100 failures in 15 minutes: five typos by five people must not
-lock everybody out) and the per-e-mail limit (5) is the protection that matters. Set `AUTH_TRUST_PROXY=1` behind a proxy that overwrites `X-Forwarded-For` (above) to get a
-bucket per client. A throttle that cannot be read, or in which a sign-in cannot take its place, refuses the attempt (fail closed). An attempt that never settles (the process died during the compare) stays counted as a failure for the rest of its window, which errs toward the lock.
+Without `AUTH_TRUST_PROXY=1` there is **no client address**: every request carries the same placeholder, and a bucket of it would let one anonymous caller lock out
+everybody who shares it (a password sign-in, an invitation, a reset link, a provider sign-in). So the placeholder is never a lock. For a password sign-in the per-e-mail
+limit (5) is the lock; invitation, reset and provider refusals have no limit at all in this configuration (the table above). Four things follow.
+
+1. **Guesses spread over many e-mail addresses are slowed, not refused.** Once more than 20 counted attempts without an address (failed sign-ins, and every registration)
+   have happened in this process within 15 minutes, each further sign-in or registration without an address waits 100 ms per extra attempt, up to 2 seconds
+   (`src/lib/auth/login-backoff.ts`). Nothing is refused by it, and the wait holds the request, not a database connection. **The trade-off:** while the count is above 20,
+   every sign-in or registration without an address waits, a correct password included, so
+   an ordinary user signing in during a spread-out guessing run is slowed by up to 2 seconds. The count is per process, so N instances allow about N times as many guesses.
+   It is a brake, not a limit: the real protection is a limit on `/api/auth/*` at the proxy, or `AUTH_TRUST_PROXY=1` behind one.
+2. Open registration without an address is slowed by the same wait and never refused. Every such attempt counts toward the wait, because each one hashes a
+   password. So one anonymous client cannot stop the sign-ups of everybody else (there is no shared lock for registration); the cost is the one of point 1.
+3. The REST API's failed requests share one allowance of 20 a minute, which refuses only requests that failed to authenticate.
+4. Set `AUTH_TRUST_PROXY=1` behind a proxy that overwrites `X-Forwarded-For` (above) to get a bucket per client. A production server that starts without it logs a warning
+   saying so once.
+
+A throttle that cannot be read, or in which a sign-in cannot take its place, refuses the attempt (fail closed). An attempt that never settles (the process died during the compare) stays counted as a failure for the rest of its window, which errs toward the lock.
 
 The password sign-in and `/register` reserve their place: the row is written first and counted with the others, so of any number of simultaneous requests at most five are let through (a refused one stops counting). `/invite/<token>`, `/reset/<token>` and the provider check read the count and write afterwards, so a burst of simultaneous requests can pass their limit by about the size of the burst. None of them lets a guess be tried against a secret that can be found by guessing: an invitation or reset token is 32 random bytes, and a refused provider sign-in tries no password.
 
@@ -348,6 +363,37 @@ active tenant that its roles cover (a domain- or product-scoped role sees only i
 administrator. A user with no role is told 404 on the schema routes and 403 on the webhook routes, never a 500. **The webhook list never carries a signing
 secret**: the secret is in the answer of the creation, once.
 
+### Rate limits
+
+The REST API limits the routes that serve tenant data: `GET /api/v1/schemas` and `/api/v1/schemas/:id`, `POST` on `/api/v1/schemas/:id/emit` and `/validate`,
+`GET /api/v1/event-specs/:id`, `/api/v1/notifications` and the webhook routes. The credential is checked **first**, so a request without a valid one never spends
+anyone's allowance:
+
+- An authenticated request counts against its **principal**: the API key (one service principal, so every caller of the key shares one allowance) or the
+  signed-in user. The allowance is **100 requests a minute**; `API_RATE_LIMIT_PER_MINUTE` sets another positive whole number. The 101st is a 429.
+- A request that does not authenticate (no credential, a wrong key, an expired session) counts against its **client address**, in an allowance of its own of
+  **20 a minute**. With `AUTH_TRUST_PROXY=1` each address has its own; without it there is no address, and all such requests share one allowance. That
+  allowance refuses only requests that failed to authenticate: a valid key or session is never refused because of it.
+- The 429 is the API's error envelope (`RATE_LIMITED`), with `Retry-After` and `X-RateLimit-*` headers. The allowances are kept in memory, per process (KD-028).
+- **Compiler runs have their own share.** One emission (`emit`, `validate`) is one TypeSpec run per enabled target. A principal may hold **16 runs** in flight
+  (queued or running) at once: an emit or validate call that would go over it is a 429 (`RATE_LIMITED`) and builds nothing, so one caller cannot fill the
+  compiler's shared queue for everybody else. The process-wide queue itself is bounded (`TSP_MAX_CONCURRENT_RUNS` at a time, 200 waiting, and a run waits at
+  most **60 seconds** for its slot, `TSP_MAX_WAIT_MS` in src/lib/typespec-official/emitter.service.ts): a run that finds the queue full, or that waited that
+  long, is answered **503** (`EMITTER_BUSY`, `Retry-After`), never as `valid: false`. A client that disconnects cancels its runs: one still waiting leaves its queue
+  at once and starts nothing; one running is killed. The share is given back when the request has settled. An event's renders (the draft, a preview, a publish, a
+  pinned schema) take one unit each, up to the whole share, and wait in the renderer's own queue (two at a time, 200 waiting, 60 seconds each, the same answers).
+- `POST /api/ai/generate-entity` (the app's own route, not `/api/v1`) is limited by the same principal allowance, answered in the app's `{ "error": "..." }`
+  shape with a 429 and `Retry-After`.
+
+The app's own session endpoints under `/api/` (the compliance ones, the tenant switcher's, the command palette's) are not limited by this, except the AI
+generation route described above. The dashboard's generate and emit actions share the compiler-run share of their user (16 runs in flight), but not the
+per-minute allowance. So do the event renders: a draft emission (`GET /api/v1/event-specs/:id?version=draft`, the dashboard's draft and preview) and a publish
+preview or publish take **one unit of the caller's share per render they start** (at most the whole share), and a pinned JSON Schema takes one. The units are given back
+when the call settles. A call the share cannot hold is refused the same way (429 on the REST route, the same message in the dashboard) before anything is rendered.
+A busy compiler or render queue answers 503 with `Retry-After` on the REST route, and a retry in the dashboard. The draft's compiler runs are cancelled when the client goes away
+on the REST route. The renders wait in the renderer's own queue (two at a time, 200 waiting, 60 seconds each), so one caller's queued renders are bounded by its share, or by
+one document's own renders when that is more than the share.
+
 ## The audit trail has a tenant
 
 Every audit row (`audit_log`) carries the tenant it belongs to (`audit_log.tenantId`), written by `withAudit` (`src/lib/audit.ts`) from the **acting tenant**: the
@@ -419,7 +465,8 @@ These are the open items. Each is either a decision recorded in `docs/testing/kn
 - **Sessions cannot be revoked one by one, and they slide.** A session is a 12-hour window renewed at most once an hour, so a user who keeps working stays signed in. A disabled user is refused on the next request. A password reset does not end sessions that are already signed in.
 - **The tenant in view is a cookie** (KD-034). A user with roles in two tenants who opens a deep link into the other tenant gets a 404 until they switch, and a cookie that names a tenant whose role was revoked falls back silently.
 - **Page files are not in the deny-by-default scan.** The scan covers server actions and route handlers. KD-034 records how the pages ask the policy.
-- **The REST API's rate limit is per process** (KD-028): several instances each allow 100 a minute on `emit`, `validate` and `event-specs`. The sign-in throttle is in the database and holds across instances.
+- **The REST API's limits are per process** (KD-028): several instances each allow their own 100 a minute per authenticated caller, 16 compiler runs in flight per caller, and 20 a minute of requests that do not authenticate (per address with `AUTH_TRUST_PROXY=1`; one shared allowance without it). The sign-in throttle is in the database and holds across instances.
+- **Password guesses spread over many e-mail addresses are only slowed by this app without `AUTH_TRUST_PROXY=1`, never refused** (see Throttling: a per-process wait that grows with the failures, which also slows correct sign-ins while it runs). The start-up warning says so; a real limit belongs at the proxy.
 - **The glossary is one list for every tenant** (KD-043). **An event document can name an entity its author may not read** (KD-044).
 - **A steward can publish a stored draft whose files they cannot see.** This is accepted; see [`auth.md`](auth.md), "Access notes".
 - **Closed registration has no browser test.** Its server behaviour is unit and PGlite tested (`docs/testing/access-control.md`).

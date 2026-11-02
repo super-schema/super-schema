@@ -21,4 +21,4 @@ export const GET = withApiAuth<{ id: string }>("platform.admin", async (_request
     console.error("GET /api/v1/webhooks/:id/deliveries error:", e);
     return apiServerError();
   }
-});
+}, { rateLimit: true });

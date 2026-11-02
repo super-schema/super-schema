@@ -130,7 +130,7 @@ describe("credentials authorize", () => {
     expect(mocks.authenticateWithPassword).toHaveBeenCalledWith({ email: " Bob@Example.test ", password: "pw", ip: "203.0.113.7" });
   });
 
-  it("uses the constant bucket without AUTH_TRUST_PROXY=1, whatever the header says", async () => {
+  it("has no client address without AUTH_TRUST_PROXY=1 (the placeholder), whatever the header says", async () => {
     mocks.authenticateWithPassword.mockResolvedValue(null);
     const { credentials } = await load();
     await credentials!.authorize!({ email: "bob@example.test", password: "pw" }, request({ "x-forwarded-for": "203.0.113.7" }));

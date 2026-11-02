@@ -3,14 +3,15 @@ import { assign, principalOf, roleless, tenantMember } from "../../../helpers/ac
 
 const h = vi.hoisted(() => ({
   authenticateRequest: vi.fn(),
-  checkRateLimit: vi.fn(),
+  checkPrincipalRateLimit: vi.fn(),
+  checkFailedAuthRateLimit: vi.fn(),
   getActiveTenantId: vi.fn(),
   findFirst: vi.fn(),
   emitEventDraft: vi.fn(),
   emitEventStoredVersion: vi.fn(),
 }));
 vi.mock("@/app/api/v1/middleware", () => ({ authenticateRequest: h.authenticateRequest }));
-vi.mock("@/app/api/v1/rate-limit", () => ({ checkRateLimit: h.checkRateLimit }));
+vi.mock("@/app/api/v1/rate-limit", () => ({ checkPrincipalRateLimit: h.checkPrincipalRateLimit, checkFailedAuthRateLimit: h.checkFailedAuthRateLimit }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/db", () => ({ prisma: { eventSpec: { findFirst: h.findFirst } } }));
@@ -47,7 +48,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   specName = "checkout-service";
-  h.checkRateLimit.mockReturnValue(null);
+  h.checkPrincipalRateLimit.mockReturnValue(null);
+  h.checkFailedAuthRateLimit.mockReturnValue(null);
   h.authenticateRequest.mockResolvedValue(session());
   h.getActiveTenantId.mockResolvedValue("t1");
   h.findFirst.mockImplementation(async ({ where }: { where: { id: string; tenantId?: string } }) => {
@@ -87,8 +89,23 @@ describe("GET /api/v1/event-specs/:id", () => {
     expect(draft.headers.get("x-event-spec-version")).toBe("draft");
     expect(draft.headers.get("content-disposition")).toBe('inline; filename="checkout-service-draft.asyncapi.yaml"');
     expect(h.emitEventDraft).toHaveBeenCalledTimes(1);
-    expect(h.emitEventDraft).toHaveBeenCalledWith("s1", "p1", CTX);
+    expect(h.emitEventDraft).toHaveBeenCalledWith("s1", "p1", CTX, { signal: expect.any(AbortSignal) });
     expect(h.emitEventStoredVersion).toHaveBeenCalledTimes(1); // the draft never goes through the stored-version path
+  });
+
+  it("answers 429 with the API envelope when the caller is over its compiler share (nothing rendered)", async () => {
+    h.emitEventDraft.mockResolvedValueOnce({ success: false, error: { code: "RATE_LIMITED", message: "You already have schema generation running." } });
+    const res = await call("?version=draft");
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toMatchObject({ code: "RATE_LIMITED" });
+  });
+
+  it("answers 503 with Retry-After when the compiler is busy: a retry, not a draft that is invalid", async () => {
+    h.emitEventDraft.mockResolvedValueOnce({ success: false, error: { code: "EMITTER_BUSY", message: "The TypeSpec compiler is busy." } });
+    const res = await call("?version=draft");
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).not.toBeNull();
+    expect((await res.json()).error).toMatchObject({ code: "EMITTER_BUSY" });
   });
 
   it("still returns a draft document that assembled but carries error diagnostics (never a 500)", async () => {
@@ -120,14 +137,25 @@ describe("GET /api/v1/event-specs/:id", () => {
     expect(emitters()).toBe(0);
     const draft = await call("?version=draft", "s-draft-only");
     expect(draft.status).toBe(200);
-    expect(h.emitEventDraft).toHaveBeenCalledWith("s-draft-only", "p1", CTX);
+    expect(h.emitEventDraft).toHaveBeenCalledWith("s-draft-only", "p1", CTX, { signal: expect.any(AbortSignal) });
   });
 
-  it("answers rate-limited requests before authenticating", async () => {
+  it("answers a rate-limited principal after it has authenticated, and before the event is looked up", async () => {
     const limited = new Response("slow down", { status: 429 });
-    h.checkRateLimit.mockReturnValueOnce(limited);
+    h.checkPrincipalRateLimit.mockReturnValueOnce(limited);
     expect(await call()).toBe(limited);
-    expect(h.authenticateRequest).not.toHaveBeenCalled();
+    expect(h.authenticateRequest).toHaveBeenCalledTimes(1);
+    expect(h.findFirst).not.toHaveBeenCalled();
+    expect(emitters()).toBe(0);
+  });
+
+  it("a request that does not authenticate is counted against its address, and that limit answers it first", async () => {
+    const limited = new Response("slow down", { status: 429 });
+    h.authenticateRequest.mockResolvedValueOnce({ authenticated: false });
+    h.checkFailedAuthRateLimit.mockReturnValueOnce(limited);
+    expect(await call()).toBe(limited);
+    expect(h.checkPrincipalRateLimit).not.toHaveBeenCalled();
+    expect(h.findFirst).not.toHaveBeenCalled();
   });
 });
 

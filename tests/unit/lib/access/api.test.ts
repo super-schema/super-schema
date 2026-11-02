@@ -277,3 +277,108 @@ describe("the answer takes the route's own shape", () => {
     expect(text).not.toMatch(/ADMIN|platform|t1|VIEWER/);
   });
 });
+
+describe("the REST API's rate limits (rateLimit: true, src/app/api/v1/rate-limit.ts)", () => {
+  const RATE = { rateLimit: true } as const;
+  const SAVED_TRUST = process.env.AUTH_TRUST_PROXY;
+  // The limiter keeps its windows for the life of the module: each test starts two minutes after the one before, so none of them sees another's.
+  let minutesBefore = 0;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.UTC(2026, 9, 25, 12) + minutesBefore++ * 120_000));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    if (SAVED_TRUST === undefined) delete process.env.AUTH_TRUST_PROXY;
+    else process.env.AUTH_TRUST_PROXY = SAVED_TRUST;
+  });
+
+  it("an authenticated request counts against its principal: the 101st of one user is a 429 and the handler does not run for it", async () => {
+    signInAs(tenantMember("VIEWER", "t1", "limited-user-1"));
+    for (let i = 0; i < 100; i += 1) expect((await call("entity.read", {}, RATE)).status, String(i + 1)).toBe(200);
+    const limited = await call("entity.read", {}, RATE);
+    expect(limited.status).toBe(429);
+    expect(await bodyOf(limited)).toMatchObject({ success: false, error: { code: "RATE_LIMITED" } });
+    expect(handler).toHaveBeenCalledTimes(100);
+  });
+
+  it("another principal is not limited by it, and the api key's principal is its own", async () => {
+    signInAs(tenantMember("VIEWER", "t1", "limited-user-2"));
+    for (let i = 0; i < 101; i += 1) await call("entity.read", {}, RATE);
+    expect((await call("entity.read", {}, RATE)).status).toBe(429);
+    signInAs(tenantMember("VIEWER", "t1", "limited-user-3"));
+    expect((await call("entity.read", {}, RATE)).status).toBe(200);
+  });
+
+  it("a request that does not authenticate counts against its client address: the 21st from it is a 429, and the 401s before it are unchanged", async () => {
+    process.env.AUTH_TRUST_PROXY = "1";
+    signedOut();
+    const from = { "x-forwarded-for": "203.0.113.50" };
+    for (let i = 0; i < 20; i += 1) expect((await call("entity.read", from, RATE)).status, String(i + 1)).toBe(401);
+    const limited = await call("entity.read", from, RATE);
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toMatch(/^\d+$/);
+    expect(handler).not.toHaveBeenCalled();
+    // another address is another client
+    expect((await call("entity.read", { "x-forwarded-for": "203.0.113.51" }, RATE)).status).toBe(401);
+  });
+
+  it("a valid session is never refused because failed requests used up their allowance (no trusted proxy: one shared allowance of failures)", async () => {
+    delete process.env.AUTH_TRUST_PROXY;
+    signedOut();
+    for (let i = 0; i < 21; i += 1) await call("entity.read", { "x-forwarded-for": `198.51.100.${i + 1}` }, RATE);
+    expect((await call("entity.read", {}, RATE)).status).toBe(429);
+    signInAs(tenantMember("VIEWER", "t1", "limited-user-4"));
+    expect((await call("entity.read", {}, RATE)).status).toBe(200);
+  });
+
+  it("a failed request does not spend the principal's allowance, and a principal's requests do not spend the failed allowance", async () => {
+    process.env.AUTH_TRUST_PROXY = "1";
+    signInAs(tenantMember("VIEWER", "t1", "limited-user-5"));
+    for (let i = 0; i < 100; i += 1) await call("entity.read", {}, RATE);
+    expect((await call("entity.read", {}, RATE)).status).toBe(429);
+    signedOut();
+    // the same caller, now not authenticated, still has its own (failed) allowance: 401, not 429
+    expect((await call("entity.read", { "x-forwarded-for": "203.0.113.60" }, RATE)).status).toBe(401);
+  });
+
+  it("a route without rateLimit is not limited at all (the app's own endpoints keep their behaviour)", async () => {
+    signInAs(tenantMember("VIEWER", "t1", "limited-user-6"));
+    for (let i = 0; i < 150; i += 1) expect((await call("entity.read")).status).toBe(200);
+    signedOut();
+    for (let i = 0; i < 30; i += 1) expect((await call("entity.read")).status).toBe(401);
+  });
+
+  it("the rate limit comes after the credential and before the policy: a refused caller's requests are counted too", async () => {
+    signInAs(roleless("limited-user-7"));
+    for (let i = 0; i < 100; i += 1) expect((await call("entity.read", {}, RATE)).status).toBe(404);
+    expect((await call("entity.read", {}, RATE)).status).toBe(429);
+  });
+
+  it("the route's own answer to a caller with no credential (unauthenticated) is not a refusal: it is never counted, so it is never a 429", async () => {
+    process.env.AUTH_TRUST_PROXY = "1";
+    signedOut();
+    const from = { "x-forwarded-for": "203.0.113.70" };
+    const constant = { rateLimit: true, unauthenticated: () => new Response("0", { status: 200 }) } as const;
+    // far more than the 20 a minute of failed requests: every one is the route's constant answer
+    for (let i = 0; i < 40; i += 1) expect((await call("entity.read", from, constant)).status, String(i + 1)).toBe(200);
+    // a request the route does not answer is still counted, from the same address: its 21st is the 429
+    for (let i = 0; i < 20; i += 1) expect((await call("entity.read", from, RATE)).status).toBe(401);
+    expect((await call("entity.read", from, RATE)).status).toBe(429);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("a route can write its refusal in its own shape (respondLimited): the 429 carries that body and Retry-After", async () => {
+    signInAs(tenantMember("VIEWER", "t1", "limited-user-8"));
+    const own = {
+      rateLimit: true,
+      respondLimited: ({ retryAfterSeconds }: { retryAfterSeconds: number }) =>
+        Response.json({ error: "slow down" }, { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } }),
+    } as const;
+    for (let i = 0; i < 100; i += 1) await call("entity.read", {}, own);
+    const limited = await call("entity.read", {}, own);
+    expect(limited.status).toBe(429);
+    expect(await bodyOf(limited)).toEqual({ error: "slow down" });
+    expect(limited.headers.get("retry-after")).toMatch(/^\d+$/);
+  });
+});

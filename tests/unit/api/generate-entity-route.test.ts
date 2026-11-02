@@ -95,6 +95,49 @@ describe("POST /api/ai/generate-entity", () => {
   });
 });
 
+describe("POST /api/ai/generate-entity: the rate limit answers in the app's own shape", () => {
+  const fromAddress = (ip: string) =>
+    new Request("http://localhost/api/ai/generate-entity", {
+      method: "POST",
+      body: JSON.stringify(BODY),
+      headers: { "content-type": "application/json", "x-forwarded-for": ip },
+    });
+
+  it("a signed-in user's requests count against their own allowance: the one over it is 429 with { error } and Retry-After, and no suggestion is paid for", async () => {
+    mocks.findFirst.mockResolvedValue(DOMAIN);
+    signInAs(principalOf([assign.tenant("AUTHOR", "tenant-a")], { userId: "ai-rate-limited-user" }));
+
+    for (let i = 0; i < 100; i += 1) expect((await POST(request(BODY))).status).toBe(200);
+    const refused = await POST(request(BODY));
+
+    expect(refused.status).toBe(429);
+    expect(Number(refused.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    const body = await refused.json();
+    expect(body).toEqual({ error: expect.stringMatching(/Too many suggestions/) });
+    expect(body).not.toHaveProperty("success");
+    expect(mocks.generate).toHaveBeenCalledTimes(100);
+  });
+
+  it("a flood of requests that do not authenticate is 429 in the app's shape after 20 from one address, and a valid session from that address is still admitted", async () => {
+    vi.stubEnv("AUTH_TRUST_PROXY", "1");
+    try {
+      signedOut();
+      for (let i = 0; i < 20; i += 1) expect((await POST(fromAddress("198.51.100.20"))).status).toBe(401);
+      const refused = await POST(fromAddress("198.51.100.20"));
+      expect(refused.status).toBe(429);
+      expect(Number(refused.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+      expect(await refused.json()).toEqual({ error: expect.stringMatching(/Too many suggestions/) });
+
+      // The allowance of the failures refuses failures only: a valid caller from the same address is not refused by it.
+      mocks.findFirst.mockResolvedValue(DOMAIN);
+      signInAs(principalOf([assign.tenant("AUTHOR", "tenant-a")], { userId: "ai-flood-bystander" }));
+      expect((await POST(fromAddress("198.51.100.20"))).status).toBe(200);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("who may ask the AI about a domain (ai.generate: an author of the domain or above)", () => {
   it("a user with no role at all is a 404 (never a 500), with or without a tenant to reach, and the domain is never looked up", async () => {
     signInAs(roleless());

@@ -10,10 +10,11 @@
  *                first test that asks for `key` fails with that sentence instead of a 401 that looks like a product bug;
  *   - `anon`     no cookie, no header.
  *
- * Every context sends an `X-Forwarded-For` of its own (an address that is made up per test): the emit, validate and event-spec routes
- * allow 100 requests a minute per client address (src/app/api/v1/rate-limit.ts), and the address is read from that header ONLY when the app
- * trusts a proxy (`AUTH_TRUST_PROXY=1`, which the release runner sets for the app under test), so a test gets its own allowance instead of
- * sharing one with every other spec of the run. (Without the setting the header is ignored: tests/unit/api/v1/rate-limit.test.ts.)
+ * Every context sends an `X-Forwarded-For` of its own (an address that is made up per test): a request that does not authenticate is allowed 20
+ * a minute per client address (src/app/api/v1/rate-limit.ts), and the address is read from that header ONLY when the app trusts a proxy
+ * (`AUTH_TRUST_PROXY=1`, which the release runner sets for the app under test), so a test gets its own allowance of failed requests instead of
+ * sharing one with every other spec of the run. An authenticated caller is counted against its principal (100 a minute, lifted for the run by
+ * `API_RATE_LIMIT_PER_MINUTE`: scripts/e2e-env.mjs). (Without the setting the header is ignored: tests/unit/api/v1/rate-limit.test.ts.)
  */
 import { randomInt } from "node:crypto";
 import { expect, type APIRequestContext, type APIResponse, type PlaywrightWorkerArgs } from "@playwright/test";

@@ -2,8 +2,11 @@
  * `withApiAuth(action, handler)`: the one guard in front of every API route handler that serves tenant data (access-control design, goal 3).
  *
  * What it does BEFORE the handler runs, in this order, and the handler never runs when any of it says no:
- *  1. `options.before` (the rate limit: it counts requests that carry no credential too);
+ *  1. `options.before` (a hook that runs first; no route uses it for the rate limit any more);
  *  2. who is calling: the API key (a service principal) or the session's principal (`authenticateRequest`); nobody is a 401;
+ *     `options.rateLimit` (the REST API's limits, src/app/api/v1/rate-limit.ts) comes right after this, and only after it: a request that did not
+ *     authenticate counts against its client address, and an authenticated one against its principal, so an anonymous caller cannot spend a
+ *     principal's allowance;
  *  3. the acting TENANT: the key's own tenant, or the session's active tenant (one the user holds a role in). A caller who may reach no
  *     tenant (`NoTenantAccess`: no role yet, a disabled user) is told the same 404 as for a resource that does not exist, never a 500;
  *  4. may this principal perform `action` here at all: a principal with no role in the tenant is a 404 ("Not found", no existence oracle),
@@ -19,6 +22,7 @@
 import { NextResponse } from "next/server";
 import { apiError, apiServerError, apiUnauthorized } from "@/app/api/v1/error-handler";
 import { authenticateRequest, type AuthResult } from "@/app/api/v1/middleware";
+import { checkFailedAuthRateLimit, checkPrincipalRateLimit, type LimitResponder } from "@/app/api/v1/rate-limit";
 import { contextOf } from "@/lib/action-context";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { ACTIONS, can, isActionId, readableScopes, type ActionId, type ReadableScopes } from "@/lib/access";
@@ -62,12 +66,22 @@ export type ApiAuthOptions = {
   before?: (request: Request) => Response | null;
   /** How a refusal is written (default: the REST API's envelope). */
   respond?: ErrorShape;
-  /** The answer for a caller with no credential, in place of the 401 (the notification bell polls and wants a count, not an error); null keeps the 401. */
+  /**
+   * The answer for a caller with no credential, in place of the 401 (the notification bell polls and wants a count, not an error); null keeps the 401.
+   * It is asked BEFORE the failed-authentication allowance counts the request: a constant answer of this kind is not a refusal and is never a 429.
+   */
   unauthenticated?: (request: Request) => Response | null;
   /** The answer when looking up who is calling failed (the database); null keeps the generic 500. */
   authFailure?: (request: Request) => Response | null;
   /** `false`: the route answers to a session only, a bearer token is ignored (the app's own endpoints). Default `true`. */
   allowApiKey?: boolean;
+  /**
+   * The REST API's rate limits (src/app/api/v1/rate-limit.ts), checked after the credential: an authenticated request counts against its principal
+   * (100 a minute), a request that does not authenticate against its client address (20 a minute, a separate allowance). Default: no limit.
+   */
+  rateLimit?: boolean;
+  /** How a `rateLimit` refusal is written when the route's own shape is not the API's envelope (default: the envelope). */
+  respondLimited?: LimitResponder;
 };
 
 const FORBIDDEN_MESSAGE = "You do not have permission to do this";
@@ -132,8 +146,19 @@ export function withApiAuth<P = Record<string, string>>(
       console.error("[api] could not tell who is calling", e);
       return options.authFailure?.(request) ?? refuse(respond, 500);
     }
-    if (!authenticated.authenticated) return options.unauthenticated?.(request) ?? refuse(respond, 401);
+    if (!authenticated.authenticated) {
+      // The route's own answer to a caller with no credential goes first: it is not a refusal, so it is not counted (see `unauthenticated`).
+      const answered = options.unauthenticated?.(request);
+      if (answered) return answered;
+      // A request that does not authenticate counts against its client address, in an allowance of its own: it can never spend a principal's.
+      const limited = options.rateLimit ? checkFailedAuthRateLimit(request, options.respondLimited) : null;
+      if (limited) return limited;
+      return refuse(respond, 401);
+    }
     const { principal, source } = authenticated;
+    // An authenticated request counts against its principal (the key's service principal, or the signed-in user), after the credential was checked.
+    const limited = options.rateLimit ? checkPrincipalRateLimit(principal, process.env, options.respondLimited) : null;
+    if (limited) return limited;
 
     if (!isActionId(action)) return refuse(respond, 403); // an action id that is not in the table is a bug: never allowed
     const spec = ACTIONS[action];

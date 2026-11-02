@@ -16,11 +16,12 @@
 
 import { withApiAuth } from "@/lib/access/api";
 import { entityReader } from "@/lib/access/entity-reader";
-import { checkRateLimit } from "@/app/api/v1/rate-limit";
 import { isUsableId, unusableIdNotFound } from "@/app/api/v1/request";
 import {
   apiSuccess,
   apiError,
+  apiBusy,
+  apiCompilerSharesInUse,
   apiServerError,
 } from "@/app/api/v1/error-handler";
 import { getEntityById } from "@/services/entity.service";
@@ -28,6 +29,7 @@ import { prisma } from "@/lib/db";
 import { compileEntity } from "@/lib/compiler/compiler.service";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { emitTargetsForEntity } from "@/lib/emission/emission.service";
+import { admitCompilerRuns } from "@/lib/emission/emission-admission";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import { runAfterResponse } from "@/lib/after-response";
 import { notifyEntityEmitted } from "@/services/notification.triggers";
@@ -36,9 +38,10 @@ import type {
   PrismaFieldInput,
 } from "@/lib/compiler/compiler.service";
 
-// The rate limit comes first, before the credential is looked at (a request without one counts too); then who, which tenant and whether any role
-// reaches `entity.read`; `getEntityById` then answers one NOT_FOUND for an entity that is missing, of another tenant or that no role covers.
-export const POST = withApiAuth<{ id: string }>("entity.read", async (_request, api, { params }) => {
+// The credential is checked first (who, which tenant, whether any role reaches `entity.read`), then the rate limit (`rateLimit`: a request that does not
+// authenticate counts against its address, an authenticated one against its principal). `getEntityById` then answers one NOT_FOUND for an entity that
+// is missing, of another tenant or that no role covers.
+export const POST = withApiAuth<{ id: string }>("entity.read", async (request, api, { params }) => {
   try {
     const { id } = await params;
     if (!isUsableId(id)) return unusableIdNotFound("entity", id);
@@ -61,10 +64,20 @@ export const POST = withApiAuth<{ id: string }>("entity.read", async (_request, 
     const prismaFields = fields as unknown as PrismaFieldInput[];
 
     const enabledTargets = getSchemaTargetCatalog().filter((t) => t.enabledInSchemaTab);
+    // The caller's share of the compiler: one run per target, refused at once (429) when it is used up (src/lib/emission/emission-admission.ts).
+    const share = admitCompilerRuns(api.principal.userId, enabledTargets.length);
+    if (!share) return apiCompilerSharesInUse();
     // The root is an entity of the acting tenant that a role of the caller covers (`getEntityById` above), and the closure stays inside that tenant. Every
     // entity the root references (transitively) must be covered by a role of the caller too, or the run is refused before anything is built from it: 403
-    // REFERENCE_NOT_READABLE, a message that names nothing of the other entity (KD-045).
-    const run = await emitTargetsForEntity(prisma, prismaEntity, prismaFields, enabledTargets, "draft", entityReader(api.principal.assignments));
+    // REFERENCE_NOT_READABLE, a message that names nothing of the other entity (KD-045). A client that goes away cancels its runs (`request.signal`).
+    let run: Awaited<ReturnType<typeof emitTargetsForEntity>>;
+    try {
+      run = await emitTargetsForEntity(prisma, prismaEntity, prismaFields, enabledTargets, "draft", entityReader(api.principal.assignments), { signal: request.signal });
+    } finally {
+      share();
+    }
+    // The compiler refused runs because its queue is full: the answer is "try again", not an emission verdict.
+    if (run.busy) return apiBusy();
     if (run.refusal) return apiError(run.refusal);
     const results = run.results.map(({ target, result }) => ({
       target: target.key,
@@ -102,5 +115,5 @@ export const POST = withApiAuth<{ id: string }>("entity.read", async (_request, 
     console.error("POST /api/v1/schemas/:id/emit error:", e);
     return apiServerError();
   }
-}, { before: (request) => checkRateLimit(request) });
+}, { rateLimit: true });
 

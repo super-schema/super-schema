@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 import { createArtifactRenderer, type EmitFiles } from "@/services/events/artifact-renderer";
+import { Semaphore } from "@/lib/concurrency/semaphore";
 
 const TENANT = "tenant-acme";
 
@@ -416,10 +417,11 @@ describe("artifact renderer — timeout and concurrency", () => {
   it("passes the timeout to the emitter and fails a hung emitter with EMITTER_TIMEOUT, freeing its slot", async () => {
     vi.useFakeTimers();
     try {
-      const seen: Array<{ timeoutMs?: number } | undefined> = [];
+      const seen: Array<number | undefined> = [];
+      // The hung emitter reports its start (as a compiler run does when it gets its slot), which is when its timeout starts.
       const emitFiles = vi.fn<EmitFiles>()
-        .mockImplementationOnce((_p, _s, _o, run) => { seen.push(run); return new Promise(() => undefined); })
-        .mockImplementation(async (p, src, o, run) => { seen.push(run); return avroOk(p, src, o); });
+        .mockImplementationOnce((_p, _s, _o, run) => { seen.push(run?.timeoutMs); run?.onStart?.(); return new Promise(() => undefined); })
+        .mockImplementation(async (p, src, o, run) => { seen.push(run?.timeoutMs); return avroOk(p, src, o); });
       const renderer = createArtifactRenderer({ db: fakeDb() as never, emitFiles, concurrency: 1, emitTimeoutMs: 1_000 });
       const hung = renderer.render(ofVersion("vOrder"), "avro");
       await vi.advanceTimersByTimeAsync(1_000 + 5_000);
@@ -429,7 +431,38 @@ describe("artifact renderer — timeout and concurrency", () => {
       // concurrency is 1: the next render only runs because the timed-out one released the slot
       const next = await renderer.render(ofVersion("vBroken"), "avro");
       expect(next.success).toBe(true);
-      expect(seen).toEqual([{ timeoutMs: 1_000 }, { timeoutMs: 1_000 }]);
+      expect(seen).toEqual([1_000, 1_000]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not time a render out for its wait in the compiler's queue: the timeout covers the run, from the moment the run starts", async () => {
+    vi.useFakeTimers();
+    try {
+      // One compiler slot, as the real runs have: the second render waits behind the first one's whole run.
+      const compiler = new Semaphore(1);
+      const finishers: Array<() => void> = [];
+      const emitFiles: EmitFiles = (pkg, source, options, run) =>
+        compiler.run(
+          () =>
+            new Promise<Awaited<ReturnType<EmitFiles>>>((resolve) => {
+              run?.onStart?.();
+              finishers.push(() => void avroOk(pkg, source, options, run).then(resolve));
+            })
+        );
+      const renderer = createArtifactRenderer({ db: fakeDb() as never, emitFiles, concurrency: 2, emitTimeoutMs: 100_000 });
+      const first = renderer.render(ofVersion("vAddress"), "avro");
+      const second = renderer.render(ofVersion("vBroken"), "avro");
+      await vi.advanceTimersByTimeAsync(100_000);
+      // the first run took 100 s of its own; the second has waited all that time and must not be timed out for it
+      finishers.shift()!();
+      expect((await first).success).toBe(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(finishers).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(100_000);
+      finishers.shift()!();
+      expect((await second).success).toBe(true);
     } finally {
       vi.useRealTimers();
     }

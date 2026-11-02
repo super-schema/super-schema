@@ -50,6 +50,11 @@ export interface EmissionResult {
    * (`pickRequestOfRefusal`) instead of showing "N targets invalid".
    */
   refusal?: { code: string; message: string; details?: object; suggestedFix?: string };
+  /**
+   * Set when a target was not emitted because the TypeSpec compiler was busy (`EMITTER_BUSY`): those targets are INVALID in `targets`, but that is
+   * not a verdict on the schema. A caller answers "try again" and records no emission failure.
+   */
+  busy?: true;
   /** Per-target emission outputs keyed by emitter name */
   targets: Record<string, TargetOutput>;
   /** Overall success — true if all targets are valid or have only warnings */

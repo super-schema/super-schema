@@ -38,9 +38,16 @@ vi.mock("@/lib/auth/request-guard", () => ({ requestIp: mocks.requestIp, reserve
 vi.mock("@/lib/auth", () => ({ signIn: mocks.signIn }));
 vi.mock("@/app/(auth)/invite/[token]/actions", () => ({ acceptInvitationAction: mocks.acceptInvitationAction }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+const waits = vi.hoisted(() => ({ waitFor: vi.fn<(ms: number) => Promise<void>>(async () => undefined) }));
+vi.mock("@/lib/auth/login-backoff", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth/login-backoff")>()),
+  loginBackoffMs: () => 1500,
+  waitFor: waits.waitFor,
+}));
 
 import { registerAction } from "@/app/(auth)/register/actions";
 import { INVALID_LINK_MESSAGE, REGISTRATION_CLOSED_MESSAGE } from "@/lib/auth/messages";
+import { UNTRUSTED_IP } from "@/lib/auth/client-ip";
 
 const GOOD = "tangerine-lantern-orbit-42";
 const IP = "203.0.113.7";
@@ -163,6 +170,15 @@ describe("AUTH_REGISTRATION=open", () => {
     expect(result).toEqual({ state: { error: "Too many attempts. Try again in a few minutes." } });
     expect(mocks.hashPassword).not.toHaveBeenCalled();
     expect(mocks.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("without a client address the shared lock is never asked: the sign-up waits (login-backoff) and is made, whatever the shared lock would say", async () => {
+    mocks.requestIp.mockResolvedValue(UNTRUSTED_IP);
+    mocks.reserveAttempt.mockResolvedValue(true);
+    expect(await outcome()).toEqual({ redirectTo: "/login?notice=registered" });
+    expect(mocks.reserveAttempt).not.toHaveBeenCalled();
+    expect(waits.waitFor).toHaveBeenCalledWith(1500);
+    expect(mocks.create).toHaveBeenCalledTimes(1);
   });
 
   describe("an e-mail that already has an account is answered EXACTLY like a new one", () => {

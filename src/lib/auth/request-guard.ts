@@ -16,7 +16,7 @@ import {
   type ThrottleKind,
 } from "@/lib/auth/throttle";
 
-/** The client address bucket of the request being served (`clientIp`: a trusted proxy header, else the constant bucket). */
+/** The client address of the request being served (`clientIp`: a trusted proxy's header, else `UNTRUSTED_IP`, which no kind counts: throttle.ts). */
 export async function requestIp(): Promise<string> {
   return clientIp(await headers());
 }

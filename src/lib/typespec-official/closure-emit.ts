@@ -52,6 +52,7 @@ import {
   runTypeSpecEmitterWithWarnings,
   splitLeadingImports,
   unusableOutputReason,
+  type EmitterRunOptions,
 } from "./emitter.service";
 
 export type { TargetId };
@@ -146,16 +147,16 @@ const compareCodeUnits = (a: string, b: string): number => (a < b ? -1 : a > b ?
  * emitter that skipped one is an error, not a smaller "valid" set). Never throws: a failure anywhere in compiling, generating or
  * running is an `EMISSION_FAILED` error.
  */
-export async function emitClosure(closure: Closure, targetKey: TargetId): Promise<Result<ClosureEmission, ServiceError>> {
+export async function emitClosure(closure: Closure, targetKey: TargetId, run: EmitterRunOptions = {}): Promise<Result<ClosureEmission, ServiceError>> {
   try {
-    return await emitClosureUnguarded(closure, targetKey);
+    return await emitClosureUnguarded(closure, targetKey, run);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return err({ code: "EMISSION_FAILED", message: `Closure emission failed: ${reason.length > 300 ? `${reason.slice(0, 300)}...` : reason}` });
   }
 }
 
-async function emitClosureUnguarded(closure: Closure, targetKey: TargetId): Promise<Result<ClosureEmission, ServiceError>> {
+async function emitClosureUnguarded(closure: Closure, targetKey: TargetId, run: EmitterRunOptions): Promise<Result<ClosureEmission, ServiceError>> {
   const resolved = resolveEmittableTarget(targetKey);
   if ("error" in resolved) return err({ code: "UNSUPPORTED_TARGET", message: resolved.error });
   const target = resolved.target;
@@ -201,9 +202,9 @@ async function emitClosureUnguarded(closure: Closure, targetKey: TargetId): Prom
   if (plan.errors.length > 0) return invalid(plan.errors, plan.warnings);
 
   const packageName = target.packageName ?? "";
-  const run = await runTypeSpecEmitterWithWarnings(packageName, plan.source, plan.options);
-  if (!run.success) {
-    return err({ code: run.error.code, message: emitterFailureMessage(packageName, run.error), details: { ...(run.error.details ?? {}), warnings: plan.warnings } });
+  const emitted = await runTypeSpecEmitterWithWarnings(packageName, plan.source, plan.options, run);
+  if (!emitted.success) {
+    return err({ code: emitted.error.code, message: emitterFailureMessage(packageName, emitted.error), details: { ...(emitted.error.details ?? {}), warnings: plan.warnings } });
   }
 
   const files: EmittedFile[] = [];
@@ -216,7 +217,7 @@ async function emitClosureUnguarded(closure: Closure, targetKey: TargetId): Prom
     for (const id of [attribution.entityId, ...(attribution.alsoFor ?? [])]) served.get(id)?.add(finalPath);
   };
   let dropped: Array<{ path: string; content: string }> = [];
-  for (const raw of run.data.files) {
+  for (const raw of emitted.data.files) {
     const path = raw.relativePath.split(/[\\/]/).join("/");
     const attribution = plan.attribute({ path, content: raw.content });
     if (attribution === null) dropped.push({ path, content: raw.content });

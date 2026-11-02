@@ -12,27 +12,36 @@
  *     is by hash, so nothing here can tell them apart. A password attempt takes its place BEFORE its password is compared (`reserveLoginAttempt`: a
  *     `pending` row that counts as a failure until it is settled), so attempts made at the same moment cannot all pass the check.
  *   - registration (`register`): every ATTEMPT counts against the client address (5 in 15 minutes): a success creates an account, which is
- *     what is being limited. An attempt takes its place BEFORE the work (`reserveCountedAttempt`), like a password attempt does.
- *   - accepting an invitation (`invite_accept`) and using a reset link (`reset_consume`): 5 FAILURES in 15 minutes per client address.
+ *     what is being limited. An attempt takes its place BEFORE the work (`reserveCountedAttempt`), like a password attempt does. Without a trusted
+ *     proxy the address counts for nothing, as for the other kinds: a registration there is slowed, never refused (login-backoff.ts), so no
+ *     anonymous client can refuse the sign-ups of everybody else.
+ *   - accepting an invitation (`invite_accept`) and using a reset link (`reset_consume`): 5 FAILURES in 15 minutes per client address. Without a
+ *     trusted proxy they count for nothing (see the header): a token is 32 random bytes, so there is nothing to guess, and a locked address would turn
+ *     away every valid link too.
  *   - a sign-in through an identity provider that the policy REFUSED (`provider_refused:<reason>`, outcome `refused`: src/lib/auth/provider-callback.ts)
- *     counts, whatever the reason, against the client address (5 in 15 minutes; the shared bucket's ceiling when no proxy is trusted). The reason is the tail
+ *     counts, whatever the reason, against the client address (5 in 15 minutes; not counted without a trusted proxy). The reason is the tail
  *     of the event kind, so a count of the table says what is being refused and the user is told none of it. The e-mail is not limited: a refusal there
  *     means the identity provider vouched for the person already, and the address is not a secret a guess can find.
  *   - an attempt made while locked is recorded as `locked` and does not count, so the lock is not extended by the attempts it refuses.
  *
  * The client address comes from `X-Forwarded-For` ONLY when `AUTH_TRUST_PROXY=1` (a proxy in front sets it; otherwise it is whatever the client
- * writes, and trusting it would let anyone choose their own bucket). Without trust every request is in one constant bucket, `UNTRUSTED_IP`, which
- * cannot tell clients apart: five typos by five people must not lock everybody out, so that bucket's ceiling is 100 failures, and the per-e-mail
- * limit (5) is the real protection. The left-most entry is taken, which is right when the proxy overwrites the header and only then (docs/auth-ops.md).
+ * writes, and trusting it would let anyone choose their own bucket). Without trust every request has one address, `UNTRUSTED_IP`, which is not a
+ * client at all: a bucket of it would let one anonymous caller lock out everybody who shares it (a password sign-in, an invitation, a reset link,
+ * a provider sign-in). So for those kinds the address counts for nothing, and the per-e-mail limit (5) is the protection; registration has no e-mail
+ * limit, so its protection there is the bounded wait of login-backoff.ts. The left-most entry is taken, which is right when the proxy overwrites the
+ * header and only then (docs/auth-ops.md).
  *
  * What the caller shows a locked visitor is the answer for a wrong password (the same words, the same shape): `isThrottled` reports
  * `retryAfterSeconds` for the logs and for a caller that chooses to use it; nobody is told "locked".
  */
 import { createHmac } from "node:crypto";
-import { isIP } from "node:net";
 import { prisma } from "@/lib/db";
 import { resolveAuthSecret } from "@/lib/auth-secret";
 import { normalizeEmail } from "@/lib/auth/password-policy";
+import { UNTRUSTED_IP, clientIp } from "@/lib/auth/client-ip";
+
+// The client address (`clientIp`) and its placeholder (`UNTRUSTED_IP`) live in client-ip.ts, a pure module the REST guard uses too.
+export { UNTRUSTED_IP, clientIp };
 
 /** The kinds that have a rule of their own (`isThrottled` is asked about one of these). */
 export type ThrottleKind = "login" | "register" | "invite_accept" | "reset_consume" | "provider_refused";
@@ -48,16 +57,15 @@ export type AuthEventOutcome = "success" | "failure" | "attempt" | "refused" | "
 
 export const THROTTLE_WINDOW_MS = 15 * 60 * 1000;
 export const THROTTLE_MAX_FAILURES = 5;
-/** The bucket of every request when no proxy is trusted (see the header). */
-export const UNTRUSTED_IP = "untrusted";
-/** The ceiling of the shared bucket: 20 times a single client's, so it stops a flood and not a bad afternoon. */
-export const UNTRUSTED_IP_MAX_FAILURES = THROTTLE_MAX_FAILURES * 20;
 /** Rows older than this are deleted by the next inserts. */
 export const PRUNE_AFTER_MS = 24 * 60 * 60 * 1000;
 /** At most this many old rows are deleted by one insert (a backlog is worked off over the following ones, no insert becomes a big delete). */
 export const PRUNE_BATCH = 200;
 
-/** Which outcomes of each kind count toward its limit, and whether a success of it resets an e-mail's count. */
+/**
+ * Which outcomes of each kind count toward its limit and whether a success of it resets an e-mail's count. The unknown address (no trusted proxy) is
+ * never a bucket: it is not counted for any kind.
+ */
 const COUNTED: Record<ThrottleKind, { outcomes: AuthEventOutcome[]; successResets: boolean; kindPrefix?: string }> = {
   // an attempt still being decided counts like a failure: it has not been shown to be anything else
   login: { outcomes: ["failure", "pending"], successResets: true },
@@ -79,26 +87,6 @@ function keyedDigest(label: "email" | "ip", value: string): string {
 export const hashEmail = (email: string): string => keyedDigest("email", normalizeEmail(email));
 /** The stored form of a client address (or of `UNTRUSTED_IP`): HMAC-SHA-256 (hex), keyed with the auth secret. */
 export const hashIp = (ip: string): string => keyedDigest("ip", ip);
-
-/** The loopback addresses: 127.0.0.0/8, ::1 (any spelling) and their IPv4-mapped form. */
-function isLoopback(address: string): boolean {
-  const mapped = address.replace(/^::ffff:/i, "");
-  if (isIP(mapped) === 4) return mapped.startsWith("127.");
-  return /^(0{0,4}:){1,7}0{0,3}1$/.test(address) || address === "::1";
-}
-
-/**
- * The client address of a request: the left-most entry of `X-Forwarded-For` when `AUTH_TRUST_PROXY` is exactly "1" and the entry is an IP
- * address, else `UNTRUSTED_IP`. A header that is missing, empty or garbage does not make a bucket of its own, and neither does a LOOPBACK
- * address: `next start` writes the socket's own address into the header when a request carries none, so with trust on and no proxy in front every
- * client arrives as 127.0.0.1 / ::1, which tells clients apart no better than no header at all (the shared bucket, with the shared ceiling).
- */
-export function clientIp(headers: { get(name: string): string | null }, env: Readonly<Record<string, string | undefined>> = process.env): string {
-  if (env.AUTH_TRUST_PROXY !== "1") return UNTRUSTED_IP;
-  const first = (headers.get("x-forwarded-for") ?? "").split(",")[0]?.trim() ?? "";
-  if (first === "" || isIP(first) === 0 || isLoopback(first)) return UNTRUSTED_IP;
-  return first.toLowerCase();
-}
 
 /** Inserts one event (and prunes old rows in the same transaction) and returns its id. */
 async function insertEvent(kind: AuthEventKind, event: { email?: string; ip?: string; outcome: AuthEventOutcome }, now: Date): Promise<string> {
@@ -147,9 +135,8 @@ async function lockWaits(input: { email?: string; ip?: string }, kind: ThrottleK
 
   const dimensions: Dimension[] = [];
   if (input.email !== undefined) dimensions.push({ field: "emailHash", hash: hashEmail(input.email), limit: THROTTLE_MAX_FAILURES });
-  if (input.ip !== undefined) {
-    dimensions.push({ field: "ipHash", hash: hashIp(input.ip), limit: input.ip === UNTRUSTED_IP ? UNTRUSTED_IP_MAX_FAILURES : THROTTLE_MAX_FAILURES });
-  }
+  // A client's own address counts for every kind. The unknown address (no trusted proxy) is not a bucket: one caller must not be able to lock the rest.
+  if (input.ip !== undefined && input.ip !== UNTRUSTED_IP) dimensions.push({ field: "ipHash", hash: hashIp(input.ip), limit: THROTTLE_MAX_FAILURES });
 
   const waits = await Promise.all(
     dimensions.map(async (dimension): Promise<number | null> => {

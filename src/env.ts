@@ -24,7 +24,7 @@ export const env = createEnv({
       (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
       z.enum(REGISTRATION_MODES).default(DEFAULT_REGISTRATION_MODE),
     ),
-    // `1`: take the client address of sign-in throttling from X-Forwarded-For (a proxy in front sets it). Anything else: one shared bucket. src/lib/auth/throttle.ts.
+    // `1`: take the client address of sign-in throttling from X-Forwarded-For (a proxy in front sets it). Anything else: no client address (the limits that count by address do not count it). src/lib/auth/client-ip.ts.
     AUTH_TRUST_PROXY: z.string().optional(),
     // The identity providers offered next to local accounts, a comma list of keys of the table in src/lib/auth/providers.ts (empty = none: local accounts only).
     // Each provider's own settings are AUTH_PROVIDER_<KEY>_<CLIENT_ID|CLIENT_SECRET|ISSUER|LABEL|ALLOWED_DOMAINS|LINK_EXISTING_USERS>: their names come from that table

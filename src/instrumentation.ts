@@ -17,4 +17,8 @@ export async function register(): Promise<void> {
   // The same refusal for the sign-in providers (an administrator's AUTH_PROVIDERS): production only, nothing for a sound configuration or none at all.
   const { refuseToStartWithBadProviderConfiguration } = await import("@/lib/auth/providers");
   refuseToStartWithBadProviderConfiguration();
+  // Not a refusal: a production server without a trusted proxy runs, and says once that its address-based limits have no address to count.
+  const { trustProxyStartupWarning } = await import("@/lib/auth/client-ip");
+  const warning = trustProxyStartupWarning();
+  if (warning) console.warn(warning);
 }

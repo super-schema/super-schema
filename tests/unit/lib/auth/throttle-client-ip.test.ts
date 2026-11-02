@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 
 import { UNTRUSTED_IP, clientIp, hashEmail, hashIp } from "@/lib/auth/throttle";
+import { trustProxyStartupWarning } from "@/lib/auth/client-ip";
 
 const headers = (values: Record<string, string>) => new Headers(values);
 
@@ -131,5 +132,22 @@ describe("what is stored of an e-mail address and of a client address", () => {
     delete process.env.NEXTAUTH_SECRET;
     expect(() => hashEmail("alice@example.com")).toThrow(/secret/i);
     expect(() => hashIp("203.0.113.7")).toThrow(/secret/i);
+  });
+});
+
+describe("trustProxyStartupWarning (what a production start says about the missing client address)", () => {
+  it("is a warning for production without AUTH_TRUST_PROXY=1, and names the setting", () => {
+    for (const env of [{ NODE_ENV: "production" }, { NODE_ENV: "production", AUTH_TRUST_PROXY: "0" }, { NODE_ENV: "production", AUTH_TRUST_PROXY: "" }]) {
+      const warning = trustProxyStartupWarning(env);
+      expect(warning, JSON.stringify(env)).toMatch(/AUTH_TRUST_PROXY is not 1 in production/);
+      expect(warning).toMatch(/per e-mail/);
+    }
+  });
+
+  it("says nothing when the proxy is trusted, and outside production (development and test start quietly)", () => {
+    expect(trustProxyStartupWarning({ NODE_ENV: "production", AUTH_TRUST_PROXY: "1" })).toBeNull();
+    expect(trustProxyStartupWarning({ NODE_ENV: "development" })).toBeNull();
+    expect(trustProxyStartupWarning({ NODE_ENV: "test" })).toBeNull();
+    expect(trustProxyStartupWarning({})).toBeNull();
   });
 });

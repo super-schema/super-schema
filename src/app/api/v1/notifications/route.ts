@@ -60,6 +60,9 @@ export const GET = withApiAuth(
     unauthenticated: (request) => (new URL(request.url).searchParams.get("countOnly") === "true" ? apiSuccess({ unreadCount: 0 }) : null),
     // Looking up who is calling failed (the database): the poll answers an empty mailbox rather than an error.
     authFailure: () => apiSuccess({ unreadCount: 0, notifications: [], total: 0 }),
+    // The REST API's limits: a request that does not authenticate counts against its address (the anonymous count answer above is not counted: it is
+    // a constant 0, never a refusal), the signed-in bell against its user.
+    rateLimit: true,
   }
 );
 
@@ -95,4 +98,4 @@ export const POST = withApiAuth("notification.own", async (request, api) => {
     console.error("POST /api/v1/notifications error:", e);
     return apiServerError();
   }
-});
+}, { rateLimit: true });

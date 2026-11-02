@@ -26,7 +26,7 @@ vi.mock("@/app/api/v1/middleware", () => ({
 }));
 vi.mock("@/lib/auth", () => ({ auth: async () => null }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: async () => "tenant-1" }));
-vi.mock("@/app/api/v1/rate-limit", () => ({ checkRateLimit: () => null }));
+vi.mock("@/app/api/v1/rate-limit", () => ({ checkPrincipalRateLimit: () => null, checkFailedAuthRateLimit: () => null }));
 vi.mock("@/lib/db", () => ({
   prisma: {
     entity: { findMany: h.findMany, findUnique: async () => ({ metadata: {} }) },

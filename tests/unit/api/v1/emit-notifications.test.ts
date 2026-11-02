@@ -38,7 +38,7 @@ vi.mock("@/lib/webhook-transport", async (importOriginal) => ({
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/active-tenant", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/active-tenant")>()), getActiveTenantId: h.activeTenant }));
-vi.mock("@/app/api/v1/rate-limit", () => ({ checkRateLimit: () => null }));
+vi.mock("@/app/api/v1/rate-limit", () => ({ checkPrincipalRateLimit: () => null, checkFailedAuthRateLimit: () => null }));
 vi.mock("next/server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/server")>()),
   // Inside a request `after` keeps the task for once the answer is sent; the test runs it then.

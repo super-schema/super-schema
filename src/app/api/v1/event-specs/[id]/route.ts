@@ -16,9 +16,8 @@
  * (the original is logged server-side); only already-sanitised draft diagnostics are returned, field-whitelisted.
  */
 import type { NextResponse } from "next/server";
-import { checkRateLimit } from "@/app/api/v1/rate-limit";
 import { isUsableId, optionalParam, queryProblem } from "@/app/api/v1/request";
-import { apiError, apiServerError } from "@/app/api/v1/error-handler";
+import { apiBusy, apiCompilerSharesInUse, apiError, apiServerError } from "@/app/api/v1/error-handler";
 import { withApiAuth } from "@/lib/access/api";
 import { ctxCan } from "@/lib/access";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
@@ -66,10 +65,15 @@ const versionNotFound = () =>
     suggestedFix: "Omit ?version for the latest published version, or pass ?version=draft.",
   });
 
-/** A service failure as a fixed-text response: 404 / 400 keep their meaning, everything else is a logged, generic 500. */
+/**
+ * A service failure as a fixed-text response: 404 / 400 keep their meaning, a caller over its compiler share is 429, a busy compiler is 503 with
+ * `Retry-After`, everything else is a logged, generic 500.
+ */
 function serviceFailure(error: ServiceError, step: string, notFound: () => NextResponse): NextResponse {
   if (error.code === "NOT_FOUND") return notFound();
   if (error.code === "VALIDATION_ERROR") return apiError({ code: "VALIDATION_ERROR", message: "The request could not be processed" });
+  if (error.code === "RATE_LIMITED") return apiCompilerSharesInUse();
+  if (error.code === "EMITTER_BUSY") return apiBusy();
   console.error(`GET /api/v1/event-specs/:id ${step} failed:`, error);
   return apiServerError();
 }
@@ -118,8 +122,9 @@ export const GET = withApiAuth<{ id: string }>("event.read", async (request, api
       version = formatVersionLabel(owned.latestVersion);
     }
 
+    // The draft's renders are the caller's: a client that goes away cancels the compiler runs they still have (`request.signal`).
     const emission: Result<EventEmission> =
-      version === DRAFT ? await emitEventDraft(id, productId, ctx) : await emitEventStoredVersion(id, productId, version, ctx);
+      version === DRAFT ? await emitEventDraft(id, productId, ctx, { signal: request.signal }) : await emitEventStoredVersion(id, productId, version, ctx);
     if (!emission.success) return serviceFailure(emission.error, "emission", version === DRAFT ? specNotFound : versionNotFound);
     const { document, yaml, json, diagnostics } = emission.data;
     if (!document || !yaml || !json) {
@@ -144,4 +149,4 @@ export const GET = withApiAuth<{ id: string }>("event.read", async (request, api
     console.error("GET /api/v1/event-specs/:id error:", e);
     return apiServerError();
   }
-}, { before: (request) => checkRateLimit(request) });
+}, { rateLimit: true });

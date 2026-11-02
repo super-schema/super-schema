@@ -19,11 +19,12 @@ import {
 import type { EventVersionSummary } from "@/lib/events/types";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
+import { admitCompilerRuns, compilerBusyError, shareInUseError } from "@/lib/emission/emission-admission";
 import { getSharedArtifactRenderer } from "./artifact-renderer";
 import { auditedWrite } from "./audited";
 import { emitResolved, type EmitDeps } from "./event-emit.service";
 import { gatherPublishFacts, type PublishFacts } from "./event-publish-facts";
-import { loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
+import { eventRenderShare, loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
 import { isConcurrentWriteFailure } from "./publish-concurrency";
 import { replaceReferences } from "./schema-references";
 import { assertOwnedEvent, guardRead } from "./service-guards";
@@ -84,14 +85,25 @@ async function prepare(db: Db, eventId: string, requested: BumpKind | undefined,
   const planned = planVersionedPublish(base, requested);
   const label = planned.success ? planned.data.label : provisionalLabel(analyzeVersionedPublish(base));
 
-  const draft = await resolveEventSnapshot(snapshot.data, deps.renderer ?? getSharedArtifactRenderer(ctx.prisma), label);
+  // The renders and the emission run under the caller's compiler share, one unit per render (src/lib/emission/emission-admission.ts): refused at once otherwise.
+  const share = admitCompilerRuns(ctx.userId, eventRenderShare(snapshot.data));
+  if (!share) return err(shareInUseError());
+  let draft: Awaited<ReturnType<typeof resolveEventSnapshot>>;
   let output: EmitOutput | null = null;
-  let diagnostics = normalizeDiagnostics(draft.diagnostics);
-  if (draft.resolved) {
-    const out = await emitResolved(draft.resolved, snapshot.data.event.specType, deps);
-    if (!out.success) return emitFailure(eventId, out.error);
-    output = out.data;
-    diagnostics = normalizeDiagnostics([...draft.diagnostics, ...out.data.diagnostics]);
+  let diagnostics: ReturnType<typeof normalizeDiagnostics>;
+  try {
+    draft = await resolveEventSnapshot(snapshot.data, deps.renderer ?? getSharedArtifactRenderer(ctx.prisma), label);
+    // A busy compiler is a retry, not a blocker of the publish: the plan would be built from missing renders.
+    if (draft.busy) return err(compilerBusyError());
+    diagnostics = normalizeDiagnostics(draft.diagnostics);
+    if (draft.resolved) {
+      const out = await emitResolved(draft.resolved, snapshot.data.event.specType, deps);
+      if (!out.success) return emitFailure(eventId, out.error);
+      output = out.data;
+      diagnostics = normalizeDiagnostics([...draft.diagnostics, ...out.data.diagnostics]);
+    }
+  } finally {
+    share();
   }
   const emissionBlockers = diagnostics.filter((d) => d.severity === "error").map(diagnosticBlocker);
   return ok({

@@ -7,6 +7,7 @@
 
 import { NextResponse } from "next/server";
 import type { ServiceError } from "@/types/result";
+import { COMPILER_BUSY_MESSAGE, SHARE_IN_USE_MESSAGE } from "@/lib/emission/emission-admission";
 
 // ---------------------------------------------------------------------------
 // Standardized API response helpers
@@ -59,9 +60,41 @@ function mapErrorCodeToStatus(code: string): number {
     case "INHERITANCE_CYCLE":
     case "CLOSURE_TOO_LARGE":
       return 422;
+    // The caller is over its share of the emission queue (src/lib/emission/emission-admission.ts): nothing was built.
+    case "RATE_LIMITED":
+      return 429;
+    // The compiler is busy (`apiBusy`): a retry is the answer, not a verdict on the schema.
+    case "EMITTER_BUSY":
+      return 503;
     default:
       return 500;
   }
+}
+
+/** How long a caller is told to wait before it retries a busy compiler, in seconds. */
+export const BUSY_RETRY_AFTER_SECONDS = 10;
+
+/**
+ * The 503 of a request whose compiler runs were refused because the queue is full (`EMITTER_BUSY`), with `Retry-After`. Never the 200 that
+ * says `valid: false`: a CI gate reading that would fail a schema that is fine, because the server was busy.
+ */
+export function apiBusy(): NextResponse {
+  const response = apiError({
+    code: "EMITTER_BUSY",
+    message: COMPILER_BUSY_MESSAGE,
+    suggestedFix: `Retry the request after ${BUSY_RETRY_AFTER_SECONDS} seconds.`,
+  });
+  response.headers.set("Retry-After", String(BUSY_RETRY_AFTER_SECONDS));
+  return response;
+}
+
+/** The 429 of a caller whose share of the compiler is in use (`admitCompilerRuns` refused it): the API's envelope, nothing built. */
+export function apiCompilerSharesInUse(): NextResponse {
+  return apiError({
+    code: "RATE_LIMITED",
+    message: SHARE_IN_USE_MESSAGE,
+    suggestedFix: "Wait for the running generation to finish, then send the request again.",
+  });
 }
 
 /**

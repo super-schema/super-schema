@@ -5,8 +5,8 @@
  * Who calls (helpers/api.ts): the admin's saved session (the seeded GLOBAL administrator: a session carries the user's real roles), the run's API key
  * (`Authorization: Bearer`; a service principal that acts as an ADMIN in the default tenant, `API_KEY_ROLE` / `API_KEY_TENANT_ID` blank; the release
  * runner makes the key up per run), users the spec makes itself (a user with no role, a viewer), and nobody. Every test sends a client address of its own
- * (the run trusts X-Forwarded-For: AUTH_TRUST_PROXY=1), so the rate limit (100 requests a minute per address, on emit / validate / event-specs) never couples
- * two tests.
+ * (the run trusts X-Forwarded-For: AUTH_TRUST_PROXY=1), so the allowance of requests that do not authenticate (20 a minute per address) never couples
+ * two tests; an authenticated caller's allowance (per principal) is lifted for the run.
  *
  *   health         unauthenticated, 200 for healthy and degraded, no internals
  *   docs           /api/v1/docs is a valid OpenAPI 3 document, names every route group, and every documented operation exists
@@ -704,16 +704,16 @@ test.describe("emit and validate", () => {
 });
 
 test.describe("rate limit", () => {
-  test("the 101st request of one client address within a minute is a 429 with Retry-After, in the API's own envelope, whatever route it goes to; another address is not limited", { tag: ["@regression"] }, async ({ api }) => {
-    // Unauthenticated requests count too: the limit comes before the credential check. The unknown id is a cheap 404/401 for the first 100.
-    for (let i = 0; i < 100; i += 1) {
+  test("a request that does not authenticate is limited per client address: the 21st of one address within a minute is a 429 with Retry-After, in the API's own envelope, whatever route it goes to; a valid key from that address is not refused, and another address is not limited", { tag: ["@regression"] }, async ({ api }) => {
+    // A request without a valid credential counts against its client address, in an allowance of its own (20 a minute). The unknown id is a cheap 401 for the first 20.
+    for (let i = 0; i < 20; i += 1) {
       const response = await api.anon.get(`${API}/event-specs/some-id`);
       expect(response.status(), `request ${i + 1}`).toBe(401);
     }
     const limited = await api.anon.get(`${API}/event-specs/some-id`);
     expect(limited.status()).toBe(429);
     expect(limited.headers()["content-type"]).toMatch(/application\/json/);
-    expect(limited.headers()["x-ratelimit-limit"]).toBe("100");
+    expect(limited.headers()["x-ratelimit-limit"]).toBe("20");
     expect(limited.headers()["x-ratelimit-remaining"]).toBe("0");
     expect(Number(limited.headers()["retry-after"])).toBeGreaterThan(0);
     expect(Number(limited.headers()["retry-after"])).toBeLessThanOrEqual(60);
@@ -722,14 +722,16 @@ test.describe("rate limit", () => {
     const error = await expectApiError(limited, 429, "RATE_LIMITED");
     expect(error.details).toEqual({ retryAfter: Number(limited.headers()["retry-after"]) });
     expect(error.message).toMatch(/Rate limit exceeded\. Try again in \d+ seconds\./);
-    // The limit is per address across the routes that have one.
+    // The same address is limited on the routes that have a limit ...
     expect((await api.anon.post(`${API}/schemas/some-id/emit`)).status()).toBe(429);
     expect((await api.anon.post(`${API}/schemas/some-id/validate`)).status()).toBe(429);
-    // The routes without a limit are not affected.
+    expect((await api.anon.get(`${API}/schemas`)).status()).toBe(429);
+    // ... and the routes without one are not affected.
     expect((await api.anon.get(`${API}/health`)).status()).toBe(200);
-    expect((await api.anon.get(`${API}/schemas`)).status()).toBe(401);
+    // A valid key from the same address authenticates, so the failed-authentication allowance does not refuse it: it counts against the key's principal.
+    expect((await api.key.get(`${API}/schemas`)).status()).toBe(200);
     // The run trusts X-Forwarded-For (AUTH_TRUST_PROXY=1: a proxy sets it), so another address is another client. Without that setting the header is
-    // ignored and every caller is one client, so a made-up header buys no allowance (unit-tested: tests/unit/api/v1/rate-limit.test.ts).
+    // ignored and every failed request shares one allowance (unit-tested: tests/unit/api/v1/rate-limit.test.ts).
     const another = await api.custom({ "x-forwarded-for": `10.${(Number(api.ip.split(".")[1]) + 1) % 256}.1.1` });
     expect((await another.get(`${API}/event-specs/some-id`)).status()).toBe(401);
   });

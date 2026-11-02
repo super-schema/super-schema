@@ -26,7 +26,7 @@ export const PUT = withApiAuth<{ id: string }>("platform.admin", async (request,
     console.error("PUT /api/v1/webhooks/:id error:", e);
     return apiServerError();
   }
-});
+}, { rateLimit: true });
 
 export const DELETE = withApiAuth<{ id: string }>("platform.admin", async (_request, api, { params }) => {
   try {
@@ -41,4 +41,4 @@ export const DELETE = withApiAuth<{ id: string }>("platform.admin", async (_requ
     console.error("DELETE /api/v1/webhooks/:id error:", e);
     return apiServerError();
   }
-});
+}, { rateLimit: true });

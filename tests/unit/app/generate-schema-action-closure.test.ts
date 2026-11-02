@@ -402,6 +402,15 @@ describe("generateSchemaAction: result and storage", () => {
     expect(p.auditLog.create).not.toHaveBeenCalled();
   });
 
+  it("a generation the compiler refused as busy answers EMITTER_BUSY, stores nothing and records no emission failure", async () => {
+    h.emitClosure.mockResolvedValue({ success: false, error: { code: "EMITTER_BUSY", message: "The TypeSpec compiler is busy." } });
+    const result = await actions.generateSchemaAction("a", "json-schema");
+    expect(result).toMatchObject({ code: "EMITTER_BUSY" });
+    expect(p.auditLog.create).not.toHaveBeenCalled();
+    expect(p.entity.update).not.toHaveBeenCalled();
+    expect(p.field.update).not.toHaveBeenCalled();
+  });
+
   it("returns the emitter's warnings", async () => {
     h.emitClosure.mockResolvedValue({ success: true, data: { files: FILES, warnings: ["Order and Customer share a namespace"], entityFiles: {} } });
     const result = await actions.generateSchemaAction("a", "json-schema");
@@ -411,7 +420,7 @@ describe("generateSchemaAction: result and storage", () => {
   it("passes the active tenant to the closure and emits for the requested target", async () => {
     await actions.generateSchemaAction("a", "avro");
     expect(p.entity.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-1" } }));
-    expect(h.emitClosure).toHaveBeenCalledWith(expect.anything(), "avro");
+    expect(h.emitClosure).toHaveBeenCalledWith(expect.anything(), "avro", expect.anything());
   });
 
   it("answers an emission failure as the error string and stores nothing", async () => {
