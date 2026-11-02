@@ -201,6 +201,9 @@ docker compose -f .docker/docker-compose.yml up --build
 
 - **Both secrets are required.** Compose stops with `set POSTGRES_PASSWORD` or `set NEXTAUTH_SECRET` when one is not exported. The file holds no
   database password.
+- **Stored secrets.** Export `SECRETS_ENCRYPTION_KEY` (`openssl rand -base64 32`) before the first Git credential or webhook secret is stored.
+  Left unset, the key is derived from `NEXTAUTH_SECRET`, and rotating that secret makes the stored secrets unreadable (auth-ops.md, "Stored
+  secrets").
 - **The order:** `db` is healthy, then `migrate` applies the committed migrations and the built-in message properties and exits `0`, then `app`
   starts. A failed migration, or a built-in message property that cannot be installed, stops the stack before the app serves anything.
 - **Published on this machine only.** The app is on <http://127.0.0.1:3000> and the database on `127.0.0.1:5432` (psql, `npm run db:studio`);
