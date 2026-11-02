@@ -443,7 +443,7 @@ describe("e2e.yml: the tiers", () => {
     for (const id of Object.keys(workflow.jobs)) {
       for (const { leg, argv } of releaseInvocations(id)) {
         // The plan is about the arguments, not about the Node the test happens to run on (scripts/e2e-node.mjs refuses some; CI's own is 22).
-        const plan = planRun(argv, {}, { root: "/repo", tmpdir: "/tmp", bins, nodeVersions: { node: "22.12.0" } });
+        const plan = planRun(argv, {}, { root: "/repo", tmpdir: "/tmp", bins, nodeVersions: { node: "22.22.2" } });
         expect(plan.phasesArgv.length, `${id} ${leg}`).toBeGreaterThan(0);
       }
     }
