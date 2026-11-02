@@ -34,6 +34,11 @@ interface RetentionPolicyEditorProps {
   entityName: string;
   fields: { name: string; type: string }[];
   currentPolicy: RetentionPolicy | null;
+  /**
+   * True while a save of this entity started by the caller is still running. The form tracks only the saves it started itself, so a caller that
+   * keeps saves across selections (the retention page does, per entity) passes this: a form shown again mid-save then keeps Save disabled.
+   */
+  saving?: boolean;
   onSave: (entityId: string, policy: RetentionPolicy) => Promise<void>;
 }
 
@@ -65,11 +70,21 @@ const PERIOD_UNITS: { value: PeriodUnit; label: string }[] = [
 // Component
 // ---------------------------------------------------------------------------
 
-export function RetentionPolicyEditor({
+/**
+ * The retention policy of ONE entity, edited in a form seeded from its `currentPolicy` when the form mounts. The form is keyed by the entity: another
+ * entity gets a fresh form seeded from its own policy, so what was typed for one entity is never kept for another, and Save writes the form for
+ * the entity it was loaded for (`entityId` does not change under a mounted form).
+ */
+export function RetentionPolicyEditor(props: RetentionPolicyEditorProps) {
+  return <RetentionPolicyForm key={props.entityId} {...props} />;
+}
+
+function RetentionPolicyForm({
   entityId,
   entityName,
   fields,
   currentPolicy,
+  saving = false,
   onSave,
 }: RetentionPolicyEditorProps) {
   const [strategy, setStrategy] = useState<RetentionStrategy>(currentPolicy?.strategy ?? "age-based");
@@ -307,8 +322,8 @@ export function RetentionPolicyEditor({
         <div className="text-caption text-muted-foreground">
           Preview: <span data-testid="retention-preview" className="text-foreground font-medium">{preview}</span>
         </div>
-        <Button onClick={handleSave} disabled={isSaving} size="sm" className="gap-1.5" data-testid="retention-save">
-          {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+        <Button onClick={handleSave} disabled={isSaving || saving} size="sm" className="gap-1.5" data-testid="retention-save">
+          {isSaving || saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
           Save Policy
         </Button>
       </div>

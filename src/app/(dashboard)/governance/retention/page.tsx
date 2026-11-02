@@ -48,6 +48,10 @@ function RetentionPoliciesContent() {
   const [entities, setEntities] = useState<EntitySummary[]>([]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(focusEntityId);
   const [isLoading, setIsLoading] = useState(true);
+  // The policy each entity's save is writing, from the moment Save is pressed until the server answers. The list holds the policy an entity had
+  // before that save, so selecting the entity again while the save runs shows this one instead, and its Save waits for the answer: the answer
+  // then cannot bring the old policy back into the form.
+  const [pendingPolicies, setPendingPolicies] = useState<Map<string, RetentionPolicy>>(() => new Map());
 
   const loadEntities = useCallback(async () => {
     setIsLoading(true);
@@ -94,29 +98,42 @@ function RetentionPoliciesContent() {
     loadEntities();
   }, [loadEntities]);
 
+  // The entity the URL names is selected when the URL names one (on mount, or when the link changes). Not on every change of the list: a save
+  // changes the list, and that would take the selection back from the entity the user chose.
   useEffect(() => {
-    if (focusEntityId && entities.length > 0) {
-      setSelectedEntityId(focusEntityId);
-    }
-  }, [focusEntityId, entities]);
+    if (focusEntityId) setSelectedEntityId(focusEntityId);
+  }, [focusEntityId]);
 
+  // The toasts name the entity: the selection may have moved on by the time the answer comes.
   const handleSavePolicy = useCallback(
     async (entityId: string, policy: RetentionPolicy) => {
-      const result = await updateRetentionPolicyAction(entityId, policy as unknown as Record<string, unknown>);
+      const name = entities.find((e) => e.id === entityId)?.name ?? "this entity";
+      setPendingPolicies((prev) => new Map(prev).set(entityId, policy));
+      try {
+        const result = await updateRetentionPolicyAction(entityId, policy as unknown as Record<string, unknown>);
 
-      if (result.error) {
-        toast.error(result.error);
-        return;
+        if (result.error) {
+          toast.error(`Retention policy for ${name} was not saved: ${result.error}`);
+          return;
+        }
+
+        toast.success(`Retention policy saved for ${name}`);
+        setEntities((prev) =>
+          prev.map((e) =>
+            e.id === entityId ? { ...e, retentionPolicy: policy } : e
+          )
+        );
+      } finally {
+        // Cleared with the list update above (one render), and only if this save is still the one pending for the entity.
+        setPendingPolicies((prev) => {
+          if (prev.get(entityId) !== policy) return prev;
+          const next = new Map(prev);
+          next.delete(entityId);
+          return next;
+        });
       }
-
-      toast.success("Retention policy saved");
-      setEntities((prev) =>
-        prev.map((e) =>
-          e.id === entityId ? { ...e, retentionPolicy: policy } : e
-        )
-      );
     },
-    []
+    [entities]
   );
 
   const selectedEntity = entities.find((e) => e.id === selectedEntityId);
@@ -200,7 +217,8 @@ function RetentionPoliciesContent() {
               entityId={selectedEntity.id}
               entityName={selectedEntity.name}
               fields={selectedEntity.fields}
-              currentPolicy={selectedEntity.retentionPolicy}
+              currentPolicy={pendingPolicies.get(selectedEntity.id) ?? selectedEntity.retentionPolicy}
+              saving={pendingPolicies.has(selectedEntity.id)}
               onSave={handleSavePolicy}
             />
           ) : (

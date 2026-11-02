@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { mockPrisma } = vi.hoisted(() => ({
-  mockPrisma: { entity: { findUnique: vi.fn(), update: vi.fn() } },
+  mockPrisma: { entity: { findUnique: vi.fn(), update: vi.fn() }, auditLog: { create: vi.fn() } },
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));

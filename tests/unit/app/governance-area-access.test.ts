@@ -31,6 +31,7 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     governanceRequest: { findUnique: h.findRequest },
     entity: { findUnique: h.findEntity, findMany: h.findManyEntities, update: h.updateEntity },
+    auditLog: { create: vi.fn() },
   },
 }));
 vi.mock("@/services/governance.service", () => ({ getAllRequests: h.getAllRequests, approveRequest: h.approveRequest, rejectRequest: h.rejectRequest }));

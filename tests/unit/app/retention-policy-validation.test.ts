@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // {period: 0.5} used to be stored, and the stored template then read as "No template" wherever the schema is applied.
 
 const { mockPrisma } = vi.hoisted(() => ({
-  mockPrisma: { entity: { findUnique: vi.fn(), update: vi.fn() } },
+  mockPrisma: { entity: { findUnique: vi.fn(), update: vi.fn() }, auditLog: { create: vi.fn() } },
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));

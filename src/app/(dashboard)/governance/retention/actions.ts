@@ -6,10 +6,11 @@ import type { Prisma } from "@/generated/prisma/client";
 import { readableScopes } from "@/lib/access";
 import { omitSchemaVersions } from "@/lib/access/schema-version-redaction";
 import { guardActiveTenant, guardSubject, unexpectedFailure } from "@/lib/action-context";
+import { withAudit } from "@/lib/audit";
 import { isPlainObject } from "@/lib/editable-fields";
 import { RetentionPolicySchema } from "@/types/schemas/retention-policy.schema";
 import { domainLabel } from "@/lib/entity-placement";
-import { metadataChangesDraft, withSourceStale } from "@/lib/entity-versioning/draft-state";
+import { isSourceStale, metadataChangesDraft, withSourceStale } from "@/lib/entity-versioning/draft-state";
 
 /**
  * The entities of the ACTIVE tenant that the caller may read (`entity.read`: the retention page is a read of entities): they must hold a role in the
@@ -55,7 +56,7 @@ export async function getEntitiesForRetentionAction() {
  * Edit an entity's retention policy: `retention.write` (a steward's act) over the entity, judged BEFORE the entity is read. The entity must lie in
  * the ACTIVE tenant and the caller's roles must cover it; a missing entity, one of another tenant and one nothing of theirs covers all answer the
  * same `Entity not found`, too low a role a generic refusal. The payload is checked after, so nobody learns what a valid policy looks like
- * without a role over the entity.
+ * without a role over the entity. The edit is audited as the entity's other metadata edits are (see `saveRetentionPolicy`).
  */
 export async function updateRetentionPolicyAction(
   entityId: string,
@@ -64,14 +65,26 @@ export async function updateRetentionPolicyAction(
   try {
     const access = await guardSubject("retention.write", { kind: "entity", id: entityId }, { label: "Entity" });
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
-    return await saveRetentionPolicy(entityId, retentionPolicy);
+    return await saveRetentionPolicy(entityId, retentionPolicy, {
+      userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
+    });
   } catch (e: unknown) {
     return { ...unexpectedFailure("updateRetentionPolicyAction", e) };
   }
 }
 
-/** The write behind `updateRetentionPolicyAction`, after the guard. */
-async function saveRetentionPolicy(entityId: string, retentionPolicy: Record<string, unknown>) {
+/**
+ * The write behind `updateRetentionPolicyAction`, after the guard. It is an UPDATE of the entity recorded with `withAudit`, by the acting user
+ * (`actor`) in the acting tenant, as `updateEntityMetadataAction` records the other metadata edits. Its states are the retention policy and the two
+ * draft flags the write can set (the `sourceStale` marker of the metadata, `hasUnpublishedChanges` of the row), before and after. The rest of the
+ * metadata, the stored generated schemas among it, stays out of the log (KD-046).
+ */
+async function saveRetentionPolicy(
+  entityId: string,
+  retentionPolicy: Record<string, unknown>,
+  actor: { userId: string; tenantId: string }
+) {
   // `retentionPolicy` is stored as metadata: only a plain object is a policy (a Date or Map would still mark the draft changed).
   if (!isPlainObject(retentionPolicy)) return { error: "The retention policy must be an object", code: "VALIDATION_ERROR" };
   // The policy is validated HERE, not only in the editor: `{ period: 0.5 }` used to be stored, and a stored policy that the schema refuses
@@ -84,7 +97,7 @@ async function saveRetentionPolicy(entityId: string, retentionPolicy: Record<str
     // The guard above proved the entity exists, lies in the active tenant and is the caller's to edit.
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { metadata: true },
+      select: { metadata: true, hasUnpublishedChanges: true },
     });
     if (!entity) return { error: "Entity not found", code: "NOT_FOUND" as const };
 
@@ -94,12 +107,33 @@ async function saveRetentionPolicy(entityId: string, retentionPolicy: Record<str
     // policy leaves the flags alone, but never lets an already-stale source go fresh.
     const changesDraft = metadataChangesDraft(existingMeta, mergedMeta);
     const updatedMeta = withSourceStale(existingMeta, mergedMeta, changesDraft);
+    // The states: the policy, and the flags this write may set (the same values the write stores, read before and after).
+    const wasUnpublished = entity.hasUnpublishedChanges === true;
+    const beforeState = {
+      metadata: { retentionPolicy: existingMeta.retentionPolicy ?? null, sourceStale: isSourceStale(existingMeta) },
+      hasUnpublishedChanges: wasUnpublished,
+    };
+    const afterState = {
+      metadata: { retentionPolicy: policy, sourceStale: isSourceStale(updatedMeta) },
+      hasUnpublishedChanges: changesDraft || wasUnpublished,
+    };
 
-    await prisma.entity.update({
-      where: { id: entityId },
-      data: {
-        metadata: updatedMeta as Prisma.InputJsonValue,
-        ...(changesDraft && { hasUnpublishedChanges: true }),
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Entity",
+      entityId,
+      userId: actor.userId,
+      tenantId: actor.tenantId,
+      beforeState,
+      fn: async () => {
+        await prisma.entity.update({
+          where: { id: entityId },
+          data: {
+            metadata: updatedMeta as Prisma.InputJsonValue,
+            ...(changesDraft && { hasUnpublishedChanges: true }),
+          },
+        });
+        return afterState;
       },
     });
 
