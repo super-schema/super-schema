@@ -7,10 +7,12 @@ import { createImportedEntities, type ImportedEntityInput } from "@/services/imp
 // A non-Latin name has a URL name of its own, so two of them are both created.
 
 async function importEntities(names: string[]) {
+  const auditCreate = vi.fn(async () => ({}));
   const create = vi.fn(async ({ data }: { data: { name: string; slug: string } }) => ({ id: `id-${data.name}` }));
   const tx = {
     field: { findMany: vi.fn(async () => []) },
     entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) },
+    auditLog: { create: auditCreate },
   } as unknown as Prisma.TransactionClient;
   const skipped: string[] = [];
   await createImportedEntities(tx, {
@@ -24,15 +26,18 @@ async function importEntities(names: string[]) {
   });
   return {
     created: create.mock.calls.map(([args]) => args.data),
+    audited: auditCreate.mock.calls.length,
     skipped,
   };
 }
 
 describe("createImportedEntities: the URL name of an imported entity", () => {
   it("skips a name with no letter or digit, with a message, and creates nothing for it", async () => {
-    const { created, skipped } = await importEntities(["_", "!!!", "Orders"]);
+    const { created, audited, skipped } = await importEntities(["_", "!!!", "Orders"]);
 
     expect(created.map((data) => data.name)).toEqual(["Orders"]);
+    // Only the entity that is created is audited; a skipped name leaves no audit row.
+    expect(audited).toBe(1);
     expect(skipped).toEqual([
       'Entity "_" must contain at least one letter or digit — skipped',
       'Entity "!!!" must contain at least one letter or digit — skipped',

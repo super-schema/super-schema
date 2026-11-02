@@ -4,6 +4,7 @@
 //   that name the marker is replaced by a real reference (and, the other way round, a new entity picks up the dangling fields that name it);
 import { Prisma } from "@/generated/prisma/client";
 import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
+import { redactCredentials } from "@/lib/audit-redaction";
 import { readDanglingMarker } from "@/lib/field-dangling";
 import { withoutReferenceKeys, writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
 
@@ -111,7 +112,7 @@ export type AuditActor = { userId: string; tenantId: string };
 
 /**
  * Writes an audit row through the caller's transaction, so it commits or rolls back with the write it records. The row has the shape
- * `withAudit` writes (the states, the acting tenant). Used where the write runs inside a transaction that `withAudit`'s own client cannot join.
+ * `withAudit` writes (the states with credentials redacted, the acting tenant). Used where the write runs inside a transaction that `withAudit`'s own client cannot join.
  */
 export async function auditInTransaction(
   tx: Prisma.TransactionClient,
@@ -125,8 +126,8 @@ export async function auditInTransaction(
       entityId: entry.entityId,
       userId: actor.userId,
       tenantId: actor.tenantId,
-      beforeState: entry.beforeState !== undefined ? (entry.beforeState as Prisma.InputJsonValue) : Prisma.JsonNull,
-      afterState: entry.afterState as Prisma.InputJsonValue,
+      beforeState: entry.beforeState !== undefined ? (redactCredentials(entry.beforeState) as Prisma.InputJsonValue) : Prisma.JsonNull,
+      afterState: redactCredentials(entry.afterState) as Prisma.InputJsonValue,
     },
   });
 }
