@@ -12,10 +12,11 @@
  * Service layer pattern: all functions return Result<T, ServiceError>.
  */
 
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { ok } from "@/types/result";
 import type { Result } from "@/types/result";
+import type { SchemaVersion } from "@/types/schema-version";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -172,6 +173,9 @@ export async function markAsDeployed(
       status: status as "DEPLOYED" | "STAGED",
       deployedBy: userId,
       deployedAt: now,
+      // The environment now runs the version marked, so a drift verdict an earlier check left on it no longer applies.
+      isDrifted: false,
+      driftReport: Prisma.DbNull,
     },
   });
 
@@ -188,6 +192,11 @@ export async function getDeploymentStatus(
     id: string;
     targetFormat: string;
     emittedVersion?: string | null;
+    /**
+     * The target's stored versions, newest first. When given, each environment's drift is compared now (environmentDriftVerdict) and the
+     * flag the last check wrote is not used: a version published after that check can change the latest output the environment is judged by.
+     */
+    versions?: readonly SchemaVersion[];
   }[]
 ): Promise<Result<DeploymentStatus[]>> {
   const statuses: DeploymentStatus[] = [];
@@ -199,15 +208,19 @@ export async function getDeploymentStatus(
 
     const environments: EnvironmentDeployment[] = rows.map((row) => {
       const rec = toDeploymentRecord(row);
+      // Drift is the isDrifted flag (set by updateDriftStatus) unless the versions are given, then the comparison made now.
+      const drifted = target.versions
+        ? environmentDriftVerdict(target.versions, Number(rec.deployedVersionId)).isDrifted
+        : row.isDrifted;
+      const status: DeploymentTrackingStatus = drifted ? "DRIFTED" : (row.status as DeploymentTrackingStatus);
       return {
         name: rec.environment,
         deployedVersion: rec.deployedVersionId,
-        status: rec.status,
-        // Drift is tracked on the isDrifted flag (set by updateDriftStatus); the
-        // status enum has no DRIFTED member, so derive the badge from the flag.
-        driftStatus: row.isDrifted
+        status,
+        // The badge is derived from the drift verdict, not from the record's status.
+        driftStatus: drifted
           ? ("drifted" as const)
-          : rec.status === "DEPLOYED"
+          : status === "DEPLOYED"
             ? ("in-sync" as const)
             : ("unknown" as const),
         lastChecked: rec.checkedAt,
@@ -292,13 +305,18 @@ export async function getDeploymentOverview(
     }),
   }));
 
-  // Apply filters
+  // Apply filters. A target filter narrows to the rows that carry that target, and the drift filter then reads that target's drift;
+  // without a target, the drift filter matches a row when any of its targets has that status.
   if (filters?.domain) {
     rows = rows.filter((r) => r.domain === filters.domain);
   }
   if (filters?.driftStatus) {
     rows = rows.filter((r) =>
-      r.targets.some((t) => t.driftStatus === filters.driftStatus)
+      r.targets.some(
+        (t) =>
+          t.driftStatus === filters.driftStatus &&
+          (!filters.targetFormat || t.format === filters.targetFormat)
+      )
     );
   }
   if (filters?.targetFormat) {
@@ -364,4 +382,36 @@ export async function updateDriftStatus(
   });
 
   return ok(toDeploymentRecord(updated));
+}
+
+// ---------------------------------------------------------------------------
+// environmentDriftVerdict — the drift verdict of one environment
+// ---------------------------------------------------------------------------
+
+/**
+ * The drift verdict of one environment: the output of the version it runs (its deployment record's version) against the output of the latest
+ * emitted version of the target. `versions` is the target's stored list, newest first. A version the record names but the list does not hold
+ * cannot be compared with the latest output, so it is drifted, never in sync.
+ */
+export function environmentDriftVerdict(
+  versions: readonly SchemaVersion[],
+  recordedVersion: number
+): { isDrifted: boolean; driftReport: Record<string, unknown> } {
+  const latest = versions[0];
+  const recorded = versions.find((version) => version.version === recordedVersion);
+  const report = (reason: string): Record<string, unknown> => ({
+    checkedAt: new Date().toISOString(),
+    deployedVersion: `v${recordedVersion}`,
+    latestVersion: latest ? `v${latest.version}` : null,
+    reason,
+  });
+
+  if (!latest || !recorded) {
+    return { isDrifted: true, driftReport: report(`Deployed version v${recordedVersion} is not in the schema history`) };
+  }
+  const isDrifted = (recorded.output ?? "").trim() !== (latest.output ?? "").trim();
+  return {
+    isDrifted,
+    driftReport: report(isDrifted ? "Deployed output differs from latest emitted schema" : "Deployed output matches latest emitted schema"),
+  };
 }

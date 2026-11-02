@@ -1,20 +1,19 @@
 "use client";
 
+import type { DeploymentOverviewFilters as OverviewFilters } from "@/services/deployment.service";
+
+const DRIFT_STATUSES: readonly NonNullable<OverviewFilters["driftStatus"]>[] = ["in-sync", "drifted", "unknown"];
+
+/** The drift status a Status option stands for; the empty "All" option (and anything else) is no drift filter. */
+function driftStatusOf(value: string): OverviewFilters["driftStatus"] {
+  return DRIFT_STATUSES.find((status) => status === value);
+}
+
 interface DeploymentOverviewFiltersProps {
   domains: string[];
   targetFormats: string[];
-  filters: {
-    domain?: string;
-    driftStatus?: string;
-    targetFormat?: string;
-  };
-  onFilterChange: (
-    filters: Partial<{
-      domain: string;
-      driftStatus: string;
-      targetFormat: string;
-    }>
-  ) => void;
+  filters: OverviewFilters;
+  onFilterChange: (filters: OverviewFilters) => void;
 }
 
 export function DeploymentOverviewFilters({
@@ -30,8 +29,9 @@ export function DeploymentOverviewFilters({
     >
       {/* Domain filter */}
       <div className="flex items-center gap-1">
-        <label className="text-caption text-muted-foreground">Domain:</label>
+        <label htmlFor="deployment-filter-domain" className="text-caption text-muted-foreground">Domain:</label>
         <select
+          id="deployment-filter-domain"
           value={filters.domain || ""}
           onChange={(e) =>
             onFilterChange({
@@ -52,13 +52,14 @@ export function DeploymentOverviewFilters({
 
       {/* Drift status filter */}
       <div className="flex items-center gap-1">
-        <label className="text-caption text-muted-foreground">Status:</label>
+        <label htmlFor="deployment-filter-status" className="text-caption text-muted-foreground">Status:</label>
         <select
+          id="deployment-filter-status"
           value={filters.driftStatus || ""}
           onChange={(e) =>
             onFilterChange({
               ...filters,
-              driftStatus: e.target.value || undefined,
+              driftStatus: driftStatusOf(e.target.value),
             })
           }
           className="bg-muted rounded-lg px-space-2 py-1 text-caption text-foreground outline-none border border-border"
@@ -72,8 +73,9 @@ export function DeploymentOverviewFilters({
 
       {/* Target format filter */}
       <div className="flex items-center gap-1">
-        <label className="text-caption text-muted-foreground">Target:</label>
+        <label htmlFor="deployment-filter-target" className="text-caption text-muted-foreground">Target:</label>
         <select
+          id="deployment-filter-target"
           value={filters.targetFormat || ""}
           onChange={(e) =>
             onFilterChange({

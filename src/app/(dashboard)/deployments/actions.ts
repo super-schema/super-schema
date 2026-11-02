@@ -1,5 +1,6 @@
 "use server";
 
+import type { z } from "zod";
 import { prisma } from "@/lib/db";
 import { contextOf, guardActiveTenant, unexpectedFailure } from "@/lib/action-context";
 import { getEntities } from "@/services/entity.service";
@@ -9,17 +10,23 @@ import {
 } from "@/services/deployment.service";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import { domainLabel } from "@/lib/entity-placement";
+import { GetDeploymentOverviewInput } from "@/types/schemas/deployment";
 
 /**
  * The deployment overview of the ACTIVE tenant, for the entities the caller may read (`deploy.read`, a viewer's act over each entity): the caller
  * must hold a role in the tenant (`tenant.access`), and the entity list is restricted IN THE QUERY to the entities their roles cover (a tenant-wide
  * role lists every entity of the tenant, a domain- or product-scoped role only the entities under its domains and products, never another tenant's).
  * Only the domains of the listed entities are read for their names and slugs. Marking an entity deployed is `deploy.run` in the entity actions.
+ *
+ * The answer is one page: `limit` rows (1 to 100, 25 by default) from `offset`, after the `filters`. `total` counts every row the filters match,
+ * across all pages, and `domains` lists the domains of the entities listed above (the choices of the Domain filter, whatever the page).
  */
-export async function getDeploymentOverviewAction() {
+export async function getDeploymentOverviewAction(request?: z.input<typeof GetDeploymentOverviewInput>) {
   try {
     const access = await guardActiveTenant("tenant.access", { label: "Deployments" });
     if (!access.allowed) return { error: access.refusal.error };
+    const requested = GetDeploymentOverviewInput.safeParse(request ?? {});
+    if (!requested.success) return { error: "The deployment overview page is not valid", code: "VALIDATION_ERROR" as const };
     const ctx = { ...contextOf(access.principal), tenantId: access.resource.tenantId };
 
     const entitiesRes = await getEntities({}, ctx);
@@ -42,8 +49,10 @@ export async function getDeploymentOverviewAction() {
       currentVersion: e.version != null ? `v${e.version}` : null,
       targets: targets.map((t) => ({ id: `${e.id}:${t.key}`, format: t.targetFormat })),
     }));
+    const domains = [...new Set(input.map((e) => e.domain))].sort((a, b) => a.localeCompare(b));
 
-    const overview = await getDeploymentOverview(input);
+    const { offset, limit, filters } = requested.data;
+    const overview = await getDeploymentOverview(input, filters, offset, limit);
     if (!overview.success) return { error: overview.error.message };
 
     // Enrich rows with slugs for entity links (service does not carry them).
@@ -76,7 +85,7 @@ export async function getDeploymentOverviewAction() {
       productSlug: slugById.get(r.entityId)?.productSlug,
     }));
 
-    return { success: true as const, data: { rows, targetFormats } };
+    return { success: true as const, data: { rows, targetFormats, domains, total: overview.data.total } };
   } catch (e: unknown) {
     return { ...unexpectedFailure("getDeploymentOverviewAction", e) };
   }

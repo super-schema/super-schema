@@ -84,11 +84,13 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import {
+  environmentDriftVerdict,
   markAsDeployed,
   getDeploymentStatus,
   getDeploymentOverview,
   unmarkDeployment,
   clearDeploymentStore,
+  updateDriftStatus,
 } from "@/services/deployment.service";
 
 describe("Deployment Service", () => {
@@ -178,6 +180,20 @@ describe("Deployment Service", () => {
       expect(result.data.status).toBe("DEPLOYED");
     });
 
+    it("clears the drift verdict an earlier check left on the environment, since it now runs the version marked", async () => {
+      await markAsDeployed({ emissionTargetId: "target-1", environment: "production", versionId: "v2" }, "user-1");
+      await updateDriftStatus("target-1", "production", { reason: "earlier check" }, true);
+      const drifted = await getDeploymentStatus("entity-1", [{ id: "target-1", targetFormat: "avro" }]);
+      expect(drifted.success && drifted.data[0].environments[0].driftStatus).toBe("drifted");
+
+      await markAsDeployed({ emissionTargetId: "target-1", environment: "production", versionId: "v3" }, "user-1");
+
+      const status = await getDeploymentStatus("entity-1", [{ id: "target-1", targetFormat: "avro" }]);
+      expect(status.success).toBe(true);
+      if (!status.success) return;
+      expect(status.data[0].environments[0]).toMatchObject({ deployedVersion: "3", driftStatus: "in-sync" });
+    });
+
     it("creates different records for different environments", async () => {
       await markAsDeployed(
         {
@@ -238,6 +254,47 @@ describe("Deployment Service", () => {
       expect(result.success).toBe(true);
       if (!result.success) return;
       expect(result.data[0].environments).toHaveLength(0);
+    });
+
+    describe("with the target's versions (drift compared on read)", () => {
+      // Newest first, the order the stored versions are kept in.
+      const versions = (...list: [number, string][]) =>
+        list.map(([version, output]) => ({ version, status: "published" as const, output, generatedAt: "2026-01-01T00:00:00.000Z", entityVersion: 1 }));
+
+      it("reads an environment as drifted when the version it runs has other output than the latest, with no check having run", async () => {
+        await markAsDeployed({ emissionTargetId: "target-1", environment: "staging", versionId: "v1" }, "user-1");
+
+        const result = await getDeploymentStatus("entity-1", [
+          { id: "target-1", targetFormat: "avro", versions: versions([2, "CREATE TABLE b"], [1, "CREATE TABLE a"]) },
+        ]);
+
+        expect(result.success && result.data[0].environments[0]).toMatchObject({
+          deployedVersion: "1",
+          status: "DRIFTED",
+          driftStatus: "drifted",
+        });
+      });
+
+      it("reads an environment as in-sync when the version it runs has the output of the latest, whatever an earlier check flagged", async () => {
+        await markAsDeployed({ emissionTargetId: "target-1", environment: "production", versionId: "v2" }, "user-1");
+        await updateDriftStatus("target-1", "production", { reason: "earlier check" }, true);
+
+        const result = await getDeploymentStatus("entity-1", [
+          { id: "target-1", targetFormat: "avro", versions: versions([2, "CREATE TABLE a"], [1, "CREATE TABLE old"]) },
+        ]);
+
+        expect(result.success && result.data[0].environments[0]).toMatchObject({ deployedVersion: "2", status: "DEPLOYED", driftStatus: "in-sync" });
+      });
+
+      it("reads an environment whose recorded version is not in the history as drifted", async () => {
+        await markAsDeployed({ emissionTargetId: "target-1", environment: "production", versionId: "v5" }, "user-1");
+
+        const result = await getDeploymentStatus("entity-1", [
+          { id: "target-1", targetFormat: "avro", versions: versions([2, "CREATE TABLE a"]) },
+        ]);
+
+        expect(result.success && result.data[0].environments[0].driftStatus).toBe("drifted");
+      });
     });
   });
 
@@ -318,6 +375,33 @@ describe("Deployment Service", () => {
       if (!result.success) return;
       expect(result.data.rows).toHaveLength(1);
       expect(result.data.rows[0].entityName).toBe("Order");
+    });
+  });
+
+  describe("environmentDriftVerdict", () => {
+    // Newest first, the order the stored versions are kept in.
+    const versions = (...list: [number, string][]) =>
+      list.map(([version, output]) => ({ version, status: "published" as const, output, generatedAt: "2026-01-01T00:00:00.000Z", entityVersion: 1 }));
+
+    it("is in sync when the version the environment runs has the output of the latest emitted version", () => {
+      const verdict = environmentDriftVerdict(versions([2, "CREATE TABLE a\n"], [1, " CREATE TABLE a"]), 1);
+
+      expect(verdict.isDrifted).toBe(false);
+      expect(verdict.driftReport).toMatchObject({ deployedVersion: "v1", latestVersion: "v2", reason: "Deployed output matches latest emitted schema" });
+    });
+
+    it("is drifted when the version the environment runs has other output than the latest emitted version", () => {
+      const verdict = environmentDriftVerdict(versions([2, "CREATE TABLE b"], [1, "CREATE TABLE a"]), 1);
+
+      expect(verdict.isDrifted).toBe(true);
+      expect(verdict.driftReport).toMatchObject({ deployedVersion: "v1", latestVersion: "v2", reason: "Deployed output differs from latest emitted schema" });
+    });
+
+    it("is drifted, never in sync, when the version the environment runs is not in the schema history", () => {
+      const verdict = environmentDriftVerdict(versions([2, "CREATE TABLE b"]), 1);
+
+      expect(verdict.isDrifted).toBe(true);
+      expect(verdict.driftReport).toMatchObject({ deployedVersion: "v1", latestVersion: "v2", reason: "Deployed version v1 is not in the schema history" });
     });
   });
 

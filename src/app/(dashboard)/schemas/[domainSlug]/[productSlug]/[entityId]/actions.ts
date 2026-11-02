@@ -57,6 +57,7 @@ import {
 } from "@/lib/schema-targets/requirements";
 import { requirementFromDiagnostic, structuredDiagnostics } from "@/lib/typespec-official/emitter-diagnostics";
 import {
+  environmentDriftVerdict,
   getDeploymentStatus,
   markAsDeployed,
   updateDriftStatus,
@@ -1851,17 +1852,12 @@ export async function publishSchemaAction(
         continue;
       }
 
-      // Enforce single deployed version — un-deploy any existing deployed version
-      const updated = targetVersions.map((v) =>
-        (v.status === "published" || v.status === "deployed")
-          ? { ...v, status: "draft" as const }
-          : v
+      // Publishing changes only the version it publishes. A deployed version stays deployed until another version is deployed in its place
+      // (deploying un-deploys it), so the schema keeps recording which version is deployed. Which environment runs which version is the
+      // deployment records' answer, and publishing leaves those alone too.
+      const updated = targetVersions.map((v, i) =>
+        i === idx ? { ...v, status: "published" as const, publishedAt: new Date().toISOString() } : v
       );
-      updated[idx] = {
-        ...updated[idx],
-        status: "published",
-        publishedAt: new Date().toISOString(),
-      };
 
       const updatedMeta = {
         ...meta,
@@ -1916,12 +1912,12 @@ export async function deploySchemaAction(
       return { error: `Version ${version} is not published (current: ${targetVersions[idx].status})` };
     }
 
-    const updated = [...targetVersions];
-    updated[idx] = {
-      ...updated[idx],
-      status: "deployed",
-      deployedAt: new Date().toISOString(),
-    };
+    // One deployed version at a time: deploying this one (a rollback to an older published version included) puts the version that was
+    // deployed back to published, the identity it had before it was deployed.
+    const updated = targetVersions.map((v, i) => {
+      if (i === idx) return { ...v, status: "deployed" as const, deployedAt: new Date().toISOString() };
+      return v.status === "deployed" ? { ...v, status: "published" as const } : v;
+    });
 
     const updatedMeta = {
       ...meta,
@@ -2072,7 +2068,7 @@ export async function updateEntityDescriptionAction(
 function buildEmissionTargets(
   entityId: string,
   schemaVersions: SchemaVersionsMap
-): { id: string; targetFormat: string; emittedVersion: string | null }[] {
+): { id: string; targetFormat: string; emittedVersion: string | null; versions: SchemaVersion[] }[] {
   return Object.keys(schemaVersions)
     .filter((target) => (schemaVersions[target] ?? []).length > 0)
     .map((target) => {
@@ -2083,6 +2079,7 @@ function buildEmissionTargets(
         id: `${entityId}:${target}`,
         targetFormat: def?.displayName ?? target,
         emittedVersion: latest ? `v${latest.version}` : null,
+        versions,
       };
     });
 }
@@ -2172,30 +2169,17 @@ export async function checkTargetDriftAction(
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
     const versions = schemaVersions[targetKey] ?? [];
-    const latest = versions[0];
-    const deployed = versions.find((v) => v.status === "deployed");
-
-    // Drift = the version live in an environment no longer matches the latest
-    // emitted output for that target.
-    const latestOutput = (latest?.output ?? "").trim();
-    const deployedOutput = (deployed?.output ?? "").trim();
-    const isDrifted = Boolean(deployed) && deployedOutput !== latestOutput;
-    const driftReport: Record<string, unknown> = {
-      checkedAt: new Date().toISOString(),
-      deployedVersion: deployed ? `v${deployed.version}` : null,
-      latestVersion: latest ? `v${latest.version}` : null,
-      reason: isDrifted
-        ? "Deployed output differs from latest emitted schema"
-        : "Deployed output matches latest emitted schema",
-    };
 
     const targets = buildEmissionTargets(entityId, schemaVersions);
     const statusRes = await getDeploymentStatus(entityId, targets);
     if (!statusRes.success) return { ...failureOf(statusRes.error, "checkTargetDriftAction") };
 
+    // Drift is judged per environment, against the version that environment's own deployment record names. The schema's one "deployed"
+    // version is not the answer: an environment keeps running its version when another version is published or deployed.
     const target = statusRes.data.find((t) => t.targetId === targetId);
     for (const env of target?.environments ?? []) {
-      const upd = await updateDriftStatus(targetId, env.name, driftReport, isDrifted);
+      const verdict = environmentDriftVerdict(versions, Number(env.deployedVersion));
+      const upd = await updateDriftStatus(targetId, env.name, verdict.driftReport, verdict.isDrifted);
       if (!upd.success) return { ...failureOf(upd.error, "checkTargetDriftAction") };
     }
 

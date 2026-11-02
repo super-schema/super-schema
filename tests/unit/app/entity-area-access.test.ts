@@ -55,7 +55,9 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 vi.mock("@/services/entity.service", () => ({ updateEntity: h.effects.updateEntity }));
-vi.mock("@/services/deployment.service", () => ({
+// The drift verdict is pure (environmentDriftVerdict stays real); the database-facing functions are the mocks.
+vi.mock("@/services/deployment.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/deployment.service")>()),
   getDeploymentStatus: h.effects.getDeploymentStatus, markAsDeployed: h.effects.markAsDeployed, updateDriftStatus: h.effects.updateDriftStatus,
 }));
 vi.mock("@/services/type-mapping.service", () => ({

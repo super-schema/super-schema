@@ -21,7 +21,8 @@ interface EntityDeploymentsTabProps {
 export function EntityDeploymentsTab({ entityId, entityName }: EntityDeploymentsTabProps) {
   const [statuses, setStatuses] = useState<DeploymentStatus[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [checkingTargetId, setCheckingTargetId] = useState<string | null>(null);
+  // The targets whose drift check is in flight: each check holds only its own button, and a check that fails releases it.
+  const [checkingTargetIds, setCheckingTargetIds] = useState<ReadonlySet<string>>(() => new Set());
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -53,27 +54,36 @@ export function EntityDeploymentsTab({ entityId, entityName }: EntityDeployments
         return;
       }
       toast.success(`Marked deployed to ${environment}`);
+      await load();
     } catch (error) {
       toast.error(`Could not mark deployed to ${environment}: ${errorMessage(error)}`);
-      return;
     }
-    await load();
   }
 
   async function handleCheckDrift(targetId: string) {
-    setCheckingTargetId(targetId);
+    setCheckingTargetIds((ids) => new Set(ids).add(targetId));
     try {
       const res = await checkTargetDriftAction(entityId, targetId);
       if ("error" in res) {
         toast.error(res.error);
         return;
       }
-      setStatuses(res.data);
+      // Only this target's status is taken from the answer: another check may have answered first, and this answer's copy of that other
+      // target can be older than what is already shown.
+      setStatuses((current) =>
+        current.map((target) =>
+          target.targetId === targetId ? (res.data.find((t) => t.targetId === targetId) ?? target) : target
+        )
+      );
       toast.success("Drift check complete");
     } catch (error) {
       toast.error(`Could not check drift: ${errorMessage(error)}`);
     } finally {
-      setCheckingTargetId(null);
+      setCheckingTargetIds((ids) => {
+        const next = new Set(ids);
+        next.delete(targetId);
+        return next;
+      });
     }
   }
 
@@ -113,7 +123,7 @@ export function EntityDeploymentsTab({ entityId, entityName }: EntityDeployments
           deploymentStatuses={statuses}
           onMarkDeployed={handleMarkDeployed}
           onCheckDrift={handleCheckDrift}
-          isChecking={checkingTargetId !== null}
+          checkingTargetIds={checkingTargetIds}
         />
       )}
     </div>

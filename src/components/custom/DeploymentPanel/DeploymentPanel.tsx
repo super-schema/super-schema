@@ -13,7 +13,8 @@ interface DeploymentPanelProps {
   deploymentStatuses: DeploymentStatus[];
   onCheckDrift?: (targetId: string) => void;
   onMarkDeployed?: (targetId: string, environment: string) => void;
-  isChecking?: boolean;
+  /** The targets whose drift check is in flight. Only their check button is disabled and spinning. */
+  checkingTargetIds?: ReadonlySet<string>;
 }
 
 export function DeploymentPanel({
@@ -21,13 +22,15 @@ export function DeploymentPanel({
   deploymentStatuses,
   onCheckDrift,
   onMarkDeployed,
-  isChecking = false,
+  checkingTargetIds,
 }: DeploymentPanelProps) {
   const [deployDialog, setDeployDialog] = useState<{
     targetId: string;
     targetFormat: string;
     version: string;
   } | null>(null);
+
+  const isChecking = (targetId: string) => checkingTargetIds?.has(targetId) ?? false;
 
   return (
     <div data-testid="deployment-panel" className="flex flex-col gap-space-3">
@@ -63,13 +66,13 @@ export function DeploymentPanel({
               {onCheckDrift && (
                 <button
                   onClick={() => onCheckDrift(target.targetId)}
-                  disabled={isChecking}
+                  disabled={isChecking(target.targetId)}
                   className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-50"
                   title="Check Drift"
                   data-testid="deployment-check-drift"
                 >
                   <RefreshCw
-                    className={`w-3 h-3 ${isChecking ? "animate-spin" : ""}`}
+                    className={`w-3 h-3 ${isChecking(target.targetId) ? "animate-spin" : ""}`}
                   />
                 </button>
               )}
@@ -108,7 +111,8 @@ export function DeploymentPanel({
                   <VersionBadge
                     version={env.deployedVersion}
                     isMatched={
-                      env.deployedVersion === target.emittedVersion
+                      // The environment holds a version number and the target the `v`-prefixed label of the latest emitted version.
+                      env.deployedVersion !== null && `v${env.deployedVersion}` === target.emittedVersion
                     }
                     label={`Deployed to ${env.name}`}
                   />

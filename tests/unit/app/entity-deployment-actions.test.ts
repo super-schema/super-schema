@@ -124,6 +124,40 @@ describe("getEntityDeploymentStatusAction", () => {
     const res = await getEntityDeploymentStatusAction(ENTITY_ID);
     expect(res).toEqual({ error: "Entity not found", code: "NOT_FOUND" });
   });
+
+  it("reads an environment on an older version as drifted once a newer version with other output is published, with no drift check", async () => {
+    const targetId = `${ENTITY_ID}:postgresql`;
+    h.entity.findUnique.mockResolvedValue(metadataWith({ postgresql: [version(1, "deployed", "OLD")] }));
+    await markEntityDeployedAction(ENTITY_ID, targetId, "staging"); // staging runs v1
+    h.entity.findUnique.mockResolvedValue(
+      metadataWith({ postgresql: [version(2, "published", "NEW"), version(1, "deployed", "OLD")] })
+    );
+
+    const res = await getEntityDeploymentStatusAction(ENTITY_ID);
+    if ("error" in res) throw new Error(res.error);
+    const staging = res.data.find((t) => t.targetId === targetId)?.environments.find((e) => e.name === "staging");
+    expect(staging).toMatchObject({ deployedVersion: "1", driftStatus: "drifted" });
+    expect(h.prisma.deploymentRecord.update).not.toHaveBeenCalled(); // a read compares, it does not store the verdict
+  });
+
+  it("reads an environment on the latest version as in-sync, even when an earlier check flagged it", async () => {
+    const targetId = `${ENTITY_ID}:postgresql`;
+    h.entity.findUnique.mockResolvedValue(metadataWith({ postgresql: [version(1, "deployed", "OLD")] }));
+    await markEntityDeployedAction(ENTITY_ID, targetId, "production");
+    h.entity.findUnique.mockResolvedValue(
+      metadataWith({ postgresql: [version(2, "draft", "NEW"), version(1, "deployed", "OLD")] })
+    );
+    await checkTargetDriftAction(ENTITY_ID, targetId); // production is drifted on v1
+
+    // v2 is regenerated with the output production runs: the stored flag is stale, the comparison is not.
+    h.entity.findUnique.mockResolvedValue(
+      metadataWith({ postgresql: [version(2, "draft", "OLD"), version(1, "deployed", "OLD")] })
+    );
+    const res = await getEntityDeploymentStatusAction(ENTITY_ID);
+    if ("error" in res) throw new Error(res.error);
+    const prod = res.data.find((t) => t.targetId === targetId)?.environments.find((e) => e.name === "production");
+    expect(prod?.driftStatus).toBe("in-sync");
+  });
 });
 
 describe("markEntityDeployedAction", () => {
@@ -153,12 +187,14 @@ describe("markEntityDeployedAction", () => {
 });
 
 describe("checkTargetDriftAction", () => {
-  it("flags drift when deployed output differs from latest emitted output", async () => {
-    h.entity.findUnique.mockResolvedValue(
-      metadataWith({ postgresql: [version(2, "draft", "NEW"), version(1, "deployed", "OLD")] })
-    );
+  it("flags drift when the version an environment runs differs from the latest emitted output", async () => {
+    // Production is marked while v1 is the latest version; v2 is generated afterwards with other output.
+    h.entity.findUnique.mockResolvedValue(metadataWith({ postgresql: [version(1, "published", "OLD")] }));
     const targetId = `${ENTITY_ID}:postgresql`;
     await markEntityDeployedAction(ENTITY_ID, targetId, "production");
+    h.entity.findUnique.mockResolvedValue(
+      metadataWith({ postgresql: [version(2, "draft", "NEW"), version(1, "published", "OLD")] })
+    );
 
     const res = await checkTargetDriftAction(ENTITY_ID, targetId);
     if ("error" in res) throw new Error(res.error);
@@ -166,6 +202,44 @@ describe("checkTargetDriftAction", () => {
       .find((t) => t.targetId === targetId)
       ?.environments.find((e) => e.name === "production");
     expect(prod?.driftStatus).toBe("drifted");
+  });
+
+  it("judges each environment against its own version: the one that runs the latest is in sync, the one that runs an older version is drifted", async () => {
+    const targetId = `${ENTITY_ID}:postgresql`;
+    h.entity.findUnique.mockResolvedValue(metadataWith({ postgresql: [version(1, "deployed", "OLD")] }));
+    await markEntityDeployedAction(ENTITY_ID, targetId, "staging"); // staging runs v1
+    h.entity.findUnique.mockResolvedValue(
+      metadataWith({ postgresql: [version(2, "published", "NEW"), version(1, "deployed", "OLD")] })
+    );
+    await markEntityDeployedAction(ENTITY_ID, targetId, "production"); // production runs v2, the latest
+
+    const res = await checkTargetDriftAction(ENTITY_ID, targetId);
+    if ("error" in res) throw new Error(res.error);
+    const environments = res.data.find((t) => t.targetId === targetId)?.environments ?? [];
+    expect(environments.find((e) => e.name === "staging")?.driftStatus).toBe("drifted");
+    expect(environments.find((e) => e.name === "production")?.driftStatus).toBe("in-sync");
+  });
+
+  it("marking an environment at the latest version clears the drift an earlier check found", async () => {
+    const targetId = `${ENTITY_ID}:postgresql`;
+    h.entity.findUnique.mockResolvedValue(metadataWith({ postgresql: [version(1, "deployed", "OLD")] }));
+    await markEntityDeployedAction(ENTITY_ID, targetId, "production");
+    h.entity.findUnique.mockResolvedValue(
+      metadataWith({ postgresql: [version(2, "draft", "NEW"), version(1, "deployed", "OLD")] })
+    );
+    const checked = await checkTargetDriftAction(ENTITY_ID, targetId);
+    if ("error" in checked) throw new Error(checked.error);
+    expect(checked.data.find((t) => t.targetId === targetId)?.environments[0]?.driftStatus).toBe("drifted");
+
+    expect(await markEntityDeployedAction(ENTITY_ID, targetId, "production")).toEqual({ success: true });
+
+    const status = await getEntityDeploymentStatusAction(ENTITY_ID);
+    if ("error" in status) throw new Error(status.error);
+    const prod = status.data
+      .find((t) => t.targetId === targetId)
+      ?.environments.find((e) => e.name === "production");
+    expect(prod?.deployedVersion).toBe("2");
+    expect(prod?.driftStatus).toBe("in-sync");
   });
 
   it("reports in-sync when deployed output matches latest output", async () => {

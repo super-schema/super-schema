@@ -66,7 +66,9 @@ vi.mock("@/services/version-history/version.service", () => ({
 vi.mock("@/services/change-history.service", () => ({ getChangeHistory: h.getChangeHistory }));
 vi.mock("@/lib/emission/emission.service", () => ({ emitEntity: h.emitEntity }));
 vi.mock("@/lib/typespec-official/emitter.service", () => ({ emitOfficialTypeSpecTargetForEntity: h.emitOfficial }));
-vi.mock("@/services/deployment.service", () => ({
+// The drift verdict is pure (environmentDriftVerdict stays real); the database-facing functions are the mocks.
+vi.mock("@/services/deployment.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/deployment.service")>()),
   getDeploymentStatus: h.getDeploymentStatus,
   markAsDeployed: h.markAsDeployed,
   updateDriftStatus: h.updateDriftStatus,
