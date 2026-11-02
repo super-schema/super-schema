@@ -142,6 +142,14 @@ const E2E_DATABASE_URL = process.env.E2E_DATABASE_URL;
 /** Every project but `setup` starts logged in as the admin. A spec that needs the login form opts out with `test.use({ storageState: { cookies: [], origins: [] } })`. */
 const loggedIn = { storageState: AUTH_STATE_PATH };
 
+/**
+ * The server of a direct run (`npm run test:e2e:smoke` and the other phases without E2E_BASE_URL). The database is prepared first, as
+ * `npm run dev` prepares its own (predev): the generated client, then `db:deploy` (the migrations and the built-in message properties).
+ * `npm run build` writes to no database, so without these steps a fresh checkout's run would start on an unmigrated database. The release
+ * runner migrates and seeds its own database and starts its own server (E2E_BASE_URL), so this command does not run for it.
+ */
+const WEB_SERVER_COMMAND = "npm run db:generate && npm run db:deploy && npm run build && npm start";
+
 export default defineConfig({
   testDir: "./tests/e2e",
   // 60 s, not Playwright's 30: a test without its own `test.setTimeout` (the smoke ones) must not be on the default under the load of
@@ -233,7 +241,7 @@ export default defineConfig({
   webServer: EXTERNAL_BASE_URL
     ? undefined
     : {
-        command: "npm run build && npm start",
+        command: WEB_SERVER_COMMAND,
         url: `http://localhost:${WEB_SERVER_PORT}`,
         // Never by default: a server that is already there has a database of its own (a dev server's). E2E_ALLOW_REUSE_SERVER=1 says "that one, on purpose".
         reuseExistingServer: process.env[REUSE_ENV] === "1" && !CI && !E2E_DATABASE_URL,

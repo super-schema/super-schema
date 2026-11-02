@@ -44,7 +44,7 @@ message says why and how to make one. Development and test accept any value.
 openssl rand -base64 32      # 44 characters; put it in AUTH_SECRET (or NEXTAUTH_SECRET)
 ```
 
-`.docker/docker-compose.yml` has no default for it: `docker compose up` stops with "set NEXTAUTH_SECRET" until you `export NEXTAUTH_SECRET="$(openssl rand -base64 32)"`.
+`.docker/docker-compose.yml` has no default for it: `docker compose up` stops with "set NEXTAUTH_SECRET" until you `export NEXTAUTH_SECRET="$(openssl rand -base64 32)"`. The same file also requires `POSTGRES_PASSWORD` (`export POSTGRES_PASSWORD="$(openssl rand -hex 24)"`; see the Docker Compose section of `database.md`).
 A secret is per deployment and per environment: a secret that is shared between environments makes a login of one valid in the other.
 
 **Rotation is not supported.** Auth.js can rotate with `AUTH_SECRET_1`, `AUTH_SECRET_2`, `AUTH_SECRET_3`, but it reads those only when it has no

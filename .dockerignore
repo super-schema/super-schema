@@ -6,6 +6,10 @@ node_modules
 .env.*.local
 *.md
 tests
+# Test-runner configs. playwright.config.ts imports tests/, and next build type-checks every tsconfig file (**/*.ts), so in the context it
+# fails `RUN npm run build` ("cannot find module ./tests/..."). vitest.config.ts does not depend on tests/; it is test tooling and stays out too.
+playwright.config.ts
+vitest.config.ts
 coverage
 .docker
 _bmad

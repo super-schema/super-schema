@@ -151,3 +151,23 @@ describe("playwright.config.ts refuses what the scripts would", () => {
     expect((await load()).webServer?.reuseExistingServer).toBe(false);
   });
 });
+
+describe("playwright.config.ts: the server of a direct run is migrated before it is built", () => {
+  it("generates the client, then runs db:deploy, then builds and starts: the build writes to no database, so this is where a fresh checkout's database is prepared", async () => {
+    const savedBaseUrl = process.env.E2E_BASE_URL;
+    delete process.env.E2E_BASE_URL; // no external server: the config starts its own
+    vi.resetModules();
+    try {
+      const config = (await import("../../../playwright.config")).default as unknown as { webServer?: { command: string } };
+      const command = config.webServer?.command ?? "";
+      const at = (step: string) => command.indexOf(step);
+      expect(at("npm run db:generate")).toBeGreaterThanOrEqual(0);
+      expect(at("npm run db:deploy")).toBeGreaterThan(at("npm run db:generate"));
+      expect(at("npm run build")).toBeGreaterThan(at("npm run db:deploy"));
+      expect(command.endsWith("npm start")).toBe(true);
+    } finally {
+      if (savedBaseUrl === undefined) delete process.env.E2E_BASE_URL;
+      else process.env.E2E_BASE_URL = savedBaseUrl;
+    }
+  });
+});

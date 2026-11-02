@@ -43,7 +43,7 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/superschema
 Then:
 
 ```bash
-npm run db:deploy    # runs `prisma migrate deploy` against your database
+npm run db:deploy    # runs `prisma migrate deploy` against your database, then installs the built-in message properties
 npm run db:seed
 npm run dev
 ```
@@ -68,9 +68,10 @@ npm run dev
 
 | Script | Behavior |
 |--------|----------|
-| `npm run dev` / `build` | `predev`/`prebuild` first run `db:generate` + `db.ts ensure` |
+| `npm run dev` | `predev` runs `db:generate` + `db.ts ensure`: PGlite gets its pending migrations and the built-in message properties; PostgreSQL gets the built-in message properties only (best effort, no migrations) |
+| `npm run build` | `prebuild` runs `db:generate` and the parser worker. A build writes no rows to any database (on PGlite it can still create the embedded directory, which `src/lib/db.ts` opens when it loads) |
 | `npm run db:generate` | `prisma generate` |
-| `npm run db:deploy` | PGlite: apply pending migrations in-process · PostgreSQL: `prisma migrate deploy` |
+| `npm run db:deploy` | PGlite: apply pending migrations in-process · PostgreSQL: `prisma migrate deploy`. Then, for either, install the built-in message properties into every tenant. A failure fails the command (exit 1): the production step does not finish without them |
 | `npm run db:migrate` | `prisma migrate dev` — **author** a new migration (PostgreSQL only, see below) |
 | `npm run db:seed` | `tsx prisma/seed.ts` (provider-aware) |
 | `npm run db:studio` | `prisma studio` |
@@ -94,7 +95,7 @@ DB_PROVIDER ─▶ src/lib/db-provider.ts ─▶ src/lib/db-adapter.ts ─▶ Pr
   the MIT `pglite-prisma-adapter` package (see "Vendored adapter" below).
 - **`src/lib/pglite-migrate.ts`** — applies committed migration SQL to the embedded
   PGlite database in-process.
-- **`scripts/db.ts`** — `ensure` (auto, pre dev/build) and `deploy` entrypoints.
+- **`scripts/db.ts`** — `ensure` (auto, before `dev`) and `deploy` (`npm run db:deploy`, the production step) entrypoints.
 
 ### Why a custom migrator for PGlite
 
@@ -179,11 +180,62 @@ has no creator: delete those, or give each a creator, first.
 
 ## Production notes
 
-- Run `npm run db:deploy` **before** `npm start` — `predev`/`prebuild` only cover
-  dev and build, not the production start.
+- Run `npm run db:deploy` **before** `npm start`. It is the production step: it applies the migrations and installs the built-in message
+  properties into every tenant that lacks them, and it exits 1 when that install fails, so a deploy that did not finish does not look done.
+  `predev` covers dev only. `npm run build` writes no rows to any database, so a build against a production or staging `DATABASE_URL` changes
+  nothing there. The compose stack runs this step in its `migrate` service (see Docker Compose below).
 - **PGlite is single-connection, single-process.** Do not use it for multi-instance
   or serverless fan-out — use `DB_PROVIDER=postgresql` there.
 - CI (`.github/workflows/ci.yml`) runs the suite against **both** providers.
+
+## Docker Compose
+
+`.docker/docker-compose.yml` runs three services: `db` (PostgreSQL 16), `migrate` (a one-shot `npm run db:deploy`) and `app` (the image of
+`.docker/Dockerfile`, PostgreSQL only: its `DB_PROVIDER` is `postgresql`, and the image carries no migrations for the embedded database).
+
+```bash
+export NEXTAUTH_SECRET="$(openssl rand -base64 32)"
+export POSTGRES_PASSWORD="$(openssl rand -hex 24)"   # hex: the password goes into DATABASE_URL unescaped
+docker compose -f .docker/docker-compose.yml up --build
+```
+
+- **Both secrets are required.** Compose stops with `set POSTGRES_PASSWORD` or `set NEXTAUTH_SECRET` when one is not exported. The file holds no
+  database password.
+- **The order:** `db` is healthy, then `migrate` applies the committed migrations and the built-in message properties and exits `0`, then `app`
+  starts. A failed migration, or a built-in message property that cannot be installed, stops the stack before the app serves anything.
+- **Published on this machine only.** The app is on <http://127.0.0.1:3000> and the database on `127.0.0.1:5432` (psql, `npm run db:studio`);
+  nothing on another machine can connect to either. To reach the app from elsewhere, put a reverse proxy on this host in front of it and set
+  `AUTH_URL` to the public address (auth-ops.md, "Trusting the host").
+- **The first administrator.** The stack creates no account. Make one with `admin:create` in the `migrate` service, which uses the same database
+  and reads both variables, so it needs no terminal:
+
+  ```bash
+  export BOOTSTRAP_ADMIN_EMAIL=you@example.com
+  export BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -base64 18)"   # or your own, 12 to 72 bytes; save it, it is the password you sign in with
+  docker compose -f .docker/docker-compose.yml run --rm -e BOOTSTRAP_ADMIN_EMAIL -e BOOTSTRAP_ADMIN_PASSWORD migrate npm run admin:create
+  ```
+
+  It refuses an e-mail that already has an account. The `migrate` service runs with `NODE_ENV=production`, so a seed run there does not make the
+  development account `admin@admin.com` (auth-ops.md, "The seed's administrator").
+- **The database is initialised with `POSTGRES_PASSWORD` when the `pgdata` volume is first created.** Later, the password of the database is
+  whatever it was set to. To change it, run `ALTER USER` inside the database (the local socket needs no password, so `exec` is enough) and then
+  export the new value:
+
+  ```bash
+  docker compose -f .docker/docker-compose.yml exec db psql -U superschema -d superschema -c "ALTER USER superschema WITH PASSWORD '<the new value>'"
+  ```
+
+  This matters for a volume made by the earlier version of this file, which gave the database the fixed password `password`. Exporting a new
+  value without that step makes `app` and `migrate` fail to log in. Export `POSTGRES_PASSWORD=password`, start `db` (`docker compose -f
+  .docker/docker-compose.yml up -d db`; `NEXTAUTH_SECRET` must still be exported, Compose checks the whole file), run the `ALTER USER` above, then
+  export the new value and start the stack. For a disposable volume, `docker compose -f .docker/docker-compose.yml down -v`
+  removes the volume and its data instead.
+- **The image does not build from a bare checkout yet.** `docker build -f .docker/Dockerfile .` stops in the `deps` stage at `RUN npm ci` on
+  `node:20-alpine` (npm 10.8): `npm ci` rejects `package-lock.json` with `EUSAGE` (`Missing: @swc/helpers@0.5.23 from lock file`), because npm 10
+  wants that version for an optional peer of `@swc/core` and the lock does not list it. Separately, the five
+  `file:../typespec/packages/*` emitter links point at a sibling checkout that the build context does not contain (KD-040 in
+  `docs/testing/known-defects.md`). Even with a built image, generating a schema target does not work in it, because the emitter packages are
+  not in the runtime image (KD-040).
 
 ## Vendored adapter
 

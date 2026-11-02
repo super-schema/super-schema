@@ -24,7 +24,7 @@
     "test:e2e:release:smoke": "node scripts/e2e-release.mjs --tier smoke",
     "db:generate": "prisma generate",
     "predev": "npm run db:generate && tsx scripts/db.ts ensure && npm run build:parser-worker",
-    "prebuild": "npm run db:generate && tsx scripts/db.ts ensure && npm run build:parser-worker",
+    "prebuild": "npm run db:generate && npm run build:parser-worker",
     "build:parser-worker": "node scripts/build-parser-worker.mjs",
     "db:deploy": "tsx scripts/db.ts deploy",
     "db:name-conflicts": "tsx scripts/report-name-conflicts.ts",

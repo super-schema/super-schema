@@ -2,6 +2,7 @@ import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { createDbAdapter } from "../src/lib/db-adapter";
 import { ensureBootstrapAdmin, planSeedAdmin } from "../src/lib/admin-bootstrap";
+import { ensureBundledTraits } from "../src/services/events/bundled-traits.service";
 
 async function main() {
   const prisma = new PrismaClient({ adapter: createDbAdapter() });
@@ -65,6 +66,20 @@ async function main() {
       isSystem: true,
     },
   });
+
+  // Its built-in message properties too. The migrations create this tenant but install no built-in traits: `npm run db:deploy` does, and so
+  // does ensureDefaultTenantId when it creates a tenant. A database migrated with `prisma migrate deploy` (the e2e release runner) and then
+  // seeded would otherwise have none. A failure is reported and the seed goes on (the next db:deploy installs them).
+  const traits = await ensureBundledTraits(prisma, DEFAULT_TENANT_ID);
+  if (traits.success) {
+    console.log(
+      traits.data.created.length
+        ? `Created the built-in message properties in ${DEFAULT_TENANT_ID}: ${traits.data.created.join(", ")}`
+        : `The built-in message properties are already in ${DEFAULT_TENANT_ID}`
+    );
+  } else {
+    console.error(`The built-in message properties were not installed in ${DEFAULT_TENANT_ID} (${traits.error.code}): run npm run db:deploy`);
+  }
 
   for (const domain of systemDomains) {
     const existing = await prisma.domain.findUnique({

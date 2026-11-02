@@ -14,7 +14,11 @@
 // every outside thing (arguments, environment, terminal, database) passed in.
 
 import { isEntryPoint } from "./e2e-entry.mjs";
-import { ensureBootstrapAdmin, normalizeBootstrapEmail, validateBootstrapPassword } from "../src/lib/admin-bootstrap";
+// tsx compiles the TypeScript helper to CommonJS (package.json has no "type": "module"), and an ES module cannot import the named exports of a
+// CommonJS module by name: the loader does not see them, and the script would not start. Through the namespace, `default` is the CommonJS
+// exports object; a real ES module has no `default` and its names are on the namespace itself.
+const bootstrap = await import("../src/lib/admin-bootstrap");
+const { ensureBootstrapAdmin, normalizeBootstrapEmail, validateBootstrapPassword } = bootstrap.default ?? bootstrap;
 
 const USAGE = [
   "Usage: npm run admin:create -- --email <address>",

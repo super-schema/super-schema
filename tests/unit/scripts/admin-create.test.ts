@@ -3,7 +3,9 @@
  * password (12 to 72 bytes) and an existing e-mail with a clear message, before any write; the password never appears in an argument, in
  * its output, or in an error; the three ways to give the password; the exit codes; and that it is wired in package.json.
  */
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { hashMock, compareMock } = vi.hoisted(() => ({
@@ -265,8 +267,14 @@ describe("admin:create", () => {
     expect(scripts["admin:create"]).toBe("tsx scripts/admin-create.mjs");
   });
 
+  it("starts as the CLI through tsx: the helper is CommonJS there, so the script reads its names through the namespace (a named import did not start)", () => {
+    const tsx = path.join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
+    const out = execFileSync(process.execPath, [tsx, "scripts/admin-create.mjs", "--help"], { encoding: "utf8", timeout: 120_000 });
+    expect(out).toContain("Usage: npm run admin:create");
+  }, 150_000);
+
   it("the seed and the script are the only importers of the bootstrap module", () => {
     expect(readFileSync("prisma/seed.ts", "utf8")).toMatch(/from "\.\.\/src\/lib\/admin-bootstrap"/);
-    expect(readFileSync("scripts/admin-create.mjs", "utf8")).toMatch(/from "\.\.\/src\/lib\/admin-bootstrap"/);
+    expect(readFileSync("scripts/admin-create.mjs", "utf8")).toMatch(/import\("\.\.\/src\/lib\/admin-bootstrap"\)/);
   });
 });

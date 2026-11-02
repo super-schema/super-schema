@@ -1,12 +1,21 @@
+# The stack: Postgres, a one-shot migrator and the app. Export the two secrets, then start it (docs/database.md, "Docker Compose"):
+#   export NEXTAUTH_SECRET="$(openssl rand -base64 32)"
+#   export POSTGRES_PASSWORD="$(openssl rand -hex 24)"   # hex, so that it needs no escaping inside DATABASE_URL
+#   docker compose -f .docker/docker-compose.yml up --build
+# The order: db is healthy, migrate applies the migrations and the built-in traits and exits 0, then the app starts.
+# The app and the database are published on 127.0.0.1 only. The stack creates no account: docs/database.md says how to make the first administrator.
 services:
   app:
     build:
       context: ..
       dockerfile: .docker/Dockerfile
     ports:
-      - "3000:3000"
+      # This machine only: a reverse proxy on the same host is the way in (docs/database.md, "Docker Compose").
+      - "127.0.0.1:3000:3000"
     environment:
-      DATABASE_URL: postgresql://superschema:password@db:5432/superschema
+      # The compose Postgres. Without DB_PROVIDER the app opens the embedded PGlite database instead, which is empty in the container.
+      DB_PROVIDER: postgresql
+      DATABASE_URL: postgresql://superschema:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (openssl rand -hex 24)}@db:5432/superschema
       # The secret that signs every login (the session cookie): the whole authentication boundary. There is NO default: a server in production
       # refuses to start with a secret shorter than 32 characters or a known development value (src/lib/auth-secret.ts). Make one and export it:
       #   export NEXTAUTH_SECRET="$(openssl rand -base64 32)"
@@ -20,24 +29,47 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
+
+  # Runs `npm run db:deploy` (the migrations, then the built-in message properties) against the compose Postgres on every `up`. It is
+  # idempotent. A failure stops the stack before the app starts, so the app never serves an unmigrated database.
+  migrate:
+    build:
+      context: ..
+      dockerfile: .docker/Dockerfile
+      target: migrate
+    environment:
+      DB_PROVIDER: postgresql
+      DATABASE_URL: postgresql://superschema:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (openssl rand -hex 24)}@db:5432/superschema
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
 
   db:
     image: postgres:16
+    # The host can reach the database on this machine's loopback interface only (psql, npm run db:studio). The app and migrate use the
+    # compose network.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: superschema
-      POSTGRES_PASSWORD: password
+      # Required, and read when the pgdata volume is first created: it is never written in this file.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (openssl rand -hex 24)}
       POSTGRES_DB: superschema
 
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U superschema -d superschema"]
+      # Over TCP. The image's initialisation server listens on its socket only, so `pg_isready` without `-h` passes before the database
+      # accepts connections. start_period covers the initdb of a fresh volume: failures in it do not count.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U superschema -d superschema"]
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 30s
     restart: unless-stopped
 
 volumes:
