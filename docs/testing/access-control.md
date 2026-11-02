@@ -100,4 +100,4 @@ node scripts/e2e-release.mjs --tier nightly --project chromium -- tests/e2e/acce
 node scripts/e2e-release.mjs --tier regression --project chromium
 ```
 
-Node 20, Docker on the PATH, as for every release run (`docs/testing/e2e.md`).
+Node 22.22.2+, Docker on the PATH, as for every release run (`docs/testing/e2e.md`).

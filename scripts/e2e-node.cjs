@@ -6,13 +6,13 @@
 // config imports to CommonJS first (an imported `.mjs` then fails), while the `.mjs` scripts import a `.cjs` file as they would any module
 // (scripts/e2e-node.mjs re-exports it under the name the scripts and the tests have always used).
 //
-// The policy (package.json `engines.node` is `>=20.9.0 <25`; `.nvmrc` says 22):
-//   - SUPPORTED   Node 20.9+ (the oldest Node 20 Next 16 supports) and Node 22: what CI and the owner's checks run on;
+// The policy (package.json `engines.node` is `>=22.22.2 <25`; `.nvmrc` says 22.22.2):
+//   - SUPPORTED   Node 22.22.2 and later in 22 (the floor of package.json `engines`; Node 20 is end-of-life): what CI and the owner's checks run on;
 //   - UNTESTED    Node 24 (the Active LTS, and what Playwright's Docker image ships): allowed, with a one-line warning, because nothing is known
 //                 against it: the app is not tested on it by this suite;
 //   - REFUSED     everything else: Node 25 and 26 (a run of the full regression tier on Node 26.3.1, the default of a Homebrew machine, stopped after
 //                 its last test with every Playwright worker idle and never ended: seen four times, and once on Node 20.19.4: the watchdog is what ends such a run), the odd-numbered
-//                 releases between, and anything below 20.9. Refused before anything is provisioned, with the commands that fix it.
+//                 releases between, and anything below 22.22.2, Node 20 included. Refused before anything is provisioned, with the commands that fix it.
 //                 `E2E_ALLOW_UNSUPPORTED_NODE=1` is the way to try another one anyway (the stall watchdog of scripts/e2e-process.mjs still ends a
 //                 run that hangs). Only the e2e guard refuses: the application itself runs on what `engines` allows.
 
@@ -28,15 +28,15 @@ const ALLOW_UNSUPPORTED_NODE = "E2E_ALLOW_UNSUPPORTED_NODE";
  * @returns {"supported" | "untested" | "unsupported"}
  */
 function classifyNode(version) {
-  const match = /^v?(\d+)\.(\d+)/.exec(String(version));
+  const match = /^v?(\d+)\.(\d+)(?:\.(\d+))?/.exec(String(version));
   if (!match) return "unsupported";
-  const [major, minor] = [Number(match[1]), Number(match[2])];
-  if (major === 22 || (major === 20 && minor >= 9)) return "supported";
+  const [major, minor, patch] = [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)];
+  if (major === 22 && (minor > 22 || (minor === 22 && patch >= 2))) return "supported";
   if (major === 24) return "untested";
   return "unsupported";
 }
 
-/** Node 22, or Node 20 from 20.9: the versions the suite is verified on. */
+/** Node 22.22.2 or later: the versions the suite is verified on. */
 function isSupportedNode(version) {
   return classifyNode(version) === "supported";
 }
@@ -60,7 +60,7 @@ function nodeProblem(versions, env) {
   if (env[ALLOW_UNSUPPORTED_NODE] === "1") return null;
   return (
     `Node ${version} is not supported by this suite (Playwright stalled after the last test on Node 26.3.1, and Node 25+ is not verified): ` +
-    "run `nvm install 22 && nvm use 22` (the .nvmrc of this checkout), or `nvm use 20` (20.9+ also works). " +
+    "run `nvm install 22 && nvm use 22` (the .nvmrc of this checkout; 22.22.2 or later). " +
     `${ALLOW_UNSUPPORTED_NODE}=1 runs it anyway; a run that stalls is then ended by the watchdog (E2E_STALL_MS, 20 minutes by default, exit 124).`
   );
 }
@@ -73,7 +73,7 @@ function nodeProblem(versions, env) {
  */
 function nodeWarning(versions) {
   return classifyNode(versions.node) === "untested"
-    ? `Node ${versions.node} is untested with this suite (verified: Node 20.9+ and 22; \`nvm use 22\`): a run on it is allowed, and a hang is ended by the watchdog.`
+    ? `Node ${versions.node} is untested with this suite (verified: Node 22.22.2 and later; \`nvm use 22\`): a run on it is allowed, and a hang is ended by the watchdog.`
     : null;
 }
 
@@ -90,7 +90,7 @@ function describeNode(versions, env) {
     case "supported":
       return text;
     case "untested":
-      return `${text} (untested: the suite is verified on Node 20.9+ and 22)`;
+      return `${text} (untested: the suite is verified on Node 22.22.2 and later)`;
     default:
       return env[ALLOW_UNSUPPORTED_NODE] === "1" ? `${text} (unsupported, let through by ${ALLOW_UNSUPPORTED_NODE}=1)` : text;
   }

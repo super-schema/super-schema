@@ -16,7 +16,7 @@ with governance built in.
 
 [![CI](https://github.com/super-schema/super-schema/actions/workflows/ci.yml/badge.svg)](https://github.com/super-schema/super-schema/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-![Node](https://img.shields.io/badge/node-%3E%3D20.9%20%3C25-339933?logo=node.js&logoColor=white)
+![Node](https://img.shields.io/badge/node-%3E%3D22.22.2%20%3C25-339933?logo=node.js&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js)
 ![TypeSpec](https://img.shields.io/badge/TypeSpec-1.x-0078D4)
 ![Status](https://img.shields.io/badge/status-pre--release-orange)
@@ -190,7 +190,7 @@ flowchart LR
 
 ### Prerequisites
 
-- **Node.js 22**. `package.json` accepts `>=20.9.0 <25`; CI and the documented workflow use 22.
+- **Node.js 22.22.2 or later**. `package.json` accepts `>=22.22.2 <25`; CI uses Node 22. Node 20 is end-of-life and is no longer supported.
 - **npm** (the lockfile is `package-lock.json`).
 - **Git**.
 - **TypeSpec emitter packages (optional).** The Avro, Java POJO, BigQuery, PostgreSQL, and

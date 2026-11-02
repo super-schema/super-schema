@@ -10,7 +10,7 @@
   },
   "private": true,
   "engines": {
-    "node": ">=20.9.0 <25"
+    "node": ">=22.22.2 <25"
   },
   "scripts": {
     "dev": "next dev",
@@ -108,7 +108,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/bcryptjs": "^2.4.6",
-    "@types/node": "^20",
+    "@types/node": "^22.20.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@typespec/bigquery": "file:../typespec/packages/bigquery",

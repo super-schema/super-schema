@@ -11,7 +11,7 @@
     "lint": "eslint src"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^22.20.5",
     "@typespec/compiler": "^1.10.0",
     "typescript": "^5.4.0"
   },
@@ -19,4 +19,3 @@
     "@typespec/compiler": ">=0.55.0"
   }
 }
-

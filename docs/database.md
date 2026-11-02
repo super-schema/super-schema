@@ -234,7 +234,7 @@ docker compose -f .docker/docker-compose.yml up --build
   export the new value and start the stack. For a disposable volume, `docker compose -f .docker/docker-compose.yml down -v`
   removes the volume and its data instead.
 - **The image does not build from a bare checkout yet.** `docker build -f .docker/Dockerfile .` stops in the `deps` stage at `RUN npm ci` on
-  `node:20-alpine` (npm 10.8): `npm ci` rejects `package-lock.json` with `EUSAGE` (`Missing: @swc/helpers@0.5.23 from lock file`), because npm 10
+  `node:20-alpine` (npm 10.8; seen before the base image moved to `node:22-alpine`, which also ships npm 10 and has not been retried): `npm ci` rejects `package-lock.json` with `EUSAGE` (`Missing: @swc/helpers@0.5.23 from lock file`), because npm 10
   wants that version for an optional peer of `@swc/core` and the lock does not list it. Separately, the five
   `file:../typespec/packages/*` emitter links point at a sibling checkout that the build context does not contain (KD-040 in
   `docs/testing/known-defects.md`). Even with a built image, generating a schema target does not work in it, because the emitter packages are

@@ -1,11 +1,11 @@
 # Stage 1: Install dependencies
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
 # Stage 2: Build the application
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -37,7 +37,7 @@ CMD ["npm", "run", "db:deploy"]
 # KNOWN GAP (KD-040, docs/auth-ops.md): the standalone output below carries @typespec/compiler and NO emitter package and no
 # node_modules/.bin/tsp, so this image cannot GENERATE a schema target (/api/v1/health reads "degraded", HTTP 200). Five emitters are
 # file:../typespec/packages/* links that this build context does not have.
-FROM node:20-alpine AS runtime
+FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # PostgreSQL only: this image carries no migrations for the embedded database, so it must not open one (it would start empty).

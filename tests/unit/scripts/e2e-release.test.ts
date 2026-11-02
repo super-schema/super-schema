@@ -60,7 +60,7 @@ const DEVELOPER = {
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 // No Chrome unless a test says so: the machine the tests run on must not decide what they see.
 const plan = (argv: string[] = ["--tier", "smoke"], env: Record<string, string> = DEVELOPER, options: Parameters<typeof planRun>[2] = {}) =>
-  planRun(argv, env, { root: "/repo", tmpdir: "/tmp", bins: BINS, chromePath: undefined, nodeVersions: { node: "22.12.0" }, ...options });
+  planRun(argv, env, { root: "/repo", tmpdir: "/tmp", bins: BINS, chromePath: undefined, nodeVersions: { node: "22.22.2" }, ...options });
 
 describe("parseArgs", () => {
   it("reads the tier in both spellings, and the last one wins (an npm script's default can be overridden)", () => {
@@ -305,7 +305,7 @@ describe("planRun: the environment of every child", () => {
 
     it("names a supported Node plainly, and does not hand the hatch (or any knob) to a run that did not set one", () => {
       const p = plan();
-      expect(p.nodeText).toBe("node v22.12.0");
+      expect(p.nodeText).toBe("node v22.22.2");
       for (const name of ["E2E_ALLOW_UNSUPPORTED_NODE", "E2E_STALL_MS", "E2E_GLOBAL_TIMEOUT_MS"]) expect(p.env.phases, name).not.toHaveProperty(name);
     });
 
@@ -655,7 +655,7 @@ describe("runRelease", () => {
     const p = plan();
     await runRelease(p, deps);
     const start = messages.findIndex((m) => m.includes(`run ${p.runId}: tier`));
-    expect(messages[start + 1]).toBe("[e2e-release] node v22.12.0");
+    expect(messages[start + 1]).toBe("[e2e-release] node v22.22.2");
     expect(messages[start + 2]).toBe("[e2e-release] browser: Google Chrome 155.0.8059.85 [channel chrome: fake]");
     expect(messages.at(-1)).toMatch(/done: exit 0.*; browser: Google Chrome 155\.0\.8059\.85 \[channel chrome: fake\]$/);
   });

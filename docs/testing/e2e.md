@@ -13,7 +13,7 @@ Before a release, on a machine with Docker running, **in this order**. The exit 
 **Once per machine**
 
 - Docker running (Docker Desktop, Rancher Desktop, colima): `docker info`. The runner starts `postgres:16` and removes it again.
-- Node 22 or 20.9+, through nvm: `nvm install 22 && nvm use 22` in the checkout (`.nvmrc`), or `nvm use 20`. Node 24 runs with an "untested" warning; Node 25 and 26 are refused (exit 2).
+- Node 22.22.2 or later in 22, through nvm: `nvm install 22 && nvm use 22` in the checkout (`.nvmrc`). Node 20 is end-of-life and refused. Node 24 runs with an "untested" warning; Node 25 and 26 are refused (exit 2).
 - `npm ci`, with the sibling repository it needs ([CI prerequisites](#ci-prerequisites-what-npm-ci-needs-on-a-runner) says what: the same applies on a developer machine).
 - The browsers: `npx playwright install chromium firefox webkit` once. Firefox and WebKit are needed only for the smoke tier's three browsers (a smoke run without them fails for those two projects); Chromium
   is the default, and Google Chrome is used instead when the machine has it.
@@ -62,10 +62,10 @@ npm run test:e2e:release -- --tier regression --shard 2/4
   run in the Chromium Playwright downloads. Which one, and how to force the other: [The browser](#the-browser-google-chrome-or-the-bundled-chromium).
 - **macOS or Linux.** The runner puts each child in a process group of its own and signals the group (`kill(-pid)`, `ps` for the last
   resort); on Windows it signals the child alone and is not tested there.
-- **Node 20.9+ or 22** (`.nvmrc` says 22, CI runs 22; `engines` in `package.json` is `>=20.9.0 <25`) and `npm ci`, as for the app:
-  `nvm install 22 && nvm use 22` (or `nvm use 20`) in the checkout. The runner and the phases script refuse an unsupported Node with exit code 2
+- **Node 22.22.2+** (`.nvmrc` says 22.22.2, CI runs 22; `engines` in `package.json` is `>=22.22.2 <25`) and `npm ci`, as for the app:
+  `nvm install 22 && nvm use 22` in the checkout. The runner and the phases script refuse an unsupported Node with exit code 2
   before they provision anything: on Node 26.3.1 a run stopped after its last test with every Playwright worker idle and never ended (see
-  Troubleshooting). The policy is a whitelist, not a finding about every other Node: **20.9+ and 22 are supported; Node 24 (the Active LTS, and the
+  Troubleshooting). The policy is a whitelist, not a finding about every other Node: **Node 22 from 22.22.2 is supported (Node 20 is end-of-life and refused); Node 24 (the Active LTS, and the
   Playwright image's) is allowed with a one-line "untested" warning; Node 25 and 26 and the other versions are refused**.
   `E2E_ALLOW_UNSUPPORTED_NODE=1` runs the suite on a refused Node anyway. Only the e2e guard refuses: the application itself runs on whatever
   `engines` allows. The guard is also in `playwright.config.ts`, so a bare `playwright test` (below) meets it too. No `.env` is needed, no database, no running server. A `.env` in the checkout is still read by the
@@ -139,7 +139,7 @@ decides what a baseline looks like. Firefox and WebKit (`firefox-smoke`, `webkit
 
 `scripts/e2e-release.mjs`, in this order:
 
-1. Checks the Node (20.9+, 22, or 24 with a warning; else exit 2 with `nvm install 22 && nvm use 22`: above), that Docker is running, and decides the browser (above; an explicit
+1. Checks the Node (22.22.2+, or 24 with a warning; else exit 2 with `nvm install 22 && nvm use 22`: above), that Docker is running, and decides the browser (above; an explicit
    `E2E_BROWSER_CHANNEL=chrome` that this machine cannot give is exit 2 before anything is provisioned); names the Node and the browser with
    its version.
 2. Picks a port for the app and one for the database (random, 20000-32000: below the ports Linux gives outgoing connections; never 3000,
@@ -548,8 +548,8 @@ that. Until a week of nightly runs says that it never fails by itself, `e2e-visu
 - **A run is stuck after Ctrl-C**: the first Ctrl-C asks the step in progress to stop and runs the teardown; a second one kills the step
   at once (the teardown still runs). It never leaves the container behind unless you pass `--keep`.
 - **"Node 26.3.1 is not supported by this suite ..."** (exit 2 from the scripts, an error from `playwright.config.ts` for a bare `playwright test`; before
-  anything is provisioned): the Node of your shell is not 20.9+, 22 or 24. Run `nvm install 22 && nvm use 22` in the checkout (`.nvmrc`), or
-  `nvm use 20`. `ls ~/.nvm/versions/node` lists the ones you have; the build is made once per Node major, it is part of the reuse hash.
+  anything is provisioned): the Node of your shell is not 22.22.2+ or 24. Run `nvm install 22 && nvm use 22` in the checkout (`.nvmrc`).
+  `ls ~/.nvm/versions/node` lists the ones you have; the build is made once per Node major, it is part of the reuse hash.
   `E2E_ALLOW_UNSUPPORTED_NODE=1` overrides the refusal (Node 25 and 26 are not verified; Node 26.3.1 is the one that stalled).
 - **A run that stalls**: a run that never ends, with every Playwright worker idle (the list shows the last test or no test at all, no summary, no
   CPU, no sockets), was seen four times on Node 26.3.1 (Homebrew) with a suite of about a hundred tests, and **once on Node 20.19.4** (2026-10-25: a smoke run whose 21 tests passed in 25 s and which then sat for 11 minutes with its three remaining workers and the Playwright process all idle, until it ended by itself; the next run of the same command took 25 s). So the guard is not the whole answer, and the watchdog below is what makes a run that hangs end. The Node guard keeps

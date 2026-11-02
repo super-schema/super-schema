@@ -10,14 +10,14 @@ import { directRunVerdict, isListeningSync, reuseProblem } from "../../../script
 const never = () => false;
 const always = () => true;
 const NODE_26 = { node: "26.3.1" };
-const NODE_22 = { node: "22.12.0" };
+const NODE_22 = { node: "22.22.2" };
 
 describe("directRunVerdict: the Node", () => {
   it("refuses an unsupported Node with the commands that fix it", () => {
     const { problem } = directRunVerdict({ versions: NODE_26, env: {}, argv: ["node", "playwright", "test"], listening: never });
     expect(problem).toContain("Node 26.3.1 is not supported by this suite");
     expect(problem).toContain("nvm install 22 && nvm use 22");
-    expect(problem).toContain("nvm use 20");
+    expect(problem).toContain("22.22.2 or later");
   });
 
   it("lets it through with E2E_ALLOW_UNSUPPORTED_NODE=1", () => {

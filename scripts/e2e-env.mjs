@@ -206,7 +206,7 @@ export const HERMETIC_BROWSER_RUN_NAMES = Object.freeze({
 
 /** The runner's own settings: read from the shell, handed to the browser run when set. Never to the app (it reads none of them). */
 export const HERMETIC_RUNNER_KNOB_NAMES = Object.freeze({
-  E2E_ALLOW_UNSUPPORTED_NODE: "`1` lets a Node that the suite refuses (not 20.9+, 22 or 24: scripts/e2e-node.cjs) run it; the phases script checks it again",
+  E2E_ALLOW_UNSUPPORTED_NODE: "`1` lets a Node that the suite refuses (not 22.22.2+ or 24: scripts/e2e-node.cjs) run it; the phases script checks it again",
   E2E_ALLOW_SKIPS: "`1` lets a run skip tests that are not tagged @external without failing (the skipped-test gate of scripts/e2e-phases.mjs; every skip is still listed); never set by CI",
   E2E_STALL_MS: "how long the phases script waits for a sign of life from Playwright (the heartbeat file) before it ends it with exit 124; default 20 minutes (above the longest test timeout)",
   E2E_GLOBAL_TIMEOUT_MS: "playwright.config.ts globalTimeout: a hard ceiling for the whole Playwright run (CI sets it); unset means none",
