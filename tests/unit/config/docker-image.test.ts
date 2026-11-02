@@ -117,6 +117,7 @@ describe(".dockerignore: the build context", () => {
     expect(excludedByDockerignore("tests/e2e/helpers/auth-state.ts")).toBe(true);
     expect(excludedByDockerignore("playwright.config.ts")).toBe(true);
     expect(excludedByDockerignore("vitest.config.ts")).toBe(true);
+    expect(excludedByDockerignore("next-env.d.ts")).toBe(true);
   });
 
   it("leaves no file in the context importing a file the context does not contain (next build type-checks every tsconfig file)", () => {
