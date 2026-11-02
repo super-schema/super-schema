@@ -124,6 +124,19 @@ describe("updateFieldAction whitelist", () => {
     expect(await update("fld-1", { name: "dup" })).toEqual({ error: "A field with that name already exists" });
     spy.mockRestore();
   });
+
+  it("a rename onto a URL name another field holds names that field, not the typed name (the field being renamed is left out of the lookup)", async () => {
+    mockPrisma.field.findFirst.mockImplementation(async (args: { where: { slug?: string } }) => (args.where.slug === "order-id" ? { name: "Order ID" } : null));
+    mockPrisma.$transaction.mockRejectedValueOnce(new Error("Unique constraint failed on the fields: (`entityId`,`slug`)"));
+    expect(await update("fld-1", { name: "order_id" })).toEqual({ error: 'Field "Order ID" already exists' });
+    expect(mockPrisma.field.findFirst).toHaveBeenLastCalledWith({ where: { entityId: "ent-1", slug: "order-id", id: { not: "fld-1" } }, select: { name: true } });
+  });
+
+  it("a failing holder lookup keeps the plain duplicate message: the naming is a refinement of the refusal, not a second failure", async () => {
+    mockPrisma.field.findFirst.mockRejectedValueOnce(new Error("connection lost"));
+    mockPrisma.$transaction.mockRejectedValueOnce(new Error("Unique constraint failed on the fields: (`entityId`,`slug`)"));
+    expect(await update("fld-1", { name: "order_id" })).toEqual({ error: "A field with that name already exists" });
+  });
 });
 
 /**

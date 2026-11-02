@@ -112,6 +112,24 @@ export const WRITE_BACK_SOURCE_SQL =
   `"metadata" = (${METADATA_AS_OBJECT} - 'sourceStale' - 'typespecMigration') WHERE "id" = $1`;
 
 /**
+ * $1 = entity id, $2 = the generated source. Used by the TypeSpec source migration (Story 12.7): stores the source and drops the
+ * `typespecMigration` marker in ONE statement, only while no source is stored (the guard). The other metadata keys are read from the row
+ * as it is at that moment, so a metadata write that landed during the compile is kept.
+ */
+export const MIGRATED_WRITE_SQL =
+  `UPDATE "entities" SET "typespecSource" = $2, "updatedAt" = CURRENT_TIMESTAMP, ` +
+  `"metadata" = ${METADATA_AS_OBJECT} - 'typespecMigration' WHERE "id" = $1 AND "typespecSource" IS NULL`;
+
+/**
+ * $1 = entity id, $2 = JSON text of the FLAGGED marker. Used by the TypeSpec source migration: sets `metadata.typespecMigration` and nothing
+ * else, only while no source is stored (the guard). The other metadata keys are kept as the row holds them.
+ */
+export const FLAGGED_WRITE_SQL =
+  `UPDATE "entities" SET "updatedAt" = CURRENT_TIMESTAMP, ` +
+  `"metadata" = jsonb_set(${METADATA_AS_OBJECT}, '{typespecMigration}', $2::jsonb, true) ` +
+  `WHERE "id" = $1 AND "typespecSource" IS NULL`;
+
+/**
  * $1 = entity id, $2 = the stored source the caller compared against the field rows. Marks only the
  * source stale (draft flags untouched: the draft did not change, its source just lags), and only when
  * the source is still exactly that text and not already stale — idempotent, and a TypeSpec source save

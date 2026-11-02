@@ -40,16 +40,15 @@ describe("resolveEntityNames: field slug collisions", () => {
     ]);
   });
 
-  it("names with no Latin letter slug to empty: the first keeps its name, the others are numbered (and the numbers are free)", async () => {
-    const jp = "日本語";
-    const cn = "中文";
-    const kr = "한국어";
-    const { names } = await namesOf(jp, cn, kr, "2", "3");
-    // `cn` -> "<cn>2" (slug "2"), `kr` -> "<kr>3" (slug "3"); the fields named "2" and "3" then collide and are numbered too
-    expect(names.slice(0, 3)).toEqual([jp, `${cn}2`, `${kr}3`]);
-    expect(new Set(names)).toHaveProperty("size", 5);
-    expect(names[3]).not.toBe("2");
-    expect(names[4]).not.toBe("3");
+  it("a name in a non-Latin script has a slug of its own, so its field keeps its name", async () => {
+    const { names, warnings } = await namesOf("日本語", "中文", "한국어");
+    expect(names).toEqual(["日本語", "中文", "한국어"]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("a name with no letter or digit slugs to empty: the first keeps its name, the later one is numbered (a number is a digit, so its slug is free)", async () => {
+    const { names } = await namesOf("!!", "??");
+    expect(names).toEqual(["!!", "??2"]);
   });
 
   it("a number that is itself taken is skipped (a-b2 exists as a field already)", async () => {
@@ -58,14 +57,18 @@ describe("resolveEntityNames: field slug collisions", () => {
   });
 
   it("a single leftover collision is reported in the singular", async () => {
-    const fields = Array.from({ length: 52 }, (_, i) => String.fromCodePoint(0x4e00 + i)); // 51 renames: 50 listed, 1 left over
+    const fields = Array.from({ length: 52 }, (_, i) => "!".repeat(i + 1)); // no letter or digit: all slug "", so 51 renames: 50 listed, 1 left over
     const { warnings } = await namesOf(...fields);
     expect(warnings).toHaveLength(51);
     expect(warnings.at(-1)).toEqual({ pointer: "", code: "SANITIZED_VALUE", message: "1 more field was renamed because its URL slug collided; it is not listed." });
   });
 
   it("2,000 fields of empty slug stay fast (linear, not quadratic) and unique, and only 50 are reported plus one summary", async () => {
-    const fields = Array.from({ length: 2000 }, (_, i) => String.fromCodePoint(0x4e00 + i)); // 2,000 different CJK characters, all slug ""
+    // 2,000 different names of three symbols each (no letter or digit, so all slug ""); short names keep the work per field constant
+    const SYMBOLS = "!#%&*+=?@^~|<>";
+    const fields = Array.from({ length: 2000 }, (_, i) =>
+      [SYMBOLS[i % 14], SYMBOLS[Math.floor(i / 14) % 14], SYMBOLS[Math.floor(i / 196) % 14]].join(""),
+    );
     const started = performance.now();
     const { names, warnings } = await namesOf(...fields);
     expect(performance.now() - started).toBeLessThan(2_000);

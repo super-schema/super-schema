@@ -133,6 +133,12 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
     }
 
     const slug = generateSlug(entity.name);
+    // A name with no letter or digit in any script has no URL name: stored as "", the entity would open the product page and the next such name
+    // would be refused as taken. Skipped, like the other known conflicts.
+    if (slug === "") {
+      args.skip(`Entity "${entity.name}" must contain at least one letter or digit — skipped`);
+      continue;
+    }
     const slugTaken = await tx.entity.findFirst({
       where: { slug, productId },
       select: { id: true },

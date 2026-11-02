@@ -42,6 +42,8 @@ const { mockPrisma } = await vi.hoisted(async () => {
       },
       $executeRaw: vi.fn(),
       $executeRawUnsafe: vi.fn(),
+      // The row lock an entity update takes first (`SELECT ... FOR UPDATE`), answered with the id it was given.
+      $queryRaw: vi.fn(async () => [{ id: "ent-1" }]),
       $transaction: vi.fn(),
       field: {
         create: vi.fn(),

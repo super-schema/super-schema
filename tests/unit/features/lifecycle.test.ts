@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@/lib/db", () => ({
-  prisma: {
+vi.mock("@/lib/db", () => {
+  const prisma: Record<string, unknown> = {
     entity: {
       create: vi.fn(),
       findMany: vi.fn(),
@@ -12,8 +12,12 @@ vi.mock("@/lib/db", () => ({
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: "audit-1" }),
     },
-  },
-}));
+    // An update takes the entity row lock first (`SELECT ... FOR UPDATE`) and runs in a transaction whose callback gets this same client.
+    $queryRaw: vi.fn(async () => [{ id: "ent-1" }]),
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
+  };
+  return { prisma };
+});
 
 import { updateEntity } from "@/services/entity.service";
 import { canTransition, isReadOnly } from "@/lib/entity-lifecycle";

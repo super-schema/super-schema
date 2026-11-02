@@ -4,6 +4,7 @@ import { compileTypeSpecWithGovernance, type GovernanceDiagnostic } from "@/lib/
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { ok, err, type Result } from "@/types/result";
+import { FLAGGED_WRITE_SQL, MIGRATED_WRITE_SQL } from "@/lib/entity-versioning/draft-state";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -38,8 +39,10 @@ function messageOf(e: unknown): string {
  * clean under the real compiler before it is written; otherwise the entity is
  * flagged in metadata.typespecMigration and left on the old path.
  *
- * Writes are guarded on `typespecSource: null`, so source saved by a user
- * between our read and our write is never overwritten (outcome: SKIPPED).
+ * Writes are guarded on `typespecSource IS NULL`, so source saved by a user
+ * between our read and our write is never overwritten (outcome: SKIPPED). Each
+ * write touches only its own key in one statement, so a metadata write that
+ * lands during the compile is never reverted by this one.
  * An unexpected throw (compiler, DB) is returned as an ERROR outcome — it
  * never crosses the service boundary.
  */
@@ -58,28 +61,15 @@ export async function migrateEntityTypeSpecSource(
 
     const source = deps.generate(model.data);
     const compiled = await deps.compile(source);
-    const metadata = (entity.metadata as Record<string, unknown> | null) ?? {};
 
     if (!compiled.success) {
-      const { count } = await db.entity.updateMany({
-        where: { id: entityId, typespecSource: null },
-        data: {
-          metadata: {
-            ...metadata,
-            typespecMigration: { status: "FLAGGED", at: new Date().toISOString(), diagnostics: compiled.diagnostics },
-          } as unknown as Prisma.InputJsonValue,
-        },
-      });
+      const marker = { status: "FLAGGED", at: new Date().toISOString(), diagnostics: compiled.diagnostics };
+      const count = await db.$executeRawUnsafe(FLAGGED_WRITE_SQL, entityId, JSON.stringify(marker));
       if (count === 0) return ok({ entityId, status: "SKIPPED" });
       return ok({ entityId, status: "FLAGGED", diagnostics: compiled.diagnostics });
     }
 
-    const rest = { ...metadata };
-    delete rest.typespecMigration;
-    const { count } = await db.entity.updateMany({
-      where: { id: entityId, typespecSource: null },
-      data: { typespecSource: source, metadata: rest as Prisma.InputJsonValue },
-    });
+    const count = await db.$executeRawUnsafe(MIGRATED_WRITE_SQL, entityId, source);
     if (count === 0) return ok({ entityId, status: "SKIPPED" });
     return ok({ entityId, status: "MIGRATED" });
   } catch (e) {

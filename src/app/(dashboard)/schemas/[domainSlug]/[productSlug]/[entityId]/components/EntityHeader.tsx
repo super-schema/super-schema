@@ -111,9 +111,9 @@ export function EntityHeader({
   }
 
   function handleDeprecationSubmit() {
-    const existingMeta = (entity.metadata || {}) as Record<string, unknown>;
+    // Only the deprecation notice is sent. The server merges it over the stored metadata; this page's copy of the metadata has no schemaVersions,
+    // so sending the whole copy would write back a metadata that lacks them.
     const metadata = {
-      ...existingMeta,
       deprecation: {
         deprecated: true,
         since: depSince,

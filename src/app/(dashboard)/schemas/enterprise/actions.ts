@@ -44,6 +44,10 @@ export async function createTenantEntityAction(data: {
   if (reservedMsg) {
     return { error: reservedMsg };
   }
+  // The URL name is the name's slug: a name with no letter or digit has none, and the entity could not be opened.
+  if (generateSlug(name) === "") {
+    return { error: "Entity name must contain at least one letter or digit" };
+  }
 
   // A field named like a key the AsyncAPI parser cannot read is refused by name, before anything is created.
   const reservedField = firstReservedFieldNameMessage(data.fields);

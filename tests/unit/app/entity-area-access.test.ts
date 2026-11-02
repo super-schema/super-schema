@@ -28,7 +28,7 @@ const h = vi.hoisted(() => {
     fieldFindUnique: fn(),
     effects: {
       entityUpdate: fn(), fieldCreate: fn(), fieldUpdate: fn(), fieldDelete: fn(), fieldUpdateMany: fn(), fieldFindMany: fn(), fieldFindFirst: fn(),
-      auditCreate: fn(), transaction: fn(), executeRaw: fn(), entityVersionFind: fn(),
+      auditCreate: fn(), transaction: fn(), executeRaw: fn(), queryRaw: fn(), entityVersionFind: fn(),
       updateEntity: fn(), markAsDeployed: fn(), updateDriftStatus: fn(), getDeploymentStatus: fn(), createGlobalOverride: fn(),
       createEntityOverride: fn(), acknowledgeLossyMapping: fn(), getOverridesForEntity: fn(), getVersionHistory: fn(), compareVersionsStructured: fn(),
       getChangeHistory: fn(), emitEntity: fn(), emitOfficial: fn(), publishEntity: fn(), previewPublish: fn(), listEntityVersions: fn(), compile: fn(),
@@ -51,6 +51,7 @@ vi.mock("@/lib/db", () => ({
     auditLog: { create: h.effects.auditCreate },
     $transaction: h.effects.transaction,
     $executeRawUnsafe: h.effects.executeRaw,
+    $queryRaw: h.effects.queryRaw,
   },
 }));
 vi.mock("@/services/entity.service", () => ({ updateEntity: h.effects.updateEntity }));
@@ -179,7 +180,10 @@ beforeEach(() => {
       : { id: "fld-1", entityId: "ent-1", name: "email", slug: "email", type: "string", decorators: {} }
   );
   for (const effect of EFFECTS) effect.mockResolvedValue(undefined);
-  h.effects.transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
+  // The batch form resolves every operation; the interactive form (a callback) runs on the mocked client.
+  h.effects.transaction.mockImplementation(async (ops: unknown) =>
+    typeof ops === "function" ? (ops as (tx: unknown) => unknown)((await import("@/lib/db")).prisma) : Promise.all(ops as unknown[])
+  );
   h.effects.updateEntity.mockResolvedValue({ success: true, data: { id: "ent-1" } });
 });
 

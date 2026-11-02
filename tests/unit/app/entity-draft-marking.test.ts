@@ -13,6 +13,8 @@ const { mockPrisma, mockCompile } = vi.hoisted(() => ({
     },
     auditLog: { create: vi.fn() },
     $executeRawUnsafe: vi.fn(),
+    // The row lock a metadata write takes first (`SELECT ... FOR UPDATE`).
+    $queryRaw: vi.fn(async () => [{ id: "ent-1" }]),
     $transaction: vi.fn(),
   },
   mockCompile: vi.fn(),
@@ -50,8 +52,10 @@ beforeEach(() => {
   mockPrisma.field.findMany.mockResolvedValue([]);
   // The entity of the active tenant (the by-id ownership guard reads it).
   mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", tenantId: "tenant-1", metadata: {} });
-  // $transaction([...]) batch form: resolve every operation.
-  mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
+  // $transaction([...]) batch form: resolve every operation. The interactive form (a callback) runs it on this same client.
+  mockPrisma.$transaction.mockImplementation(async (ops: unknown) =>
+    typeof ops === "function" ? (ops as (tx: unknown) => unknown)(mockPrisma) : Promise.all(ops as unknown[])
+  );
 });
 
 describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
@@ -127,6 +131,30 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
     expect(mockPrisma.entity.update).toHaveBeenLastCalledWith({
       where: { id: "ent-1" },
       data: { metadata: { tags: ["a"], schemaVersions: { avro: [] }, sourceStale: true } },
+    });
+  });
+
+  it("updateEntityMetadataAction keeps the stored custom.extensions when a client sends custom, and never stores an extensions it sends (regression)", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue({ metadata: { custom: { color: "red", extensions: { "x-team": "iot" } } }, tenantId: "tenant-1" });
+    await updateEntityMetadataAction("ent-1", { custom: { color: "blue", extensions: { "x-evil": true } } });
+    expect(mockPrisma.entity.update).toHaveBeenLastCalledWith({
+      where: { id: "ent-1" },
+      data: {
+        metadata: { custom: { color: "blue", extensions: { "x-team": "iot" } }, sourceStale: true },
+        hasUnpublishedChanges: true,
+      },
+    });
+  });
+
+  it("updateEntityMetadataAction clears the custom properties sent as null and still keeps the stored extensions", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue({ metadata: { custom: { color: "red", extensions: { "x-team": "iot" } } }, tenantId: "tenant-1" });
+    await updateEntityMetadataAction("ent-1", { custom: null });
+    expect(mockPrisma.entity.update).toHaveBeenLastCalledWith({
+      where: { id: "ent-1" },
+      data: {
+        metadata: { custom: { extensions: { "x-team": "iot" } }, sourceStale: true },
+        hasUnpublishedChanges: true,
+      },
     });
   });
 

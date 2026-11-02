@@ -128,6 +128,15 @@ describe("createTenantEntityAction", () => {
     expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
   });
 
+  it("refuses a name with no letter or digit (its URL name would be empty) before any database work", async () => {
+    const result = await createTenantEntityAction({ name: "!!!", description: "", fields: [] });
+
+    expect(result).toEqual({ error: "Entity name must contain at least one letter or digit" });
+    expect(mockGetActiveTenantId).not.toHaveBeenCalled();
+    expect(mockAssertNameAvailable).not.toHaveBeenCalled();
+    expect(mockTx.entity.create).not.toHaveBeenCalled();
+  });
+
   it("returns the registry conflict message, creates nothing and writes no audit log", async () => {
     mockAssertNameAvailable.mockResolvedValue({
       success: false,

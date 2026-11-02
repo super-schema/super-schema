@@ -125,6 +125,13 @@ export async function createProduct(
   }
 
   const slug = generateSlug(name);
+  if (slug === "") {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: "Product name must contain at least one letter or digit",
+      suggestedFix: "Use a name with letters or digits.",
+    });
+  }
   if (isReservedProductRouteSlug(slug)) {
     return err({
       code: "VALIDATION_ERROR",
@@ -186,16 +193,26 @@ export async function updateProduct(
     if (!name) {
       return err({ code: "VALIDATION_ERROR", message: "Product name is required" });
     }
-    const slug = generateSlug(name);
-    if (isReservedProductRouteSlug(slug)) {
-      return err({
-        code: "VALIDATION_ERROR",
-        message: `"${slug}" is reserved for a domain-level utility page.`,
-        suggestedFix: "Choose a different product name.",
-      });
+    // The URL name follows a rename only: a stored slug is not re-derived from the same name (the slug rules may have changed since it was made).
+    if (name !== existing.name) {
+      const slug = generateSlug(name);
+      if (slug === "") {
+        return err({
+          code: "VALIDATION_ERROR",
+          message: "Product name must contain at least one letter or digit",
+          suggestedFix: "Use a name with letters or digits.",
+        });
+      }
+      if (isReservedProductRouteSlug(slug)) {
+        return err({
+          code: "VALIDATION_ERROR",
+          message: `"${slug}" is reserved for a domain-level utility page.`,
+          suggestedFix: "Choose a different product name.",
+        });
+      }
+      data.slug = slug;
     }
     data.name = name;
-    data.slug = slug;
   }
   if (input.description !== undefined) data.description = input.description;
   if (input.tierId !== undefined) data.tierId = input.tierId;

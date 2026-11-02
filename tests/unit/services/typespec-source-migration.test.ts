@@ -1,13 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
 import { migrateEntityTypeSpecSource, runTypeSpecSourceMigration } from "@/services/typespec-source-migration.service";
+import { FLAGGED_WRITE_SQL, MIGRATED_WRITE_SQL } from "@/lib/entity-versioning/draft-state";
 
 function fakeDb(
   entities: Array<{ id: string; typespecSource: string | null; metadata?: unknown }>,
-  opts: { updateManyCount?: number } = {}
+  opts: { writeCount?: number } = {}
 ) {
-  const updates: Array<{ id: string; data: Record<string, unknown>; where: Record<string, unknown> }> = [];
+  const writes: Array<{ sql: string; args: unknown[] }> = [];
   return {
-    updates,
+    writes,
     entity: {
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
         const e = entities.find((x) => x.id === where.id);
@@ -17,15 +18,16 @@ function fakeDb(
       }),
       findMany: vi.fn(async () => entities.map((e) => ({ id: e.id }))),
       update: vi.fn(async () => {
-        throw new Error("migration must write via updateMany (guarded on typespecSource: null)");
+        throw new Error("migration must write via $executeRawUnsafe (guarded on typespecSource IS NULL, one key per statement)");
       }),
-      updateMany: vi.fn(
-        async ({ where, data }: { where: { id: string; typespecSource?: null }; data: Record<string, unknown> }) => {
-          updates.push({ id: where.id, data, where });
-          return { count: opts.updateManyCount ?? 1 };
-        }
-      ),
+      updateMany: vi.fn(async () => {
+        throw new Error("migration must write via $executeRawUnsafe (guarded on typespecSource IS NULL, one key per statement)");
+      }),
     },
+    $executeRawUnsafe: vi.fn(async (sql: string, ...args: unknown[]) => {
+      writes.push({ sql, args });
+      return opts.writeCount ?? 1;
+    }),
     field: { findMany: vi.fn(async () => []) },
   };
 }
@@ -38,7 +40,7 @@ describe("migrateEntityTypeSpecSource", () => {
       compile: vi.fn(),
     });
     expect(res.success && res.data.status).toBe("SKIPPED");
-    expect(db.updates).toHaveLength(0);
+    expect(db.writes).toHaveLength(0);
   });
 
   it("writes source when it round-trips clean", async () => {
@@ -49,10 +51,21 @@ describe("migrateEntityTypeSpecSource", () => {
       compile,
     });
     expect(res.success && res.data.status).toBe("MIGRATED");
-    expect(db.updates[0].data.typespecSource).toBe("model Order {}");
     expect(compile).toHaveBeenCalledWith("model Order {}");
+    expect(db.writes).toEqual([{ sql: MIGRATED_WRITE_SQL, args: ["e1", "model Order {}"] }]);
     // Guarded write: never overwrites source saved concurrently.
-    expect(db.updates[0].where).toEqual({ id: "e1", typespecSource: null });
+    expect(MIGRATED_WRITE_SQL).toContain(`"typespecSource" IS NULL`);
+  });
+
+  it("the MIGRATED write touches only the typespecMigration key of the metadata (the other keys are kept by the row; see the PGlite test)", async () => {
+    const db = fakeDb([{ id: "e1", typespecSource: null, metadata: { tags: ["x"], typespecMigration: { status: "FLAGGED" } } }]);
+    await migrateEntityTypeSpecSource(db as never, "e1", {
+      generate: () => "model Order {}",
+      compile: async () => ({ success: true, diagnostics: [] }) as never,
+    });
+    expect(db.writes[0].sql).toBe(MIGRATED_WRITE_SQL);
+    expect(MIGRATED_WRITE_SQL).toContain(`- 'typespecMigration'`);
+    expect(db.entity.updateMany).not.toHaveBeenCalled();
   });
 
   it("flags entities whose generated source fails to compile, leaving typespecSource null", async () => {
@@ -63,15 +76,19 @@ describe("migrateEntityTypeSpecSource", () => {
       compile: async () => ({ success: false, diagnostics: [diag] }) as never,
     });
     expect(res.success && res.data.status).toBe("FLAGGED");
-    const data = db.updates[0].data as { typespecSource?: unknown; metadata: Record<string, unknown> };
-    expect(data.typespecSource).toBeUndefined();
-    expect(data.metadata.tags).toEqual(["x"]);
-    expect((data.metadata.typespecMigration as { status: string }).status).toBe("FLAGGED");
-    expect(db.updates[0].where).toEqual({ id: "e1", typespecSource: null });
+    expect(db.writes).toHaveLength(1);
+    const [write] = db.writes;
+    expect(write.sql).toBe(FLAGGED_WRITE_SQL);
+    expect(write.args[0]).toBe("e1");
+    // The statement sets the marker only: it never assigns typespecSource.
+    expect(write.sql).not.toMatch(/"typespecSource" =/);
+    const marker = JSON.parse(write.args[1] as string) as { status: string; diagnostics: unknown[] };
+    expect(marker.status).toBe("FLAGGED");
+    expect(marker.diagnostics).toEqual([diag]);
   });
 
   it("returns SKIPPED when the guarded write matches no row (source saved concurrently)", async () => {
-    const db = fakeDb([{ id: "e1", typespecSource: null }], { updateManyCount: 0 });
+    const db = fakeDb([{ id: "e1", typespecSource: null }], { writeCount: 0 });
     const res = await migrateEntityTypeSpecSource(db as never, "e1", {
       generate: () => "model Order {}",
       compile: async () => ({ success: true, diagnostics: [] }) as never,
@@ -80,7 +97,7 @@ describe("migrateEntityTypeSpecSource", () => {
   });
 
   it("returns SKIPPED when the guarded FLAGGED write matches no row", async () => {
-    const db = fakeDb([{ id: "e1", typespecSource: null }], { updateManyCount: 0 });
+    const db = fakeDb([{ id: "e1", typespecSource: null }], { writeCount: 0 });
     const res = await migrateEntityTypeSpecSource(db as never, "e1", {
       generate: () => "model Order { x: Nope }",
       compile: async () => ({ success: false, diagnostics: [] }) as never,
@@ -98,7 +115,7 @@ describe("migrateEntityTypeSpecSource", () => {
     });
     expect(res.success).toBe(true);
     expect(res.success && res.data).toMatchObject({ entityId: "e1", status: "ERROR", error: "compiler exploded" });
-    expect(db.updates).toHaveLength(0);
+    expect(db.writes).toHaveLength(0);
   });
 });
 

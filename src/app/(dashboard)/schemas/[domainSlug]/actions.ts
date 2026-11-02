@@ -159,6 +159,10 @@ async function createProductEntity(params: {
   if (reservedMsg) {
     return { error: reservedMsg };
   }
+  // The URL name is the name's slug: a name with no letter or digit has none, and the entity could not be opened.
+  if (generateSlug(name) === "") {
+    return { error: "Entity name must contain at least one letter or digit" };
+  }
 
   const productId = params.productId ?? (await ensureDefaultProductId(domainId));
 

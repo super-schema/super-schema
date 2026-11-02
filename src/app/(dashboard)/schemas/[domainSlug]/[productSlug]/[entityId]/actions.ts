@@ -8,8 +8,7 @@ import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
 import { firstReservedFieldNameMessage, reservedFieldNameMessage, reservedNameMessage } from "@/lib/reserved-field-names";
 import { TypeSpecDecoratorSchema } from "@/types/schemas/typespec-decorator.schema";
-import { updateEntity } from "@/services/entity.service";
-import type { UpdateEntityInput } from "@/types/schemas/entity.schema";
+import { updateEntity, type UpdateEntityPatch } from "@/services/entity.service";
 import type { Relationship } from "@/types/schemas/entity-metadata.schema";
 import type { DiffResult } from "@/services/version-history/version.types";
 import { can, entityReader, type ActionId, type ResourceRef } from "@/lib/access";
@@ -132,6 +131,23 @@ function newFieldName(value: unknown): { name: string } | { error: string; code:
   return reserved === null ? fieldName : { error: reserved, code: "VALIDATION_ERROR" };
 }
 
+/**
+ * The name of the field of `entityId` that holds the URL name of `name` (`Order ID` holds `order-id`, which `order_id` slugs to as well), or
+ * undefined when no field does. A refused duplicate names that field rather than the name that was typed; `exceptFieldId` leaves one field out.
+ */
+async function fieldHoldingSlug(entityId: string, name: string, exceptFieldId?: string): Promise<string | undefined> {
+  try {
+    const holder = await prisma.field.findFirst({
+      where: { entityId, slug: generateSlug(name), ...(exceptFieldId !== undefined && { id: { not: exceptFieldId } }) },
+      select: { name: true },
+    });
+    return holder?.name;
+  } catch {
+    // The wording is a refinement of the refusal: when this lookup fails, the plain message stands.
+    return undefined;
+  }
+}
+
 export async function addFieldAction(
   entityId: string,
   name: string,
@@ -242,7 +258,8 @@ export async function addFieldAction(
     return { success: true, field };
   } catch (e: unknown) {
     if (e instanceof Error && e.message.includes("Unique constraint")) {
-      return { error: `Field "${fieldName.name}" already exists` };
+      const holder = await fieldHoldingSlug(entityId, fieldName.name);
+      return { error: `Field "${holder ?? fieldName.name}" already exists` };
     }
     // Anything else (a Prisma validation message carries the absolute source path and a code excerpt) is logged, not shown.
     return { ...unexpectedFailure("addFieldAction", e) };
@@ -298,12 +315,15 @@ export async function updateFieldAction(
     rest.name = fieldName.name;
   }
 
+  // The field's entity, once it is read: a duplicate name is then answered with the field that holds the name (see fieldHoldingSlug).
+  let entityOfField: string | undefined;
   try {
     // The field's place (its entity's tenant, domain and product) is judged BEFORE anything of it is read: the active tenant AND a covering role.
     const access = await guardSubject("entity.write", { kind: "field", id: fieldId }, { label: "Field" });
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     const existing = await prisma.field.findUnique({ where: { id: fieldId } });
     if (!existing) return { ...notFoundFailure("Field") };
+    entityOfField = existing.entityId;
 
     // A RENAME to a name the AsyncAPI parser cannot read is refused. A name that does not change is not looked at: the field studio sends
     // the name with every other edit, and a field that already has such a name (created before the rule) must stay editable.
@@ -377,11 +397,17 @@ export async function updateFieldAction(
     return { success: true };
   } catch (e: unknown) {
     if (e instanceof Error && e.message.includes("Unique constraint")) {
-      return { error: `A field with that name already exists` };
+      const holder = entityOfField !== undefined && typeof rest.name === "string" ? await fieldHoldingSlug(entityOfField, rest.name, fieldId) : undefined;
+      return { error: holder === undefined ? `A field with that name already exists` : `Field "${holder}" already exists` };
     }
     return { ...unexpectedFailure("updateFieldAction", e) };
   }
 }
+
+/** The metadata keys a lifecycle change may send: the keys whose only action is `entity.lifecycle` in METADATA_KEY_ACTIONS (the deprecation notice). */
+const LIFECYCLE_METADATA_KEYS: readonly string[] = Object.keys(METADATA_KEY_ACTIONS).filter((key) =>
+  METADATA_KEY_ACTIONS[key].every((action) => action === "entity.lifecycle")
+);
 
 export async function updateEntityStatusAction(
   entityId: string,
@@ -396,10 +422,17 @@ export async function updateEntityStatusAction(
 
     const input: Record<string, unknown> = { status };
     if (metadata) {
+      // The change is a patch of the lifecycle's own key (the deprecation notice): the service merges it over the stored metadata. Any other key is
+      // refused here, as updateEntityMetadataAction refuses it (the same METADATA_KEY_ACTIONS gate), so a lifecycle change cannot set tags, relationships
+      // or the keys the server writes.
+      if (!isPlainObject(metadata)) return { error: "The metadata changes must be an object", code: "VALIDATION_ERROR" };
+      const unknownKey = Object.keys(metadata).find((key) => !LIFECYCLE_METADATA_KEYS.includes(key));
+      if (unknownKey !== undefined) return { error: `The metadata key "${unknownKey.slice(0, 64)}" cannot be changed here`, code: "VALIDATION_ERROR" };
       input.metadata = metadata;
     }
 
-    const result = await updateEntity(entityId, input as UpdateEntityInput, contextOf(access.principal));
+    // A patch: its metadata keys may be sent as null (a removal), which the UpdateEntityInput type does not allow.
+    const result = await updateEntity(entityId, input as UpdateEntityPatch, contextOf(access.principal));
 
     if (!result.success) {
       return { ...failureOf(result.error, "updateEntityStatusAction") };
@@ -1856,6 +1889,20 @@ export async function deploySchemaAction(
 }
 
 /**
+ * The `custom` a metadata write stores. The client's custom properties replace the stored ones, but the `extensions` the TypeSpec sync records
+ * beside them (SET_ENTITY_EXTENSIONS_SQL) are kept as the row holds them, and an `extensions` the client sends is never stored. A `custom` sent
+ * as null or as a non-object clears the properties and keeps the extensions.
+ */
+function customWithStoredExtensions(storedCustom: unknown, sentCustom: unknown): unknown {
+  const storedExtensions = isPlainObject(storedCustom) ? (storedCustom as Record<string, unknown>).extensions : undefined;
+  if (storedExtensions === undefined && !isPlainObject(sentCustom)) return sentCustom;
+  const properties = isPlainObject(sentCustom)
+    ? Object.fromEntries(Object.entries(sentCustom as Record<string, unknown>).filter(([key]) => key !== "extensions"))
+    : {};
+  return storedExtensions === undefined ? properties : { ...properties, extensions: storedExtensions };
+}
+
+/**
  * Update entity metadata (generic helper for schema version updates).
  */
 export async function updateEntityMetadataAction(
@@ -1885,11 +1932,6 @@ export async function updateEntityMetadataAction(
     if (!entity) return { ...notFoundFailure("Entity") };
 
     const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
-    const mergedMeta = { ...existingMeta, ...metadata };
-    // A draft edit (tags, owner, retention, custom, ...) marks the stored TypeSpec source stale (R45);
-    // bookkeeping-only edits leave it alone, but never let an already-stale source go fresh.
-    const changesDraft = metadataChangesDraft(existingMeta, mergedMeta);
-    const updatedMeta = withSourceStale(existingMeta, mergedMeta, changesDraft);
 
     await withAudit({
       action: "UPDATE",
@@ -1899,12 +1941,27 @@ export async function updateEntityMetadataAction(
       tenantId: access.resource.tenantId,
       beforeState: { metadata: existingMeta } as unknown as object,
       fn: () =>
-        prisma.entity.update({
-          where: { id: entityId },
-          data: {
-            metadata: updatedMeta as unknown as Prisma.InputJsonValue,
-            ...(changesDraft && { hasUnpublishedChanges: true }),
-          },
+        prisma.$transaction(async (tx) => {
+          // The merge runs under the row lock (the one publish and delete take) over the metadata AS IT STANDS under it: the copy read above is
+          // older than any write that landed since, and a whole-column write of that copy would revert it.
+          await tx.$queryRaw`SELECT "id" FROM "entities" WHERE "id" = ${entityId} FOR UPDATE`;
+          const locked = await tx.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+          const storedMeta = (locked?.metadata as Record<string, unknown>) ?? {};
+          const sent = Object.hasOwn(metadata, "custom")
+            ? { ...metadata, custom: customWithStoredExtensions(storedMeta.custom, metadata.custom) }
+            : metadata;
+          const mergedMeta = { ...storedMeta, ...sent };
+          // A draft edit (tags, owner, retention, custom, ...) marks the stored TypeSpec source stale (R45);
+          // bookkeeping-only edits leave it alone, but never let an already-stale source go fresh.
+          const changesDraft = metadataChangesDraft(storedMeta, mergedMeta);
+          const updatedMeta = withSourceStale(storedMeta, mergedMeta, changesDraft);
+          return tx.entity.update({
+            where: { id: entityId },
+            data: {
+              metadata: updatedMeta as unknown as Prisma.InputJsonValue,
+              ...(changesDraft && { hasUnpublishedChanges: true }),
+            },
+          });
         }),
     });
 

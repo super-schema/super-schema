@@ -79,6 +79,24 @@ describe("Product Service", () => {
         expect(result.error.code).toBe("VALIDATION_ERROR");
       }
     });
+
+    it("refuses a name with no letter or digit (its URL name would be empty), creating nothing", async () => {
+      const result = await createProduct({ domainId: "dom-1", name: "!!!", description: "" }, mockCtx);
+
+      expect(result).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR", message: "Product name must contain at least one letter or digit" } });
+      expect(prisma.product.create).not.toHaveBeenCalled();
+    });
+
+    it("gives a non-Latin name a URL name of its own", async () => {
+      vi.mocked(prisma.product.create).mockResolvedValue({ id: "prd-2" } as never);
+
+      const result = await createProduct({ domainId: "dom-1", name: "製品", description: "" }, mockCtx);
+
+      expect(result.success).toBe(true);
+      expect(vi.mocked(prisma.product.create).mock.calls[0][0]).toMatchObject({
+        data: { name: "製品", slug: expect.stringMatching(/^item-[0-9a-z]+$/) },
+      });
+    });
   });
 
   describe("updateProduct", () => {
@@ -101,6 +119,30 @@ describe("Product Service", () => {
         expect(result.error.message).toContain("reserved");
       }
       expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("a rename derives the new URL name, and a name with no letter or digit is refused", async () => {
+      vi.mocked(prisma.product.findUnique).mockResolvedValue({ id: "prd-1", name: "Checkout", slug: "checkout" } as never);
+      vi.mocked(prisma.product.update).mockResolvedValue({ id: "prd-1" } as never);
+
+      expect((await updateProduct("prd-1", { name: "Payments Hub" }, mockCtx)).success).toBe(true);
+      expect(vi.mocked(prisma.product.update).mock.calls[0][0]).toMatchObject({ data: { name: "Payments Hub", slug: "payments-hub" } });
+
+      const refused = await updateProduct("prd-1", { name: "!!!" }, mockCtx);
+      expect(refused).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR", message: "Product name must contain at least one letter or digit" } });
+      expect(prisma.product.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the stored URL name when the name does not change (a product made before the slug rules changed keeps its URL)", async () => {
+      vi.mocked(prisma.product.findUnique).mockResolvedValue({ id: "prd-1", name: "Café", slug: "caf" } as never);
+      vi.mocked(prisma.product.update).mockResolvedValue({ id: "prd-1" } as never);
+
+      const result = await updateProduct("prd-1", { name: "Café", description: "Renamed nothing" }, mockCtx);
+
+      expect(result.success).toBe(true);
+      const data = vi.mocked(prisma.product.update).mock.calls[0][0].data as Record<string, unknown>;
+      expect(data).toMatchObject({ description: "Renamed nothing" });
+      expect(data).not.toHaveProperty("slug");
     });
   });
 

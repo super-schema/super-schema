@@ -54,3 +54,18 @@ export const EntityMetadataSchema = z
   .partial();
 
 export type EntityMetadata = z.infer<typeof EntityMetadataSchema>;
+
+/**
+ * The metadata keys a PATCH may set or remove through `updateEntity`. The other declared keys have a writer of their own or are the server's:
+ * `importedFrom` and `sourceFormat` (the import records them), `relationships` (updateEntityRelationshipsAction writes them) and `custom`, whose
+ * `extensions` the TypeSpec sync records beside the custom properties (updateEntityMetadataAction writes the properties).
+ */
+export const PATCHABLE_ENTITY_METADATA_KEYS = ["tags", "deprecation", "retentionPolicy"] as const satisfies readonly (keyof EntityMetadata)[];
+
+type PatchableEntityMetadataKey = (typeof PATCHABLE_ENTITY_METADATA_KEYS)[number];
+
+/**
+ * A metadata PATCH, as a writer sends it to `updateEntity`: the patchable keys (see PATCHABLE_ENTITY_METADATA_KEYS), each of which may be sent as
+ * `null` to remove it from the stored metadata. Every other key, declared or not, is never part of a patch.
+ */
+export type EntityMetadataPatch = { [K in PatchableEntityMetadataKey]?: EntityMetadata[K] | null };

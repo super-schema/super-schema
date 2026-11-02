@@ -237,5 +237,14 @@ describe("createEntityWithFieldsAction session reconciliation", () => {
       expect(mockTx.entity.create).not.toHaveBeenCalled();
       expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
     });
+
+    it("refuses a name with no letter or digit (its URL name would be empty), creating nothing", async () => {
+      const result = await createEntityWithFieldsAction("domain-1", { name: "!!!", description: "", fields: [] });
+
+      expect(result).toEqual({ error: "Entity name must contain at least one letter or digit" });
+      expect(mockEnsureDefaultProductId).not.toHaveBeenCalled();
+      expect(mockTx.entity.create).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
   });
 });

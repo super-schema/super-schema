@@ -4,7 +4,12 @@ import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { Entity } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
-import { EntityMetadataSchema } from "@/types/schemas/entity-metadata.schema";
+import {
+  EntityMetadataSchema,
+  PATCHABLE_ENTITY_METADATA_KEYS,
+  type EntityMetadata,
+  type EntityMetadataPatch,
+} from "@/types/schemas/entity-metadata.schema";
 import {
   CreateEntityInputSchema,
   UpdateEntityInputSchema,
@@ -14,6 +19,7 @@ import {
 } from "@/types/schemas/entity.schema";
 import type { Prisma } from "@/generated/prisma/client";
 import { ctxCan, readableScopes } from "@/lib/access";
+import { isPlainObject } from "@/lib/editable-fields";
 import { omitSchemaVersions, redactEntityMetadata } from "@/lib/access/schema-version-redaction";
 import { canTransition } from "@/lib/entity-lifecycle";
 import { entityUpdateTouchesDraft, withSourceStale } from "@/lib/entity-versioning/draft-state";
@@ -52,6 +58,14 @@ export async function createEntity(
   }
 
   const entitySlug = generateSlug(parsed.data.name);
+  // The URL name is the name's slug: a name with no letter or digit in any script has none, and the entity could not be opened.
+  if (entitySlug === "") {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: "Entity name must contain at least one letter or digit",
+      suggestedFix: "Use a name with letters or digits.",
+    });
+  }
   const reservedMsg = entityNameMessage(parsed.data.name);
   if (reservedMsg) {
     return err({
@@ -191,12 +205,55 @@ export async function getEntityById(
   return ok({ ...entity, metadata });
 }
 
+/** `updateEntity`'s input: the update fields, and a metadata patch (EntityMetadataPatch) in which a patchable key sent as `null` is removed. */
+export type UpdateEntityPatch = Omit<UpdateEntityInput, "metadata"> & { metadata?: EntityMetadataPatch };
+
+/**
+ * The keys a patch may set or remove (PATCHABLE_ENTITY_METADATA_KEYS). Any other key of a patch is ignored: the server records it or another writer
+ * owns it (the import's importedFrom and sourceFormat, the relationships, the TypeSpec sync's extensions inside custom). An allowlist, so an own
+ * `__proto__` key of a parsed patch is not one of them and never reaches `set`.
+ */
+const PATCHABLE_KEYS: ReadonlySet<string> = new Set(PATCHABLE_ENTITY_METADATA_KEYS);
+
+/** A metadata patch split for the schema: the patchable keys it removes (sent as `null`) and the rest of them, which is what the schema reads. */
+function splitMetadataPatch(patch: object): { removed: string[]; set: Record<string, unknown> } {
+  const removed: string[] = [];
+  const set: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (!PATCHABLE_KEYS.has(key)) continue;
+    if (value !== null) set[key] = value;
+    else removed.push(key);
+  }
+  return { removed, set };
+}
+
+/**
+ * The stored metadata with a patch applied. A patchable key the patch sets replaces its stored value, a patchable key it removes is dropped, and
+ * every other key keeps its stored value, the keys the schema does not declare included. A key whose value is `undefined` is one the patch does
+ * not carry, so it keeps the stored value too.
+ */
+function mergeMetadataPatch(
+  stored: Record<string, unknown>,
+  patch: EntityMetadata | undefined,
+  removed: readonly string[]
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...stored };
+  for (const key of removed) delete merged[key];
+  for (const [key, value] of Object.entries(patch ?? {})) {
+    if (value !== undefined) merged[key] = value;
+  }
+  return merged;
+}
+
 export async function updateEntity(
   id: string,
-  input: UpdateEntityInput,
+  input: UpdateEntityPatch,
   ctx: ServiceContext
 ): Promise<Result<Entity>> {
-  const parsed = UpdateEntityInputSchema.safeParse(input);
+  // The schema takes no null, so the removals (declared keys sent as `null`) come out of the metadata before it reads the input. Only a plain
+  // object is split: anything else is left for the schema to refuse, as it always has.
+  const split = input.metadata !== undefined && isPlainObject(input.metadata) ? splitMetadataPatch(input.metadata) : undefined;
+  const parsed = UpdateEntityInputSchema.safeParse(split ? { ...input, metadata: split.set } : input);
   if (!parsed.success) {
     return err({
       code: "VALIDATION_ERROR",
@@ -273,6 +330,9 @@ export async function updateEntity(
     });
   }
 
+  // A patch sets a key only when it carries a value for one: a patch of keys the server records (or of undefined values) writes no metadata.
+  const patchSetsKey = parsed.data.metadata !== undefined && Object.values(parsed.data.metadata).some((value) => value !== undefined);
+
   try {
     const entity = await withAudit({
       action: "UPDATE",
@@ -281,40 +341,55 @@ export async function updateEntity(
       userId: ctx.userId,
       beforeState: existing as unknown as object,
       fn: async () => {
-        const touchesDraft = entityUpdateTouchesDraft(existing, parsed.data);
-        // R42/R45: name, description and draft metadata are all rendered into the TypeSpec source, so a
-        // draft edit marks the stored source stale. Callers also send a whole metadata copy (and the
-        // schema strips unknown keys), so the server-owned marker is carried over from the stored
-        // metadata or a replace would silently clear it.
-        const storedMetadata =
-          existing.metadata !== null && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
-            ? (existing.metadata as Record<string, unknown>)
-            : {};
-        const nextMetadata =
-          parsed.data.metadata !== undefined
-            ? withSourceStale(existing.metadata, parsed.data.metadata, touchesDraft)
-            : touchesDraft
-              ? withSourceStale(existing.metadata, storedMetadata, true)
-              : undefined;
-        const update = {
-          where: { id },
-          data: {
-            ...parsed.data,
-            metadata: nextMetadata as unknown as Prisma.InputJsonValue | undefined,
-            ...(touchesDraft && { hasUnpublishedChanges: true }),
-          },
-          include: { domain: true },
-        } satisfies Prisma.EntityUpdateArgs;
+        // The write runs under the row lock and merges the patch over the metadata AS IT STANDS under that lock, not the copy read above. A write
+        // from another path that landed in between (a publish's schemaVersions, a generate, a sourceStale mark) is kept; the whole-column write
+        // used to put back the older copy and revert it. The lock is the one publish and delete take (`FOR UPDATE` on the entity row).
+        const write = async (tx: Prisma.TransactionClient) => {
+          await tx.$queryRaw`SELECT "id" FROM "entities" WHERE "id" = ${id} FOR UPDATE`;
+          const current = await tx.entity.findUnique({ where: { id } });
+          if (!current) {
+            throw new ServiceErrorRejection({
+              code: "NOT_FOUND",
+              message: `Entity with ID "${id}" not found`,
+              suggestedFix: "Verify the entity ID and try again.",
+            });
+          }
+          // The metadata is a PATCH merged over the stored object (see mergeMetadataPatch): a key the caller does not send keeps its stored value,
+          // and the server-owned keys (schemaVersions, versionHistory, the extends link, sourceStale, ...) are never the caller's to write, so none
+          // of them is lost to a write that carries only the change.
+          const storedMetadata =
+            current.metadata !== null && typeof current.metadata === "object" && !Array.isArray(current.metadata)
+              ? (current.metadata as Record<string, unknown>)
+              : {};
+          const removed = split?.removed ?? [];
+          const nextMetadata = mergeMetadataPatch(storedMetadata, parsed.data.metadata, removed);
+          // R42/R45: name, description and draft metadata are all rendered into the TypeSpec source, so a draft edit marks the stored source
+          // stale. The draft check reads the merged metadata: a key the patch leaves alone is no change.
+          const touchesDraft = entityUpdateTouchesDraft(current, { ...parsed.data, metadata: nextMetadata });
+          const metadataWritten = patchSetsKey || removed.length > 0 || touchesDraft;
+          const update = {
+            where: { id },
+            data: {
+              ...parsed.data,
+              metadata: (metadataWritten
+                ? withSourceStale(current.metadata, nextMetadata, touchesDraft)
+                : undefined) as unknown as Prisma.InputJsonValue | undefined,
+              ...(touchesDraft && { hasUnpublishedChanges: true }),
+            },
+            include: { domain: true },
+          } satisfies Prisma.EntityUpdateArgs;
+          return tx.entity.update(update);
+        };
 
         const newName = parsed.data.name;
-        if (newName === undefined || newName === existing.name) return prisma.entity.update(update);
+        if (newName === undefined || newName === existing.name) return prisma.$transaction(write);
 
-        // A real rename must stay line-unique: check and write under the tenant lock.
+        // A real rename must stay line-unique: check and write under the tenant lock (taken before the row lock).
         const outcome = await writeWithUniqueName(prisma, {
           scope: existing,
           name: newName,
           exclude: { kind: "entity", id },
-          write: (tx) => tx.entity.update(update),
+          write,
         });
         if (!outcome.success) throw new ServiceErrorRejection(outcome.error);
         return outcome.data;

@@ -192,7 +192,7 @@ export interface ResolvedPayload {
 
 /**
  * Field names whose URL slugs (`generateSlug`) are all different: `fields` has a unique (entity, slug) and a unique (entity, name), and
- * importers can return `a b` / `a-b`, or names with no Latin letters at all (their slug is empty). The first field of a slug keeps its
+ * importers can return `a b` / `a-b`, or names with no letter or digit at all (their slug is empty). The first field of a slug keeps its
  * name; a later one with the same slug gets a number (`a-b2`). `onRename` hears about each one. A reserved name is renamed first
  * (`onReservedRename`).
  */

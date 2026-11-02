@@ -5,7 +5,11 @@ const { mockTx, mockAssertNameAvailable } = vi.hoisted(() => ({
     entity: {
       create: vi.fn(),
       update: vi.fn(),
+      // Wired to the prisma fake in beforeEach: a rename's write runs in this transaction client (under the tenant lock) and reads the row there.
+      findUnique: vi.fn(),
     },
+    // The row lock an update takes first (`SELECT ... FOR UPDATE`), answered with the id it was given.
+    $queryRaw: vi.fn(async (_strings: TemplateStringsArray, id: string) => [{ id }]),
   },
   mockAssertNameAvailable: vi.fn(),
 }));
@@ -75,6 +79,7 @@ describe("Entity Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAssertNameAvailable.mockResolvedValue({ success: true, data: undefined });
+    mockTx.entity.findUnique = prisma.entity.findUnique as never;
   });
 
   describe("createEntity", () => {
@@ -201,6 +206,26 @@ describe("Entity Service", () => {
         expect(result.error.message).toContain("reserved");
       }
       expect(mockTx.entity.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses a name with no letter or digit (its URL name would be empty), creating nothing", async () => {
+      const result = await createEntity({ name: "!!!", domainId: "dom-1", description: "" }, mockCtx);
+
+      expect(result).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR", message: "Entity name must contain at least one letter or digit" } });
+      expect(mockTx.entity.create).not.toHaveBeenCalled();
+    });
+
+    it("accepts a non-Latin name with a URL name of its own, so a second such name does not collide with the first", async () => {
+      mockTx.entity.create.mockResolvedValue({ id: "ent-1" } as never);
+
+      expect((await createEntity({ name: "名前", domainId: "dom-1", description: "" }, mockCtx)).success).toBe(true);
+      expect((await createEntity({ name: "年齢", domainId: "dom-1", description: "" }, mockCtx)).success).toBe(true);
+
+      const slugs = mockTx.entity.create.mock.calls.map(([args]) => (args as { data: { slug: string } }).data.slug);
+      expect(slugs).toHaveLength(2);
+      expect(slugs[0]).toMatch(/^item-[a-z0-9]+$/);
+      expect(slugs[1]).toMatch(/^item-[a-z0-9]+$/);
+      expect(slugs[0]).not.toBe(slugs[1]);
     });
   });
 
@@ -478,14 +503,14 @@ describe("Entity Service", () => {
       );
     });
 
-    it("a tags edit marks the stored source stale", async () => {
-      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, description: "", metadata: { tags: [] } } as never);
+    it("a tags edit marks the stored source stale and keeps the stored schemaVersions", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, description: "", metadata: { tags: [], schemaVersions: { avro: [] } } } as never);
       vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing } as never);
 
       await updateEntity("ent-1", { metadata: { tags: ["sales"] } }, mockCtx);
 
       const call = vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: { metadata: Record<string, unknown> } };
-      expect(call.data.metadata).toEqual({ tags: ["sales"], sourceStale: true });
+      expect(call.data.metadata).toEqual({ tags: ["sales"], schemaVersions: { avro: [] }, sourceStale: true });
     });
 
     it("does not flag the draft or touch metadata on a status-only change", async () => {
@@ -502,7 +527,7 @@ describe("Entity Service", () => {
 
     it("a lifecycle-only metadata change (deprecation) neither flags the draft nor invents sourceStale", async () => {
       vi.mocked(prisma.entity.findUnique).mockResolvedValue({
-        ...existing, status: "ACTIVE", description: "", metadata: { tags: [] },
+        ...existing, status: "ACTIVE", description: "", metadata: { tags: [], schemaVersions: { avro: [] } },
       } as never);
       vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, status: "DEPRECATED" } as never);
 
@@ -514,7 +539,7 @@ describe("Entity Service", () => {
 
       const call = vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: Record<string, unknown> };
       expect(call.data).not.toHaveProperty("hasUnpublishedChanges");
-      expect(call.data.metadata).toEqual({ tags: [], deprecation: { deprecated: true } });
+      expect(call.data.metadata).toEqual({ tags: [], schemaVersions: { avro: [] }, deprecation: { deprecated: true } });
     });
 
     it("keeps metadata.sourceStale when the caller replaces metadata with a copy that lacks it, even for a lifecycle-only change", async () => {
@@ -531,6 +556,138 @@ describe("Entity Service", () => {
 
       const call = vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: { metadata: Record<string, unknown> } };
       expect(call.data.metadata).toEqual({ tags: [], deprecation: { deprecated: true }, sourceStale: true });
+    });
+
+    describe("a metadata patch is merged over the stored metadata (a key the schema does not declare is the server's)", () => {
+      // An entity with generated schemas, a version history, an allOf base, an owner and an earlier deprecation. None of the server's keys is in
+      // the metadata schema: a write that replaced the whole column (what the deprecation form did) erased them all.
+      const stored: Record<string, unknown> = {
+        tags: ["sales"],
+        owner: "alice",
+        custom: { extensions: { "x-team": "iot" } },
+        deprecation: { deprecated: true, since: "2026-01-01" },
+        schemaVersions: { avro: [{ label: "1.0" }] },
+        schemaTargetTypeOverrides: { avro: [{ field: "email", type: "string" }] },
+        versionHistory: [{ version: "1.0" }],
+        typespecMigration: { status: "MIGRATED" },
+        extends: "Base",
+      };
+      const deprecation = { deprecated: true, since: "2026-11-01" };
+      const written = () => vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: Record<string, unknown> };
+
+      beforeEach(() => {
+        vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, status: "ACTIVE", description: "", metadata: stored } as never);
+        vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, status: "DEPRECATED" } as never);
+      });
+
+      it("a deprecation keeps schemaVersions, versionHistory and the extends link (regression)", async () => {
+        const result = await updateEntity("ent-1", { status: "DEPRECATED", metadata: { deprecation } }, mockCtx);
+
+        expect(result.success).toBe(true);
+        expect(written().data.metadata).toEqual({ ...stored, deprecation });
+        expect(written().data).not.toHaveProperty("hasUnpublishedChanges");
+      });
+
+      it("a whole copy of the page's metadata (every key but schemaVersions) writes back what the row holds", async () => {
+        const pageCopy: Record<string, unknown> = { ...stored };
+        delete pageCopy.schemaVersions;
+
+        await updateEntity("ent-1", { status: "DEPRECATED", metadata: { ...pageCopy, deprecation } } as never, mockCtx);
+
+        expect(written().data.metadata).toEqual({ ...stored, deprecation });
+      });
+
+      it("keeps the declared keys a patch omits, removes the ones it sends as null, and reads undefined as omitted", async () => {
+        await updateEntity("ent-1", { metadata: { tags: ["ops"], deprecation: null, retentionPolicy: undefined } } as never, mockCtx);
+
+        const expected: Record<string, unknown> = { ...stored, tags: ["ops"], sourceStale: true };
+        delete expected.deprecation;
+        expect(written().data.metadata).toEqual(expected);
+        expect(written().data.metadata).not.toHaveProperty("deprecation");
+        expect(written().data.hasUnpublishedChanges).toBe(true);
+      });
+
+      it("refuses a metadata that is not an object (an array), as the schema always has, and writes nothing", async () => {
+        const result = await updateEntity("ent-1", { metadata: [] } as never, mockCtx);
+
+        expect(result).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR" } });
+        expect(prisma.entity.update).not.toHaveBeenCalled();
+      });
+
+      it("never sets or removes a key the schema does not declare", async () => {
+        await updateEntity(
+          "ent-1",
+          { metadata: { schemaVersions: null, owner: null, versionHistory: [], typespecMigration: null, extends: "Other" } } as never,
+          mockCtx
+        );
+
+        // Nothing it sets is a patchable key: the patch writes no metadata at all (the stored copy is left as it is).
+        expect(written().data.metadata).toBeUndefined();
+        expect(written().data).not.toHaveProperty("hasUnpublishedChanges");
+      });
+
+      it("never sets or removes a key the server records (importedFrom and sourceFormat from the import, relationships, custom with its extensions) (regression)", async () => {
+        const recorded: Record<string, unknown> = {
+          ...stored,
+          importedFrom: { format: "avro", originalContent: "{}", importedAt: "2026-01-01" },
+          sourceFormat: "avro",
+          relationships: [{ targetEntityId: "ent-2", fieldId: "fld-1", cardinality: "many-to-one" }],
+        };
+        vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, status: "ACTIVE", description: "", metadata: recorded } as never);
+
+        await updateEntity(
+          "ent-1",
+          { metadata: { importedFrom: null, sourceFormat: null, relationships: [], custom: { extensions: {} } } } as never,
+          mockCtx
+        );
+
+        expect(written().data.metadata).toBeUndefined();
+        expect(written().data).not.toHaveProperty("hasUnpublishedChanges");
+      });
+
+      it("merges the patch over the row as it stands under the lock: a schemaVersions written after the read is kept (regression)", async () => {
+        // The read before the lock has no generated schemas; a publish lands between that read and the lock, so the locked row has them.
+        const beforeLock: Record<string, unknown> = { ...stored };
+        delete beforeLock.schemaVersions;
+        vi.mocked(prisma.entity.findUnique)
+          .mockResolvedValueOnce({ ...existing, status: "ACTIVE", description: "", metadata: beforeLock } as never)
+          .mockResolvedValueOnce({ ...existing, status: "ACTIVE", description: "", metadata: stored } as never);
+
+        const result = await updateEntity("ent-1", { metadata: { tags: ["ops"] } }, mockCtx);
+
+        expect(result.success).toBe(true);
+        expect(written().data.metadata).toEqual({ ...stored, tags: ["ops"], sourceStale: true });
+      });
+
+      it("takes the row lock before it reads the metadata it merges into", async () => {
+        await updateEntity("ent-1", { metadata: { tags: ["ops"] } }, mockCtx);
+
+        const lock = vi.mocked(prisma.$queryRaw).mock.invocationCallOrder[0];
+        const reads = vi.mocked(prisma.entity.findUnique).mock.invocationCallOrder;
+        expect(lock).toBeGreaterThan(0);
+        // The second read (the one under the lock) comes after the lock.
+        expect(lock).toBeLessThan(reads[1]);
+      });
+
+      it("a patch of keys the server records sets no patchable key, so it writes no metadata at all (not a whole copy)", async () => {
+        const result = await updateEntity(
+          "ent-1",
+          { metadata: { importedFrom: null, sourceFormat: "avro" } } as never,
+          mockCtx
+        );
+
+        expect(result.success).toBe(true);
+        expect(written().data.metadata).toBeUndefined();
+        expect(written().data).not.toHaveProperty("hasUnpublishedChanges");
+      });
+
+      it("a __proto__ key in a patch is not a key of the patch: it sets no tags through the prototype (regression)", async () => {
+        // JSON.parse keeps "__proto__" as an own key. Copying it onto a plain object sets that object's prototype instead, so the tags array
+        // read off the prototype used to reach the schema as if the patch had sent it.
+        await updateEntity("ent-1", { metadata: JSON.parse('{"__proto__":{"tags":["injected"]}}') } as never, mockCtx);
+
+        expect(written().data.metadata).toBeUndefined();
+      });
     });
 
     describe("retiring: blocked while an event holds the entity's LATEST version", () => {

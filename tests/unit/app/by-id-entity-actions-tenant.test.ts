@@ -30,6 +30,7 @@ const h = vi.hoisted(() => ({
     field: { findFirst: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
     auditLog: { create: vi.fn() },
     $executeRawUnsafe: vi.fn(),
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   },
 }));
@@ -114,7 +115,10 @@ beforeEach(() => {
   p.field.create.mockResolvedValue({ id: "fld-new" });
   p.field.update.mockResolvedValue({ id: "fld-1" });
   p.field.delete.mockResolvedValue({ id: "fld-1" });
-  p.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
+  // The batch form resolves every operation; the interactive form (a callback) runs on this same client.
+  p.$transaction.mockImplementation(async (ops: unknown) =>
+    typeof ops === "function" ? (ops as (tx: unknown) => unknown)(p) : Promise.all(ops as unknown[])
+  );
   h.updateEntity.mockResolvedValue({ success: true, data: { id: "ent-1" } });
   h.createGlobalOverride.mockResolvedValue({ success: true, data: { id: "ov-1" } });
   h.createEntityOverride.mockResolvedValue({ success: true, data: { id: "ov-2" } });
@@ -385,6 +389,12 @@ describe("addFieldAction names and input", () => {
     p.$transaction.mockRejectedValue(new Error("Unique constraint failed on the fields: (`entityId`,`slug`)"));
     expect(await actions.addFieldAction("ent-1", " email ", "string")).toEqual({ error: 'Field "email" already exists' });
   });
+
+  it("a name whose URL name another field holds is refused as that field: order_id clashes with Order ID, which is named", async () => {
+    p.$transaction.mockRejectedValue(new Error("Unique constraint failed on the fields: (`entityId`,`slug`)"));
+    p.field.findFirst.mockImplementation(async (args: { where: { slug?: string } }) => (args.where.slug === "order-id" ? { name: "Order ID" } : null));
+    expect(await actions.addFieldAction("ent-1", "order_id", "string")).toEqual({ error: 'Field "Order ID" already exists' });
+  });
 });
 
 describe("updateFieldAction names (F2 guarded the field; names are new)", () => {
@@ -513,6 +523,30 @@ describe("service failures keep their message, except opaque codes", () => {
     h.updateEntity.mockResolvedValue({ success: false, error: { code: "DB_ERROR", message: 'relation "entities" does not exist at 10.0.0.5:5432' } });
     expect(await actions.updateEntityStatusAction("ent-1", "RETIRED")).toEqual({ error: GENERIC_ACTION_ERROR, code: "DB_ERROR" });
     spy.mockRestore();
+  });
+
+  it("updateEntityStatusAction: the deprecation notice is the only metadata a lifecycle change sends; any other key is refused, nothing is written", async () => {
+    const notice = { deprecation: { deprecated: true, since: "2026-11-01", replacementEntityId: null } };
+    expect(await actions.updateEntityStatusAction("ent-1", "DEPRECATED", notice)).toEqual({ success: true });
+    expect(h.updateEntity).toHaveBeenLastCalledWith("ent-1", { status: "DEPRECATED", metadata: notice }, expect.anything());
+
+    const refused = [
+      [{ tags: ["a"] }, "tags"],
+      [{ relationships: [] }, "relationships"],
+      [{ schemaVersions: {} }, "schemaVersions"],
+      [{ ...notice, owner: "bob" }, "owner"],
+    ] as const;
+    for (const [metadata, key] of refused) {
+      expect(await actions.updateEntityStatusAction("ent-1", "DEPRECATED", metadata)).toEqual({
+        error: `The metadata key "${key}" cannot be changed here`,
+        code: "VALIDATION_ERROR",
+      });
+    }
+    expect(await actions.updateEntityStatusAction("ent-1", "DEPRECATED", asAny([]))).toEqual({
+      error: "The metadata changes must be an object",
+      code: "VALIDATION_ERROR",
+    });
+    expect(h.updateEntity).toHaveBeenCalledTimes(1);
   });
 
   it("the history and deployment reads turn an opaque service failure into the generic message", async () => {

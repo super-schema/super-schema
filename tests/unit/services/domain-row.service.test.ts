@@ -43,6 +43,16 @@ describe("createDomainRow", () => {
     expect(h.withAudit.mock.calls[0][0]).toMatchObject({ action: "CREATE", entityType: "Domain", entityId: "pending", userId: "user-1" });
   });
 
+  it("accepts a name in a non-Latin script: its slug is a hash of the name, so two such domains do not share one", async () => {
+    expect((await createDomainRow(input("日本"), asDb)).success).toBe(true);
+    expect((await createDomainRow(input("中国"), asDb)).success).toBe(true);
+
+    const slugs = db.domain.create.mock.calls.map(([args]) => (args as { data: { slug: string } }).data.slug);
+    expect(slugs[0]).toMatch(/^item-[0-9a-z]+$/);
+    expect(slugs[1]).toMatch(/^item-[0-9a-z]+$/);
+    expect(slugs[0]).not.toBe(slugs[1]);
+  });
+
   it("stores a policy template when one is given, and none when it is not", async () => {
     await createDomainRow(input("With Template", { policyTemplate: { classification: "PII" } }), asDb);
     expect(db.domain.create.mock.calls[0][0].data.policyTemplate).toEqual({ classification: "PII" });
