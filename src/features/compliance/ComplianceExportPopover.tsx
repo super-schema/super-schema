@@ -2,26 +2,61 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Download, FileText, Table, Loader2 } from "lucide-react";
-import { exportToCsv } from "./exportCsv";
+import {
+  exportFieldsToJson,
+  exportGapsToCsv,
+  exportGapsToJson,
+  exportLimitNotice,
+  exportToCsv,
+} from "./exportCsv";
 import type { ComplianceFieldResult, ComplianceGap, ComplianceFilter } from "@/types/schemas/compliance";
 
 interface ComplianceExportPopoverProps {
-  fields: ComplianceFieldResult[];
   gaps?: ComplianceGap[];
   filters: ComplianceFilter;
+  /** The sort of the Query list: the export comes out in the same order. */
+  sortBy: string;
+  sortOrder: "asc" | "desc";
   activeTab: "query" | "gaps" | "audit";
   loading?: boolean;
 }
 
+type Notice = { tone: "warning" | "error"; text: string };
+
+/**
+ * Every field the filters select, from the server (the page on the screen is not the export): `truncated` when the export stopped at the cap.
+ */
+async function fetchFieldExport(
+  filters: ComplianceFilter,
+  sortBy: string,
+  sortOrder: "asc" | "desc"
+): Promise<{ fields: ComplianceFieldResult[]; total: number; truncated: boolean }> {
+  let res: Response;
+  try {
+    res = await fetch("/api/compliance/query/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filters, sort: { sortBy, sortOrder } }),
+    });
+  } catch {
+    throw new Error("Network error — the export did not run.");
+  }
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.success) throw new Error(data?.error || `The export failed (${res.status}).`);
+  return data.data;
+}
+
 export function ComplianceExportPopover({
-  fields,
   gaps,
   filters,
+  sortBy,
+  sortOrder,
   activeTab,
   loading: externalLoading,
 }: ComplianceExportPopoverProps) {
   const [open, setOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   // Close on outside click
@@ -35,33 +70,21 @@ export function ComplianceExportPopover({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const handleExportCsv = async () => {
+  const runExport = async (format: "csv" | "json") => {
     setExporting(true);
+    setNotice(null);
     try {
       if (activeTab === "gaps" && gaps) {
-        exportGapsCsv(gaps, filters);
+        if (format === "csv") exportGapsToCsv(gaps, filters);
+        else exportGapsToJson(gaps, filters);
       } else {
-        exportToCsv(fields, filters);
+        const exported = await fetchFieldExport(filters, sortBy, sortOrder);
+        if (format === "csv") exportToCsv(exported.fields, filters);
+        else exportFieldsToJson(exported.fields, filters);
+        if (exported.truncated) setNotice({ tone: "warning", text: exportLimitNotice(exported.total, "matching fields") });
       }
-    } finally {
-      setExporting(false);
-      setOpen(false);
-    }
-  };
-
-  const handleExportJson = async () => {
-    setExporting(true);
-    try {
-      const data = activeTab === "gaps" && gaps ? gaps : fields;
-      const blob = new Blob([JSON.stringify(data, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = generateFilename(filters, "json");
-      a.click();
-      URL.revokeObjectURL(url);
+    } catch (e: unknown) {
+      setNotice({ tone: "error", text: e instanceof Error ? e.message : "The export did not run." });
     } finally {
       setExporting(false);
       setOpen(false);
@@ -86,7 +109,7 @@ export function ComplianceExportPopover({
       {open && (
         <div className="absolute right-0 top-full mt-1 w-64 surface-1 border border-border rounded-xl shadow-lg backdrop-blur-sm z-50 overflow-hidden">
           <button
-            onClick={handleExportCsv}
+            onClick={() => runExport("csv")}
             className="w-full flex items-center gap-space-3 px-space-4 py-space-3 hover:bg-accent/50 transition-colors text-left"
           >
             <Table className="w-5 h-5 text-green-400" />
@@ -98,7 +121,7 @@ export function ComplianceExportPopover({
             </div>
           </button>
           <button
-            onClick={handleExportJson}
+            onClick={() => runExport("json")}
             className="w-full flex items-center gap-space-3 px-space-4 py-space-3 hover:bg-accent/50 transition-colors text-left border-t border-border"
           >
             <FileText className="w-5 h-5 text-blue-400" />
@@ -111,58 +134,20 @@ export function ComplianceExportPopover({
           </button>
         </div>
       )}
+
+      {notice && (
+        <div
+          role={notice.tone === "error" ? "alert" : "status"}
+          data-testid="compliance-export-notice"
+          className={`absolute right-0 top-full mt-1 w-80 rounded-md border px-space-3 py-space-2 text-caption shadow-lg z-50 ${
+            notice.tone === "error"
+              ? "border-destructive/40 bg-destructive/10 text-destructive"
+              : "border-border bg-background text-foreground"
+          }`}
+        >
+          {notice.text}
+        </div>
+      )}
     </div>
   );
-}
-
-function exportGapsCsv(
-  gaps: ComplianceGap[],
-  filters: ComplianceFilter
-) {
-  const headers = [
-    "Entity Name",
-    "Field Name",
-    "Gap Type",
-    "Severity",
-    "Suggested Fix",
-  ];
-  const rows = gaps.map((g) => [
-    g.entityName,
-    g.fieldName,
-    g.gapType,
-    g.severity,
-    g.suggestedFix,
-  ]);
-
-  const csv = [
-    headers.join(","),
-    ...rows.map((r) => r.map((v) => `"${(v || "").replace(/"/g, '""')}"`).join(",")),
-  ].join("\n");
-
-  const blob = new Blob([csv], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = generateFilename(filters, "csv");
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function generateFilename(
-  filters: ComplianceFilter,
-  ext: string
-): string {
-  const date = new Date().toISOString().split("T")[0];
-  const filterParts = [
-    ...(filters.classifications || []),
-    filters.retention && filters.retention !== "any"
-      ? filters.retention
-      : null,
-    filters.anonymization && filters.anonymization !== "any"
-      ? filters.anonymization
-      : null,
-  ].filter(Boolean);
-  const filterSuffix =
-    filterParts.length > 0 ? `-${filterParts.join("-").toLowerCase()}` : "";
-  return `compliance-report-${date}${filterSuffix}.${ext}`;
 }

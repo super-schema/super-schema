@@ -358,6 +358,10 @@ export async function deleteDomainAdmin(
 
 // ---------------------------------------------------------------------------
 // applyPolicyTemplate — merge template values into field decorators
+//
+// Nothing calls it yet. It writes the legacy `decorators.policy.retention`, which the compliance views read only for a field whose entity has no
+// retention policy, and none of the Data Protection values (`decorators.typespec.governance`, see lib/compliance/field-protection.ts). Wire it
+// only together with a review of that module; the template's structured `retentionPolicy` is not applied here.
 // ---------------------------------------------------------------------------
 
 export function applyPolicyTemplate(

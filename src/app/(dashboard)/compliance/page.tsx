@@ -8,6 +8,7 @@ import { ComplianceResultsTable } from "@/features/compliance/ComplianceResultsT
 import { ComplianceGapsView } from "@/features/compliance/ComplianceGapsView";
 import { ComplianceExportPopover } from "@/features/compliance/ComplianceExportPopover";
 import { AuditTrailView } from "@/features/compliance/AuditTrailView";
+import { exportAuditTrailToCsv, exportLimitNotice } from "@/features/compliance/exportCsv";
 import type { ExplorerTree } from "@/lib/navigation/build-explorer-tree";
 import type {
   ComplianceFilter,
@@ -69,6 +70,10 @@ export default function CompliancePage() {
   const [auditTotal, setAuditTotal] = useState(0);
   const [auditPage, setAuditPage] = useState(1);
   const [auditLoading, setAuditLoading] = useState(false);
+  // What an export said about itself when it was cut short (the cap), shown until the next export or tab
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+  // An Audit Trail export is in flight: its button is off until the file is made (or the export failed)
+  const [auditExporting, setAuditExporting] = useState(false);
 
   // Fetch domains on mount
   useEffect(() => {
@@ -197,37 +202,34 @@ export default function CompliancePage() {
     setPage(1);
   }, []);
 
-  const handleAuditExport = useCallback(() => {
-    const headers = [
-      "Timestamp",
-      "User",
-      "Action",
-      "Entity Type",
-      "Entity ID",
-      "Change Summary",
-    ];
-    const rows = auditEntries.map((e) => [
-      new Date(e.timestamp).toISOString(),
-      e.userName || "",
-      e.action,
-      e.entityType,
-      e.entityId,
-      e.changeSummary,
-    ]);
-    const csv = [
-      headers.join(","),
-      ...rows.map((r) =>
-        r.map((v) => `"${(v || "").replace(/"/g, '""')}"`).join(",")
-      ),
-    ].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `audit-trail-${new Date().toISOString().split("T")[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [auditEntries]);
+  // The export is every entry the filters select, fetched on the server (the page on the screen holds only a part of them), up to the cap.
+  const handleAuditExport = useCallback(async () => {
+    if (auditExporting) return;
+    setExportNotice(null);
+    setAuditExporting(true);
+    try {
+      let res: Response;
+      try {
+        res = await fetch("/api/compliance/audit-trail/export", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filters: auditFilters }),
+        });
+      } catch {
+        setError("Network error — could not reach the compliance service.");
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) {
+        setError(data?.error || `Failed to export the audit trail (${res.status})`);
+        return;
+      }
+      exportAuditTrailToCsv(data.data.entries);
+      if (data.data.truncated) setExportNotice(exportLimitNotice(data.data.total, "matching audit entries"));
+    } finally {
+      setAuditExporting(false);
+    }
+  }, [auditFilters, auditExporting]);
 
   return (
     <div className="flex flex-col h-full -m-space-6" data-testid="compliance-page">
@@ -243,7 +245,11 @@ export default function CompliancePage() {
           {TABS.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                // A notice about an export belongs to the tab that made it
+                setExportNotice(null);
+                setActiveTab(tab.id);
+              }}
               className={`px-space-3 py-1 text-body-small rounded-md transition-colors ${
                 activeTab === tab.id
                   ? "bg-background text-foreground shadow-sm font-medium"
@@ -258,9 +264,10 @@ export default function CompliancePage() {
         {/* Export (for query/gaps tabs) */}
         {(activeTab === "query" || activeTab === "gaps") && (
           <ComplianceExportPopover
-            fields={fields}
             gaps={activeTab === "gaps" ? gaps : undefined}
             filters={filters}
+            sortBy={sortBy}
+            sortOrder={sortOrder}
             activeTab={activeTab}
             loading={loading}
           />
@@ -275,6 +282,12 @@ export default function CompliancePage() {
           className="mx-space-6 mt-space-4 rounded-md border border-destructive/40 bg-destructive/10 px-space-4 py-space-3 text-body-small text-destructive"
         >
           {error}
+        </div>
+      )}
+
+      {exportNotice && (
+        <div role="status" data-testid="compliance-export-notice" className="mx-space-6 mt-space-4 rounded-md border border-border bg-background px-space-4 py-space-3 text-body-small text-foreground">
+          {exportNotice}
         </div>
       )}
 
@@ -324,6 +337,7 @@ export default function CompliancePage() {
             }}
             onPageChange={setAuditPage}
             onExport={handleAuditExport}
+            exporting={auditExporting}
             loading={auditLoading}
           />
         )}

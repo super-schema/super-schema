@@ -2,8 +2,9 @@
 /**
  * The compliance service decides with the policy over the caller's assignments (no role names): the Query and Gaps tabs are
  * `compliance.query` / `compliance.gaps` (a compliance officer and above, judged per entity: a domain- or product-scoped role reads only its
- * entities, in the query), the Audit Trail and its export are `compliance.audit` / `compliance.export` over the whole tenant. A steward and an
- * author no longer reach any of it (the spec says COMPLIANCE_OFFICER; the old list also let STEWARD and AUTHOR in).
+ * entities, in the query), the Audit Trail and its export are `compliance.audit` over the whole tenant (the export is decided the same way: no code
+ * path checks `compliance.export`). A steward and an author no longer reach any of it (the spec says COMPLIANCE_OFFICER; the old list also let
+ * STEWARD and AUTHOR in).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { assign } from "../../helpers/access-mocks";
@@ -11,13 +12,16 @@ import { ROLE_HIERARCHY, type Role } from "@/types/schemas/rbac";
 import { roleAtLeast } from "@/lib/access";
 
 const h = vi.hoisted(() => ({
-  fieldCount: vi.fn(), fieldFindMany: vi.fn(), auditCount: vi.fn(), auditFindMany: vi.fn(),
+  fieldCount: vi.fn(), fieldFindMany: vi.fn(), auditCount: vi.fn(), auditFindMany: vi.fn(), auditCreate: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({
-  prisma: { field: { count: h.fieldCount, findMany: h.fieldFindMany }, auditLog: { count: h.auditCount, findMany: h.auditFindMany } },
+  prisma: {
+    field: { count: h.fieldCount, findMany: h.fieldFindMany },
+    auditLog: { count: h.auditCount, findMany: h.auditFindMany, create: h.auditCreate },
+  },
 }));
 
-import { detectGaps, exportAuditTrail, queryAuditTrail, queryFields } from "@/services/compliance.service";
+import { detectGaps, exportAuditTrail, exportFields, queryAuditTrail, queryFields } from "@/services/compliance.service";
 import { prisma } from "@/lib/db";
 import type { ServiceContext } from "@/types/service-context";
 import type { Assignment } from "@/lib/access";
@@ -33,10 +37,12 @@ beforeEach(() => {
   h.fieldFindMany.mockResolvedValue([]);
   h.auditCount.mockResolvedValue(0);
   h.auditFindMany.mockResolvedValue([]);
+  h.auditCreate.mockResolvedValue({ id: "audit-1" });
 });
 
 const TENANT_OPS: Array<{ label: string; call: (ctx: ServiceContext) => Promise<{ success: boolean; error?: { code: string; message: string } }>; reads: () => unknown }> = [
   { label: "queryFields", call: (ctx) => queryFields({}, undefined, ctx), reads: () => h.fieldFindMany },
+  { label: "exportFields", call: (ctx) => exportFields({}, undefined, ctx), reads: () => h.fieldFindMany },
   { label: "detectGaps", call: (ctx) => detectGaps({}, ctx), reads: () => h.fieldFindMany },
   { label: "queryAuditTrail", call: (ctx) => queryAuditTrail({}, undefined, ctx), reads: () => h.auditFindMany },
   { label: "exportAuditTrail", call: (ctx) => exportAuditTrail({}, ctx), reads: () => h.auditFindMany },
@@ -50,6 +56,7 @@ describe.each(TENANT_OPS)("$label", ({ call, reads }) => {
       h.fieldFindMany.mockResolvedValue([]);
       h.auditCount.mockResolvedValue(0);
       h.auditFindMany.mockResolvedValue([]);
+      h.auditCreate.mockResolvedValue({ id: "audit-1" });
       const result = await call(ctxOf([assign.tenant(role, T)]));
       if (roleAtLeast(role, "COMPLIANCE_OFFICER")) expect(result.success, role).toBe(true);
       else {
@@ -112,5 +119,11 @@ describe("Query and Gaps read only the entities the caller's roles cover", () =>
   it("a tenant-wide role is not restricted", async () => {
     await queryFields({}, undefined, ctxOf([assign.tenant("COMPLIANCE_OFFICER", T)]));
     expect(entityWhere()).toEqual({ tenantId: T });
+  });
+
+  it("the Query's export is confined to the same entities as the list, for a domain-scoped officer", async () => {
+    const ctx = ctxOf([assign.domain("COMPLIANCE_OFFICER", T, "dom-a")]);
+    expect((await exportFields({}, undefined, ctx)).success).toBe(true);
+    expect(entityWhere()).toEqual({ AND: [{ OR: [{ domainId: { in: ["dom-a"] } }, { productId: { in: [] } }] }], tenantId: T });
   });
 });

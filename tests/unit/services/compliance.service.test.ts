@@ -7,6 +7,9 @@ vi.mock("@/lib/db", () => ({
       findMany: vi.fn(),
       count: vi.fn(),
     },
+    entity: {
+      findMany: vi.fn(),
+    },
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: "audit-1", timestamp: new Date() }),
       findMany: vi.fn(),
@@ -20,10 +23,12 @@ import {
   detectGaps,
   queryAuditTrail,
   exportAuditTrail,
+  exportFields,
   generateChangeSummary,
   parseRetentionToYears,
 } from "@/services/compliance.service";
 import { prisma } from "@/lib/db";
+import { MAX_EXPORT_ROWS } from "@/types/schemas/compliance";
 import type { ServiceContext } from "@/types/service-context";
 import { assign } from "../../helpers/access-mocks";
 
@@ -63,9 +68,22 @@ function makeField(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** The database filter of a classification filter: the column, or no column and the legacy level in the decorators. */
+const classificationWhere = (levels: string[]) => ({
+  AND: [
+    {
+      OR: [
+        { classification: { in: levels } },
+        { classification: null, OR: levels.map((level) => ({ decorators: { path: ["classification", "level"], equals: level } })) },
+      ],
+    },
+  ],
+});
+
 describe("Compliance Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.entity.findMany).mockResolvedValue([]);
   });
 
   // The Query and Gaps tabs show the tenant being viewed: a field has no tenant of its own, its entity does. The audit trail has one
@@ -90,7 +108,7 @@ describe("Compliance Service", () => {
       await queryFields({ domains: ["dom-1"], classifications: ["PII"] }, undefined, inTenant);
 
       expect(vi.mocked(prisma.field.findMany).mock.calls[0][0]?.where).toEqual({
-        classification: { in: ["PII"] },
+        ...classificationWhere(["PII"]),
         entity: { domainId: { in: ["dom-1"] }, tenantId: "tenant-a" },
       });
     });
@@ -161,11 +179,26 @@ describe("Compliance Service", () => {
       }
       expect(prisma.field.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            classification: { in: ["PII"] },
-          }),
+          where: expect.objectContaining(classificationWhere(["PII"])),
         })
       );
+    });
+
+    it("a classification filter asks for the legacy level in the decorators as well as the column (the database answers it: see tests/integration/compliance)", async () => {
+      vi.mocked(prisma.field.count).mockResolvedValue(0);
+      vi.mocked(prisma.field.findMany).mockResolvedValue([]);
+
+      await queryFields({ classifications: ["PII", "SENSITIVE"] }, undefined, mockCtx);
+
+      const where = vi.mocked(prisma.field.findMany).mock.calls[0][0]?.where as { AND: Array<{ OR: unknown[] }> };
+      expect(where).toEqual(classificationWhere(["PII", "SENSITIVE"]));
+      expect(where.AND[0].OR[1]).toEqual({
+        classification: null,
+        OR: [
+          { decorators: { path: ["classification", "level"], equals: "PII" } },
+          { decorators: { path: ["classification", "level"], equals: "SENSITIVE" } },
+        ],
+      });
     });
 
     it("narrows results by domain filter", async () => {
@@ -232,7 +265,7 @@ describe("Compliance Service", () => {
       expect(prisma.field.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            classification: { in: ["PII"] },
+            ...classificationWhere(["PII"]),
             entity: expect.objectContaining({
               domainId: { in: ["dom-1"] },
             }),
@@ -280,7 +313,7 @@ describe("Compliance Service", () => {
 
       expect(prisma.field.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          orderBy: { name: "desc" },
+          orderBy: [{ name: "desc" }, { id: "asc" }],
         })
       );
     });
@@ -695,7 +728,7 @@ describe("Compliance Service", () => {
       }
       expect(prisma.auditLog.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          orderBy: { timestamp: "desc" },
+          orderBy: [{ timestamp: "desc" }, { id: "desc" }],
         })
       );
     });
@@ -772,7 +805,7 @@ describe("Compliance Service", () => {
       expect(prisma.auditLog.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            timestamp: { gte: from, lte: to },
+            timestamp: { gte: from, lt: to },
           }),
         })
       );
@@ -933,7 +966,8 @@ describe("Compliance Service", () => {
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data).toHaveLength(3);
+        expect(result.data.entries).toHaveLength(3);
+        expect(result.data).toMatchObject({ total: 3, truncated: false });
       }
     });
   });
@@ -946,6 +980,8 @@ describe("compliance services: an unexpected failure is answered in fixed words 
     ["queryFields", () => queryFields({}, undefined, mockCtx), "Failed to query fields", () => vi.mocked(prisma.field.count).mockRejectedValueOnce(new Error(DRIVER))],
     ["detectGaps", () => detectGaps({}, mockCtx), "Failed to detect gaps", () => vi.mocked(prisma.field.findMany).mockRejectedValueOnce(new Error(DRIVER))],
     ["queryAuditTrail", () => queryAuditTrail({}, undefined, mockCtx), "Failed to query audit trail", () => vi.mocked(prisma.auditLog.count).mockRejectedValueOnce(new Error(DRIVER))],
+    ["exportAuditTrail", () => exportAuditTrail({}, mockCtx), "Failed to export the audit trail", () => vi.mocked(prisma.auditLog.count).mockRejectedValueOnce(new Error(DRIVER))],
+    ["exportFields", () => exportFields({}, undefined, mockCtx), "Failed to export fields", () => vi.mocked(prisma.field.count).mockRejectedValueOnce(new Error(DRIVER))],
   ])("%s never returns the driver's text", async (label, run, message, arrange) => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     arrange();
@@ -958,3 +994,347 @@ describe("compliance services: an unexpected failure is answered in fixed words 
     spy.mockRestore();
   });
 });
+
+// ============================================================
+// The protection values the product stores (the Data Protection section, the entity's retention policy), and the queries that filter on them
+// ============================================================
+
+// (The describes above clear the mocks in their own beforeEach; these read the calls of a mock, so they clear it for every test of the file.)
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+const PERIOD_2_YEARS = { strategy: "age-based", period: 2, periodUnit: "years", referenceField: "created_at", action: "delete" };
+const SIX_MONTHS = { strategy: "age-based", period: 6, periodUnit: "months", referenceField: "created_at", action: "delete" };
+const PAGE = { page: 1, pageSize: 25, sortBy: "entityName", sortOrder: "asc" } as const;
+
+/** The entity of a field, with the metadata the retention page stores on it. */
+const entityWith = (metadata: Record<string, unknown>) => ({
+  id: "ent-1",
+  name: "Customer",
+  slug: "customer",
+  metadata,
+  domain: { id: "dom-1", name: "Commerce", slug: "commerce" },
+  product: { slug: "orders" },
+});
+
+/**
+ * Answers the field queries as the database would for these rows: the read of a page (`where.id.in`) gets the rows named, in the order the
+ * database returns them (reversed here, so that a service that trusts that order is caught); a protection filter's read of the candidates
+ * (`select`) gets their id, decorators and entity id only; every other read gets all the rows. The entities are the rows' entities, once each.
+ */
+function mockFieldRows(rows: Array<Record<string, unknown>>, options: { reversePages?: boolean } = {}) {
+  vi.mocked(prisma.field.count).mockResolvedValue(rows.length);
+  vi.mocked(prisma.field.findMany).mockImplementation((async (args: { where?: { id?: { in?: string[] } }; select?: unknown }) => {
+    const ids = args.where?.id?.in;
+    if (!ids) {
+      if (args.select === undefined) return rows;
+      return rows.map((row) => ({ id: row.id, decorators: row.decorators, entityId: (row.entity as { id: string }).id }));
+    }
+    const wanted = new Set(ids);
+    const found = rows.filter((row) => wanted.has(row.id as string));
+    return options.reversePages ? found.reverse() : found;
+  }) as never);
+  const entities = new Map(rows.map((row) => [(row.entity as { id: string }).id, { id: (row.entity as { id: string }).id, metadata: (row.entity as { metadata: unknown }).metadata }]));
+  vi.mocked(prisma.entity.findMany).mockResolvedValue([...entities.values()] as never);
+}
+
+const idsOf = (result: Awaited<ReturnType<typeof queryFields>>) => (result.success ? result.data.fields.map((field) => field.fieldId) : []);
+
+describe("protection values: the keys the product writes", () => {
+  it("queryFields shows the anonymization and encryption the Data Protection section stored, and the retention of the entity", async () => {
+    mockFieldRows([
+      makeField({
+        classification: "PII",
+        decorators: { typespec: { governance: { anonymization: "hash", encryption: "AES-256" } } },
+        entity: entityWith({ retentionPolicy: PERIOD_2_YEARS }),
+      }),
+    ]);
+
+    const result = await queryFields({}, PAGE, mockCtx);
+
+    expect(result.success && result.data.fields[0]).toMatchObject({
+      anonymization: "hash",
+      encryption: "AES-256",
+      retention: "Delete after 2 years (created_at)",
+    });
+  });
+
+  it("the @anonymization of a TypeSpec source (decorators.governance, written by the sync) is the field's anonymization: no gap, and the column shows it", async () => {
+    mockFieldRows([makeField({ classification: "PII", decorators: { governance: { anonymization: "hash" } }, entity: entityWith({ retentionPolicy: PERIOD_2_YEARS }) })]);
+
+    const query = await queryFields({ anonymization: "hash" }, PAGE, mockCtx);
+    expect(query.success && query.data.fields.map((field) => field.anonymization)).toEqual(["hash"]);
+
+    vi.mocked(prisma.field.findMany).mockResolvedValue([
+      makeField({ classification: "PII", decorators: { governance: { anonymization: "hash" } }, entity: entityWith({ retentionPolicy: PERIOD_2_YEARS }) }),
+    ] as never);
+    const gaps = await detectGaps({}, mockCtx);
+    expect(gaps.success && gaps.data.gaps).toEqual([]);
+  });
+
+  it("detectGaps: a PII field the panel gave an anonymization, in an entity with a retention policy, has no gap", async () => {
+    vi.mocked(prisma.field.findMany).mockResolvedValue([
+      makeField({
+        classification: "PII",
+        decorators: { typespec: { governance: { anonymization: "mask" } } },
+        entity: entityWith({ retentionPolicy: PERIOD_2_YEARS }),
+      }),
+    ] as never);
+
+    const result = await detectGaps({}, mockCtx);
+
+    expect(result.success && result.data.gaps).toEqual([]);
+  });
+
+  it("detectGaps: the panel's none is a gap, and so is a field of an entity with no retention policy", async () => {
+    vi.mocked(prisma.field.findMany).mockResolvedValue([
+      makeField({
+        classification: "PII",
+        decorators: { typespec: { governance: { anonymization: null } } },
+        entity: entityWith({}),
+      }),
+      makeField({
+        id: "fld-2",
+        classification: "SENSITIVE",
+        decorators: { typespec: { governance: { encryption: "field-level" } } },
+        entity: entityWith({}),
+      }),
+    ] as never);
+
+    const result = await detectGaps({}, mockCtx);
+
+    expect(result.success && result.data.gaps.map((gap) => `${gap.fieldId}:${gap.gapType}`).sort()).toEqual([
+      "fld-1:NO_RETENTION",
+      "fld-1:PII_NO_ANONYMIZATION",
+      "fld-2:NO_RETENTION",
+    ]);
+  });
+
+  it("the anonymization filter matches the stored value, and none matches the fields with no value", async () => {
+    mockFieldRows([
+      makeField({ id: "fld-1", decorators: { typespec: { governance: { anonymization: "hash" } } } }),
+      makeField({ id: "fld-2", decorators: { typespec: { governance: { anonymization: null } } } }),
+      makeField({ id: "fld-3", decorators: {} }),
+      makeField({ id: "fld-4", decorators: { typespec: { governance: { anonymization: "mask" } } } }),
+    ]);
+
+    expect(idsOf(await queryFields({ anonymization: "hash" }, PAGE, mockCtx))).toEqual(["fld-1"]);
+    expect(idsOf(await queryFields({ anonymization: "none" }, PAGE, mockCtx))).toEqual(["fld-2", "fld-3"]);
+  });
+
+  it("the encryption filter matches the method under the enum's name (AES-256)", async () => {
+    mockFieldRows([
+      makeField({ id: "fld-1", decorators: { typespec: { governance: { encryption: "AES-256" } } } }),
+      makeField({ id: "fld-2", decorators: { typespec: { governance: { encryption: "field-level" } } } }),
+    ]);
+
+    expect(idsOf(await queryFields({ encryption: "AES-256" }, PAGE, mockCtx))).toEqual(["fld-1"]);
+  });
+
+  it("the retention filter reads the entity's policy: 6 months is under a year, 2 years is in 1-3, indefinite is in no range", async () => {
+    mockFieldRows([
+      makeField({ id: "short", entity: { ...entityWith({ retentionPolicy: SIX_MONTHS }), id: "ent-short" } }),
+      makeField({ id: "two", entity: { ...entityWith({ retentionPolicy: PERIOD_2_YEARS }), id: "ent-two" } }),
+      makeField({ id: "forever", entity: { ...entityWith({ retentionPolicy: { strategy: "indefinite", action: "notify-only" } }), id: "ent-forever" } }),
+      makeField({ id: "none", entity: { ...entityWith({}), id: "ent-none" } }),
+    ]);
+
+    expect(idsOf(await queryFields({ retention: "lt_1_year" }, PAGE, mockCtx))).toEqual(["short"]);
+    expect(idsOf(await queryFields({ retention: "1_to_3_years" }, PAGE, mockCtx))).toEqual(["two"]);
+    expect(idsOf(await queryFields({ retention: "gt_7_years" }, PAGE, mockCtx))).toEqual([]);
+  });
+});
+
+describe("a protection filter is applied before the page is cut", () => {
+  // Sixty fields, each in its own entity; the 3rd, the 10th and the 40th are in an entity that keeps its data six months.
+  const rows = Array.from({ length: 60 }, (_, i) =>
+    makeField({
+      id: `fld-${i}`,
+      name: `field_${i}`,
+      entity: { ...entityWith(i === 2 || i === 9 || i === 39 ? { retentionPolicy: SIX_MONTHS } : {}), id: `ent-${i}` },
+    })
+  );
+
+  it("total is the number of matching fields, and every page holds matching fields only", async () => {
+    mockFieldRows(rows);
+    const sort = { page: 1, pageSize: 2, sortBy: "entityName", sortOrder: "asc" } as const;
+
+    const first = await queryFields({ retention: "lt_1_year" }, sort, mockCtx);
+    const second = await queryFields({ retention: "lt_1_year" }, { ...sort, page: 2 }, mockCtx);
+    const third = await queryFields({ retention: "lt_1_year" }, { ...sort, page: 3 }, mockCtx);
+    const past = await queryFields({ retention: "lt_1_year" }, { ...sort, page: 9 }, mockCtx);
+
+    expect(first.success && first.data.total).toBe(3);
+    expect(idsOf(first)).toEqual(["fld-2", "fld-9"]);
+    expect(idsOf(second)).toEqual(["fld-39"]);
+    expect(idsOf(third)).toEqual([]);
+    expect(idsOf(past)).toEqual([]);
+    expect(past.success && past.data.total).toBe(3);
+  });
+
+  it("the rows of a page come in the order of the sort, whatever order the database hands the page back in", async () => {
+    mockFieldRows(rows, { reversePages: true });
+
+    const result = await queryFields({ retention: "lt_1_year" }, { ...PAGE, pageSize: 25 }, mockCtx);
+
+    expect(idsOf(result)).toEqual(["fld-2", "fld-9", "fld-39"]);
+  });
+
+  it("the protection filter is judged on the stored values and leaves the database's own filters in the query", async () => {
+    mockFieldRows(rows);
+    await queryFields({ retention: "lt_1_year", classifications: ["PII"] }, PAGE, mockCtx);
+    const candidateRead = vi.mocked(prisma.field.findMany).mock.calls[0][0] as { where: unknown; select?: unknown };
+    expect(candidateRead.where).toEqual(classificationWhere(["PII"]));
+    // the candidates carry their values and their entity's id: the entity's metadata is read once per entity, apart
+    expect(candidateRead.select).toEqual({ id: true, decorators: true, entityId: true });
+  });
+
+  it("each entity's metadata is read once, for the entities in the scope of the fields (not once per field)", async () => {
+    mockFieldRows(rows);
+    await queryFields({ retention: "lt_1_year" }, PAGE, { ...mockCtx, tenantId: "tenant-a" });
+    expect(prisma.entity.findMany).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(prisma.entity.findMany).mock.calls[0][0]).toEqual({ where: { tenantId: "tenant-a" }, select: { id: true, metadata: true } });
+  });
+});
+
+describe("exportFields: every field the filters select, not the page on the screen", () => {
+  it("exports all the matching fields, with the same sort the list uses (and the list's access)", async () => {
+    const rows = Array.from({ length: 300 }, (_, i) => makeField({ id: `fld-${i}`, name: `field_${i}` }));
+    mockFieldRows(rows);
+
+    const result = await exportFields({}, { sortBy: "fieldName", sortOrder: "desc" }, mockCtx);
+
+    expect(result.success && result.data.fields).toHaveLength(300);
+    expect(result.success && result.data).toMatchObject({ total: 300, truncated: false });
+    expect(vi.mocked(prisma.field.findMany).mock.calls[0][0]).toMatchObject({ take: MAX_EXPORT_ROWS, orderBy: [{ name: "desc" }, { id: "asc" }] });
+  });
+
+  it("exports every match of a protection filter, not only the ones in the first page", async () => {
+    const rows = Array.from({ length: 500 }, (_, i) =>
+      makeField({ id: `fld-${i}`, entity: { ...entityWith(i % 4 === 0 ? { retentionPolicy: SIX_MONTHS } : {}), id: `ent-${i}` } })
+    );
+    mockFieldRows(rows);
+
+    const result = await exportFields({ retention: "lt_1_year" }, undefined, mockCtx);
+
+    expect(result.success && result.data.fields).toHaveLength(125);
+    expect(result.success && result.data.total).toBe(125);
+  });
+
+  it("stops at the documented cap and says so: the total is every match, the rows are the cap", async () => {
+    vi.mocked(prisma.field.count).mockResolvedValue(MAX_EXPORT_ROWS + 5);
+    vi.mocked(prisma.field.findMany).mockResolvedValue(Array.from({ length: MAX_EXPORT_ROWS }, (_, i) => makeField({ id: `fld-${i}` })) as never);
+
+    const result = await exportFields({}, undefined, mockCtx);
+
+    expect(result.success && result.data).toMatchObject({ total: MAX_EXPORT_ROWS + 5, truncated: true });
+    expect(result.success && result.data.fields).toHaveLength(MAX_EXPORT_ROWS);
+  });
+
+  it("stops at the cap with a protection filter as well: the total is every match, the rows the first ones of the sort, and it is said", async () => {
+    const matches = MAX_EXPORT_ROWS + 3;
+    const rows = Array.from({ length: matches + 5 }, (_, i) =>
+      makeField({ id: `fld-${i}`, entity: { ...entityWith(i < matches ? { retentionPolicy: SIX_MONTHS } : {}), id: `ent-${i}` } })
+    );
+    mockFieldRows(rows);
+
+    const result = await exportFields({ retention: "lt_1_year" }, undefined, mockCtx);
+
+    expect(result.success && result.data).toMatchObject({ total: matches, truncated: true });
+    expect(result.success && result.data.fields).toHaveLength(MAX_EXPORT_ROWS);
+    expect(result.success && result.data.fields[0].fieldId).toBe("fld-0");
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ afterState: expect.objectContaining({ rows: MAX_EXPORT_ROWS, total: matches, truncated: true }) }) })
+    );
+  });
+
+  it("is refused to a role that does not read the list, and reads nothing", async () => {
+    const result = await exportFields({}, undefined, unauthorizedCtx);
+    expect(result.success).toBe(false);
+    expect(prisma.field.findMany).not.toHaveBeenCalled();
+  });
+
+  it("writes a compliance.export audit entry, in the tenant the export was made in, with what was exported", async () => {
+    mockFieldRows([makeField()]);
+
+    await exportFields({ classifications: ["PII"] }, undefined, { ...mockCtx, tenantId: "tenant-a" });
+
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: "compliance.export",
+          entityType: "Compliance",
+          entityId: "fields",
+          userId: "user-1",
+          tenantId: "tenant-a",
+          afterState: expect.objectContaining({ rows: 1, total: 1, truncated: false }),
+        }),
+      })
+    );
+  });
+
+  it("an export that cannot be audited is not handed out", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mockFieldRows([makeField()]);
+    vi.mocked(prisma.auditLog.create).mockRejectedValueOnce(new Error("audit write failed"));
+
+    const result = await exportFields({}, undefined, mockCtx);
+
+    expect(result.success).toBe(false);
+    spy.mockRestore();
+  });
+});
+
+describe("the audit trail's date range and its export", () => {
+  const where = () => vi.mocked(prisma.auditLog.findMany).mock.calls.at(-1)?.[0]?.where;
+
+  beforeEach(() => {
+    vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
+    vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
+  });
+
+  it("from is inclusive and to is exclusive: the day is whole when to is the start of the next day", async () => {
+    const from = new Date(2026, 9, 1);
+    const nextDay = new Date(2026, 10, 1);
+    await queryAuditTrail({ dateRange: { from, to: nextDay } }, { page: 1, pageSize: 50 }, mockCtx);
+    expect(where()).toMatchObject({ timestamp: { gte: from, lt: nextDay } });
+  });
+
+  it("from alone is a lower bound and to alone an upper bound: neither is invented", async () => {
+    const from = new Date(2026, 9, 1);
+    const to = new Date(2026, 10, 1);
+    await queryAuditTrail({ dateRange: { from } }, { page: 1, pageSize: 50 }, mockCtx);
+    expect(where()).toMatchObject({ timestamp: { gte: from } });
+    expect(JSON.stringify(where())).not.toContain('"lt"');
+    await queryAuditTrail({ dateRange: { to } }, { page: 1, pageSize: 50 }, mockCtx);
+    expect(where()).toMatchObject({ timestamp: { lt: to } });
+    expect(JSON.stringify(where())).not.toContain('"gte"');
+  });
+
+  it("exports every row of the filter up to the cap, with the total, and says when the cap is hit", async () => {
+    vi.mocked(prisma.auditLog.count).mockResolvedValue(MAX_EXPORT_ROWS + 1);
+    vi.mocked(prisma.auditLog.findMany).mockResolvedValue(
+      Array.from({ length: MAX_EXPORT_ROWS }, (_, i) => ({ id: `al-${i}`, action: "UPDATE", entityType: "Field", entityId: "f", userId: "u", timestamp: new Date(0), beforeState: null, afterState: {}, user: null })) as never
+    );
+
+    const result = await exportAuditTrail({}, mockCtx);
+
+    expect(vi.mocked(prisma.auditLog.findMany).mock.calls.at(-1)?.[0]).toMatchObject({ take: MAX_EXPORT_ROWS });
+    expect(result.success && result.data).toMatchObject({ total: MAX_EXPORT_ROWS + 1, truncated: true });
+    expect(result.success && result.data.entries).toHaveLength(MAX_EXPORT_ROWS);
+    // the file's columns only: the states of 10,000 entries are not carried
+    expect(result.success && Object.keys(result.data.entries[0]).sort()).toEqual(["action", "changeSummary", "entityId", "entityType", "timestamp", "userName"]);
+  });
+
+  it("writes a compliance.export audit entry for the export of the audit trail", async () => {
+    await exportAuditTrail({ actionTypes: ["CREATE"] }, officerOfTenant("tenant-a"));
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ action: "compliance.export", entityType: "Compliance", entityId: "audit-trail", tenantId: "tenant-a" }) })
+    );
+  });
+});
+
+function officerOfTenant(tenantId: string): ServiceContext {
+  return { ...mockCtx, userRole: "COMPLIANCE_OFFICER", assignments: [assign.tenant("COMPLIANCE_OFFICER", tenantId)], tenantId };
+}

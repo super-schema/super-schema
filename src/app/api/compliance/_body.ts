@@ -18,6 +18,10 @@ import {
 export const QueryBodySchema = z.object({ filters: ComplianceFilterSchema.optional(), pagination: PaginationSchema.optional() });
 export const GapsBodySchema = z.object({ filters: GapFilterSchema.optional() });
 export const AuditTrailBodySchema = z.object({ filters: AuditTrailFilterSchema.optional(), pagination: AuditPaginationSchema.optional() });
+/** The Query export: the same filters, and the sort the list is in (no page: an export is every match, up to the cap). */
+export const FieldExportBodySchema = z.object({ filters: ComplianceFilterSchema.optional(), sort: PaginationSchema.pick({ sortBy: true, sortOrder: true }).optional() });
+/** The Audit Trail export: the same filters as the list (no page). */
+export const AuditExportBodySchema = z.object({ filters: AuditTrailFilterSchema.optional() });
 
 export async function readBody<S extends z.ZodType>(
   req: Request,

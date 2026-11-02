@@ -13,6 +13,8 @@ interface AuditTrailViewProps {
   onFilterChange: (filters: AuditTrailFilter) => void;
   onPageChange: (page: number) => void;
   onExport: () => void;
+  /** An export is being made: its button is off */
+  exporting?: boolean;
   loading: boolean;
 }
 
@@ -24,6 +26,7 @@ export function AuditTrailView({
   onFilterChange,
   onPageChange,
   onExport,
+  exporting = false,
   loading,
 }: AuditTrailViewProps) {
   return (
@@ -32,6 +35,7 @@ export function AuditTrailView({
         filters={filters}
         onFilterChange={onFilterChange}
         onExport={onExport}
+        exporting={exporting}
       />
       <AuditTrailList
         entries={entries}

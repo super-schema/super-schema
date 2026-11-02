@@ -134,7 +134,8 @@ export const ACTIONS = freezeTable({
   "compliance.gaps": { minRole: "COMPLIANCE_OFFICER", level: "resource" },
   // POST /api/compliance/audit-trail: queryAuditTrail (a tenant-wide read of audit_log) [the tenant]
   "compliance.audit": { minRole: "COMPLIANCE_OFFICER", level: "tenant" },
-  // exportAuditTrail (a tenant-wide export of audit_log) [the tenant]
+  // No code path checks this action. The exports are decided as their lists are: the Query's export as compliance.query, the Audit Trail's as
+  // compliance.audit (the same rule). The row stays for tests/unit/lib/access/policy.test.ts, which pins it.
   "compliance.export": { minRole: "COMPLIANCE_OFFICER", level: "tenant" },
 
   // ── Administration: ADMIN ──────────────────────────────────────────────────────────────────────────────────────────────────────

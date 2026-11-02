@@ -1,8 +1,15 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Download, X, Search } from "lucide-react";
+import { Download, X, Search, Loader2 } from "lucide-react";
 import type { AuditTrailFilter } from "@/types/schemas/compliance";
+import {
+  dayAfterStart,
+  dayInputValue,
+  dayStart,
+  lastDayInputValue,
+  withDateBound,
+} from "./audit-date-range";
 
 const ACTION_TYPES = [
   "CREATE",
@@ -26,12 +33,15 @@ interface AuditTrailFilterBarProps {
   filters: AuditTrailFilter;
   onFilterChange: (filters: AuditTrailFilter) => void;
   onExport: () => void;
+  /** An export is being made: the Export button is off until it is made */
+  exporting?: boolean;
 }
 
 export function AuditTrailFilterBar({
   filters,
   onFilterChange,
   onExport,
+  exporting = false,
 }: AuditTrailFilterBarProps) {
   const [entityName, setEntityName] = useState(filters.entityName || "");
 
@@ -105,42 +115,22 @@ export function AuditTrailFilterBar({
         />
       </div>
 
-      {/* Date range (simplified) */}
+      {/* Date range: whole local days, both ends included (see audit-date-range.ts); a bound that is left out is not invented */}
       <input
         type="date"
-        value={
-          filters.dateRange?.from
-            ? filters.dateRange.from.toISOString().split("T")[0]
-            : ""
+        value={dayInputValue(filters.dateRange?.from)}
+        onChange={(e) =>
+          onFilterChange({ ...filters, dateRange: withDateBound(filters.dateRange, { from: dayStart(e.target.value) }) })
         }
-        onChange={(e) => {
-          const from = e.target.value ? new Date(e.target.value) : undefined;
-          onFilterChange({
-            ...filters,
-            dateRange: from
-              ? { from, to: filters.dateRange?.to || new Date() }
-              : undefined,
-          });
-        }}
         className="bg-muted text-foreground text-body-small rounded-lg px-space-3 py-1.5 border border-border outline-none"
         placeholder="From"
       />
       <input
         type="date"
-        value={
-          filters.dateRange?.to
-            ? filters.dateRange.to.toISOString().split("T")[0]
-            : ""
+        value={lastDayInputValue(filters.dateRange?.to)}
+        onChange={(e) =>
+          onFilterChange({ ...filters, dateRange: withDateBound(filters.dateRange, { to: dayAfterStart(e.target.value) }) })
         }
-        onChange={(e) => {
-          const to = e.target.value ? new Date(e.target.value) : undefined;
-          onFilterChange({
-            ...filters,
-            dateRange: to
-              ? { from: filters.dateRange?.from || new Date(0), to }
-              : undefined,
-          });
-        }}
         className="bg-muted text-foreground text-body-small rounded-lg px-space-3 py-1.5 border border-border outline-none"
         placeholder="To"
       />
@@ -164,9 +154,10 @@ export function AuditTrailFilterBar({
       <button
         data-testid="audit-export"
         onClick={onExport}
-        className="flex items-center gap-space-2 px-space-3 py-1.5 text-body-small border border-border rounded-lg hover:bg-accent/50 transition-colors"
+        disabled={exporting}
+        className="flex items-center gap-space-2 px-space-3 py-1.5 text-body-small border border-border rounded-lg hover:bg-accent/50 transition-colors disabled:opacity-50"
       >
-        <Download className="w-4 h-4" />
+        {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
         Export Audit Trail
       </button>
     </div>

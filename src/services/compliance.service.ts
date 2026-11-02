@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db";
 import { can, ctxCan, readableScopes, type ActionId } from "@/lib/access";
+import { withAudit } from "@/lib/audit";
+import { fieldProtection, isMethod, type FieldProtection } from "@/lib/compliance/field-protection";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -13,14 +15,18 @@ import type {
   AuditTrailFilter,
   AuditPagination,
   AuditTrailEntry,
+  AuditExportEntry,
 } from "@/types/schemas/compliance";
+import { MAX_EXPORT_ROWS } from "@/types/schemas/compliance";
 import { domainLabel } from "@/lib/entity-placement";
+
+export { parseRetentionToYears } from "@/lib/compliance/field-protection";
 
 // ============================================================
 // Access: the policy over the caller's assignments (no role names here)
 // ============================================================
 
-type ComplianceAction = Extract<ActionId, "compliance.query" | "compliance.gaps" | "compliance.audit" | "compliance.export">;
+type ComplianceAction = Extract<ActionId, "compliance.query" | "compliance.gaps" | "compliance.audit">;
 
 const FORBIDDEN = { code: "FORBIDDEN", message: "You do not have permission to do this" } as const;
 
@@ -36,9 +42,10 @@ function assertComplianceTenant(ctx: ServiceContext, action: ComplianceAction): 
 }
 
 /**
- * Access to the FIELDS of the entities of the tenant in view (Query and Gaps, judged per entity): a role over the whole tenant reads them all, a
- * domain- or product-scoped one only the entities under its domains and products (`entityRestriction`, applied in the query), one that reaches none
- * is refused. With no tenant in view only a platform administrator passes, over every entity.
+ * Access to the FIELDS of the entities of the tenant in view (Query and Gaps, judged per entity, and the Query's export, which is the same
+ * decision): a role over the whole tenant reads them all, a domain- or product-scoped one only the entities under its domains and products
+ * (`entityRestriction`, applied in the query), one that reaches none is refused. With no tenant in view only a platform administrator passes,
+ * over every entity.
  */
 function complianceEntityScope(ctx: ServiceContext, action: ComplianceAction): Result<{ entityRestriction: Record<string, unknown> | null }> {
   const assignments = [...(ctx.assignments ?? [])];
@@ -60,162 +67,128 @@ function internalFailure(service: string, message: string, cause: unknown): Resu
   return err({ code: "INTERNAL_ERROR", message });
 }
 
-// ============================================================
-// Story 6.1 — queryFields
-// ============================================================
-
-export async function queryFields(
-  filters: ComplianceFilter = {},
-  pagination: Pagination = { page: 1, pageSize: 25, sortBy: "entityName", sortOrder: "asc" },
-  ctx: ServiceContext
-): Promise<Result<{ fields: ComplianceFieldResult[]; total: number }>> {
-  const scope = complianceEntityScope(ctx, "compliance.query");
-  if (!scope.success) return scope as Result<never>;
-
-  try {
-    // Build where clause
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const where: any = {};
-    const entityWhere: Record<string, unknown> = {};
-    // Only the entities the caller's roles cover (a domain- or product-scoped caller; absent for a tenant-wide role)
-    if (scope.data.entityRestriction) entityWhere.AND = [scope.data.entityRestriction];
-
-    // Domain filter
-    if (filters.domains && filters.domains.length > 0) {
-      entityWhere.domainId = { in: filters.domains };
-    }
-
-    // Text search — across entity name, field name, description
-    if (filters.textSearch && filters.textSearch.trim()) {
-      const q = filters.textSearch.trim();
-      where.OR = [
-        { name: { contains: q, mode: "insensitive" } },
-        { description: { contains: q, mode: "insensitive" } },
-        { entity: { name: { contains: q, mode: "insensitive" } } },
-      ];
-    }
-
-    // Classification filter
-    if (filters.classifications && filters.classifications.length > 0) {
-      where.classification = { in: filters.classifications };
-    }
-
-    // The tenant being viewed (a field has no tenant of its own: its entity does)
-    if (ctx.tenantId !== undefined) entityWhere.tenantId = ctx.tenantId;
-
-    // Entity-level filters
-    if (Object.keys(entityWhere).length > 0) {
-      where.entity = { ...where.entity, ...entityWhere };
-    }
-
-    // Get total count
-    const total = await prisma.field.count({ where });
-
-    // Build orderBy
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let orderBy: any;
-    switch (pagination.sortBy) {
-      case "entityName":
-        orderBy = { entity: { name: pagination.sortOrder } };
-        break;
-      case "fieldName":
-        orderBy = { name: pagination.sortOrder };
-        break;
-      case "fieldType":
-        orderBy = { type: pagination.sortOrder };
-        break;
-      case "classification":
-        orderBy = { classification: pagination.sortOrder };
-        break;
-      case "domain":
-        orderBy = { entity: { domain: { name: pagination.sortOrder } } };
-        break;
-      default:
-        orderBy = { entity: { name: pagination.sortOrder } };
-    }
-
-    const skip = (pagination.page - 1) * pagination.pageSize;
-
-    const fields = await prisma.field.findMany({
-      where,
-      include: {
-        entity: {
-          include: {
-            domain: true,
-            product: true,
-          },
-        },
-      },
-      orderBy,
-      skip,
-      take: pagination.pageSize,
-    });
-
-    const results: ComplianceFieldResult[] = fields
-      .map((f) => {
-        const decorators = (f.decorators || {}) as Record<string, unknown>;
-        const policy = (decorators.policy || {}) as Record<string, string>;
-        const classification =
-          f.classification ||
-          ((decorators.classification as Record<string, string>)?.level ?? null);
-
-        return {
-          entityId: f.entity.id,
-          entityName: f.entity.name,
-          entitySlug: f.entity.slug,
-          domainSlug: f.entity.domain?.slug ?? null,
-          productSlug: f.entity.product?.slug ?? null,
-          fieldId: f.id,
-          fieldName: f.name,
-          fieldType: f.type,
-          classification,
-          retention: policy.retention || null,
-          anonymization: policy.anonymization || null,
-          encryption: policy.encryption || null,
-          targetSystems: [] as string[],
-          domain: domainLabel(f.entity.domain),
-          domainId: f.entity.domain?.id ?? null,
-        };
-      })
-      .filter((r) => {
-        // Post-filter for JSONB-based filters (retention, anonymization, encryption)
-        if (
-          filters.retention &&
-          filters.retention !== "any" &&
-          !matchRetention(r.retention, filters.retention)
-        ) {
-          return false;
-        }
-        if (
-          filters.anonymization &&
-          filters.anonymization !== "any" &&
-          r.anonymization !== filters.anonymization
-        ) {
-          return false;
-        }
-        if (
-          filters.encryption &&
-          filters.encryption !== "any" &&
-          r.encryption !== filters.encryption
-        ) {
-          return false;
-        }
-        return true;
-      });
-
-    return ok({ fields: results, total });
-  } catch (e: unknown) {
-    return internalFailure("queryFields", "Failed to query fields", e);
-  }
+/** What an export audit entry records: how many rows went out, of how many, and the filters that chose them (as JSON, the way the audit row stores them). */
+function exportRecord(rows: number, total: number, truncated: boolean, filters: unknown) {
+  return { rows, total, truncated, filters: JSON.parse(JSON.stringify(filters)) as unknown };
 }
 
-function matchRetention(
-  retention: string | null,
-  range: string
-): boolean {
-  if (!retention) return false;
-  // Parse retention like "1 year", "3 years", "6 months", "90 days", etc.
-  const years = parseRetentionToYears(retention);
+const recordOf = (value: unknown): Record<string, unknown> => (typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {});
+
+// ============================================================
+// Story 6.1 — queryFields (and its export)
+// ============================================================
+
+/** A field as the queries read it: the field, and its entity placed in a domain and a product, with the entity's metadata (its retention policy). */
+type FieldRow = {
+  id: string;
+  name: string;
+  type: string;
+  classification: string | null;
+  decorators: unknown;
+  entity: {
+    id: string;
+    name: string;
+    slug: string;
+    metadata: unknown;
+    domain: { id: string; name: string; slug: string } | null;
+    product: { slug: string } | null;
+  };
+};
+
+/** The whole of a field row, its entity placed. */
+const FIELD_INCLUDE = { entity: { include: { domain: true, product: true } } } as const;
+
+/** What a protection filter reads of each candidate: the values it judges and the entity they are in (the entity's metadata is read once, apart). */
+const CANDIDATE_SELECT = { id: true, decorators: true, entityId: true } as const;
+
+/**
+ * The database filter of a field query: the entities the caller's roles cover (`entityRestriction`), the tenant in view, and the domain, text and
+ * classification filters. The protection filters (retention, anonymization, encryption) are not in it: they are judged on the stored values.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function fieldWhere(filters: ComplianceFilter, entityRestriction: Record<string, unknown> | null, tenantId: string | undefined): any {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const where: any = {};
+  const entityWhere: Record<string, unknown> = {};
+  // Only the entities the caller's roles cover (a domain- or product-scoped caller; absent for a tenant-wide role)
+  if (entityRestriction) entityWhere.AND = [entityRestriction];
+
+  // Domain filter
+  if (filters.domains && filters.domains.length > 0) {
+    entityWhere.domainId = { in: filters.domains };
+  }
+
+  // Text search — across entity name, field name, description
+  if (filters.textSearch && filters.textSearch.trim()) {
+    const q = filters.textSearch.trim();
+    where.OR = [
+      { name: { contains: q, mode: "insensitive" } },
+      { description: { contains: q, mode: "insensitive" } },
+      { entity: { name: { contains: q, mode: "insensitive" } } },
+    ];
+  }
+
+  // Classification filter: the column, or for a row with no column value the level its decorators carry (the legacy shape that the column and the
+  // Gaps rule read), so that the filter finds every row the list shows a classification for.
+  if (filters.classifications && filters.classifications.length > 0) {
+    const levels = filters.classifications;
+    where.AND = [
+      ...(where.AND ?? []),
+      {
+        OR: [
+          { classification: { in: levels } },
+          { classification: null, OR: levels.map((level) => ({ decorators: { path: ["classification", "level"], equals: level } })) },
+        ],
+      },
+    ];
+  }
+
+  // The tenant being viewed (a field has no tenant of its own: its entity does)
+  if (tenantId !== undefined) entityWhere.tenantId = tenantId;
+
+  if (Object.keys(entityWhere).length > 0) {
+    where.entity = entityWhere;
+  }
+  return where;
+}
+
+/** The order of a field list: its sort, then the field's id, so that the rows that tie on the sort key come in one order on every page. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function fieldOrderBy(sortBy: string, sortOrder: "asc" | "desc"): any[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let primary: any;
+  switch (sortBy) {
+    case "entityName":
+      primary = { entity: { name: sortOrder } };
+      break;
+    case "fieldName":
+      primary = { name: sortOrder };
+      break;
+    case "fieldType":
+      primary = { type: sortOrder };
+      break;
+    case "classification":
+      primary = { classification: sortOrder };
+      break;
+    case "domain":
+      primary = { entity: { domain: { name: sortOrder } } };
+      break;
+    default:
+      primary = { entity: { name: sortOrder } };
+  }
+  return [primary, { id: "asc" }];
+}
+
+/** A filter that names a value: present and not "any". */
+const isFilterSet = (value: string | undefined): value is string => value !== undefined && value !== "" && value !== "any";
+
+/** Whether a protection filter narrows the query. Those are judged on the stored values, so the database does not count or page for them. */
+function hasProtectionFilter(filters: ComplianceFilter): boolean {
+  return isFilterSet(filters.retention) || isFilterSet(filters.anonymization) || isFilterSet(filters.encryption);
+}
+
+/** Whether a retention of `years` (`null`: indefinite, unset or unreadable, which is in no range) is in the range the filter names. */
+function matchRetention(years: number | null, range: string): boolean {
   if (years === null) return false;
   switch (range) {
     case "lt_1_year":
@@ -231,37 +204,127 @@ function matchRetention(
   }
 }
 
-export function parseRetentionToYears(retention: string | Record<string, unknown>): number | null {
-  // Handle structured RetentionPolicy object
-  if (typeof retention === "object" && retention !== null) {
-    const policy = retention as { strategy?: string; period?: number; periodUnit?: string };
-    if (policy.strategy === "indefinite") return null;
-    if (!policy.period || !policy.periodUnit) return null;
-    switch (policy.periodUnit) {
-      case "years": return policy.period;
-      case "months": return policy.period / 12;
-      case "days": return policy.period / 365;
-      default: return null;
-    }
+function matchesProtection(protection: FieldProtection, filters: ComplianceFilter): boolean {
+  if (isFilterSet(filters.retention) && !matchRetention(protection.retentionYears, filters.retention)) return false;
+  if (isFilterSet(filters.anonymization) && !isMethod(protection.anonymization, filters.anonymization)) return false;
+  if (isFilterSet(filters.encryption) && !isMethod(protection.encryption, filters.encryption)) return false;
+  return true;
+}
+
+/**
+ * The fields `where` selects, in `orderBy`: `take` of them from `skip`, and how many are selected in all.
+ *
+ * Without a protection filter the database counts and pages, as it always did. A protection filter is judged on values the database does not
+ * filter (the entity's retention policy, the field's decorators). Then every candidate of the scope is read with those values alone (the entities'
+ * metadata once per entity, not once per field), the matches are counted, and only the page's rows are read in full by id, so the total, the pages
+ * and the rows all come from one filtered set. The cost is that every request reads all the candidates of the caller's scope (as the Gaps tab does).
+ */
+async function selectFields(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  where: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  orderBy: any[],
+  filters: ComplianceFilter,
+  skip: number,
+  take: number
+): Promise<{ total: number; rows: FieldRow[] }> {
+  if (!hasProtectionFilter(filters)) {
+    const total = await prisma.field.count({ where });
+    const rows = await prisma.field.findMany({ where, include: FIELD_INCLUDE, orderBy, skip, take });
+    return { total, rows };
   }
 
-  // Handle legacy string format
-  const lower = (retention as string).toLowerCase().trim();
-  // Handle compact format: "30d", "90d", "1y"
-  const compactMatch = lower.match(/^(\d+)(d|y)$/);
-  if (compactMatch) {
-    const num = parseInt(compactMatch[1], 10);
-    return compactMatch[2] === "y" ? num : num / 365;
+  const candidates = await prisma.field.findMany({ where, orderBy, select: CANDIDATE_SELECT });
+  // The entities in the scope of the fields (`where.entity`, the same scope): each candidate's entity is one of them.
+  const entities = await prisma.entity.findMany({ where: where.entity ?? {}, select: { id: true, metadata: true } });
+  const metadataOf = new Map(entities.map((entity) => [entity.id, entity.metadata]));
+  const matching = candidates
+    .filter((candidate) => matchesProtection(fieldProtection(candidate.decorators, metadataOf.get(candidate.entityId)), filters))
+    .map((candidate) => candidate.id);
+  const ids = matching.slice(skip, skip + take);
+  if (ids.length === 0) return { total: matching.length, rows: [] };
+
+  const found = await prisma.field.findMany({ where: { id: { in: ids } }, include: FIELD_INCLUDE });
+  const byId = new Map(found.map((row) => [row.id, row]));
+  const rows: FieldRow[] = [];
+  for (const id of ids) {
+    const row = byId.get(id);
+    if (row) rows.push(row);
   }
-  // Handle verbose format: "1 year", "90 days"
-  const match = lower.match(/^(\d+)\s*(year|yr|month|mo|day|d)s?$/);
-  if (!match) return null;
-  const num = parseInt(match[1], 10);
-  const unit = match[2];
-  if (unit.startsWith("year") || unit.startsWith("yr")) return num;
-  if (unit.startsWith("month") || unit === "mo") return num / 12;
-  if (unit.startsWith("day") || unit === "d") return num / 365;
-  return null;
+  return { total: matching.length, rows };
+}
+
+function toFieldResult(f: FieldRow): ComplianceFieldResult {
+  const decorators = recordOf(f.decorators);
+  const protection = fieldProtection(f.decorators, f.entity.metadata);
+  const classification = f.classification || ((decorators.classification as Record<string, string>)?.level ?? null);
+
+  return {
+    entityId: f.entity.id,
+    entityName: f.entity.name,
+    entitySlug: f.entity.slug,
+    domainSlug: f.entity.domain?.slug ?? null,
+    productSlug: f.entity.product?.slug ?? null,
+    fieldId: f.id,
+    fieldName: f.name,
+    fieldType: f.type,
+    classification,
+    retention: protection.retention,
+    anonymization: protection.anonymization,
+    encryption: protection.encryption,
+    targetSystems: [] as string[],
+    domain: domainLabel(f.entity.domain),
+    domainId: f.entity.domain?.id ?? null,
+  };
+}
+
+export async function queryFields(
+  filters: ComplianceFilter = {},
+  pagination: Pagination = { page: 1, pageSize: 25, sortBy: "entityName", sortOrder: "asc" },
+  ctx: ServiceContext
+): Promise<Result<{ fields: ComplianceFieldResult[]; total: number }>> {
+  const scope = complianceEntityScope(ctx, "compliance.query");
+  if (!scope.success) return scope as Result<never>;
+
+  try {
+    const where = fieldWhere(filters, scope.data.entityRestriction, ctx.tenantId);
+    const skip = (pagination.page - 1) * pagination.pageSize;
+    const { total, rows } = await selectFields(where, fieldOrderBy(pagination.sortBy, pagination.sortOrder), filters, skip, pagination.pageSize);
+    return ok({ fields: rows.map(toFieldResult), total });
+  } catch (e: unknown) {
+    return internalFailure("queryFields", "Failed to query fields", e);
+  }
+}
+
+/** The export of the Query tab: what `queryFields` lists, for every page of it, up to `MAX_EXPORT_ROWS`. `truncated`: more matched than were exported. */
+export type FieldExport = { fields: ComplianceFieldResult[]; total: number; truncated: boolean };
+
+/** The fields the filters select, in the sort the list uses, the whole set up to `MAX_EXPORT_ROWS`. Decided as the list is (`compliance.query`). */
+export async function exportFields(
+  filters: ComplianceFilter = {},
+  sort: { sortBy: string; sortOrder: "asc" | "desc" } = { sortBy: "entityName", sortOrder: "asc" },
+  ctx: ServiceContext
+): Promise<Result<FieldExport>> {
+  const scope = complianceEntityScope(ctx, "compliance.query");
+  if (!scope.success) return scope as Result<never>;
+
+  try {
+    const where = fieldWhere(filters, scope.data.entityRestriction, ctx.tenantId);
+    const { total, rows } = await selectFields(where, fieldOrderBy(sort.sortBy, sort.sortOrder), filters, 0, MAX_EXPORT_ROWS);
+    const fields = rows.map(toFieldResult);
+    const truncated = total > fields.length;
+    await withAudit({
+      action: "compliance.export",
+      entityType: "Compliance",
+      entityId: "fields",
+      userId: ctx.userId,
+      tenantId: ctx.tenantId ?? null,
+      fn: async () => exportRecord(fields.length, total, truncated, filters),
+    });
+    return ok({ fields, total, truncated });
+  } catch (e: unknown) {
+    return internalFailure("exportFields", "Failed to export fields", e);
+  }
 }
 
 // ============================================================
@@ -300,12 +363,7 @@ export async function detectGaps(
       where.entityId = { in: filters.entities };
     }
 
-    const allFields = await prisma.field.findMany({
-      where,
-      include: {
-        entity: { include: { domain: true, product: true } },
-      },
-    });
+    const allFields = await prisma.field.findMany({ where, include: FIELD_INCLUDE });
 
     const gaps: ComplianceGap[] = [];
 
@@ -315,9 +373,10 @@ export async function detectGaps(
         string,
         string
       >;
-      const policyObj = (decorators.policy || {}) as Record<string, string>;
       const classLevel =
         field.classification || classificationObj.level || null;
+      // What the product stores for the field: its Data Protection values, and the retention of its entity (see field-protection.ts).
+      const protection = fieldProtection(field.decorators, field.entity.metadata);
 
       const entityMeta = {
         entityId: field.entity.id,
@@ -341,10 +400,7 @@ export async function detectGaps(
       }
 
       // PII without anonymization
-      if (
-        classLevel === "PII" &&
-        (!policyObj.anonymization || policyObj.anonymization === "none")
-      ) {
+      if (classLevel === "PII" && isMethod(protection.anonymization, "none")) {
         gaps.push({
           ...entityMeta,
           fieldId: field.id,
@@ -356,10 +412,7 @@ export async function detectGaps(
       }
 
       // SENSITIVE without encryption
-      if (
-        classLevel === "SENSITIVE" &&
-        (!policyObj.encryption || policyObj.encryption === "none")
-      ) {
+      if (classLevel === "SENSITIVE" && isMethod(protection.encryption, "none")) {
         gaps.push({
           ...entityMeta,
           fieldId: field.id,
@@ -371,10 +424,7 @@ export async function detectGaps(
       }
 
       // PII or SENSITIVE without retention
-      if (
-        (classLevel === "PII" || classLevel === "SENSITIVE") &&
-        !policyObj.retention
-      ) {
+      if ((classLevel === "PII" || classLevel === "SENSITIVE") && protection.retention === null) {
         gaps.push({
           ...entityMeta,
           fieldId: field.id,
@@ -413,7 +463,7 @@ export async function detectGaps(
 }
 
 // ============================================================
-// Story 6.5 — queryAuditTrail
+// Story 6.5 — queryAuditTrail (and its export)
 // ============================================================
 
 export function generateChangeSummary(
@@ -453,7 +503,7 @@ export async function queryAuditTrail(
 ): Promise<Result<{ entries: AuditTrailEntry[]; total: number }>> {
   const access = assertComplianceTenant(ctx, "compliance.audit");
   if (!access.success) return access as Result<never>;
-  return readAuditTrail(filters, pagination, auditTenantScope(ctx));
+  return readAuditTrail(filters, pagination, auditTenantScope(ctx), { service: "queryAuditTrail", message: "Failed to query audit trail" });
 }
 
 /**
@@ -467,37 +517,51 @@ function auditTenantScope(ctx: ServiceContext): Record<string, unknown> {
   return ctxCan(ctx, "platform.admin") ? { OR: [{ tenantId: ctx.tenantId }, { tenantId: null }] } : { tenantId: ctx.tenantId };
 }
 
-/** The audit trail itself, after the caller's access was decided (`compliance.audit` to read it, `compliance.export` to export it) and its scope (`auditTenantScope`). */
+/**
+ * The database filter of the audit trail: the scope, then each filter. The date range is `from` inclusive and `to` EXCLUSIVE: the screen sends the
+ * start of the day after the last day it shows, so that the whole day is in (`lte` would drop everything after midnight of that day).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function auditWhere(filters: AuditTrailFilter, scope: Record<string, unknown>): any {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const where: any = { ...scope };
+
+  if (filters.actionTypes && filters.actionTypes.length > 0) {
+    where.action = { in: filters.actionTypes };
+  }
+  if (filters.userId) {
+    where.userId = filters.userId;
+  }
+  if (filters.entityType) {
+    where.entityType = filters.entityType;
+  }
+  if (filters.entityName) {
+    where.entityId = { contains: filters.entityName, mode: "insensitive" };
+  }
+  if (filters.dateRange) {
+    const timestamp: Record<string, Date> = {};
+    if (filters.dateRange.from) timestamp.gte = filters.dateRange.from;
+    if (filters.dateRange.to) timestamp.lt = filters.dateRange.to;
+    if (Object.keys(timestamp).length > 0) where.timestamp = timestamp;
+  }
+  return where;
+}
+
+/** The name a failure is logged under, and the fixed words its caller is answered with (the list and the export say their own). */
+type FailureLabel = { service: string; message: string };
+
+/**
+ * The audit trail itself, after the caller's access was decided (`compliance.audit`) and its scope (`auditTenantScope`). The newest first, and the
+ * id breaks a tie in the timestamp, so that rows written in the same instant page in one order.
+ */
 async function readAuditTrail(
   filters: AuditTrailFilter,
   pagination: AuditPagination,
-  scope: Record<string, unknown>
+  scope: Record<string, unknown>,
+  failure: FailureLabel
 ): Promise<Result<{ entries: AuditTrailEntry[]; total: number }>> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const where: any = { ...scope };
-
-    if (filters.actionTypes && filters.actionTypes.length > 0) {
-      where.action = { in: filters.actionTypes };
-    }
-    if (filters.userId) {
-      where.userId = filters.userId;
-    }
-    if (filters.entityType) {
-      where.entityType = filters.entityType;
-    }
-    if (filters.entityName) {
-      where.entityId = { contains: filters.entityName, mode: "insensitive" };
-    }
-    if (filters.dateRange) {
-      where.timestamp = {};
-      if (filters.dateRange.from) {
-        where.timestamp.gte = filters.dateRange.from;
-      }
-      if (filters.dateRange.to) {
-        where.timestamp.lte = filters.dateRange.to;
-      }
-    }
+    const where = auditWhere(filters, scope);
 
     const total = await prisma.auditLog.count({ where });
 
@@ -508,7 +572,7 @@ async function readAuditTrail(
       include: {
         user: { select: { id: true, name: true, image: true } },
       },
-      orderBy: { timestamp: "desc" },
+      orderBy: [{ timestamp: "desc" }, { id: "desc" }],
       skip,
       take: pagination.pageSize,
     });
@@ -530,17 +594,48 @@ async function readAuditTrail(
 
     return ok({ entries: mapped, total });
   } catch (e: unknown) {
-    return internalFailure("queryAuditTrail", "Failed to query audit trail", e);
+    return internalFailure(failure.service, failure.message, e);
   }
 }
 
+/** The export of the Audit Trail: every entry of the filter up to `MAX_EXPORT_ROWS`, as its file holds them. `truncated`: more matched than were exported. */
+export type AuditExport = { entries: AuditExportEntry[]; total: number; truncated: boolean };
+
+/** The entries the filters select, up to `MAX_EXPORT_ROWS`. Decided as the list is (`compliance.audit`: the tenant as a whole). */
 export async function exportAuditTrail(
   filters: AuditTrailFilter = {},
   ctx: ServiceContext
-): Promise<Result<AuditTrailEntry[]>> {
-  const access = assertComplianceTenant(ctx, "compliance.export");
+): Promise<Result<AuditExport>> {
+  const access = assertComplianceTenant(ctx, "compliance.audit");
   if (!access.success) return access as Result<never>;
-  const result = await readAuditTrail(filters, { page: 1, pageSize: 10000 }, auditTenantScope(ctx));
+  // A failed read is an export that failed: logged and answered as one (the list's words would say a query failed).
+  const result = await readAuditTrail(filters, { page: 1, pageSize: MAX_EXPORT_ROWS }, auditTenantScope(ctx), {
+    service: "exportAuditTrail",
+    message: "Failed to export the audit trail",
+  });
   if (!result.success) return result as Result<never>;
-  return ok(result.data.entries);
+
+  const { total } = result.data;
+  const entries: AuditExportEntry[] = result.data.entries.map((entry) => ({
+    timestamp: entry.timestamp,
+    userName: entry.userName,
+    action: entry.action,
+    entityType: entry.entityType,
+    entityId: entry.entityId,
+    changeSummary: entry.changeSummary,
+  }));
+  const truncated = total > entries.length;
+  try {
+    await withAudit({
+      action: "compliance.export",
+      entityType: "Compliance",
+      entityId: "audit-trail",
+      userId: ctx.userId,
+      tenantId: ctx.tenantId ?? null,
+      fn: async () => exportRecord(entries.length, total, truncated, filters),
+    });
+    return ok({ entries, total, truncated });
+  } catch (e: unknown) {
+    return internalFailure("exportAuditTrail", "Failed to export the audit trail", e);
+  }
 }

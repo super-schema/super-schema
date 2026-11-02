@@ -291,8 +291,8 @@ secret**: the secret is in the answer of the creation, once.
 Every audit row (`audit_log`) carries the tenant it belongs to (`audit_log.tenantId`), written by `withAudit` (`src/lib/audit.ts`) from the **acting tenant**: the
 tenant the guard resolved for the action (an action passes it), or, where a caller does not know it, the tenant of the row the entry is about (an entity, a domain, an
 event or a trait states its own tenant, a field is found through its entity, a product through its domain, an annotation through the entity or field it is on). The compliance
-**Audit Trail** and its CSV export (`/api/compliance/audit-trail`, `compliance.audit` / `compliance.export`: a compliance officer or administrator of the **whole** tenant)
-read only the rows of the tenant being viewed.
+**Audit Trail** and its export (`/api/compliance/audit-trail` and `/api/compliance/audit-trail/export`, both `compliance.audit`: a compliance officer or administrator of the **whole** tenant)
+read only the rows of the tenant being viewed. The export is every entry the filters select, up to 10,000 (`MAX_EXPORT_ROWS`), and says so when it is cut short.
 
 Rows **no tenant owns** have `tenantId = NULL` and are **shown to platform administrators only** (a platform administrator reading a tenant's trail also gets them):
 the entries about the platform itself (a user's name, the git connection, a pull request) and **the rows written before the column existed that the migration could

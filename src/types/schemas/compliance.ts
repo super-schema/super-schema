@@ -15,6 +15,13 @@ const filterText = (max: number) =>
 export const MAX_PAGE_SIZE = 200;
 export const MAX_PAGE = 100_000;
 
+/**
+ * Most rows one export carries, whatever the filters select (the Query and the Audit Trail exports). An export of more matches is cut short at
+ * this many, the first in the sort: the answer says so and gives how many matched, and the screen shows that in words. Narrow the filters to get
+ * the rest.
+ */
+export const MAX_EXPORT_ROWS = 10_000;
+
 // ============================================================
 // Story 6.1 — Compliance Query Types
 // ============================================================
@@ -144,10 +151,14 @@ export const AuditTrailFilterSchema = z
     userId: filterText(128).optional(),
     entityType: filterText(64).optional(),
     entityName: filterText(200).optional(),
+    /**
+     * The entries from `from` (inclusive) up to `to` (EXCLUSIVE). The screen sends the local midnight that starts the first day and the local
+     * midnight that starts the day AFTER the last one, so a whole day is in, in the viewer's time zone. Either bound may be left out.
+     */
     dateRange: z
       .object({
-        from: z.coerce.date(),
-        to: z.coerce.date(),
+        from: z.coerce.date().optional(),
+        to: z.coerce.date().optional(),
       })
       .optional(),
   })
@@ -176,6 +187,12 @@ export type AuditTrailEntry = {
   afterState: unknown;
   changeSummary: string;
 };
+
+/**
+ * An entry as the Audit Trail's export carries it: the columns of its file. The states are left out (up to `MAX_EXPORT_ROWS` of them would be a
+ * very large answer, and the file does not hold them).
+ */
+export type AuditExportEntry = Pick<AuditTrailEntry, "timestamp" | "userName" | "action" | "entityType" | "entityId" | "changeSummary">;
 
 // ============================================================
 // Story 6.4 — Annotation Types

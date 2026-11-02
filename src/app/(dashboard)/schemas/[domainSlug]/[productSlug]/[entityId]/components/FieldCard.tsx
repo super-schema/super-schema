@@ -10,6 +10,7 @@ import { ValidationIndicator } from "@/components/custom/ValidationIndicator";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo, isComplexType, formatComplexTypeDisplay } from "@/lib/data-types";
+import { fieldProtection } from "@/lib/compliance/field-protection";
 import { getFieldCompleteness } from "@/lib/validation/field-completeness";
 import { applyReferencePick, holdsEntityReference, readFieldReference, type PickableEntity } from "@/lib/references/entity-reference";
 import { ReferencePinControl, type ReferenceFieldControls } from "./ReferencePinControl";
@@ -38,10 +39,11 @@ function needsPrecisionScale(typeId: string): boolean {
 
 function getDecoratorSummary(decorators: Record<string, unknown>): string[] {
   const tags: string[] = [];
-  const policy = (decorators.policy || {}) as Record<string, string>;
-  if (policy.retention) tags.push(`retention: ${policy.retention}`);
-  if (policy.anonymization) tags.push(`anon: ${policy.anonymization}`);
-  if (policy.encryption) tags.push(`encrypt: ${policy.encryption}`);
+  // What the field protects, as the Data Protection section stores it. Retention belongs to the entity: this reads only a legacy value on the field.
+  const protection = fieldProtection(decorators, null);
+  if (protection.retention) tags.push(`retention: ${protection.retention}`);
+  if (protection.anonymization) tags.push(`anon: ${protection.anonymization}`);
+  if (protection.encryption) tags.push(`encrypt: ${protection.encryption}`);
   const evolution = (decorators.evolution || {}) as Record<string, unknown>;
   if (evolution.deprecated) tags.push("deprecated");
   const ts = (decorators.typespec || {}) as Record<string, Record<string, unknown>>;

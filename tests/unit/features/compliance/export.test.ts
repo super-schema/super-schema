@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   generateCsvContent,
   generateCsvFilename,
+  toCsv,
 } from "@/features/compliance/exportCsv";
 import { computeDiff } from "@/features/compliance/AuditDiffViewer";
 import type { ComplianceFieldResult } from "@/types/schemas/compliance";
@@ -58,6 +59,20 @@ const MOCK_FIELDS: ComplianceFieldResult[] = [
 ];
 
 describe("Compliance Export", () => {
+  describe("toCsv: the one CSV writer", () => {
+    it("writes the header row as given and every value quoted", () => {
+      expect(toCsv(["A", "B"], [["x", "y"]])).toBe('A,B\n"x","y"');
+    });
+
+    it("doubles the quotes in a value, and keeps a comma or a line break inside its cell", () => {
+      expect(toCsv(["A"], [['say "hi", then\nbye']])).toBe('A\n"say ""hi"", then\nbye"');
+    });
+
+    it("writes a missing value as an empty cell", () => {
+      expect(toCsv(["A", "B", "C"], [["x", null, undefined]])).toBe('A,B,C\n"x","",""');
+    });
+  });
+
   describe("generateCsvContent", () => {
     it("includes correct headers", () => {
       const csv = generateCsvContent(MOCK_FIELDS);
