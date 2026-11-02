@@ -21,9 +21,10 @@ describe("library trait mapping", () => {
   });
 
   it("renders the headers entity at its pinned version, or its current draft when unpinned, or nothing without a headers entity", () => {
-    expect(traitHeadersSubject(toFrozenTrait(row({ headersEntityId: "e9", headersEntityVersionId: "v3" })))).toEqual({ kind: "version", entityVersionId: "v3" });
-    expect(traitHeadersSubject(toFrozenTrait(row({ headersEntityId: "e9" })))).toEqual({ kind: "draft", entityId: "e9" });
-    expect(traitHeadersSubject(toFrozenTrait(row()))).toBeNull();
+    // the headers entity is read inside the tenant the trait was read in
+    expect(traitHeadersSubject(toFrozenTrait(row({ headersEntityId: "e9", headersEntityVersionId: "v3" })), "t-acme")).toEqual({ kind: "version", entityVersionId: "v3", tenantId: "t-acme" });
+    expect(traitHeadersSubject(toFrozenTrait(row({ headersEntityId: "e9" })), "t-acme")).toEqual({ kind: "draft", entityId: "e9", tenantId: "t-acme" });
+    expect(traitHeadersSubject(toFrozenTrait(row()), "t-acme")).toBeNull();
   });
 
   it("resolves a trait without headers, or with the rendered headers artifact", () => {

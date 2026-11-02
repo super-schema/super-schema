@@ -13,6 +13,7 @@ import { isLibraryTrait, type DocExternalRef, type DocumentProblem, type EventDo
 import { referenceableItems } from "@/lib/events/external-refs";
 import { isJsonObject } from "@/lib/events/inputs";
 import type { EntityPin, FrozenTrait } from "@/lib/events/types";
+import type { PlaceReader } from "@/lib/access/entity-reader";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import type { ArtifactRenderer, ArtifactSubject } from "./artifact-renderer";
 
@@ -165,7 +166,7 @@ const USER_FACING_RENDER_CODES = new Set([
   "SCHEMA_BUNDLE_UNRESOLVED", "REFERENCE_CLOSURE_TOO_LARGE", "CONFLICTING_PINS", "TYPESPEC_DECLARATION_CONFLICT",
   "TYPESPEC_IMPORT_NOT_ALLOWED", "TYPESPEC_PARSE_ERROR", "PROTO_NOT_SELF_CONTAINED", "AVRO_NAME_CONFLICT", "EMITTER_TIMEOUT",
   "UNSUPPORTED_FORMAT",
-  "AVRO_SYMBOL_COLLISION", "AVRO_INVALID_SYMBOL", "ENUM_NO_VALUES", "ROOT_MESSAGE_NOT_FOUND",
+  "AVRO_SYMBOL_COLLISION", "AVRO_INVALID_SYMBOL", "ENUM_NO_VALUES", "ROOT_MESSAGE_NOT_FOUND", "REFERENCE_NOT_READABLE",
 ]);
 const GENERIC_RENDER_FAILURE = "Artifact render failed";
 const MAX_RENDER_DETAIL = 400;
@@ -187,9 +188,9 @@ function renderDiagnostic(what: string, format: PayloadFormat, error: ServiceErr
   return diagnostic("error", error.code, parts.join(" "), pointer);
 }
 
-/** Pinned → that immutable version; unpinned → the entity's current draft (preview only: publish refuses an unpinned pin). */
-const pinSubject = (pin: EntityPin): ArtifactSubject =>
-  pin.entityVersionId ? { kind: "version", entityVersionId: pin.entityVersionId } : { kind: "draft", entityId: pin.entityId };
+/** Pinned → that immutable version; unpinned → the entity's current draft (preview only: publish refuses an unpinned pin). Read inside `tenantId`. */
+const pinSubject = (pin: EntityPin, tenantId: string): ArtifactSubject =>
+  pin.entityVersionId ? { kind: "version", entityVersionId: pin.entityVersionId, tenantId } : { kind: "draft", entityId: pin.entityId, tenantId };
 
 const unpublishedPin = (what: string, pointer: string): Diagnostic =>
   diagnostic("info", "UNPUBLISHED_PIN", `${what} is not pinned to a published version; the preview uses the entity's current draft`, pointer);
@@ -219,11 +220,15 @@ type Rendered = { artifact?: SchemaArtifact; diagnostics: Diagnostic[] };
 export async function resolveEventSnapshot(
   snapshot: EventSnapshot,
   renderer: ArtifactRenderer,
-  version: string
+  version: string,
+  /** The caller's read scope (a preview): every rendered schema must reach only entities it covers. Omitted: the closure is not checked. */
+  canRead?: PlaceReader
 ): Promise<{ resolved: ResolvedEventSpec | null; diagnostics: Diagnostic[] }> {
   const doc = snapshot.document;
+  // Every pin and every library trait's headers is read inside the event's own tenant (`loadEventSnapshot` reads the event's rows there too).
+  const tenant = snapshot.event.tenantId;
   const render = async (subject: ArtifactSubject, format: PayloadFormat, what: string, pointer: string): Promise<Rendered> => {
-    const r = await renderer.render(subject, format);
+    const r = await renderer.render(subject, format, canRead);
     if (!r.success) return { diagnostics: [renderDiagnostic(what, format, r.error, pointer)] };
     const diagnostics: Diagnostic[] = [];
     for (const w of r.data.warnings) diagnostics.push(diagnostic("warning", "TYPESPEC_DUPLICATE_DECLARATION", `${what}: ${w}`, pointer));
@@ -240,9 +245,9 @@ export async function resolveEventSnapshot(
     const at = `/messages/${i}`;
     const { keyPin, headers: headersPin } = m;
     const [payloads, keys, headers] = await Promise.all([
-      Promise.all(need.payloadFormats.map((f) => render(pinSubject(m.payload), f, `Message ${m.key} payload`, `${at}/payload`))),
-      keyPin ? Promise.all(need.keyFormats.map((f) => render(pinSubject(keyPin), f, `Message ${m.key} key`, `${at}/keyPin`))) : Promise.resolve([]),
-      headersPin ? render(pinSubject(headersPin), "json-schema", `Message ${m.key} headers`, `${at}/headers`) : Promise.resolve(undefined),
+      Promise.all(need.payloadFormats.map((f) => render(pinSubject(m.payload, tenant), f, `Message ${m.key} payload`, `${at}/payload`))),
+      keyPin ? Promise.all(need.keyFormats.map((f) => render(pinSubject(keyPin, tenant), f, `Message ${m.key} key`, `${at}/keyPin`))) : Promise.resolve([]),
+      headersPin ? render(pinSubject(headersPin, tenant), "json-schema", `Message ${m.key} headers`, `${at}/headers`) : Promise.resolve(undefined),
     ]);
     // a message whose payload failed in ANY format is skipped; the resolver reports it as having no rendered payload
     if (payloads.every((p) => p.artifact) && !artifacts.has(m.key)) {
@@ -268,7 +273,7 @@ export async function resolveEventSnapshot(
     if (!isLibraryTrait(t)) {
       const { key, headers } = t;
       if (headers) {
-        headerJobs.push({ what, pointer: `/traits/${i}/headers`, subject: pinSubject(headers), unpinned: headers.entityVersionId === null, store: (a) => { if (!localTraitHeaders.has(key)) localTraitHeaders.set(key, a); } });
+        headerJobs.push({ what, pointer: `/traits/${i}/headers`, subject: pinSubject(headers, tenant), unpinned: headers.entityVersionId === null, store: (a) => { if (!localTraitHeaders.has(key)) localTraitHeaders.set(key, a); } });
       }
       return;
     }
@@ -276,7 +281,7 @@ export async function resolveEventSnapshot(
     if (seenLibraryTraits.has(libraryTraitId)) return;
     seenLibraryTraits.add(libraryTraitId);
     const frozen = snapshot.libraryTraits.get(libraryTraitId);
-    const subject = frozen ? traitHeadersSubject(frozen) : null;
+    const subject = frozen ? traitHeadersSubject(frozen, tenant) : null;
     if (subject) headerJobs.push({ what, pointer: `/traits/${i}`, subject, unpinned: false, store: (a) => { libraryTraitHeaders.set(libraryTraitId, a); } });
   });
   const traitJobs = headerJobs.map(async (job): Promise<Diagnostic[]> => {

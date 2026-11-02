@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { markEntityDraftChanged } from "@/lib/entity-versioning/draft-state";
 import { loadProgram } from "@/services/events/artifact-renderer";
-import { cleanupDomains, connectTestDb, createProductScope, testContext } from "./helpers";
+import { cleanupDomains, connectTestDb, createProductScope, TENANT, testContext } from "./helpers";
 
 /**
  * Final review B-I4: a draft render (`loadProgram` with a draft subject, behind the draft preview and `?version=draft`) used the
@@ -26,7 +26,7 @@ describe.sequential("draft artifact source (B-I4)", () => {
     domainId = sc.domain.id;
     // typespecSource says `id: string`; the field rows are then replaced by `code`, flagged exactly as every non-Source-tab edit does.
     const order = await sc.entity("Order", [{ name: "id", type: "string" }]);
-    const subject = { kind: "draft" as const, entityId: order.id };
+    const subject = { kind: "draft" as const, entityId: order.id, tenantId: TENANT };
     const sourceOf = async () => {
       const program = await loadProgram(prisma, subject);
       if (!program.success) throw new Error(`${program.error.code}: ${program.error.message}`);

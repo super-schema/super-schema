@@ -29,12 +29,15 @@ export function toFrozenTrait(row: TraitRow): FrozenTrait {
   };
 }
 
-/** What renders a trait's headers: the pinned entity version, or the entity's current draft when it is not pinned (null = no headers entity). */
-export function traitHeadersSubject(t: FrozenTrait): ArtifactSubject | null {
+/**
+ * What renders a trait's headers: the pinned entity version, or the entity's current draft when it is not pinned (null = no headers entity).
+ * `tenantId` is the tenant the trait was read in (the event's): the headers entity is read inside it.
+ */
+export function traitHeadersSubject(t: FrozenTrait, tenantId: string): ArtifactSubject | null {
   if (!t.headersEntityId) return null;
   return t.headersEntityVersionId
-    ? { kind: "version", entityVersionId: t.headersEntityVersionId }
-    : { kind: "draft", entityId: t.headersEntityId };
+    ? { kind: "version", entityVersionId: t.headersEntityVersionId, tenantId }
+    : { kind: "draft", entityId: t.headersEntityId, tenantId };
 }
 
 export function toResolvedTrait(t: FrozenTrait, headers?: SchemaArtifact): ResolvedTrait {

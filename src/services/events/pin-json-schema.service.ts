@@ -11,6 +11,7 @@
 // The pin comes from the client, so ownership is checked first: the entity (and, for a version, that version OF that entity) must
 // belong to the caller's tenant. Anything else — another tenant's entity, an unknown id, a version of some other entity — is the one
 // NOT_FOUND, naming only the id the caller sent, so a foreign entity's name and existence never leak.
+import { entityReader } from "@/lib/access/entity-reader";
 import { downConvertToDraft07 } from "@/lib/event-specs/json-schema-downconvert";
 import type { JsonObject } from "@/lib/event-specs/types";
 import { isJsonObject } from "@/lib/events/inputs";
@@ -44,8 +45,8 @@ function parsePin(raw: unknown): Result<EntityPin> {
   return version.success ? ok({ entityId: entity.data, entityVersionId: version.data }) : version;
 }
 
-const subjectOf = (pin: EntityPin): ArtifactSubject =>
-  pin.entityVersionId ? { kind: "version", entityVersionId: pin.entityVersionId } : { kind: "draft", entityId: pin.entityId };
+const subjectOf = (pin: EntityPin, tenantId: string): ArtifactSubject =>
+  pin.entityVersionId ? { kind: "version", entityVersionId: pin.entityVersionId, tenantId } : { kind: "draft", entityId: pin.entityId, tenantId };
 
 function renderFailed(where: string, detail: string): Result<never> {
   console.error(`[pin-json-schema] ${where}:`, detail);
@@ -74,9 +75,14 @@ export async function renderPinJsonSchema(
   });
   if (!owned.success) return owned;
 
+  // The caller's read scope covers the whole closure, as in the preview: a schema reaching an entity the caller's roles do not cover renders nothing.
   let rendered: Awaited<ReturnType<ArtifactRenderer["render"]>>;
   try {
-    rendered = await (deps.renderer ?? getSharedArtifactRenderer(ctx.prisma)).render(subjectOf(pin.data), "json-schema");
+    rendered = await (deps.renderer ?? getSharedArtifactRenderer(ctx.prisma)).render(
+      subjectOf(pin.data, tenantId.data),
+      "json-schema",
+      entityReader(ctx.assignments)
+    );
   } catch (e: unknown) {
     return renderFailed("the renderer threw", e instanceof Error ? e.message : String(e));
   }

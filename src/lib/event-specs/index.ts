@@ -30,7 +30,7 @@ export { headersSchema, kafkaKeyProfile, placeKafkaKey, rebaseLocalRefs, selectA
 export type { SchemaRole, SchemaSelection } from "./message-schemas";
 export { assembleAsyncApi3, ASYNCAPI_VERSION } from "./assemble";
 export type { AssemblyResult } from "./assemble";
-export { canonicalizeDocumentOrder, toJson, toYaml } from "./serialize";
+export { canonicalizeDocumentOrder, documentSizeProblem, toJson, toYaml } from "./serialize";
 export { GENERIC_VALIDATION_FAILURE, StructuralAsyncApi3Validator, validateAsyncApi3Structure } from "./validator";
 export type { EventSpecValidator } from "./validator";
 export { AsyncApi3Adapter, ASYNCAPI_3_SPEC_TYPE, getEventSpecAdapter } from "./adapter";

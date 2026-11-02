@@ -8,6 +8,8 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 import { createArtifactRenderer, type EmitFiles } from "@/services/events/artifact-renderer";
 
+const TENANT = "tenant-acme";
+
 type V = { id: string; entityId: string; major: number; minor: number; resolvedSource: string; fieldSnapshot: unknown; entity: { name: string } };
 
 const versions: Record<string, V> = {
@@ -62,7 +64,7 @@ function fakeDb() {
   };
 }
 
-const subject = (id: string) => ({ kind: "version" as const, entityVersionId: id });
+const subject = (id: string) => ({ kind: "version" as const, entityVersionId: id, tenantId: TENANT });
 
 describe("protobuf payload (real tsp)", () => {
   it("keeps context / metadata / op / in-progress with their numbers", async () => {

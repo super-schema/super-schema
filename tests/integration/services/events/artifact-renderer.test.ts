@@ -6,7 +6,7 @@ import type { ServiceContext } from "@/types/service-context";
 import { levelNamespace } from "@/lib/events/version-source";
 import { createArtifactRenderer } from "@/services/events/artifact-renderer";
 import { publishEntity } from "@/services/entity-version.service";
-import { cleanupDomains, connectTestDb, createProductScope, testContext, unwrap } from "./helpers";
+import { cleanupDomains, connectTestDb, createProductScope, TENANT, testContext, unwrap } from "./helpers";
 
 let prisma: PrismaClient;
 let ctx: ServiceContext;
@@ -85,7 +85,7 @@ describe.sequential("artifact renderer — real @typespec emitters", () => {
     expect(frozen.resolvedSource).toContain('@TypeSpec.OpenAPI.extension("x-tags", #["sales", "core"])');
 
     const renderer = createArtifactRenderer({ db: prisma });
-    const subject = { kind: "version" as const, entityVersionId: orderVersionId };
+    const subject = { kind: "version" as const, entityVersionId: orderVersionId, tenantId: TENANT };
 
     const avro = unwrap(await renderer.render(subject, "avro"));
     expect(avro.artifact).toMatchObject({ format: "avro", schema: { type: "record", name: "Order" } });
@@ -121,12 +121,12 @@ describe.sequential("artifact renderer — real @typespec emitters", () => {
       { name: "name", type: "string" },
       { name: "home", type: "reference", ref: { id: addressEntityId, name: "Address", nameOnly: true } },
     ]);
-    const draftAvro = unwrap(await renderer.render({ kind: "draft", entityId: draft.id }, "avro"));
+    const draftAvro = unwrap(await renderer.render({ kind: "draft", entityId: draft.id, tenantId: TENANT }, "avro"));
     expect(draftAvro.artifact.schema).toMatchObject({ name: "Customer", fields: [{ name: "name" }, { name: "home", type: { name: "Address" } }] });
 
     // …and a by-name reference that matches nothing in the line is a clear diagnostic, not a tsp "unknown identifier"
     const dangling = await scope.entity("Dangling", [{ name: "ghost", type: "reference", ref: { id: "none", name: "Ghost", nameOnly: true } }]);
-    const unresolved = await renderer.render({ kind: "draft", entityId: dangling.id }, "avro");
+    const unresolved = await renderer.render({ kind: "draft", entityId: dangling.id, tenantId: TENANT }, "avro");
     expect(!unresolved.success && unresolved.error.code).toBe("UNRESOLVED_REFERENCE");
     expect(!unresolved.success && unresolved.error.message).toContain("Ghost");
   }, 180_000);
@@ -154,7 +154,7 @@ describe.sequential("artifact renderer — real @typespec emitters", () => {
     );
 
     const renderer = createArtifactRenderer({ db: prisma });
-    const subject = { kind: "version" as const, entityVersionId: version.id };
+    const subject = { kind: "version" as const, entityVersionId: version.id, tenantId: TENANT };
     const avro = unwrap(await renderer.render(subject, "avro"));
     expect(avro.artifact.schema).toMatchObject({ name: "Legacy" });
 
@@ -176,7 +176,7 @@ describe.sequential("artifact renderer — real @typespec emitters", () => {
     const version = await insertVersion(lonely.id, "model Lonely {\n  id: string;\n  ghost: Ghost;\n}\n", ["id", "ghost"]);
     const renderer = createArtifactRenderer({ db: prisma });
     for (const format of ["avro", "json-schema", "protobuf"] as const) {
-      const r = await renderer.render({ kind: "version", entityVersionId: version.id }, format);
+      const r = await renderer.render({ kind: "version", entityVersionId: version.id, tenantId: TENANT }, format);
       expect(!r.success && r.error.code).toBe("ARTIFACT_RENDER_FAILED");
       expect(!r.success && r.error.message).toContain("Lonely@1.0 → " + format);
       expect(!r.success && r.error.message).toContain("Ghost");

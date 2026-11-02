@@ -13,8 +13,21 @@ import { can } from "./policy";
 /** Where an entity sits: its tenant, and the domain and product it hangs under (none for a tenant-level entity). */
 export type EntityPlace = { tenantId: string; domainId: string | null; productId: string | null };
 
+/** Who may read an entity at a place: `entityReader(assignments)`. */
+export type PlaceReader = (place: EntityPlace) => boolean;
+
+/**
+ * Where an entity row sits: its own domain, else its product's (an entity of a product whose domain column is empty still reaches its
+ * domain). Takes the columns `EntityPlace` needs, read with `product: { select: { domainId: true } }`.
+ */
+export function entityPlaceOf(e: {
+  tenantId: string; domainId: string | null; productId: string | null; product?: { domainId: string | null } | null;
+}): EntityPlace {
+  return { tenantId: e.tenantId, domainId: e.domainId ?? e.product?.domainId ?? null, productId: e.productId };
+}
+
 /** The reader for a caller who holds `assignments`: `(place) => may they read the entity there?` */
-export function entityReader(assignments: readonly Assignment[] | undefined): (place: EntityPlace) => boolean {
+export function entityReader(assignments: readonly Assignment[] | undefined): PlaceReader {
   const held = [...(assignments ?? [])];
   return (place) => {
     if (typeof place !== "object" || place === null) return false;

@@ -1,7 +1,7 @@
 import { ok, err, type Result } from "@/types/result";
 import type { Diagnostic } from "./types";
 import { diagnostic, normalizeDiagnostics } from "./diagnostics";
-import { jsonPointer, parseLocalRef, resolveLocalRef } from "./json-pointer";
+import { escapePointerSegment, jsonPointer, parseLocalRef, resolveLocalRef } from "./json-pointer";
 
 /**
  * Pluggable document validation (spec §7.1 `validate`, §7.2 step 6).
@@ -35,7 +35,12 @@ export class StructuralAsyncApi3Validator implements EventSpecValidator {
   readonly name = "structural";
 
   async validate(document: object): Promise<Result<Diagnostic[]>> {
-    return ok(validateAsyncApi3Structure(document));
+    try {
+      return ok(validateAsyncApi3Structure(document));
+    } catch (e) {
+      // Only a cyclic object gets here (`checkRefs`); the contract is that a validator never throws.
+      return validatorFailure("VALIDATOR_FAILED", "structural validator", e);
+    }
   }
 }
 
@@ -77,26 +82,63 @@ function addressParameters(address: unknown): string[] {
   return [...address.matchAll(/\{([^{}]+)\}/g)].map((m) => m[1]);
 }
 
-/** Every `$ref` must be local and resolve inside the document. */
-function checkRefs(root: Obj, node: unknown, path: Array<string | number>, out: Diagnostic[]): void {
-  if (Array.isArray(node)) {
-    node.forEach((item, i) => checkRefs(root, item, [...path, i], out));
-    return;
-  }
-  if (!isObject(node)) return;
-  const refValue = node.$ref;
-  if (typeof refValue === "string") {
-    const pointer = jsonPointer(...path);
-    if (!refValue.startsWith("#")) {
-      out.push(diagnostic("error", "REMOTE_REF", `Only local references are allowed, got "${refValue}"`, pointer));
-    } else if (!resolveLocalRef(root, refValue).found) {
-      out.push(
-        diagnostic("error", "UNRESOLVED_REF", `Reference "${refValue}" does not resolve in this document`, pointer),
-      );
+/** A container of the document still to be checked, with the link to the container it sits in (`key`: its key or index there). */
+type RefFrame = { node: object; parent: RefFrame | null; key: string | number };
+
+/** The JSON pointer of a frame, read up its parent links: only a finding needs it, so no node carries a copy of its path. */
+function pointerOf(frame: RefFrame): string {
+  const segments: string[] = [];
+  for (let f: RefFrame = frame; f.parent !== null; f = f.parent) segments.push(escapePointerSegment(String(f.key)));
+  // Built without spreading the segments into an argument list: a finding can sit thousands of levels down.
+  return segments.reverse().map((segment) => `/${segment}`).join("");
+}
+
+/**
+ * Every `$ref` must be local and resolve inside the document. One iterative pass over the containers (no recursion, so no depth limit),
+ * in the order a recursive walk would take; primitives are skipped, they hold no `$ref`. Each container is visited once, so the walk is
+ * linear in the number of containers and values; a finding costs its own pointer, linear in its depth. Input must be acyclic (anything
+ * parsed from JSON is): a container that reappears on its own path throws, and the validator reports that as a failure.
+ */
+function checkRefs(root: Obj, out: Diagnostic[]): void {
+  type Step = { frame: RefFrame; leave: boolean };
+  const stack: Step[] = [{ frame: { node: root, parent: null, key: "" }, leave: false }];
+  // The containers on the path from the root to the one being checked: the walk pushes a `leave` step under each container's children, so
+  // when it pops that step every child has been checked and the container leaves the path.
+  const onPath = new Set<object>();
+  while (stack.length > 0) {
+    const { frame, leave } = stack.pop() as Step;
+    if (leave) {
+      onPath.delete(frame.node);
+      continue;
     }
-  }
-  for (const [key, value] of Object.entries(node)) {
-    if (key !== "$ref") checkRefs(root, value, [...path, key], out);
+    const { node } = frame;
+    if (onPath.has(node)) throw new Error("The document is cyclic: a container contains itself");
+    onPath.add(node);
+    stack.push({ frame, leave: true });
+    if (Array.isArray(node)) {
+      for (let i = node.length - 1; i >= 0; i--) {
+        const item: unknown = node[i];
+        if (typeof item === "object" && item !== null) stack.push({ frame: { node: item, parent: frame, key: i }, leave: false });
+      }
+      continue;
+    }
+    const refValue = (node as Obj).$ref;
+    if (typeof refValue === "string") {
+      if (!refValue.startsWith("#")) {
+        out.push(diagnostic("error", "REMOTE_REF", `Only local references are allowed, got "${refValue}"`, pointerOf(frame)));
+      } else if (!resolveLocalRef(root, refValue).found) {
+        out.push(
+          diagnostic("error", "UNRESOLVED_REF", `Reference "${refValue}" does not resolve in this document`, pointerOf(frame)),
+        );
+      }
+    }
+    const children = Object.entries(node);
+    for (let i = children.length - 1; i >= 0; i--) {
+      const [key, value] = children[i];
+      if (key !== "$ref" && typeof value === "object" && value !== null) {
+        stack.push({ frame: { node: value, parent: frame, key }, leave: false });
+      }
+    }
   }
 }
 
@@ -339,7 +381,7 @@ export function validateAsyncApi3Structure(document: object): Diagnostic[] {
   const doc = document as Obj;
   const out: Diagnostic[] = [];
   checkRoot(doc, out);
-  checkRefs(doc, doc, [], out);
+  checkRefs(doc, out);
   checkServers(doc, out);
   checkChannels(doc, out);
   checkOperations(doc, out);

@@ -2,7 +2,7 @@ import { ok, err, type Result } from "@/types/result";
 import type { Diagnostic, EmitOutput, ImportedEventSpec, ResolvedEventSpec } from "./types";
 import { normalizeDiagnostics } from "./diagnostics";
 import { assembleAsyncApi3 } from "./assemble";
-import { toJson, toYaml } from "./serialize";
+import { documentSizeProblem, toJson, toYaml } from "./serialize";
 import { StructuralAsyncApi3Validator, validatorFailure, type EventSpecValidator } from "./validator";
 
 /**
@@ -44,7 +44,25 @@ export class AsyncApi3Adapter implements EventSpecAdapter {
    * failure yields an `err` Result.
    */
   async emit(input: ResolvedEventSpec): Promise<Result<EmitOutput>> {
-    const assembled = assembleAsyncApi3(input);
+    let assembled: ReturnType<typeof assembleAsyncApi3>;
+    try {
+      assembled = assembleAsyncApi3(input);
+    } catch (e) {
+      // The assembler copies user JSON with `structuredClone`, which runs out of stack on a binding nested thousands of levels deep.
+      if (!(e instanceof RangeError)) throw e;
+      return err({
+        code: "VALIDATION_ERROR",
+        message: "The AsyncAPI document cannot be emitted: it nests too deeply to copy. Shorten the bindings, examples or payload schemas.",
+      });
+    }
+    // Refused before any validator runs and before anything is serialized: the cost of both grows with the document (see serialize.ts).
+    const tooLarge = documentSizeProblem(assembled.document);
+    if (tooLarge !== null) {
+      return err({
+        code: "VALIDATION_ERROR",
+        message: `The AsyncAPI document cannot be emitted: ${tooLarge}. Shorten the bindings, examples or payload schemas.`,
+      });
+    }
     const validated = await this.validate(assembled.document);
     if (!validated.success) return validated;
     return ok({

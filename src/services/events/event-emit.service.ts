@@ -2,10 +2,11 @@
 // Emission of a self-contained event (spec 2026-10-15-events-self-contained-design §7): the saved draft, an unsaved document
 // (preview) or a published version. Nothing here writes.
 import {
-  canonicalizeDocumentOrder, getEventSpecAdapter, normalizeDiagnostics, StructuralAsyncApi3Validator, toJson, toYaml,
+  canonicalizeDocumentOrder, documentSizeProblem, getEventSpecAdapter, normalizeDiagnostics, StructuralAsyncApi3Validator, toJson, toYaml,
   type Diagnostic, type EmitOutput, type EventSpecValidator, type JsonObject, type ResolvedEventSpec,
 } from "@/lib/event-specs";
 import { AsyncApiParserValidator } from "@/lib/event-specs/validation/asyncapi-parser-validator";
+import { entityReader, type PlaceReader } from "@/lib/access/entity-reader";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { isJsonObject } from "@/lib/events/inputs";
@@ -13,6 +14,7 @@ import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import { getSharedArtifactRenderer, type ArtifactRenderer } from "./artifact-renderer";
 import { DRAFT_VERSION, loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
+import { validatePinRefs } from "./pin-refs";
 import { assertOwnedEvent, guardRead, requireId } from "./service-guards";
 
 /** Collaborators of an emission, replaceable in tests: the artifact renderer and the validators run on the assembled document. */
@@ -47,9 +49,9 @@ export interface EventEmission {
   diagnostics: Diagnostic[];
 }
 
-/** Render, resolve, assemble and validate one snapshot as the draft (`info.version` = "draft"). */
-async function emitSnapshot(ctx: ServiceContext, snapshot: EventSnapshot, deps: EmitDeps): Promise<Result<EventEmission>> {
-  const draft = await resolveEventSnapshot(snapshot, deps.renderer ?? getSharedArtifactRenderer(ctx.prisma), DRAFT_VERSION);
+/** Render, resolve, assemble and validate one snapshot as the draft (`info.version` = "draft"). `canRead` checks every schema it reaches (a preview). */
+async function emitSnapshot(ctx: ServiceContext, snapshot: EventSnapshot, deps: EmitDeps, canRead?: PlaceReader): Promise<Result<EventEmission>> {
+  const draft = await resolveEventSnapshot(snapshot, deps.renderer ?? getSharedArtifactRenderer(ctx.prisma), DRAFT_VERSION, canRead);
   if (!draft.resolved) return ok({ document: null, json: null, yaml: null, diagnostics: normalizeDiagnostics(draft.diagnostics) });
   const out = await emitResolved(draft.resolved, snapshot.event.specType, deps);
   if (!out.success) return out;
@@ -74,8 +76,10 @@ export async function emitEventDraft(eventId: string, productId: string, ctx: Se
 
 /**
  * The same emission for a document the user has not saved: parsed with the one shared parser (problems come back as a
- * `VALIDATION_ERROR` with `details.problems` pointers), then run through the same pipeline against the event's own tenant and
- * references. Nothing is written — not the draft, not its edges.
+ * `VALIDATION_ERROR` with `details.problems` pointers), its pins checked by the save's rule against the event's own tenant and then
+ * against the caller's read scope, and run through the same pipeline. The caller's read scope also checks every schema the pins reach, so a
+ * readable pin whose schema refers to an entity the caller's roles do not cover renders nothing. The bound of a document (`documentSizeProblem`)
+ * is applied by the emission (`AsyncApi3Adapter.emit`), as for a saved draft. Nothing is written — not the draft, not its edges.
  */
 export async function emitEventDocumentPreview(
   eventId: string, productId: string, document: unknown, ctx: ServiceContext, deps: EmitDeps = {}
@@ -87,7 +91,19 @@ export async function emitEventDocumentPreview(
     if (!parsed.success) return parsed;
     const snapshot = await loadEventSnapshot(ctx.prisma, eventId, parsed.data);
     if (!snapshot.success) return snapshot;
-    return emitSnapshot(ctx, snapshot.data, deps);
+    // The pins are the client's words. One naming an entity outside the event's tenant, or one the caller's roles do not cover, is refused as
+    // an unknown id is (the save's message, no render). The entities a pinned schema reaches are read by the caller's roles too (the renderer).
+    // Not read-checked here (KD-044): an external event reference's resolved spec, and a library trait's spec, which the save's domain rule
+    // (`validateDocumentRefs`) does not apply to the preview either.
+    const canRead = entityReader(ctx.assignments);
+    const problems = await validatePinRefs(ctx.prisma, snapshot.data.event.tenantId, parsed.data, canRead);
+    if (problems.length > 0) {
+      // The builder's preview shows the message alone, so the first problems are named in it (the pointers stay in `details`).
+      const named = problems.slice(0, 3).map((p) => p.message).join("; ");
+      const more = problems.length > 3 ? ` (and ${problems.length - 3} more)` : "";
+      return err({ code: "VALIDATION_ERROR", message: `The event references ${problems.length} unknown or invalid item(s): ${named}${more}`, details: { problems } });
+    }
+    return emitSnapshot(ctx, snapshot.data, deps, canRead);
   });
 }
 
@@ -112,6 +128,11 @@ export async function emitEventStoredVersion(eventId: string, productId: string,
     }
     // jsonb returns keys shortest-first; serialize in the assembler's canonical order, like the draft emission.
     const document = canonicalizeDocumentOrder(row.document);
+    // A stored document is served as it was published; one past the bounds is refused here too, so it cannot cost more to serve than to publish.
+    const tooLarge = documentSizeProblem(document);
+    if (tooLarge !== null) {
+      return err({ code: "VALIDATION_ERROR", message: `Version ${formatVersionLabel(row)} of event "${eventId}" cannot be served: ${tooLarge}` });
+    }
     const report = isJsonObject(row.compatReport) ? row.compatReport : {};
     return ok({
       document,

@@ -3,8 +3,10 @@
 // document. The table is still `event_specs` (E5); the old catalog-id (version 1) documents and their service are gone.
 import type { Prisma } from "@/generated/prisma/client";
 import type { ScopeTarget } from "@/lib/asset-scope";
+import { MAX_DOCUMENT_DEPTH, documentSizeProblem } from "@/lib/event-specs/serialize";
+import type { JsonObject } from "@/lib/event-specs/types";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
-import { collectDocumentEdges, collectDocumentRefs, collectPinSites } from "@/lib/events/document/edges";
+import { collectDocumentEdges, collectDocumentRefs } from "@/lib/events/document/edges";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { emptyEventDocument, isLibraryTrait, type DocumentProblem, type EventDocument } from "@/lib/events/document/types";
 import { propertiesNoun, propertiesSet } from "@/lib/events/document/wording";
@@ -14,6 +16,7 @@ import type { LevelScope } from "@/lib/levels";
 import { createInScope, ServiceErrorRejection, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
 import { eventsInUseError, findEventVersionReferrers } from "@/services/events/event-guards";
+import { validatePinRefs } from "@/services/events/pin-refs";
 import { deleteReferencesFrom, replaceReferences } from "@/services/events/schema-references";
 import { guardRead, loadOwnedRow, optionalString, requireId } from "@/services/events/service-guards";
 import { ok, err, type Result } from "@/types/result";
@@ -81,7 +84,7 @@ function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise
  * Everything the document points at must exist where the spec says it may (§4 / §10), reported all at once, in this order:
  * pins, library traits, external refs. Four batched reads however large the document is; every lookup is tenant-filtered, so
  * another tenant's entity / trait / event version reads exactly like a missing one (no name or kind leaks).
- *  - Pins (same rules as `resolvePin`): the entity is in this tenant; a non-null version belongs to that entity.
+ *  - Pins (`validatePinRefs`, the rule a preview applies as well): the entity is in this tenant; a non-null version belongs to that entity.
  *  - Library traits: same tenant, level tenant or this event's own domain (never product-level, never another domain), same kind.
  *  - External refs: a published `EventSpecVersion` (the row exists only once published) of this tenant, not of this event, whose
  *    stored `resolvedSpec` is non-null and holds a referenceable item (`isReferenceableItem`: the `channels[]` / `messages[]` entry
@@ -90,9 +93,8 @@ function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise
 async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, eventId: string, doc: EventDocument): Promise<DocumentProblem[]> {
   const refs = collectDocumentRefs(doc);
   const { tenantId } = scope;
-  const [entities, versions, traits, externals] = await Promise.all([
-    refs.entityIds.length === 0 ? [] : ctx.prisma.entity.findMany({ where: { id: { in: refs.entityIds }, tenantId }, select: { id: true, name: true } }),
-    refs.pinnedVersionIds.length === 0 ? [] : ctx.prisma.entityVersion.findMany({ where: { id: { in: refs.pinnedVersionIds }, entity: { tenantId } }, select: { id: true, entityId: true } }),
+  const [pinProblems, traits, externals] = await Promise.all([
+    validatePinRefs(ctx.prisma, tenantId, doc),
     refs.libraryTraitIds.length === 0 ? [] : ctx.prisma.trait.findMany({ where: { id: { in: refs.libraryTraitIds }, tenantId }, select: { id: true, name: true, kind: true, domainId: true, productId: true } }),
     refs.externalVersionIds.length === 0
       ? []
@@ -101,25 +103,10 @@ async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, even
           select: { id: true, eventSpecId: true, major: true, minor: true, resolvedSpec: true, eventSpec: { select: { name: true } } },
         }),
   ]);
-  const entityById = new Map(entities.map((e) => [e.id, e]));
-  const versionById = new Map(versions.map((v) => [v.id, v]));
   const traitById = new Map(traits.map((t) => [t.id, t]));
   const externalById = new Map(externals.map((v) => [v.id, v]));
 
-  const problems: DocumentProblem[] = [];
-  for (const { pointer, pin } of collectPinSites(doc)) {
-    const entity = entityById.get(pin.entityId);
-    if (!entity) {
-      problems.push({ pointer: `${pointer}/entityId`, message: `Entity "${pin.entityId}" not found in this tenant` });
-      continue;
-    }
-    if (pin.entityVersionId === null) continue;
-    const version = versionById.get(pin.entityVersionId);
-    if (!version || version.entityId !== entity.id) {
-      problems.push({ pointer: `${pointer}/entityVersionId`, message: `"${pin.entityVersionId}" is not a published version of ${entity.name}` });
-    }
-  }
-
+  const problems: DocumentProblem[] = [...pinProblems];
   doc.traits.forEach((t, i) => {
     if (!isLibraryTrait(t)) return;
     const pointer = `/traits/${i}/libraryTraitId`;
@@ -189,14 +176,29 @@ export async function createEvent(productId: string, input: CreateEventInput, ct
 }
 
 /**
- * Save the draft document. Parse problems are returned as they are; reference problems (pins, library traits, external refs)
- * come back together as one VALIDATION_ERROR. A save always marks the event as having unpublished changes and replaces the
+ * The size a saved document may have: its user JSON (bindings, examples, trait specs) counted against the emission bounds, so a document
+ * refused here is one no emission could serialize. The assembler places a message's bindings and examples one level deeper (under
+ * `components`), hence the depth bound one lower. The rendered payload schemas are added at emission, which checks the whole document again,
+ * so a saved document can still be refused there (a shape the save cannot see until its payloads are rendered).
+ */
+export function documentSaveProblem(document: EventDocument): string | null {
+  return documentSizeProblem(document as unknown as JsonObject, MAX_DOCUMENT_DEPTH - 1);
+}
+
+/**
+ * Save the draft document. Parse problems are returned as they are, and so is a document too large to emit (see `documentSaveProblem`; it is
+ * checked before the event is read, so the answer does not depend on whether the event exists). Reference problems (pins, library traits,
+ * external refs) come back together as one VALIDATION_ERROR. A save always marks the event as having unpublished changes and replaces the
  * event's draft edges from the document in the SAME transaction (the event row is updated first, so it is locked before any
  * edge is touched — the lock order publish expects: `event_specs`, then entities).
  */
 export async function updateEventDocument(id: string, document: unknown, owner: ScopeTarget, ctx: ServiceContext): Promise<Result<EventDetail>> {
   const parsed = parseEventDocument(document);
   if (!parsed.success) return parsed;
+  const tooLarge = documentSaveProblem(parsed.data);
+  if (tooLarge !== null) {
+    return err({ code: "VALIDATION_ERROR", message: `The event document cannot be saved: ${tooLarge}. Shorten the bindings, examples or trait specs.` });
+  }
   const owned = await loadOwned(ctx, id, owner);
   if (!owned.success) return owned;
   const checked = await guardRead(async () => ok(await validateDocumentRefs(ctx, owned.data.scope, id, parsed.data)));

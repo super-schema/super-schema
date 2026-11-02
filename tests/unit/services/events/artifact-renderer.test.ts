@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 import { createArtifactRenderer, type EmitFiles } from "@/services/events/artifact-renderer";
 
+const TENANT = "tenant-acme";
+
 type V = { id: string; entityId: string; major: number; minor: number; resolvedSource: string; fieldSnapshot: unknown; entity: { name: string } };
 const versions: Record<string, V> = {
   vOrder: {
@@ -25,7 +27,7 @@ function fakeDb(extraPins: Record<string, string[]> = {}) {
   };
 }
 
-const order = { kind: "version" as const, entityVersionId: "vOrder" };
+const order = { kind: "version" as const, entityVersionId: "vOrder", tenantId: TENANT };
 
 describe("artifact renderer", () => {
   it("renders Avro from the combined program and picks <Root>.avsc.json", async () => {
@@ -68,9 +70,9 @@ describe("artifact renderer", () => {
 
     const failing = vi.fn<EmitFiles>(async () => ({ success: false, error: { code: "EMITTER_FAILED", message: "boom" } }));
     const r2 = createArtifactRenderer({ db: fakeDb() as never, emitFiles: failing });
-    const first = await r2.render({ kind: "version", entityVersionId: "vBroken" }, "avro");
+    const first = await r2.render({ kind: "version", entityVersionId: "vBroken", tenantId: TENANT }, "avro");
     expect(!first.success && first.error).toEqual({ code: "ARTIFACT_RENDER_FAILED", message: "Broken@1.0 → avro: boom", details: { cause: "EMITTER_FAILED" } });
-    await r2.render({ kind: "version", entityVersionId: "vBroken" }, "avro");
+    await r2.render({ kind: "version", entityVersionId: "vBroken", tenantId: TENANT }, "avro");
     expect(failing).toHaveBeenCalledTimes(2);
   });
 
@@ -132,7 +134,7 @@ describe("artifact renderer — legacy @tag lines and draft subjects", () => {
             : avroFiles,
       }));
       const db = { ...fakeDb(), entityVersion: { findUnique: vi.fn(async () => legacy) } };
-      const r = await createArtifactRenderer({ db: db as never, emitFiles }).render({ kind: "version", entityVersionId: "vLegacy" }, format);
+      const r = await createArtifactRenderer({ db: db as never, emitFiles }).render({ kind: "version", entityVersionId: "vLegacy", tenantId: TENANT }, format);
       expect(r.success).toBe(true);
       const source = emitFiles.mock.calls[0][1];
       expect(source).not.toMatch(/^\s*@tag\(/m);
@@ -169,7 +171,7 @@ describe("artifact renderer — legacy @tag lines and draft subjects", () => {
             : [{ relativePath: "Governed.avsc.json", content: '{"type":"record","name":"Governed"}' }],
       }));
       const db = { ...fakeDb(), entityVersion: { findUnique: vi.fn(async () => governed) } };
-      const r = await createArtifactRenderer({ db: db as never, emitFiles }).render({ kind: "version", entityVersionId: "vGoverned" }, format);
+      const r = await createArtifactRenderer({ db: db as never, emitFiles }).render({ kind: "version", entityVersionId: "vGoverned", tenantId: TENANT }, format);
       expect(r.success).toBe(true);
       const source = emitFiles.mock.calls[0][1];
       expect(source).not.toMatch(/Enterprise|x-tags|typespec-enterprise|@typespec\/openapi/);
@@ -206,7 +208,7 @@ describe("artifact renderer — legacy @tag lines and draft subjects", () => {
   it("renders a draft against the latest published version of every entity it references, and never caches it", async () => {
     const emitFiles = vi.fn<EmitFiles>(async () => ({ success: true, data: [{ relativePath: "Draft.avsc.json", content: '{"type":"record","name":"Draft"}' }] }));
     const renderer = createArtifactRenderer({ db: draftDb("vAddress") as never, emitFiles });
-    const subject = { kind: "draft" as const, entityId: "eDraft" };
+    const subject = { kind: "draft" as const, entityId: "eDraft", tenantId: TENANT };
     const r = await renderer.render(subject, "avro");
     expect(r.success && r.data.artifact.schema).toMatchObject({ name: "Draft" });
     const source = emitFiles.mock.calls[0][1];
@@ -218,7 +220,7 @@ describe("artifact renderer — legacy @tag lines and draft subjects", () => {
   });
 
   it("names the unpublished entity when a draft references one", async () => {
-    const r = await createArtifactRenderer({ db: draftDb(null) as never, emitFiles: vi.fn() }).render({ kind: "draft", entityId: "eDraft" }, "avro");
+    const r = await createArtifactRenderer({ db: draftDb(null) as never, emitFiles: vi.fn() }).render({ kind: "draft", entityId: "eDraft", tenantId: TENANT }, "avro");
     expect(!r.success && r.error.code).toBe("UNPUBLISHED_REFERENCE");
     expect(!r.success && r.error.message).toContain("Address");
   });
@@ -226,7 +228,7 @@ describe("artifact renderer — legacy @tag lines and draft subjects", () => {
   it("resolves a draft reference stored by name only (referencedEntityName) in the entity's line, like publish does", async () => {
     const emitFiles = vi.fn<EmitFiles>(async () => ({ success: true, data: [{ relativePath: "Draft.avsc.json", content: '{"type":"record","name":"Draft"}' }] }));
     const db = draftDb("vAddress", [nameOnlyRef]);
-    const r = await createArtifactRenderer({ db: db as never, emitFiles }).render({ kind: "draft", entityId: "eDraft" }, "avro");
+    const r = await createArtifactRenderer({ db: db as never, emitFiles }).render({ kind: "draft", entityId: "eDraft", tenantId: TENANT }, "avro");
     expect(r.success).toBe(true);
     expect(emitFiles.mock.calls[0][1]).toContain("model Address {");
     // the line lookup is scoped to the entity's tenant / domain / product, exactly as publish does it
@@ -238,7 +240,7 @@ describe("artifact renderer — legacy @tag lines and draft subjects", () => {
   it("fails a draft whose by-name reference matches no entity in its line with UNRESOLVED_REFERENCE (not a raw tsp error)", async () => {
     const emitFiles = vi.fn<EmitFiles>();
     const db = draftDb("vAddress", [nameOnlyRef], []);
-    const r = await createArtifactRenderer({ db: db as never, emitFiles }).render({ kind: "draft", entityId: "eDraft" }, "avro");
+    const r = await createArtifactRenderer({ db: db as never, emitFiles }).render({ kind: "draft", entityId: "eDraft", tenantId: TENANT }, "avro");
     expect(!r.success && r.error.code).toBe("UNRESOLVED_REFERENCE");
     expect(!r.success && r.error.message).toContain("Address");
     expect(!r.success && r.error.details).toEqual({ names: ["Address"] });
@@ -247,7 +249,7 @@ describe("artifact renderer — legacy @tag lines and draft subjects", () => {
 
   it("fails a draft that references an entity id that no longer exists with UNRESOLVED_REFERENCE", async () => {
     const gone: DraftField = { id: "f1", name: "address", fieldNumber: null, decorators: { referencedEntityId: "eGone" } };
-    const r = await createArtifactRenderer({ db: draftDb("vAddress", [gone]) as never, emitFiles: vi.fn() }).render({ kind: "draft", entityId: "eDraft" }, "avro");
+    const r = await createArtifactRenderer({ db: draftDb("vAddress", [gone]) as never, emitFiles: vi.fn() }).render({ kind: "draft", entityId: "eDraft", tenantId: TENANT }, "avro");
     expect(!r.success && r.error.code).toBe("UNRESOLVED_REFERENCE");
     expect(!r.success && r.error.message).toContain("eGone");
   });
@@ -279,7 +281,7 @@ describe("artifact renderer — legacy @tag lines and draft subjects", () => {
       };
     }
     const orderFiles: EmitFiles = async () => ({ success: true, data: [{ relativePath: "Order.avsc.json", content: '{"type":"record","name":"Order"}' }] });
-    const subject = { kind: "draft" as const, entityId: "eDraft" };
+    const subject = { kind: "draft" as const, entityId: "eDraft", tenantId: TENANT };
 
     it("regenerates the source from the field rows (the NEW field, not the stored one)", async () => {
       const emitFiles = vi.fn<EmitFiles>(orderFiles);
@@ -409,7 +411,7 @@ describe("artifact renderer — timeout and concurrency", () => {
     return { promise, resolve };
   };
   const tick = () => new Promise<void>((r) => setTimeout(r, 0));
-  const ofVersion = (id: string) => ({ kind: "version" as const, entityVersionId: id });
+  const ofVersion = (id: string) => ({ kind: "version" as const, entityVersionId: id, tenantId: TENANT });
 
   it("passes the timeout to the emitter and fails a hung emitter with EMITTER_TIMEOUT, freeing its slot", async () => {
     vi.useFakeTimers();
@@ -481,7 +483,7 @@ describe("artifact renderer — timeout and concurrency", () => {
 });
 
 describe("artifact renderer — cache", () => {
-  const ofVersion = (id: string) => ({ kind: "version" as const, entityVersionId: id });
+  const ofVersion = (id: string) => ({ kind: "version" as const, entityVersionId: id, tenantId: TENANT });
 
   it("evicts the least recently used entry beyond maxEntries", async () => {
     const emitFiles = vi.fn<EmitFiles>(avroOk);
@@ -532,7 +534,7 @@ describe("artifact renderer — protobuf imports", () => {
       id: "vExt", entityId: "eExt", major: 1, minor: 0, entity: { name: "Ext" }, fieldSnapshot: [{ name: "other", fieldNumber: 1 }],
       resolvedSource: 'model Ext {\n  other: TypeSpec.Protobuf.Extern<"vendor/other.proto", "vendor.Other">;\n}\n',
     })) } };
-    const r = await createArtifactRenderer({ db: frozen as never, emitFiles }).render({ kind: "version", entityVersionId: "vExt" }, "protobuf");
+    const r = await createArtifactRenderer({ db: frozen as never, emitFiles }).render({ kind: "version", entityVersionId: "vExt", tenantId: TENANT }, "protobuf");
     return { r, source: emitFiles.mock.calls[0]?.[1] ?? "" };
   };
 

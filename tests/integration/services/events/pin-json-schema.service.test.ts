@@ -85,7 +85,7 @@ describe("renderPinJsonSchema: what it renders", () => {
     const { schema } = unwrap(await renderPinJsonSchema(ctx, { tenantId: TENANT, pin: { entityId: order.id, entityVersionId: v.id } }, { renderer }));
 
     expect(render).toHaveBeenCalledTimes(1);
-    expect(render).toHaveBeenCalledWith({ kind: "version", entityVersionId: v.id }, "json-schema");
+    expect(render).toHaveBeenCalledWith({ kind: "version", entityVersionId: v.id, tenantId: TENANT }, "json-schema");
     expect(schema).toEqual({
       $schema: "http://json-schema.org/draft-07/schema#",
       type: "object",
@@ -115,10 +115,10 @@ describe("renderPinJsonSchema: what it renders", () => {
     const order = await sc.entity("Order");
     const { renderer, render } = stubRenderer(renderOf(RENDERED));
     unwrap(await renderPinJsonSchema(ctx, { tenantId: TENANT, pin: { entityId: order.id, entityVersionId: null } }, { renderer }));
-    expect(render).toHaveBeenCalledWith({ kind: "draft", entityId: order.id }, "json-schema");
+    expect(render).toHaveBeenCalledWith({ kind: "draft", entityId: order.id, tenantId: TENANT }, "json-schema");
     // a pin that leaves `entityVersionId` out is the same unpinned pin
     unwrap(await renderPinJsonSchema(ctx, { tenantId: TENANT, pin: { entityId: order.id } as never }, { renderer }));
-    expect(render).toHaveBeenLastCalledWith({ kind: "draft", entityId: order.id }, "json-schema");
+    expect(render).toHaveBeenLastCalledWith({ kind: "draft", entityId: order.id, tenantId: TENANT }, "json-schema");
   });
 
   it("renders a real entity end to end: a draft with a nested model and an enum, and a version of it, both usable to generate an example from", async () => {

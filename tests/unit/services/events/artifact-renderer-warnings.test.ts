@@ -13,6 +13,8 @@ vi.mock("@/lib/events/version-source", async (importOriginal) => {
 });
 import { createArtifactRenderer, type EmitFiles } from "@/services/events/artifact-renderer";
 
+const TENANT = "tenant-acme";
+
 const db = {
   entityVersion: {
     findUnique: vi.fn(async () => ({
@@ -28,7 +30,7 @@ describe("artifact renderer — warnings", () => {
   it("surfaces the program-combination warnings through render, also from the cache", async () => {
     const emitFiles = vi.fn<EmitFiles>(async () => ({ success: true, data: [{ relativePath: "Order.avsc.json", content: '{"type":"record","name":"Order"}' }] }));
     const renderer = createArtifactRenderer({ db: db as never, emitFiles });
-    const subject = { kind: "version" as const, entityVersionId: "vOrder" };
+    const subject = { kind: "version" as const, entityVersionId: "vOrder", tenantId: TENANT };
     const first = await renderer.render(subject, "avro");
     expect(first.success && first.data.warnings).toEqual(["a non-fatal note"]);
     const second = await renderer.render(subject, "avro");

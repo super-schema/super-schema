@@ -1,4 +1,5 @@
 import type { PrismaClient, Prisma } from "@/generated/prisma/client";
+import { entityPlaceOf, type PlaceReader } from "@/lib/access/entity-reader";
 import { placeRootMessageFirst } from "@/lib/event-specs/proto-root";
 import type { JsonObject, PayloadFormat, SchemaArtifact } from "@/lib/event-specs/types";
 import { dedupeAvroNamedTypes } from "@/lib/events/avro-named-types";
@@ -26,7 +27,13 @@ import { ok, err, type Result } from "@/types/result";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-export type ArtifactSubject = { kind: "version"; entityVersionId: string } | { kind: "draft"; entityId: string };
+/**
+ * What is rendered: a pinned version or an entity's current draft, read inside `tenantId` only (the tenant the caller acts in). A subject of
+ * another tenant, whether stored or sent by a client, reads as not found: its source never reaches a payload, nor a cached render.
+ */
+export type ArtifactSubject =
+  | { kind: "version"; entityVersionId: string; tenantId: string }
+  | { kind: "draft"; entityId: string; tenantId: string };
 export interface RenderedArtifact {
   artifact: SchemaArtifact;
   /** Non-fatal program-combination notes — surfaced as diagnostics by the resolver. */
@@ -38,7 +45,11 @@ export interface RenderedArtifact {
   notes?: Array<{ code: string; message: string }>;
 }
 export interface ArtifactRenderer {
-  render(subject: ArtifactSubject, format: PayloadFormat): Promise<Result<RenderedArtifact>>;
+  /**
+   * `canRead`, when given, is the caller's read scope: a closure member it does not cover refuses the render (`REFERENCE_NOT_READABLE`), before any
+   * render is served from the cache. Without it the closure is not checked (saved drafts, publish).
+   */
+  render(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader): Promise<Result<RenderedArtifact>>;
 }
 export type EmitFiles = (
   packageName: string,
@@ -80,17 +91,32 @@ function rootModelFor(source: string, entityName: string, label: string): Result
   return ok(found.data ?? sanitizeIdentifier(entityName));
 }
 
+/** The refusal for a schema that reaches an entity the caller's roles do not cover. Its message names nothing of that entity (KD-045). */
+const unreadableReference = (): Result<never> =>
+  err({ code: "REFERENCE_NOT_READABLE", message: "The schema refers to an entity that none of the caller's roles cover" });
+
 /**
- * One frozen version as a program part. `tenantId` binds the lookup to a tenant: the dependencies of a program are reached through stored
- * `SchemaReference` edges, and an edge to another tenant's version (stored data is not trusted to be clean) must read as "not found", never
- * load that version's source into this tenant's payload. The ROOT version is loaded without it (its tenant is the one its dependencies use).
+ * One frozen version as a program part. `tenantId` binds the lookup to a tenant, for the root of a program and for every dependency: the
+ * dependencies are reached through stored `SchemaReference` edges, and an edge to another tenant's version (stored data is not trusted to be
+ * clean) must read as "not found", never load that version's source into this tenant's payload. With `canRead`, a version the caller's roles
+ * do not cover is refused before anything about it is named (its root model check below names the entity and its source's models).
  */
-async function loadVersionPart(db: Db, versionId: string, tenantId?: string): Promise<Result<{ part: ProgramPart; pins: string[]; tenantId: string }>> {
+async function loadVersionPart(
+  db: Db,
+  versionId: string,
+  tenantId: string,
+  canRead?: PlaceReader
+): Promise<Result<{ part: ProgramPart; pins: string[]; tenantId: string }>> {
   const v = await db.entityVersion.findUnique({
-    where: { id: versionId, ...(tenantId !== undefined ? { entity: { tenantId } } : {}) },
-    select: { id: true, entityId: true, major: true, minor: true, resolvedSource: true, fieldSnapshot: true, entity: { select: { name: true, tenantId: true } } },
+    where: { id: versionId, entity: { tenantId } },
+    select: {
+      id: true, entityId: true, major: true, minor: true, resolvedSource: true, fieldSnapshot: true,
+      entity: { select: { name: true, tenantId: true, domainId: true, productId: true, product: { select: { domainId: true } } } },
+    },
   });
   if (!v) return err({ code: "NOT_FOUND", message: `Entity version "${versionId}" not found` });
+  // Read before anything is named (KD-045): the root model below names the entity and the models of its source when it cannot find one.
+  if (canRead && !canRead(entityPlaceOf(v.entity))) return unreadableReference();
   const pins = await db.schemaReference.findMany({
     where: { fromKind: "ENTITY_VERSION", fromId: v.id, role: "FIELD", toKind: "ENTITY_VERSION" },
     select: { toId: true },
@@ -114,8 +140,11 @@ async function loadVersionPart(db: Db, versionId: string, tenantId?: string): Pr
   });
 }
 
-/** BFS over FIELD pins; one version per entity (CONFLICTING_PINS otherwise). */
-async function loadClosure(db: Db, start: string[], present: Map<string, ProgramPart>, tenantId: string): Promise<Result<ProgramPart[]>> {
+/**
+ * BFS over FIELD pins; one version per entity (CONFLICTING_PINS otherwise). With `canRead`, a member the caller's roles do not cover refuses the
+ * whole closure before anything is rendered from it.
+ */
+async function loadClosure(db: Db, start: string[], present: Map<string, ProgramPart>, tenantId: string, canRead?: PlaceReader): Promise<Result<ProgramPart[]>> {
   const byEntity = new Map(present);
   const queue = [...start];
   const visited = new Set<string>();
@@ -127,7 +156,7 @@ async function loadClosure(db: Db, start: string[], present: Map<string, Program
     if (visited.size > MAX_CLOSURE) {
       return err({ code: "REFERENCE_CLOSURE_TOO_LARGE", message: `More than ${MAX_CLOSURE} referenced entity versions` });
     }
-    const loaded = await loadVersionPart(db, id, tenantId);
+    const loaded = await loadVersionPart(db, id, tenantId, canRead);
     if (!loaded.success) return loaded;
     const { part, pins } = loaded.data;
     const existing = byEntity.get(part.entityId);
@@ -148,25 +177,29 @@ async function loadClosure(db: Db, start: string[], present: Map<string, Program
   return ok(out);
 }
 
-export async function loadProgram(db: Db, subject: ArtifactSubject): Promise<Result<Program>> {
+/** The program of a subject: its root and every version it reaches. With `canRead`, the whole program must be readable by the caller (see `ArtifactRenderer.render`). */
+export async function loadProgram(db: Db, subject: ArtifactSubject, canRead?: PlaceReader): Promise<Result<Program>> {
   if (subject.kind === "version") {
-    const root = await loadVersionPart(db, subject.entityVersionId);
+    const root = await loadVersionPart(db, subject.entityVersionId, subject.tenantId, canRead);
     if (!root.success) return root;
-    const deps = await loadClosure(db, root.data.pins, new Map([[root.data.part.entityId, root.data.part]]), root.data.tenantId);
+    const deps = await loadClosure(db, root.data.pins, new Map([[root.data.part.entityId, root.data.part]]), root.data.tenantId, canRead);
     if (!deps.success) return deps;
     const namespace = await namespaceFor(db, root.data.part.entityId);
     if (!namespace.success) return namespace;
     return ok({ root: root.data.part, deps: deps.data, namespace: namespace.data });
   }
 
+  // The draft root is read inside the subject's tenant too: an entity of another tenant is "no longer exists" here, like a missing one.
   const entity = await db.entity.findUnique({
-    where: { id: subject.entityId },
+    where: { id: subject.entityId, tenantId: subject.tenantId },
     select: {
       id: true, name: true, typespecSource: true, metadata: true, tenantId: true, domainId: true, productId: true,
+      product: { select: { domainId: true } },
       fields: { orderBy: { sortOrder: "asc" }, select: { id: true, name: true, fieldNumber: true, decorators: true } },
     },
   });
   if (!entity) return err({ code: "NOT_FOUND", message: `Entity "${subject.entityId}" not found` });
+  if (canRead && !canRead(entityPlaceOf(entity))) return unreadableReference();
   let source = entity.typespecSource;
   // The same trigger as publish (`needsRegeneration`): no stored source, or one flagged `metadata.sourceStale` because field /
   // entity edits happened outside the Source tab. A stale stored source would render the schema the entity had when it was last
@@ -201,17 +234,24 @@ export async function loadProgram(db: Db, subject: ArtifactSubject): Promise<Res
   // Only entities of the draft's own tenant: an id of another tenant's entity (stored by a client that forged it) is "no longer exists" here,
   // never a published version loaded into this tenant's payload.
   const refs = resolved.targetIds.length > 0
-    ? await db.entity.findMany({ where: { id: { in: resolved.targetIds }, tenantId: entity.tenantId }, select: { id: true, name: true, latestVersionId: true } })
+    ? await db.entity.findMany({
+        where: { id: { in: resolved.targetIds }, tenantId: entity.tenantId },
+        select: {
+          id: true, name: true, latestVersionId: true, tenantId: true, domainId: true, productId: true, product: { select: { domainId: true } },
+        },
+      })
     : [];
   if (refs.length < resolved.targetIds.length) {
     const missing = resolved.targetIds.filter((id) => !refs.some((r) => r.id === id));
     return err({ code: "UNRESOLVED_REFERENCE", message: `${entity.name} references entities that no longer exist (${missing.join(", ")})`, details: { ids: missing } });
   }
+  // Read before anything is named: an unpublished reference's name is as much its content as a published one's schema (KD-045).
+  if (canRead && refs.some((r) => !canRead(entityPlaceOf(r)))) return unreadableReference();
   const unpublished = refs.filter((r) => !r.latestVersionId).map((r) => r.name);
   if (unpublished.length > 0) {
     return err({ code: "UNPUBLISHED_REFERENCE", message: `${entity.name} references unpublished ${unpublished.join(", ")}; publish them to preview this payload` });
   }
-  const deps = await loadClosure(db, refs.map((r) => r.latestVersionId as string), new Map([[entity.id, root]]), entity.tenantId);
+  const deps = await loadClosure(db, refs.map((r) => r.latestVersionId as string), new Map([[entity.id, root]]), entity.tenantId, canRead);
   if (!deps.success) return deps;
   const namespace = await namespaceFor(db, entity.id);
   if (!namespace.success) return namespace;
@@ -399,8 +439,8 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
   const limit = createLimiter(options.concurrency ?? 2);
   const cache = new Map<string, Promise<Result<RenderedArtifact>>>();
 
-  async function renderUncached(subject: ArtifactSubject, format: PayloadFormat): Promise<Result<RenderedArtifact>> {
-    const program = await loadProgram(options.db, subject);
+  async function renderUncached(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader): Promise<Result<RenderedArtifact>> {
+    const program = await loadProgram(options.db, subject, canRead);
     if (!program.success) return program;
     const parts = [program.data.root, ...program.data.deps];
     const label = program.data.root.label;
@@ -449,30 +489,46 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
   }
 
   /** Never rejects: whatever a loader, the combiner, the emitter or the picker throws is an `ARTIFACT_RENDER_FAILED` result. */
-  async function renderSafely(subject: ArtifactSubject, format: PayloadFormat): Promise<Result<RenderedArtifact>> {
+  async function renderSafely(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader): Promise<Result<RenderedArtifact>> {
     try {
-      return await renderUncached(subject, format);
+      return await renderUncached(subject, format, canRead);
     } catch (error) {
       return renderFailure(subject, format, error);
     }
   }
 
-  /** The level-derived namespace is part of the key: an immutable version renders differently if its entity moves. */
-  async function versionCacheKey(entityVersionId: string, format: PayloadFormat): Promise<Result<string>> {
-    const version = await options.db.entityVersion.findUnique({ where: { id: entityVersionId }, select: { entityId: true } });
-    if (!version) return err({ code: "NOT_FOUND", message: `Entity version "${entityVersionId}" not found` });
+  /**
+   * The level-derived namespace is part of the key: an immutable version renders differently if its entity moves. The version is looked up
+   * inside the subject's tenant BEFORE the cache is consulted, so a render cached for one tenant is never handed to another.
+   */
+  async function versionCacheKey(subject: Extract<ArtifactSubject, { kind: "version" }>, format: PayloadFormat): Promise<Result<string>> {
+    const version = await options.db.entityVersion.findUnique({
+      where: { id: subject.entityVersionId, entity: { tenantId: subject.tenantId } },
+      select: { entityId: true },
+    });
+    if (!version) return err({ code: "NOT_FOUND", message: `Entity version "${subject.entityVersionId}" not found` });
     const namespace = await namespaceFor(options.db, version.entityId);
-    return namespace.success ? ok(`${entityVersionId}:${format}:${namespace.data}`) : namespace;
+    return namespace.success ? ok(`${subject.entityVersionId}:${format}:${namespace.data}`) : namespace;
   }
 
   return {
-    async render(subject, format) {
-      if (subject.kind === "draft") return renderSafely(subject, format);
+    async render(subject, format, canRead) {
+      // Fail closed: a subject without its tenant (a caller that is not typed) would otherwise read every tenant's rows.
+      if (typeof subject.tenantId !== "string" || subject.tenantId === "") {
+        return err({ code: "NOT_FOUND", message: `${describeSubject(subject)} not found` });
+      }
+      if (subject.kind === "draft") return renderSafely(subject, format, canRead);
       let key: string;
       try {
-        const keyed = await versionCacheKey(subject.entityVersionId, format);
+        const keyed = await versionCacheKey(subject, format);
         if (!keyed.success) return keyed;
         key = keyed.data;
+        // The caller's read scope is checked before the cache is consulted: a render cached for a caller whose roles cover the closure is never
+        // handed to one whose roles do not. The closure of a frozen version does not change, so the check reads the same rows a render would.
+        if (canRead) {
+          const reach = await loadProgram(options.db, subject, canRead);
+          if (!reach.success) return reach;
+        }
       } catch (error) {
         return renderFailure(subject, format, error);
       }
@@ -482,7 +538,7 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
         cache.set(key, hit);
         return hit;
       }
-      const pending: Promise<Result<RenderedArtifact>> = renderSafely(subject, format).then((result) => {
+      const pending: Promise<Result<RenderedArtifact>> = renderSafely(subject, format, canRead).then((result) => {
         if (!result.success && cache.get(key) === pending) cache.delete(key);
         return result;
       });

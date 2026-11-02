@@ -30,6 +30,32 @@ export function canonicalizeDocumentOrder(document: JsonObject): JsonObject {
   return ordered;
 }
 
+/**
+ * The largest document that is serialized or validated. Both serializers cost time in the number of values, YAML by a wide margin (measured
+ * at 30 to 50 times the JSON cost per value), and YAML indentation makes its output grow with the depth too. A document past either bound is
+ * refused before `toJson` / `toYaml` and before any validator runs.
+ */
+export const MAX_DOCUMENT_DEPTH = 64;
+export const MAX_DOCUMENT_VALUES = 50_000;
+
+/**
+ * Why `document` is over `maxDepth` (default MAX_DOCUMENT_DEPTH) or MAX_DOCUMENT_VALUES, or null when it is within both. One iterative pass that
+ * stops at the first bound it passes, so it also terminates on a cyclic object (every turn of a cycle adds depth and values).
+ */
+export function documentSizeProblem(document: JsonObject, maxDepth: number = MAX_DOCUMENT_DEPTH): string | null {
+  const pending: Array<{ value: unknown; depth: number }> = [{ value: document, depth: 1 }];
+  let values = 0;
+  while (pending.length > 0) {
+    const { value, depth } = pending.pop() as { value: unknown; depth: number };
+    values++;
+    if (values > MAX_DOCUMENT_VALUES) return `it has more than ${MAX_DOCUMENT_VALUES.toLocaleString("en-US")} values`;
+    if (typeof value !== "object" || value === null) continue;
+    if (depth > maxDepth) return `it nests more than ${maxDepth} levels`;
+    for (const child of Array.isArray(value) ? value : Object.values(value)) pending.push({ value: child, depth: depth + 1 });
+  }
+  return null;
+}
+
 export function toJson(document: JsonObject): string {
   return `${JSON.stringify(document, null, 2)}\n`;
 }

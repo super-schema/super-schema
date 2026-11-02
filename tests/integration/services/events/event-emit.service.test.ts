@@ -279,7 +279,7 @@ describe.sequential("emitEventDraft / emitEventDocumentPreview / emitEventStored
 
     const out = unwrap(await emitEventDraft(event.id, own.product.id, ctx, { renderer }));
 
-    expect(calls.map((c) => c.subject)).toEqual([{ kind: "draft", entityId: draftling.id }]);
+    expect(calls.map((c) => c.subject)).toEqual([{ kind: "draft", entityId: draftling.id, tenantId: TENANT }]);
     expect(errorsOf(out.diagnostics)).toEqual([]);
     expect(obj(obj(obj(obj(out.document).components).messages)["order-created"]).payload).toMatchObject({ schema: { type: "record", name: "Draftling" } });
     // the preview says what it did, at the pin, without blocking
@@ -627,6 +627,36 @@ describe.sequential("loadEventSnapshot / resolveEventSnapshot", () => {
       const out = unwrap(await emitEventDraft(event.id, own.product.id, ctx, { renderer: stubRenderer().renderer }));
       expect(out.document).toBeNull();
       expect(errorsOf(out.diagnostics).map((d) => d.pointer).sort()).toEqual(["/externalRefs/0", "/externalRefs/1", "/traits/0/libraryTraitId"]);
+    } finally {
+      await foreign.cleanup();
+    }
+  }, 60_000);
+
+  it("refuses a preview pin of another tenant's entity exactly as an unknown id, and renders nothing", async () => {
+    const foreign = await createForeignTenantFixture(prisma, ctx);
+    try {
+      const event = await seedEvent(orderDocument());
+      const { renderer, calls } = stubRenderer();
+      const onForeign = orderDocument();
+      onForeign.messages[0].payload = { entityId: foreign.entity.id, entityVersionId: foreign.version.id };
+      const onUnknown = orderDocument();
+      onUnknown.messages[0].payload = { entityId: "no-such-entity", entityVersionId: null };
+
+      const foreignResult = await emitEventDocumentPreview(event.id, own.product.id, onForeign, ctx, { renderer });
+      const unknownResult = await emitEventDocumentPreview(event.id, own.product.id, onUnknown, ctx, { renderer });
+
+      expect(foreignResult.success).toBe(false);
+      expect(unknownResult.success).toBe(false);
+      if (foreignResult.success || unknownResult.success) return;
+      expect(foreignResult.error.code).toBe("VALIDATION_ERROR");
+      expect(unknownResult.error.code).toBe("VALIDATION_ERROR");
+      expect((foreignResult.error.details as { problems: unknown }).problems).toEqual([
+        { pointer: "/messages/0/payload/entityId", message: `Entity "${foreign.entity.id}" not found in this tenant` },
+      ]);
+      expect((unknownResult.error.details as { problems: unknown }).problems).toEqual([
+        { pointer: "/messages/0/payload/entityId", message: 'Entity "no-such-entity" not found in this tenant' },
+      ]);
+      expect(calls).toEqual([]);
     } finally {
       await foreign.cleanup();
     }
