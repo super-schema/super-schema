@@ -8,6 +8,7 @@ import {
   type FieldType,
   JSON_TYPES,
   STRING_FORMATS_2020_12,
+  enumIssues,
   serializeJsonSchema,
 } from "./serialize";
 import { ReferenceTargetPicker } from "./ReferenceTargetPicker";
@@ -109,6 +110,7 @@ export function JsonSchemaVisualEditor({
 
         {fields.map((field) => {
           const isOpen = expanded.has(field.id);
+          const enumLeftOut = field.type === "reference" ? [] : enumIssues(field);
           return (
             <div
               key={field.id}
@@ -137,9 +139,15 @@ export function JsonSchemaVisualEditor({
                 />
                 <select
                   value={field.type}
-                  onChange={(e) =>
-                    update(field.id, { type: e.target.value as FieldType })
-                  }
+                  onChange={(e) => {
+                    // enum, const and default were written for the type the field had: a new type starts without them.
+                    update(field.id, {
+                      type: e.target.value as FieldType,
+                      enumValues: undefined,
+                      constValue: undefined,
+                      defaultValue: undefined,
+                    });
+                  }}
                   className={inputCls}
                 >
                   {FIELD_TYPES.map((t) => (
@@ -176,6 +184,14 @@ export function JsonSchemaVisualEditor({
                 onChange={(e) => update(field.id, { description: e.target.value })}
                 className={`${inputCls} w-full`}
               />
+
+              {/* Enum symbols the type does not take are left out of the schema: shown on the row, not only under Advanced options */}
+              {enumLeftOut.length > 0 && (
+                <p className="text-caption text-destructive">
+                  Left out of the schema (not valid for {field.type}): {enumLeftOut.join(", ")}
+                  {enumLeftOut.length === (field.enumValues ?? []).length && ". No enum value fits, so the property has no enum"}
+                </p>
+              )}
 
               {/* Reference target (type === reference) */}
               {field.type === "reference" && (

@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import type { Identity } from "@/types/schemas/typespec-decorator.schema";
+import { defaultInput, storedDefaultText } from "@/lib/compiler/typed-value-literal";
 
 const STRING_FORMATS = [
   "uuid",
@@ -69,6 +71,14 @@ export function IdentityPanel({
   onIdentityChange,
   onOptionalChange,
 }: IdentityPanelProps) {
+  // The text the Default Value input holds, kept while the stored value is still what that text reads as: "5." and "5.0" stay as typed
+  // although the stored value is the number 5. A stored value that changed since is shown as stored.
+  const [typedDefault, setTypedDefault] = useState<{ stored: unknown; text: string } | null>(null);
+  const storedDefault = identity.defaultValue ?? null;
+  const shownDefault =
+    typedDefault && typedDefault.stored === storedDefault ? typedDefault.text : storedDefaultText(storedDefault, fieldType);
+  const defaultCheck = defaultInput(shownDefault, fieldType);
+
   function update(partial: Partial<Identity>) {
     onIdentityChange({ ...identity, ...partial });
   }
@@ -115,46 +125,26 @@ export function IdentityPanel({
             {identity.defaultValue ? "true" : "false"}
           </label>
         ) : (
-          <Input
-            value={
-              identity.defaultValue != null
-                ? String(identity.defaultValue)
-                : ""
-            }
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val === "") {
-                update({ defaultValue: null });
-              } else if (
-                [
-                  "integer",
-                  "int8",
-                  "int16",
-                  "int32",
-                  "int64",
-                  "float",
-                  "float32",
-                  "float64",
-                  "decimal",
-                  "decimal128",
-                  "numeric",
-                  "safeint",
-                  "uint8",
-                  "uint16",
-                  "uint32",
-                  "uint64",
-                ].includes(fieldType)
-              ) {
-                const num = Number(val);
-                update({ defaultValue: isNaN(num) ? val : num });
-              } else {
-                update({ defaultValue: val });
-              }
-            }}
-            data-testid="field-default-value"
-            placeholder="No default"
-            className="h-7 text-body-small font-mono w-48"
-          />
+          <>
+            <Input
+              value={shownDefault}
+              onChange={(e) => {
+                const text = e.target.value;
+                const input = defaultInput(text, fieldType);
+                // Stored as the quick editor stores the same text: the value the field's type takes, nothing when cleared, and the text itself
+                // when it does not fit (the generator withholds it, and the reason is shown below the input).
+                const stored = input.status === "cleared" ? null : input.status === "value" ? input.value : text;
+                setTypedDefault({ stored, text });
+                update({ defaultValue: stored });
+              }}
+              data-testid="field-default-value"
+              placeholder="No default"
+              className="h-7 text-body-small font-mono w-48"
+            />
+            {defaultCheck.status === "rejected" && (
+              <p className="mt-1 text-[11px] text-destructive">Default value {defaultCheck.reason}.</p>
+            )}
+          </>
         )}
       </div>
 

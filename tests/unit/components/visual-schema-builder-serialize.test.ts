@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   serializeJsonSchema,
   buildFieldNode,
+  enumIssues,
   type JsonSchemaField,
 } from "@/components/custom/VisualSchemaBuilder/serialize";
 import { parseJsonSchema } from "@/lib/importers/jsonschema.importer";
@@ -70,13 +71,33 @@ describe("VisualSchemaBuilder serialize (JSON Schema 2020-12)", () => {
     });
   });
 
-  it("parses const/default/enum values loosely (JSON when possible)", () => {
-    const node = buildFieldNode(
-      field({ type: "integer", constValue: "42", defaultValue: "7", enumValues: ["1", "2"] })
-    );
+  it("parses const/default values loosely (JSON when possible)", () => {
+    const node = buildFieldNode(field({ type: "integer", constValue: "42", defaultValue: "7" }));
     expect(node.const).toBe(42);
     expect(node.default).toBe(7);
-    expect(node.enum).toEqual(["1", "2"]);
+  });
+
+  it("emits an enum with the literal type of its field: numbers, booleans and text", () => {
+    expect(buildFieldNode(field({ type: "integer", enumValues: ["1", "2", "3"] })).enum).toEqual([1, 2, 3]);
+    expect(buildFieldNode(field({ type: "number", enumValues: ["1.5", "2"] })).enum).toEqual([1.5, 2]);
+    expect(buildFieldNode(field({ type: "boolean", enumValues: ["true", "false"] })).enum).toEqual([true, false]);
+    expect(buildFieldNode(field({ type: "string", enumValues: ["1", "2"] })).enum).toEqual(["1", "2"]);
+  });
+
+  it("emits each typed enum value once: two symbols that are the same number on an integer field keep the first", () => {
+    expect(buildFieldNode(field({ type: "integer", enumValues: ["1", "1.0", "2"] })).enum).toEqual([1, 2]);
+    expect(buildFieldNode(field({ type: "string", enumValues: ["1", "1.0"] })).enum).toEqual(["1", "1.0"]);
+  });
+
+  it("leaves out an enum symbol that does not fit the field's type, and reports it", () => {
+    const f = field({ type: "integer", enumValues: ["1", "two", "3.5"] });
+    expect(buildFieldNode(f).enum).toEqual([1]);
+    expect(enumIssues(f)).toEqual(["two", "3.5"]);
+    expect(enumIssues(field({ type: "integer", enumValues: ["1"] }))).toEqual([]);
+  });
+
+  it("emits no enum when no symbol fits the field's type", () => {
+    expect(buildFieldNode(field({ type: "boolean", enumValues: ["yes"] })).enum).toBeUndefined();
   });
 
   it("round-trips through parseJsonSchema", () => {

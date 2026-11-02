@@ -3,6 +3,7 @@ import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { isSourceStale, MARK_SOURCE_STALE_IF_UNCHANGED_SQL } from "@/lib/entity-versioning/draft-state";
 import {
+  compareSourceLiterals,
   compareSourceProjection,
   projectRowFields,
   projectSourceFields,
@@ -63,12 +64,12 @@ async function checkEntity(db: Db, entity: Candidate, dryRun: boolean, deps: Sta
   const model = await deps.loadModel(db, entity.id);
   if (!model.success) return { ...base, status: "ERROR", error: `${model.error.code}: ${model.error.message}` };
 
-  const { differs, reasons } = compareSourceProjection(
-    projectSourceFields(source, entity.name),
-    projectRowFields(entity.fields),
-    projectSourceFields(deps.generate(model.data), entity.name)
-  );
-  if (!differs) return { ...base, status: "CONSISTENT" };
+  const storedFields = projectSourceFields(source, entity.name);
+  const regeneratedFields = projectSourceFields(deps.generate(model.data), entity.name);
+  const projection = compareSourceProjection(storedFields, projectRowFields(entity.fields), regeneratedFields);
+  // A literal the source holds that the generator now writes differently (a legacy `"5"` on an int32, an `@example(Alice)`) differs too.
+  const reasons = [...projection.reasons, ...compareSourceLiterals(storedFields, regeneratedFields)];
+  if (reasons.length === 0) return { ...base, status: "CONSISTENT" };
   if (dryRun) return { ...base, status: "WOULD_FLAG", reasons };
 
   const count = await db.$executeRawUnsafe(MARK_SOURCE_STALE_IF_UNCHANGED_SQL, entity.id, source);
@@ -78,8 +79,10 @@ async function checkEntity(db: Db, entity: Candidate, dryRun: boolean, deps: Sta
 /**
  * One-time backfill for entities whose stored `typespecSource` predates the `sourceStale` marker (R42):
  * for every entity with source and no marker, compare the source's field projection (names + logical
- * types) with the field rows and set `metadata.sourceStale = true` only where they differ, so publish
- * regenerates exactly those sources and no others. Idempotent; `dryRun` reports without writing.
+ * types) with the field rows, and its defaults and examples with the ones the generator writes now (see
+ * `compareSourceLiterals`), and set `metadata.sourceStale
+ * = true` only where they differ, so publish regenerates exactly those sources and no others. Idempotent;
+ * `dryRun` reports without writing.
  * A per-entity failure is an ERROR outcome; only failing to list the entities is a failed Result.
  */
 export async function flagStaleTypeSpecSources(

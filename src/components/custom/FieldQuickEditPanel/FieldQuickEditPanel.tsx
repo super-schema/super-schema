@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { getTypeInfo } from "@/lib/data-types";
+import { defaultInput, storedDefaultText } from "@/lib/compiler/typed-value-literal";
 import {
   applyReferencePick,
   describeEntityRef,
@@ -88,7 +89,7 @@ function fieldForm(field: FieldData) {
     localIsKey: field.isKey, localDescription: field.description,
     localClassification: field.classification, localFieldNumber: field.fieldNumber,
     localSecret: !!ts.identity?.secret, localFormat: ts.identity?.format ?? "",
-    localDefaultValue: ts.identity?.defaultValue != null ? String(ts.identity.defaultValue) : "",
+    localDefaultValue: storedDefaultText(ts.identity?.defaultValue, field.type),
     localSummary: ts.documentation?.summary ?? "", typespec: ts, localReference: null as ReferencePick | null,
   };
 }
@@ -234,9 +235,7 @@ export function FieldQuickEditPanel({
   // Header identity state derived from typespec
   const [localSecret, setLocalSecret] = useState(!!typespec.identity?.secret);
   const [localFormat, setLocalFormat] = useState(typespec.identity?.format ?? "");
-  const [localDefaultValue, setLocalDefaultValue] = useState(
-    typespec.identity?.defaultValue != null ? String(typespec.identity.defaultValue) : ""
-  );
+  const [localDefaultValue, setLocalDefaultValue] = useState(storedDefaultText(typespec.identity?.defaultValue, field.type));
   const [localSummary, setLocalSummary] = useState(typespec.documentation?.summary ?? "");
 
   // Save status
@@ -371,7 +370,19 @@ export function FieldQuickEditPanel({
         const identity = { ...(mergedTypespec.identity ?? {}) };
         if (c.localSecret) identity.secret = true; else delete identity.secret;
         if (c.localFormat) identity.format = c.localFormat; else identity.format = null;
-        if (c.localDefaultValue) identity.defaultValue = c.localDefaultValue; else delete identity.defaultValue;
+        // The default is saved as the value the field's type takes (a number for a numeric field, a boolean for a boolean). It is derived again only
+        // when its text or the field's type was changed here: a stored default that no longer fits (saved before the rule, or kept by another
+        // editor) stays as it is, so an unrelated edit is not refused. Text changed to something that does not fit is refused, so nothing is
+        // saved until it is corrected or cleared.
+        const persisted = latestPersistedRef.current;
+        if (c.localDefaultValue === persisted.localDefaultValue && c.localType === persisted.localType) {
+          const stored = (field.decorators?.typespec as TypeSpecDecorators | undefined)?.identity?.defaultValue;
+          if (stored === undefined) delete identity.defaultValue; else identity.defaultValue = stored;
+        } else {
+          const defaultValue = defaultInput(c.localDefaultValue, c.localType);
+          if (defaultValue.status === "rejected") throw new Error(`Default value ${defaultValue.reason}.`);
+          if (defaultValue.status === "value") identity.defaultValue = defaultValue.value; else delete identity.defaultValue;
+        }
         mergedTypespec.identity = identity;
 
         const documentation = { ...(mergedTypespec.documentation ?? {}) };

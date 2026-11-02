@@ -4,6 +4,10 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { Documentation } from "@/types/schemas/typespec-decorator.schema";
+import { previewLiteral } from "@/lib/compiler/typed-value-literal";
+
+/** The logical types whose values are text. */
+const TEXT_FIELD_TYPES = new Set(["string", "url"]);
 
 interface DocumentationPanelProps {
   documentation: Documentation;
@@ -23,6 +27,8 @@ export function DocumentationPanel({
   }
 
   const isDeprecated = documentation.deprecated != null;
+  // The example as the generator writes it for this field's type (see previewLiteral); undefined when the panel cannot tell.
+  const examplePreview = documentation.example != null ? previewLiteral(documentation.example, fieldType) : undefined;
 
   return (
     <div className="space-y-space-4 pb-space-2">
@@ -106,6 +112,9 @@ export function DocumentationPanel({
             const val = e.target.value;
             if (val === "") {
               update({ example: null });
+            } else if (TEXT_FIELD_TYPES.has(fieldType)) {
+              // A text field keeps the text as typed: JSON would turn `1.50` into 1.5 and `1e3` into 1000.
+              update({ example: val });
             } else {
               // Try to parse as JSON for complex types, otherwise use string
               try {
@@ -121,7 +130,11 @@ export function DocumentationPanel({
         />
         {documentation.example != null && (
           <div className="mt-1 text-[10px] text-muted-foreground/60 font-mono">
-            @example(#{"{"} value: {JSON.stringify(documentation.example)} {"}"})
+            {examplePreview === undefined
+              ? "Checked against the field's type when the source is generated; not previewed for this type."
+              : examplePreview.ok
+                ? `@example(${examplePreview.text})`
+                : <span className="text-destructive">Not written: {examplePreview.reason}.</span>}
           </div>
         )}
       </div>

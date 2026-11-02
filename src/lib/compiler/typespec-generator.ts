@@ -43,7 +43,9 @@ import {
   quoteIdentifier,
   sanitizeIdentifier,
   sanitizeIdentifierSegment,
+  unescapeTypeSpecText,
 } from "./typespec-identifiers";
+import { constructorLiteral, isClearedValue, literalFor, scalarLiteralTarget, type LiteralTarget } from "./typed-value-literal";
 
 // The identifier rules live in typespec-identifiers.ts (shared with the protobuf / Avro projections and the emitter
 // service); re-exported here so the generator stays the one import for generated-source spelling.
@@ -98,11 +100,12 @@ export interface ClosureMemberOptions {
 /**
  * Something the generator could not express faithfully. An `error` also surfaces as a compile error in the
  * generated source (a publish / emission fails loudly instead of shipping an unsatisfiable schema); a `warning`
- * was repaired (a duplicate enum symbol is dropped) and is only reported.
+ * was repaired (a duplicate enum symbol is dropped) or withheld (a default or example that does not fit the field's type is not
+ * written) and is only reported.
  */
 export interface GeneratorDiagnostic {
   severity: "error" | "warning";
-  code: "ENUM_NO_VALUES" | "ENUM_DUPLICATE_VALUE";
+  code: "ENUM_NO_VALUES" | "ENUM_DUPLICATE_VALUE" | "DEFAULT_NOT_EMITTED" | "EXAMPLE_NOT_EMITTED";
   fieldName?: string;
   message: string;
 }
@@ -459,10 +462,14 @@ interface GenContext {
   enumNameOf(field: SuperSchemaField): string;
   /** False when the field reuses a shared enum of the same name, so no field-scoped enum is declared. */
   declaresInlineEnum(field: SuperSchemaField): boolean;
+  /** The symbols the enum of `field` declares: its own, or the shared enum's when the field reuses one (empty when there are none). */
+  enumSymbolsOf(field: SuperSchemaField): readonly string[];
   /** True for a field-scoped enum with no symbols (never declared; the field fails loudly instead). */
   hasNoEnumValues(field: SuperSchemaField): boolean;
   /** True when the document declares a union of this (sanitized) name. */
   declaresUnion(name: string): boolean;
+  /** The member expressions of the union the document declares under this name (undefined when it declares none). */
+  unionMembersOf(name: string): readonly string[] | undefined;
   /** Closure member only: the type of a reference field / member (`null`: not in the closure). Absent on the stand-alone path. */
   referenceType?(field: SuperSchemaField): string | null;
 }
@@ -485,10 +492,20 @@ function createContext(model: SuperSchemaModel, referenceType?: (field: SuperSch
   }
 
   const declaredUnions = new Set((model.unionTypes ?? []).map((u) => sanitizeIdentifier(u.name)));
+  const declaredUnionMembers = new Map((model.unionTypes ?? []).map((u) => [sanitizeIdentifier(u.name), u.memberTypes] as const));
+
+  // The symbols of each shared enum the document declares (the first with values, as `sharedNames` takes it).
+  const sharedSymbols = new Map<string, string[]>();
+  for (const sharedEnum of model.sharedEnums ?? []) {
+    const values = normalizeEnumSymbols(sharedEnum.values);
+    const name = sanitizeIdentifier(sharedEnum.name);
+    if (values.length > 0 && !sharedSymbols.has(name)) sharedSymbols.set(name, values);
+  }
 
   const names = new Map<SuperSchemaField, string>();
   const reused = new Set<SuperSchemaField>();
   const inlineValues = new Map<SuperSchemaField, string[]>();
+  const symbols = new Map<SuperSchemaField, string[]>();
   for (const field of model.fields) {
     if (!needsInlineEnum(field)) continue;
     inlineValues.set(field, normalizeEnumSymbols(extractEnumValues(field)));
@@ -496,12 +513,14 @@ function createContext(model: SuperSchemaModel, referenceType?: (field: SuperSch
     if (sharedNames.has(base)) {
       names.set(field, base);
       reused.add(field);
+      symbols.set(field, sharedSymbols.get(base) ?? []);
       continue;
     }
     let name = base;
     for (let n = 2; taken.has(name); n++) name = `${base}_${n}`;
     taken.add(name);
     names.set(field, name);
+    symbols.set(field, inlineValues.get(field) ?? []);
   }
 
   return {
@@ -511,7 +530,9 @@ function createContext(model: SuperSchemaModel, referenceType?: (field: SuperSch
     enumNameOf: (field) => names.get(field) ?? `${sanitizeIdentifier(entityName)}_${sanitizeIdentifierSegment(field.name)}`,
     // An enum without symbols is never declared (see generateFieldDefinition for how the field fails loudly).
     declaresInlineEnum: (field) => !reused.has(field) && (inlineValues.get(field)?.length ?? 0) > 0,
+    enumSymbolsOf: (field) => symbols.get(field) ?? [],
     declaresUnion: (name) => declaredUnions.has(sanitizeIdentifier(name)),
+    unionMembersOf: (name) => declaredUnionMembers.get(sanitizeIdentifier(name)),
     hasNoEnumValues: (field) => !reused.has(field) && (inlineValues.get(field)?.length ?? 0) === 0,
   };
 }
@@ -753,7 +774,7 @@ function generateFieldDefinition(
   const lines: string[] = [];
 
   // Field-level decorators
-  lines.push(...generateFieldDecorators(field, governance));
+  lines.push(...generateFieldDecorators(field, governance, ctx));
 
   // Build the type expression
   let typeExpr: string;
@@ -782,14 +803,120 @@ function generateFieldDefinition(
   const optional = field.nullable && !(nullType && field.requiredNullable === true) ? "?" : "";
   if (nullType) typeExpr = `${typeExpr} | null`;
 
-  // Default value
-  const defaultClause = field.decorators.typespec?.identity?.defaultValue !== undefined
-    ? ` = ${JSON.stringify(field.decorators.typespec.identity.defaultValue).replace(/\$\{/g, "\\${")}`
-    : "";
+  // Default value: written for the field's type, or not at all (cleared, or withheld with a warning; see storedLiteral)
+  const defaultLiteral = storedLiteral(field.decorators.typespec?.identity?.defaultValue, field, ctx, "default");
+  const defaultClause = defaultLiteral === undefined ? "" : ` = ${defaultLiteral}`;
 
   lines.push(`${propertyName(field.name)}${optional}: ${typeExpr}${defaultClause};`);
 
   return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Stored default and example — the literal of the field's type
+// ---------------------------------------------------------------------------
+
+/** A value of any shape: a dangling reference is `unknown`, which takes every literal. */
+const ANY_VALUE: LiteralTarget = { kind: "any" };
+
+/**
+ * The TypeSpec literal of a value stored for `field` (its default, or its documentation example), written for the field's type. `undefined`
+ * when nothing is written: nothing is stored (cleared), or the value does not fit the type and a warning says why (the field keeps its type
+ * without the value; the stored value itself is not changed). A date, time or duration field takes its own constructor text (see
+ * {@link constructorLiteral}); its examples and defaults are checked against the type by the compiler, so no other text is written for it.
+ */
+function storedLiteral(value: unknown, field: SuperSchemaField, ctx: GenContext, what: "default" | "example"): string | undefined {
+  // An enum with no symbols is already an error (ENUM_NO_VALUES): its default has nothing more to say.
+  if (field.type === "enum" && ctx.hasNoEnumValues(field)) return undefined;
+  const target = literalTargetOf(field, ctx);
+  if (isClearedValue(value, target)) return undefined;
+  const literal = target ? literalFor(value, target, 1, what === "example") : constructorLiteral(value, field.type);
+  if (literal.ok) return literal.text;
+  ctx.diagnostics.push({
+    severity: "warning",
+    code: what === "default" ? "DEFAULT_NOT_EMITTED" : "EXAMPLE_NOT_EMITTED",
+    fieldName: field.name,
+    message: `The ${what} of field "${field.name}" is not written: ${literal.reason}`,
+  });
+  return undefined;
+}
+
+/** The literal target of a field's TypeSpec type (the type {@link resolveTypeSpecType} writes), or undefined when it has no literal form. */
+function literalTargetOf(field: SuperSchemaField, ctx: GenContext): LiteralTarget | undefined {
+  if (isDanglingField(field)) return field.danglingRef?.element ? { kind: "array", element: ANY_VALUE } : ANY_VALUE;
+  switch (field.type as LogicalType) {
+    case "enum":
+      return enumLiteralTarget(field, ctx);
+    case "array": {
+      const element = memberLiteralTarget(field.complexType?.arrayElementType ?? "string", field, ctx);
+      return element ? { kind: "array", element } : undefined;
+    }
+    case "map": {
+      const value = memberLiteralTarget(field.complexType?.mapValueType ?? "string", field, ctx);
+      return value ? { kind: "record", value } : undefined;
+    }
+    case "object":
+      return { kind: "record", value: ANY_VALUE };
+    case "reference":
+      return undefined;
+    case "union":
+      return unionLiteralTarget(field, ctx);
+    default:
+      return scalarLiteralTarget(field.type);
+  }
+}
+
+/** The literal target of an array element or a map value, as {@link resolveCollectionMemberType} writes its type. */
+function memberLiteralTarget(memberType: string, field: SuperSchemaField, ctx: GenContext): LiteralTarget | undefined {
+  switch (memberType) {
+    case "enum":
+      return extractEnumValues(field).length > 0 ? enumLiteralTarget(field, ctx) : scalarLiteralTarget("string");
+    case "array":
+      return { kind: "array", element: ANY_VALUE };
+    case "object":
+    case "map":
+      return { kind: "record", value: ANY_VALUE };
+    case "reference":
+      return undefined;
+    case "union":
+      return unionLiteralTarget(field, ctx);
+    default:
+      return scalarLiteralTarget(memberType);
+  }
+}
+
+/** The members of the enum of `field` (its own, or the shared enum it reuses) as a literal target; undefined when it declares none. */
+function enumLiteralTarget(field: SuperSchemaField, ctx: GenContext): LiteralTarget | undefined {
+  const symbols = ctx.enumSymbolsOf(field);
+  return symbols.length > 0 ? { kind: "enum", type: ctx.enumNameOf(field), symbols } : undefined;
+}
+
+/**
+ * The literal target of a union member, read from its TypeSpec expression: a quoted text, a number or a boolean is exactly that value
+ * (`"a"`, `1`, `true`); a scalar name is that scalar's target; `unknown` takes any value. A model, an enum or a structured type has no
+ * target here, so a value only such a member takes is withheld.
+ */
+function memberExpressionTarget(expression: string): LiteralTarget | undefined {
+  const text = expression.trim();
+  if (/^"(?:[^"\\]|\\.)*"$/.test(text)) return { kind: "constant", text, value: unescapeTypeSpecText(text.slice(1, -1)) };
+  if (/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(text)) return { kind: "constant", text: String(Number(text)), value: Number(text) };
+  if (text === "true" || text === "false") return { kind: "constant", text, value: text === "true" };
+  if (text === "unknown") return { kind: "any" };
+  return scalarLiteralTarget(text);
+}
+
+/**
+ * The literal target of a union field (or of an array / map of one), read from the members of the TypeSpec type {@link resolveUnionType}
+ * writes: a declared union's member expressions, else an inline union's member names. A union none of whose members has a target has none.
+ */
+function unionLiteralTarget(field: SuperSchemaField, ctx: GenContext): LiteralTarget | undefined {
+  const unionName = field.complexType?.unionName;
+  let expressions: readonly string[];
+  if (unionName && ctx.declaresUnion(unionName)) expressions = ctx.unionMembersOf(unionName) ?? [];
+  else if (field.complexType?.unionMembers && field.complexType.unionMembers.length > 0) expressions = field.complexType.unionMembers;
+  else return scalarLiteralTarget("string"); // resolveUnionType writes `string` for a union that names no members
+  const members = expressions.map(memberExpressionTarget).filter((m): m is LiteralTarget => m !== undefined);
+  return members.length > 0 ? { kind: "union", members } : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -807,7 +934,7 @@ function fieldPin(field: SuperSchemaField): string | undefined {
   return reference?.pinnedVersion;
 }
 
-function generateFieldDecorators(field: SuperSchemaField, governance: Governance): string[] {
+function generateFieldDecorators(field: SuperSchemaField, governance: Governance, ctx: GenContext): string[] {
   const decorators: string[] = [];
 
   // @key
@@ -915,9 +1042,10 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
     if (docs.summary) {
       decorators.push(`@summary("${escapeString(docs.summary)}")`);
     }
-    if (docs.example != null) {
-      decorators.push(`@example(${docs.example})`);
-    }
+    // The example is the stored value itself (the Documentation panel keeps the parsed JSON, or the text typed), written as a value of the
+    // field's type; withheld, with a warning, when it does not fit that type.
+    const example = storedLiteral(docs.example, field, ctx, "example");
+    if (example !== undefined) decorators.push(`@example(${example})`);
     if (docs.deprecated) {
       decorators.push(`#deprecated "${escapeString(docs.deprecated)}"`);
     }

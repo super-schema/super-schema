@@ -7,6 +7,8 @@
  * into the IR downstream — so this stays a faithful JSON Schema producer.
  */
 
+import { numberFromText } from "@/lib/compiler/typed-value-literal";
+
 export const JSON_SCHEMA_VERSION = "2020-12";
 export const JSON_SCHEMA_DIALECT =
   "https://json-schema.org/draft/2020-12/schema";
@@ -124,6 +126,47 @@ function num(value: number | undefined): boolean {
   return typeof value === "number" && !Number.isNaN(value);
 }
 
+/**
+ * An enum symbol, typed for the field's JSON type: a number or boolean stays one (`"1"` on an integer is `1`), text stays text, and any other
+ * type reads the symbol as JSON when it parses. `undefined` when the symbol does not fit the type (`"two"` on an integer).
+ */
+export function typedEnumValue(symbol: string, type: FieldType): unknown {
+  switch (type) {
+    case "string":
+      return symbol;
+    case "integer": {
+      const n = numberFromText(symbol);
+      return n !== undefined && Number.isInteger(n) ? n : undefined;
+    }
+    case "number":
+      return numberFromText(symbol);
+    case "boolean": {
+      const word = symbol.trim();
+      return word === "true" ? true : word === "false" ? false : undefined;
+    }
+    default:
+      return parseLoose(symbol);
+  }
+}
+
+/**
+ * The enum symbols of a field that fit its type, typed, each value once: `"1"` and `"1.0"` on an integer are both 1, and the enum keeps the first.
+ * A symbol that does not fit is left out (see {@link enumIssues}).
+ */
+function typedEnumValues(field: JsonSchemaField): unknown[] {
+  const values: unknown[] = [];
+  for (const symbol of field.enumValues ?? []) {
+    const value = typedEnumValue(symbol, field.type);
+    if (value !== undefined && !values.includes(value)) values.push(value);
+  }
+  return values;
+}
+
+/** The enum symbols of a field that do not fit its type: the editor reports them, and they are left out of the schema. */
+export function enumIssues(field: JsonSchemaField): string[] {
+  return (field.enumValues ?? []).filter((symbol) => typedEnumValue(symbol, field.type) === undefined);
+}
+
 /** Build a single JSON Schema node for a field (only set keywords are emitted). */
 export function buildFieldNode(field: JsonSchemaField): Record<string, unknown> {
   // reference → $ref (keeps entities individual + composable)
@@ -137,10 +180,9 @@ export function buildFieldNode(field: JsonSchemaField): Record<string, unknown> 
 
   if (field.description.trim()) node.description = field.description.trim();
 
-  // enum / const (value-level, type-agnostic)
-  if (field.enumValues && field.enumValues.length > 0) {
-    node.enum = field.enumValues;
-  }
+  // enum (typed for the field's type) / const (loose JSON)
+  const enumValues = typedEnumValues(field);
+  if (enumValues.length > 0) node.enum = enumValues;
   if (field.constValue != null && field.constValue.trim() !== "") {
     node.const = parseLoose(field.constValue);
   }

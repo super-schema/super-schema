@@ -786,6 +786,7 @@ describe("TypeSpec Decorator Compliance — Generator Emission", () => {
   });
 
   it("emits @example on field", () => {
+    // The stored example is the text itself (the Documentation panel keeps what was typed); the generator quotes it.
     const model = buildModel({
       fields: [
         {
@@ -799,7 +800,7 @@ describe("TypeSpec Decorator Compliance — Generator Emission", () => {
           decorators: {
             typespec: {
               documentation: {
-                example: '"test@example.com"',
+                example: "test@example.com",
               },
             },
           },

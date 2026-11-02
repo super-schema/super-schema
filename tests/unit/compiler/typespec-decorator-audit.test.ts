@@ -407,11 +407,12 @@ describe("TypeSpec Decorator Generation", () => {
   });
 
   it("emits @example on field", () => {
+    // The stored example is the value itself (the Documentation panel keeps the parsed JSON); the generator writes it as a literal of the field's type.
     const model = makeModel({
       fields: [
         {
           name: "name",
-          type: "string",
+          type: "object",
           nullable: false,
           isKey: false,
           description: "",
@@ -419,7 +420,7 @@ describe("TypeSpec Decorator Generation", () => {
           decorators: {
             typespec: {
               documentation: {
-                example: '#{ name: "John" }',
+                example: { name: "John" },
               },
             },
           },
@@ -428,7 +429,7 @@ describe("TypeSpec Decorator Generation", () => {
       ],
     });
     const output = generateTypeSpec(model);
-    expect(output).toContain('@example(#{ name: "John" })');
+    expect(output).toContain('@example(#{name: "John"})');
   });
 
   it("emits @encodedName on field", () => {

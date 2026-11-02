@@ -16,6 +16,10 @@ export interface ProjectedField {
   name: string;
   /** Logical type; arrays carry their element: `array<string>`. */
   type: string;
+  /** The default as the source writes it (the text after `=`), when it has one. Only the source projection carries it. */
+  defaultText?: string;
+  /** The `@example` argument as the source writes it, when it has one. Only the source projection carries it. */
+  exampleText?: string;
 }
 
 /** Map a type expression to its logical id until it stops changing (the scalar map is not idempotent for every id). */
@@ -36,7 +40,9 @@ function withElement(type: string, element: string | undefined): string {
 /**
  * Put `{`, `;` and `}` on line boundaries (outside strings, comments and decorator arguments). The regex
  * parser only recognises a model whose header line ends at `{`, so a one-line `model X { id: string; }`
- * would otherwise project to nothing. TypeSpec is whitespace-insensitive there, so this changes no meaning.
+ * would otherwise project to nothing. TypeSpec is whitespace-insensitive there, so this changes no meaning. The one change of text is a line
+ * break inside a string or a decorator's argument, which becomes NUL (see copyString): a stored literal that holds one is then never the text the
+ * generator writes.
  */
 export function expandBlocks(source: string): string {
   let out = "";
@@ -47,17 +53,25 @@ export function expandBlocks(source: string): string {
     out += source.slice(i, j);
     i = j;
   };
+  // A string's text is copied with each line break in it marked as NUL. TypeSpec reads no line break inside a string, so a stored string that
+  // holds one is not a literal the generator writes (it escapes every line break); the mark keeps such a literal from reading as the text the
+  // generator writes, and keeps its line from splitting the field or decorator it sits in.
+  const copyString = (end: number) => {
+    const j = Math.min(end, source.length);
+    out += source.slice(i, j).replace(/\n/g, "\u0000");
+    i = j;
+  };
   while (i < source.length) {
     const c = source[i];
     if (source.startsWith('"""', i)) {
       const end = source.indexOf('"""', i + 3);
-      copyUntil(end < 0 ? source.length : end + 3);
+      copyString(end < 0 ? source.length : end + 3);
       continue;
     }
     if (c === '"') {
       let j = i + 1;
       while (j < source.length && source[j] !== '"') j += source[j] === "\\" ? 2 : 1;
-      copyUntil(j + 1);
+      copyString(j + 1);
       continue;
     }
     if (source.startsWith("//", i)) {
@@ -74,7 +88,9 @@ export function expandBlocks(source: string): string {
     else if (c === ")") parens = Math.max(0, parens - 1);
     if (parens === 0 && (c === "{" || c === ";")) out += `${c}\n`;
     else if (parens === 0 && c === "}") out += "\n}";
-    else out += c;
+    // A line break inside a decorator's argument is marked too (see copyString): the generator writes each argument on one line, so a legacy
+    // raw text that spans lines is not its text.
+    else out += c === "\n" && parens > 0 ? "\u0000" : c;
     i++;
   }
   return out;
@@ -88,7 +104,12 @@ export function projectSourceFields(source: string, modelName: string): Projecte
     models.find((m) => m.name === sanitizeIdentifier(modelName)) ??
     models[0];
   if (!model) return [];
-  return model.fields.map((f) => ({ name: f.name, type: withElement(normalizeType(f.type), f.arrayElementType) }));
+  return model.fields.map((f) => ({
+    name: f.name,
+    type: withElement(normalizeType(f.type), f.arrayElementType),
+    ...(f.defaultValue !== undefined ? { defaultText: f.defaultValue } : {}),
+    ...(f.decorators.example !== undefined ? { exampleText: f.decorators.example } : {}),
+  }));
 }
 
 /** The field rows in the same space: normalized logical type, array element from `decorators.arrayElementType`. */
@@ -131,4 +152,28 @@ export function compareSourceProjection(
   }
 
   return { differs: reasons.length > 0, reasons };
+}
+
+/**
+ * The defaults and examples the stored source holds that the generator would not write for the same field, as reasons. A stored default or
+ * example is kept only as the generator writes it for the field's row value, whatever its kind: a plain literal of another type (`count: int32 =
+ * "5"`, `@example("42")` on an int32), a legacy raw text (`@example(Alice)`, `Dr.Smith`), a member of an enum the field does not take
+ * (`Ticket_status.ACTIVE` on a string field), and a constructor TypeSpec cannot read all differ from it, so each is flagged. A text the generator
+ * writes the same way is kept; the generator's output is what the compile tests prove.
+ */
+export function compareSourceLiterals(stored: ProjectedField[], regenerated: ProjectedField[]): string[] {
+  const regenByName = new Map(regenerated.map((f) => [f.name, f]));
+  // A line break marked by the projection (see expandBlocks) is shown as the `\n` it stands for.
+  const shown = (text: string | undefined): string => (text ?? "none").replace(/\u0000/g, "\\n");
+  const reasons: string[] = [];
+  for (const field of stored) {
+    const generated = regenByName.get(field.name);
+    if (field.defaultText !== undefined && field.defaultText !== generated?.defaultText) {
+      reasons.push(`field "${field.name}" default: source ${shown(field.defaultText)}, generated ${shown(generated?.defaultText)}`);
+    }
+    if (field.exampleText !== undefined && field.exampleText !== generated?.exampleText) {
+      reasons.push(`field "${field.name}" example: source ${shown(field.exampleText)}, generated ${shown(generated?.exampleText)}`);
+    }
+  }
+  return reasons;
 }
