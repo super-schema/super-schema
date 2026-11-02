@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { emptyEventDocument } from "@/lib/events/document/types";
 import { RUNS_PER_PRINCIPAL } from "@/lib/emission/emission-admission";
 import type { ArtifactRenderer, RenderedArtifact } from "@/services/events/artifact-renderer";
-import { countEventRenders, eventRenderShare, resolveEventSnapshot } from "@/services/events/event-snapshot";
+import { countEventRenders, eventRenderShare, RENDERS_IN_FLIGHT_PER_RESOLVE, resolveEventSnapshot } from "@/services/events/event-snapshot";
 import { err, ok } from "@/types/result";
 import { PAYMENTS_RENDERS, paymentsDocument, snapshotOf } from "../../../helpers/event-snapshot";
 
@@ -41,5 +41,30 @@ describe("the renders of an event resolve", () => {
     const render = vi.fn<ArtifactRenderer["render"]>(async () => err({ code: "EMITTER_BUSY", message: "The TypeSpec compiler is busy." }));
     const result = await resolveEventSnapshot(snapshotOf(paymentsDocument()), { render }, "draft");
     expect(result).toEqual({ resolved: null, diagnostics: [], busy: true });
+  });
+});
+
+describe("the renders of one resolve in flight", () => {
+  it("never exceed RENDERS_IN_FLIGHT_PER_RESOLVE at once, and all of them still run", async () => {
+    const snapshot = snapshotOf(paymentsDocument());
+    let inFlight = 0;
+    let most = 0;
+    const render = vi.fn<ArtifactRenderer["render"]>(async () => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return ok(avro);
+    });
+    await resolveEventSnapshot(snapshot, { render }, "draft");
+    expect(render).toHaveBeenCalledTimes(PAYMENTS_RENDERS);
+    expect(most).toBe(Math.min(RENDERS_IN_FLIGHT_PER_RESOLVE, PAYMENTS_RENDERS));
+  });
+
+  it("stop starting renders once one was refused as busy", async () => {
+    const render = vi.fn<ArtifactRenderer["render"]>(async () => err({ code: "EMITTER_BUSY", message: "The TypeSpec compiler is busy." }));
+    const result = await resolveEventSnapshot(snapshotOf(paymentsDocument()), { render }, "draft");
+    expect(result.busy).toBe(true);
+    expect(render.mock.calls.length).toBeLessThanOrEqual(RENDERS_IN_FLIGHT_PER_RESOLVE);
   });
 });

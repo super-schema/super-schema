@@ -13,6 +13,7 @@ import { isLibraryTrait, type DocExternalRef, type DocumentProblem, type EventDo
 import { referenceableItems } from "@/lib/events/external-refs";
 import { isJsonObject } from "@/lib/events/inputs";
 import { RUNS_PER_PRINCIPAL } from "@/lib/emission/emission-admission";
+import { Semaphore, SemaphoreCancelledError } from "@/lib/concurrency/semaphore";
 import type { EntityPin, FrozenTrait } from "@/lib/events/types";
 import type { PlaceReader } from "@/lib/access/entity-reader";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
@@ -261,6 +262,13 @@ export function countEventRenders(snapshot: EventSnapshot): number {
  * share. A document that needs more renders than a share holds takes all of it, so no other call of the same caller runs meanwhile; its renders then
  * wait in the renderer's bounded queue. (A per-call unit, as before, let one caller queue many documents' renders at once.)
  */
+/**
+ * The renders one resolve has in flight at once. The rest wait their turn HERE, not in the shared render queue: that queue refuses a render that waits
+ * longer than TSP_MAX_WAIT_MS, and a large document starting all of its renders at once would make its own tail wait past that and answer busy on
+ * every retry (draft renders are not cached).
+ */
+export const RENDERS_IN_FLIGHT_PER_RESOLVE = 2;
+
 export function eventRenderShare(snapshot: EventSnapshot): number {
   return Math.min(RUNS_PER_PRINCIPAL, Math.max(1, countEventRenders(snapshot)));
 }
@@ -292,8 +300,26 @@ export async function resolveEventSnapshot(
   // Set when a render was refused because the compiler (or the render queue) was busy: the document is not at fault, so no diagnostic is made;
   // the whole resolve is answered "try again" (`busy`) instead of a document with errors.
   let busy = false;
+  const inFlight = new Semaphore(RENDERS_IN_FLIGHT_PER_RESOLVE);
   const render = async (subject: ArtifactSubject, format: PayloadFormat, what: string, pointer: string): Promise<Rendered> => {
-    const r = await renderer.render(subject, format, canRead, run);
+    let r: Awaited<ReturnType<ArtifactRenderer["render"]>>;
+    try {
+      // Once one render was refused as busy the resolve is answered "try again" whatever the others give: the rest are not started.
+      r = await inFlight.run(async () => {
+        if (busy) return err({ code: "EMITTER_BUSY", message: "skipped: the resolve is already busy" });
+        const result = await renderer.render(subject, format, canRead, run);
+        // Marked before the slot is released, so the next render in line sees it.
+        if (!result.success && result.error.code === "EMITTER_BUSY") busy = true;
+        return result;
+      }, { signal: run?.signal });
+    } catch (e) {
+      // The caller went away while this render waited its turn: nothing is rendered, and the answer is not used.
+      if (e instanceof SemaphoreCancelledError) {
+        busy = true;
+        return { diagnostics: [] };
+      }
+      throw e;
+    }
     if (!r.success) {
       if (r.error.code === "EMITTER_BUSY") {
         busy = true;
