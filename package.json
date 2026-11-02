@@ -130,7 +130,7 @@
     "agentation": "^3.1.2",
     "axe-core": "^4.14.0",
     "dotenv": "^17.4.0",
-    "esbuild": "^0.27.7",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
     "jsdom": "^29.0.1",
