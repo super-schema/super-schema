@@ -1,8 +1,9 @@
 /**
- * GET /api/v1/webhooks/:id/deliveries — List delivery history for a webhook endpoint (platform administrators only).
+ * GET /api/v1/webhooks/:id/deliveries — List the delivery history of a webhook endpoint of the acting tenant (platform administrators only).
+ * Another tenant's endpoint is answered as a missing one.
  */
 
-import { withApiAuth } from "@/lib/access/api";
+import { platformActingTenant, withApiAuth } from "@/lib/access/api";
 import { apiSuccess, apiError, apiServerError } from "@/app/api/v1/error-handler";
 import { isUsableId, unusableIdNotFound } from "@/app/api/v1/request";
 import { getDeliveries } from "@/services/webhook.service";
@@ -11,7 +12,9 @@ export const GET = withApiAuth<{ id: string }>("platform.admin", async (_request
   try {
     const { id } = await params;
     if (!isUsableId(id)) return unusableIdNotFound("webhook", id);
-    const result = await getDeliveries(id, api.ctx);
+    const tenantId = await platformActingTenant(api);
+    if (tenantId === null) return apiError({ code: "NOT_FOUND", message: "Not found" });
+    const result = await getDeliveries(id, { ...api.ctx, tenantId });
     if (!result.success) return apiError(result.error);
     return apiSuccess(result.data);
   } catch (e) {

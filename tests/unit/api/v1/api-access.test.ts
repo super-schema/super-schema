@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assign, sessionOf, userRow } from "../../../helpers/access-mocks";
 import type { Assignment } from "@/lib/access";
+import { NoTenantAccess } from "@/lib/active-tenant";
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -16,7 +17,7 @@ const h = vi.hoisted(() => ({
     user: { findUnique: vi.fn() },
     entity: { findMany: vi.fn(), findUnique: vi.fn() },
     field: { findMany: vi.fn() },
-    webhookEndpoint: { findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
+    webhookEndpoint: { findMany: vi.fn(), findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
     webhookDelivery: { findMany: vi.fn() },
   },
 }));
@@ -24,6 +25,11 @@ vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/active-tenant", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/active-tenant")>()), getActiveTenantId: h.activeTenant }));
 vi.mock("@/app/api/v1/rate-limit", () => ({ checkRateLimit: () => null }));
+// The destination check resolves names: the stand-in addresses here (example.invalid) are not looked up.
+vi.mock("@/lib/webhook-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/webhook-transport")>()),
+  refuseEndpointUrl: async () => null,
+}));
 
 import { GET as listSchemas } from "@/app/api/v1/schemas/route";
 import { GET as getSchema } from "@/app/api/v1/schemas/[id]/route";
@@ -50,7 +56,7 @@ function signIn(assignments: Assignment[]) {
 }
 
 const ENTITY = { id: "e1", tenantId: "t1", domainId: "d1", productId: "p1", name: "Customer", description: "", status: "DRAFT", version: 1, domain: { id: "d1" }, fields: [], product: { domainId: "d1" }, createdAt: new Date(), updatedAt: new Date() };
-const ENDPOINT = { id: "w1", url: "https://example.invalid/h", events: ["emission.completed"], secret: "f".repeat(64), active: true, createdBy: "u9", createdAt: new Date(), updatedAt: new Date() };
+const ENDPOINT = { id: "w1", url: "https://example.invalid/h", events: ["emission.completed"], secret: "f".repeat(64), active: true, createdBy: "u9", tenantId: "t1", createdAt: new Date(), updatedAt: new Date() };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -64,6 +70,7 @@ beforeEach(() => {
   h.prisma.entity.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => (where.id === ENTITY.id ? ENTITY : null));
   h.prisma.webhookEndpoint.findMany.mockResolvedValue([ENDPOINT]);
   h.prisma.webhookEndpoint.findUnique.mockResolvedValue(ENDPOINT);
+  h.prisma.webhookEndpoint.findFirst.mockResolvedValue(ENDPOINT);
   h.prisma.webhookEndpoint.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ ...ENDPOINT, ...data, id: "w2" }));
   h.prisma.webhookEndpoint.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ ...ENDPOINT, ...data }));
   h.prisma.webhookEndpoint.delete.mockResolvedValue(ENDPOINT);
@@ -179,6 +186,8 @@ describe("a session carries its REAL roles (it used to be a viewer, always)", ()
     const created = await createWebhook(req("/webhooks", json({ url: "https://example.invalid/h", events: ["emission.completed"] })), noParams);
     expect(created.status).toBe(201);
     expect(h.prisma.webhookEndpoint.create.mock.calls[0][0].data.createdBy).toBe("user-1");
+    // The endpoint is recorded in the session's active tenant.
+    expect(h.prisma.webhookEndpoint.create.mock.calls[0][0].data.tenantId).toBe("t1");
     expect((await updateWebhook(req("/webhooks/w1", json({ active: false }, "PUT")), withId("w1"))).status).toBe(200);
     expect((await deleteWebhook(req("/webhooks/w1", { method: "DELETE" }), withId("w1"))).status).toBe(200);
     expect((await webhookDeliveries(req("/webhooks/w1/deliveries"), withId("w1"))).status).toBe(200);
@@ -260,10 +269,24 @@ describe("the API key is a service principal bound to a tenant and a role", () =
     expect((await getSchema(req("/schemas/e1", asKey), withId("e1"))).status).toBe(200);
   });
 
+  it("an administrator whose session reaches no tenant is told 404 on the webhook routes, and no endpoint is read or made", async () => {
+    signIn([assign.global()]);
+    h.activeTenant.mockRejectedValue(new NoTenantAccess());
+
+    const list = await listWebhooks(req("/webhooks"), noParams);
+    const created = await createWebhook(req("/webhooks", json({ url: "https://example.invalid/h", events: ["emission.completed"] })), noParams);
+
+    expect(list.status).toBe(404);
+    expect(created.status).toBe(404);
+    noWebhookTouched();
+  });
+
   it("an administrator key may use the webhooks, and an endpoint it creates has no creator row (KD-024): the secret is in the answer once", async () => {
     const created = await createWebhook(req("/webhooks", { ...json({ url: "https://example.invalid/h", events: ["emission.completed"] }), headers: { ...asKey.headers, "content-type": "application/json" } }), noParams);
     expect(created.status).toBe(201);
     expect(h.prisma.webhookEndpoint.create.mock.calls[0][0].data.createdBy).toBeNull();
+    // The key's endpoint is recorded in the key's own tenant (API_KEY_TENANT_ID, default tenant_default).
+    expect(h.prisma.webhookEndpoint.create.mock.calls[0][0].data.tenantId).toBe("tenant_default");
     expect((await bodyOf(created)).data.secret).toMatch(/^[0-9a-f]{64}$/);
   });
 

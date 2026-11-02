@@ -112,6 +112,7 @@ model Tenant {
   services       ServiceDefinition[]
   traits         Trait[]
   eventSpecs     EventSpec[]
+  webhookEndpoints WebhookEndpoint[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -784,12 +785,17 @@ model WebhookEndpoint {
   active    Boolean           @default(true)
   // The user who created it. Null for an endpoint the REST API key made: the key is a service principal and no row of `users` (KD-024).
   createdBy String?
+  // The tenant the endpoint belongs to: it is sent the events of that tenant only. Null only for an endpoint that could not be attributed when the
+  // column was added (migration 20261101120000_webhook_endpoint_tenant): such an endpoint is inactive and receives nothing.
+  tenantId  String?
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
   deliveries WebhookDelivery[]
 
   creator User? @relation("WebhookCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  tenant  Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@index([tenantId])
   @@map("webhook_endpoints")
 }
 

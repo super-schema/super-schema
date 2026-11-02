@@ -940,12 +940,13 @@ export async function createWebhookRow(input: { url?: string; events?: string[];
   const row: WebhookRow = {
     id: newId(),
     url: input.url ?? `https://e2e-hook-${suffix()}.example.invalid/hook`,
-    events: input.events ?? ["emission.completed"],
+    // An event no producer sends: an emission that another spec runs in parallel must not add a delivery row to an endpoint a spec counts.
+    events: input.events ?? ["drift.detected"],
     secret: randomBytes(32).toString("hex"),
   };
   await pg().query(
-    `INSERT INTO webhook_endpoints (id, url, events, secret, active, "createdBy", "updatedAt") VALUES ($1, $2, $3::text[], $4, $5, $6, now())`,
-    [row.id, row.url, row.events, row.secret, input.active ?? true, await seededOwnerId()],
+    `INSERT INTO webhook_endpoints (id, url, events, secret, active, "createdBy", "tenantId", "updatedAt") VALUES ($1, $2, $3::text[], $4, $5, $6, $7, now())`,
+    [row.id, row.url, row.events, row.secret, input.active ?? true, await seededOwnerId(), await activeTenantId()],
   );
   return row;
 }

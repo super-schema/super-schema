@@ -45,6 +45,8 @@ export type WebhookEndpoint = {
   active: boolean;
   /** The user who created it; null for an endpoint made by the REST API key (a service principal, which is no user row). */
   createdBy: string | null;
+  /** The tenant the endpoint belongs to: it is sent that tenant's events only. Null: an endpoint that could not be attributed (inactive). */
+  tenantId: string | null;
   createdAt: Date;
   updatedAt: Date;
 };

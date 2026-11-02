@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { assign, resetSessionPrincipal, setSessionPrincipal } from "../../helpers/access-mocks";
+import { assign, resetSessionPrincipal, setSessionPrincipal, userRow } from "../../helpers/access-mocks";
 
 // Task 7: generateSchemaAction for a closure target (JSON Schema, OpenAPI, Protobuf, Avro, Java) loads the entity's reference
 // closure (draft or published mode), emits it as one file per entity, stores `files` + `resolution` on the schema version and, after
@@ -37,9 +37,24 @@ const h = vi.hoisted(() => ({
     auditLog: { create: vi.fn() },
     $executeRawUnsafe: vi.fn(),
     $transaction: vi.fn(),
+    // `withAudit` asks whether the acting user exists when the client has a `user` delegate: every id answers as an existing user here.
+    user: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({ id: where.id })) },
+    notification: { create: vi.fn() },
+    webhookEndpoint: { findMany: vi.fn() },
+    webhookDelivery: { create: vi.fn(), findMany: vi.fn(), update: vi.fn() },
   },
+  // The emission notification (scheduled after the answer) reads and writes these; only the test of that notification uses them.
+  scheduled: [] as Array<() => Promise<unknown>>,
+  notifications: [] as Array<Record<string, unknown>>,
+  deliveries: [] as Array<Record<string, unknown>>,
+  endpoints: [] as Array<Record<string, unknown>>,
 }));
 
+const webhookReceiver = vi.hoisted(() => ({ postWebhook: vi.fn() }));
+vi.mock("@/lib/webhook-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/webhook-transport")>()),
+  postWebhook: webhookReceiver.postWebhook,
+}));
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
@@ -48,6 +63,13 @@ vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }
 vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: h.getEffectiveRole }));
 vi.mock("@/lib/compiler/typespec-compiler", () => ({ compileTypeSpecWithGovernance: vi.fn() }));
 vi.mock("@/services/type-mapping.service", () => ({ getOverridesForEntity: vi.fn().mockResolvedValue({ success: true, data: [] }) }));
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  // Inside a request `after` keeps the task for once the answer is sent; the test of the emission notification runs it then.
+  after: (task: () => Promise<unknown>) => {
+    h.scheduled.push(task);
+  },
+}));
 vi.mock("@/lib/typespec-official/closure-emit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/typespec-official/closure-emit")>()),
   emitClosure: h.emitClosure,
@@ -418,6 +440,86 @@ describe("generateSchemaAction: result and storage", () => {
     expect(stored.output).toBe("DDL");
     expect(stored).not.toHaveProperty("files");
     expect(stored).not.toHaveProperty("resolution");
+  });
+});
+
+describe("generateSchemaAction: the emission notification", () => {
+  beforeEach(() => {
+    h.scheduled.splice(0);
+    h.notifications.splice(0);
+    h.deliveries.splice(0);
+    h.endpoints.splice(0);
+    h.store.entities = [entity("a", "Order")];
+    // The fixture's entities have no owner column in the rows the emission reads: the owner (`owner-1`, a tenant author) is added to the row the
+    // notification reads, and holds the tenant's role the entity is covered by.
+    const read = p.entity.findUnique.getMockImplementation();
+    p.entity.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
+      const row = await read?.(args);
+      return row ? { ...row, ownerId: "owner-1" } : row;
+    });
+    p.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      where.id === "owner-1" ? userRow([assign.tenant("AUTHOR", "tenant-1")], { id: "owner-1", email: "owner@example.test" }) : { id: where.id }
+    );
+    p.notification.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      const row = { id: `n-${h.notifications.length + 1}`, read: false, createdAt: new Date(), ...data };
+      h.notifications.push(row);
+      return row;
+    });
+    p.webhookEndpoint.findMany.mockImplementation(async ({ where }: { where: { events: { hasSome: string[] } } }) =>
+      h.endpoints.filter((endpoint) => (endpoint.events as string[]).some((event) => where.events.hasSome.includes(event)))
+    );
+    p.webhookDelivery.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+      const row = { id: `d-${h.deliveries.length + 1}`, nextRetryAt: null, deliveredAt: new Date(), attempt: 1, error: null, ...data };
+      h.deliveries.push(row);
+      return row;
+    });
+    p.webhookDelivery.findMany.mockResolvedValue([]);
+    p.webhookDelivery.update.mockResolvedValue(null);
+    webhookReceiver.postWebhook.mockResolvedValue(new Response(null, { status: 200 }));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const runScheduled = async () => {
+    for (const task of h.scheduled.splice(0)) await task();
+  };
+
+  it("a stored generation is answered first; the owner is told after the answer, and the endpoints of emission.completed are told", async () => {
+    h.endpoints.push({ id: "w1", url: "https://hooks.example.test/w1", events: ["emission.completed"], secret: "s".repeat(64), active: true, createdBy: null });
+
+    const result = await actions.generateSchemaAction("a", "json-schema");
+
+    expect(result).toMatchObject({ success: true });
+    expect(h.notifications).toHaveLength(0);
+    expect(h.scheduled).toHaveLength(1);
+
+    await runScheduled();
+
+    expect(h.notifications).toEqual([expect.objectContaining({ userId: "owner-1", type: "CHANGE_COMPLETE", title: "Order v1 emitted to 1 target" })]);
+    expect(h.deliveries).toHaveLength(1);
+    expect(h.deliveries[0]).toMatchObject({ endpointId: "w1", event: "emission.completed" });
+    expect(h.deliveries[0].payload).toMatchObject({ data: { tenantId: "tenant-1", entityId: "a", targetCount: 1 } });
+  });
+
+  it("a generation whose emission was invalid is not an emission: nothing is scheduled", async () => {
+    h.emitClosure.mockResolvedValue({ success: false, error: { code: "EMISSION_INVALID", message: "x", details: { errors: ["Order: bad name"], warnings: [] } } });
+
+    expect(await actions.generateSchemaAction("a", "json-schema")).toEqual({ error: "Order: bad name" });
+    expect(h.scheduled).toHaveLength(0);
+    expect(h.notifications).toHaveLength(0);
+  });
+
+  it("a failing notification never changes the generation: the answer stands, the failure is logged", async () => {
+    p.webhookEndpoint.findMany.mockRejectedValue(new Error("DB connection failed"));
+
+    const result = await actions.generateSchemaAction("a", "json-schema");
+
+    expect(result).toMatchObject({ success: true });
+    await expect(runScheduled()).resolves.toBeUndefined();
+    expect(console.error).toHaveBeenCalled();
   });
 });
 

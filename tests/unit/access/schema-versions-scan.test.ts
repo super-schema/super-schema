@@ -29,7 +29,7 @@ const REDACTED = new Set<string>([`${A}#getSchemaVersionsAction`]);
 /** Places that may see the stored value whole, and why. */
 const STORED = new Map<string, string>([
   [`${A}#METADATA_KEY_ACTIONS`, "names the key to ask `entity.publish` + `deploy.run` for when a client writes it through updateEntityMetadataAction (a guard table, no data)"],
-  [`${A}#generateSchemaAction`, "WRITER: adds a version to the stored list and writes the whole list back; the caller's own generation is what it returns (KD-045 closed it)"],
+  [`${A}#generateSchema`, "WRITER: adds a version to the stored list and writes the whole list back; the caller's own generation is what it returns (KD-045 closed it). The exported generateSchemaAction is its wrapper and names no key"],
   [`${A}#publishSchemaAction`, "WRITER: flips a version's status in the stored list; returns a status and a message, never a file or an output"],
   [`${A}#deploySchemaAction`, "WRITER: flips a version's status in the stored list; returns a status, never a file or an output"],
   [`${A}#buildEmissionTargets`, "reads which targets have a version and the latest version NUMBER for the Deployments tab; nothing of a file or an output"],

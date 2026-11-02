@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+vi.mock("@/lib/webhook-transport", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/webhook-transport")>()),
+  postWebhook: vi.fn(),
+  refuseEndpointUrl: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // In-memory stores for the Prisma mock
 // ---------------------------------------------------------------------------
@@ -10,6 +16,7 @@ let endpoints: Array<{
   secret: string;
   active: boolean;
   createdBy: string;
+  tenantId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }> = [];
@@ -38,6 +45,7 @@ vi.mock("@/lib/db", () => ({
           secret: args.data.secret as string,
           active: args.data.active as boolean,
           createdBy: args.data.createdBy as string,
+          tenantId: (args.data.tenantId as string | null | undefined) ?? null,
           createdAt: new Date(),
           updatedAt: new Date(),
         };
@@ -50,6 +58,9 @@ vi.mock("@/lib/db", () => ({
           if (args.where.active !== undefined) {
             result = result.filter((e) => e.active === args.where!.active);
           }
+          if (args.where.tenantId !== undefined) {
+            result = result.filter((e) => e.tenantId === args.where!.tenantId);
+          }
           if (args.where.events && typeof args.where.events === "object" && "hasSome" in (args.where.events as Record<string, unknown>)) {
             const events = ((args.where.events as { hasSome: string[] }).hasSome);
             result = result.filter((e) => e.events.some((ev) => events.includes(ev)));
@@ -59,6 +70,10 @@ vi.mock("@/lib/db", () => ({
       }),
       findUnique: vi.fn(async (args: { where: { id: string } }) => {
         return endpoints.find((e) => e.id === args.where.id) ?? null;
+      }),
+      // Scoped by the tenant the caller acts in (an undefined filter means no filter, as in Prisma).
+      findFirst: vi.fn(async (args: { where: { id: string; tenantId?: string } }) => {
+        return endpoints.find((e) => e.id === args.where.id && (args.where.tenantId === undefined || e.tenantId === args.where.tenantId)) ?? null;
       }),
       update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
         const ep = endpoints.find((e) => e.id === args.where.id);
@@ -122,6 +137,15 @@ vi.mock("@/lib/db", () => ({
         }
         return d;
       }),
+      updateMany: vi.fn(async (args: { where: { id?: string; nextRetryAt?: { lte: Date } }; data: Record<string, unknown> }) => {
+        const due = deliveries.filter(
+          (d) =>
+            (args.where.id === undefined || d.id === args.where.id) &&
+            (args.where.nextRetryAt === undefined || (d.nextRetryAt !== null && d.nextRetryAt <= args.where.nextRetryAt.lte))
+        );
+        for (const d of due) Object.assign(d, args.data);
+        return { count: due.length };
+      }),
       deleteMany: vi.fn(async () => {
         deliveries = [];
         dlCounter = 0;
@@ -130,6 +154,8 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+import { postWebhook, refuseEndpointUrl, WebhookTargetError } from "@/lib/webhook-transport";
+
 import {
   createEndpoint,
   updateEndpoint,
@@ -137,6 +163,7 @@ import {
   getEndpoints,
   getDeliveries,
   dispatchEvent,
+  processRetryQueue,
   computeHmacSignature,
   _resetStore,
   _getEndpoints,
@@ -149,6 +176,7 @@ import { assign } from "../../helpers/access-mocks";
 const adminCtx: ServiceContext = {
   userId: "admin-1",
   userRole: "ADMIN", assignments: [assign.global()],
+  tenantId: "tenant-1",
   prisma: {} as ServiceContext["prisma"],
 };
 
@@ -176,6 +204,8 @@ describe("Webhook Service", () => {
     vi.restoreAllMocks();
     // The signing secret is stored sealed: a key is needed (SECRETS_ENCRYPTION_KEY, or the session secret).
     vi.stubEnv("SECRETS_ENCRYPTION_KEY", TEST_SECRETS_KEY);
+    vi.mocked(postWebhook).mockReset();
+    vi.mocked(refuseEndpointUrl).mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -331,7 +361,7 @@ describe("Webhook Service", () => {
       if (result.success) {
         for (const endpoint of result.data) {
           expect(endpoint).not.toHaveProperty("secret");
-          expect(Object.keys(endpoint).sort()).toEqual(["active", "createdAt", "createdBy", "events", "id", "updatedAt", "url"]);
+          expect(Object.keys(endpoint).sort()).toEqual(["active", "createdAt", "createdBy", "events", "id", "tenantId", "updatedAt", "url"]);
         }
         expect(JSON.stringify(result.data)).not.toContain(secret);
       }
@@ -382,15 +412,15 @@ describe("Webhook Service", () => {
         adminCtx
       );
 
-      // Mock fetch
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      // The HTTP leg is the transport (the destination policy is tested apart): mocked here.
+      const fetchSpy = vi.mocked(postWebhook).mockResolvedValue(
         new Response("OK", { status: 200 })
       );
 
       await dispatchEvent({
         event: "governance.request.created",
         timestamp: "2025-01-01T00:00:00Z",
-        data: { entityId: "e1" },
+        data: { tenantId: "tenant-1", entityId: "e1" },
       });
 
       expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -425,14 +455,14 @@ describe("Webhook Service", () => {
         );
       }
 
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      const fetchSpy = vi.mocked(postWebhook).mockResolvedValue(
         new Response("OK", { status: 200 })
       );
 
       await dispatchEvent({
         event: "governance.request.created",
         timestamp: "2025-01-01T00:00:00Z",
-        data: {},
+        data: { tenantId: "tenant-1" },
       });
 
       expect(fetchSpy).not.toHaveBeenCalled();
@@ -445,14 +475,14 @@ describe("Webhook Service", () => {
         adminCtx
       );
 
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      const fetchSpy = vi.mocked(postWebhook).mockResolvedValue(
         new Response("OK", { status: 200 })
       );
 
       await dispatchEvent({
         event: "governance.request.created",
         timestamp: "2025-01-01T00:00:00Z",
-        data: {},
+        data: { tenantId: "tenant-1" },
       });
 
       expect(fetchSpy).not.toHaveBeenCalled();
@@ -465,14 +495,14 @@ describe("Webhook Service", () => {
         adminCtx
       );
 
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      const fetchSpy = vi.mocked(postWebhook).mockResolvedValue(
         new Response("OK", { status: 200 })
       );
 
       const payload = {
         event: "governance.request.created",
         timestamp: "2025-01-01T00:00:00Z",
-        data: { entityId: "e1", entityName: "Test" },
+        data: { tenantId: "tenant-1", entityId: "e1", entityName: "Test" },
       };
 
       await dispatchEvent(payload);
@@ -481,7 +511,7 @@ describe("Webhook Service", () => {
       const parsed = JSON.parse(body);
       expect(parsed.event).toBe("governance.request.created");
       expect(parsed.timestamp).toBe("2025-01-01T00:00:00Z");
-      expect(parsed.data).toEqual({ entityId: "e1", entityName: "Test" });
+      expect(parsed.data).toEqual({ tenantId: "tenant-1", entityId: "e1", entityName: "Test" });
 
       fetchSpy.mockRestore();
     });
@@ -492,14 +522,14 @@ describe("Webhook Service", () => {
         adminCtx
       );
 
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      const fetchSpy = vi.mocked(postWebhook).mockResolvedValue(
         new Response("OK", { status: 200 })
       );
 
       const payload = {
         event: "governance.request.created",
         timestamp: "2025-01-01T00:00:00Z",
-        data: { test: true },
+        data: { tenantId: "tenant-1", test: true },
       };
 
       await dispatchEvent(payload);
@@ -525,7 +555,7 @@ describe("Webhook Service", () => {
         adminCtx
       );
 
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      vi.mocked(postWebhook).mockResolvedValue(
         new Response("Internal Server Error", {
           status: 500,
           statusText: "Internal Server Error",
@@ -535,7 +565,7 @@ describe("Webhook Service", () => {
       await dispatchEvent({
         event: "governance.request.created",
         timestamp: "2025-01-01T00:00:00Z",
-        data: {},
+        data: { tenantId: "tenant-1" },
       });
 
       const allDeliveries = await _getDeliveries();
@@ -554,14 +584,14 @@ describe("Webhook Service", () => {
         adminCtx
       );
 
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      vi.mocked(postWebhook).mockResolvedValue(
         new Response("Error", { status: 500, statusText: "Error" })
       );
 
       await dispatchEvent({
         event: "governance.request.created",
         timestamp: "2025-01-01T00:00:00Z",
-        data: {},
+        data: { tenantId: "tenant-1" },
       });
 
       const allDeliveries = await _getDeliveries();
@@ -588,7 +618,7 @@ describe("Webhook Service", () => {
         adminCtx
       );
 
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      vi.mocked(postWebhook).mockResolvedValue(
         new Response("Error", { status: 500, statusText: "Error" })
       );
 
@@ -596,7 +626,7 @@ describe("Webhook Service", () => {
       await dispatchEvent({
         event: "governance.request.created",
         timestamp: "2025-01-01T00:00:00Z",
-        data: {},
+        data: { tenantId: "tenant-1" },
       });
 
       const allDeliveries = await _getDeliveries();
@@ -613,7 +643,7 @@ describe("Webhook Service", () => {
         adminCtx
       );
 
-      vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      vi.mocked(postWebhook).mockRejectedValue(
         new Error("Network failure")
       );
 
@@ -622,7 +652,7 @@ describe("Webhook Service", () => {
         dispatchEvent({
           event: "governance.request.created",
           timestamp: "2025-01-01T00:00:00Z",
-          data: {},
+          data: { tenantId: "tenant-1" },
         })
       ).resolves.not.toThrow();
 
@@ -635,14 +665,14 @@ describe("Webhook Service", () => {
         adminCtx
       );
 
-      vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      vi.mocked(postWebhook).mockRejectedValue(
         new DOMException("The operation was aborted", "AbortError")
       );
 
       await dispatchEvent({
         event: "governance.request.created",
         timestamp: "2025-01-01T00:00:00Z",
-        data: {},
+        data: { tenantId: "tenant-1" },
       });
 
       const allDeliveries = await _getDeliveries();
@@ -651,6 +681,60 @@ describe("Webhook Service", () => {
       expect(failed!.error).toContain("aborted");
 
       vi.restoreAllMocks();
+    });
+
+    it("a refused destination (KD-027: not https, or not a public address) is recorded once and never retried", async () => {
+      await createEndpoint(
+        makeEndpointInput({ events: ["governance.request.created"] }),
+        adminCtx
+      );
+
+      vi.mocked(postWebhook).mockRejectedValue(
+        new WebhookTargetError("only https endpoints are called")
+      );
+
+      await dispatchEvent({
+        event: "governance.request.created",
+        timestamp: "2025-01-01T00:00:00Z",
+        data: { tenantId: "tenant-1" },
+      });
+
+      const allDeliveries = await _getDeliveries();
+      expect(allDeliveries).toHaveLength(1);
+      expect(allDeliveries[0]).toMatchObject({ statusCode: null, error: "only https endpoints are called", attempt: 1, nextRetryAt: null });
+
+      vi.restoreAllMocks();
+    });
+  });
+
+  describe("processRetryQueue", () => {
+    beforeEach(() => {
+      // Only the clock is faked: the retry falls due by moving it forward, nothing else waits.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2025-01-01T00:00:00Z"));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("a due retry is sent once, even when two sweeps read the same row (concurrent dispatches)", async () => {
+      await createEndpoint(makeEndpointInput({ events: ["governance.request.created"] }), adminCtx);
+      vi.mocked(postWebhook).mockResolvedValueOnce(new Response("Error", { status: 500, statusText: "Error" }));
+      await dispatchEvent({ event: "governance.request.created", timestamp: "2025-01-01T00:00:00Z", data: { tenantId: "tenant-1" } });
+      expect(postWebhook).toHaveBeenCalledTimes(1);
+
+      // The first attempt's retry is due 10 seconds on; both sweeps run after that.
+      vi.setSystemTime(new Date("2025-01-01T00:00:11Z"));
+      vi.mocked(postWebhook).mockClear();
+      vi.mocked(postWebhook).mockResolvedValue(new Response("OK", { status: 200 }));
+
+      await Promise.all([processRetryQueue(), processRetryQueue()]);
+
+      expect(postWebhook).toHaveBeenCalledTimes(1);
+      const retried = (await _getDeliveries()).filter((d) => d.attempt === 2);
+      expect(retried).toHaveLength(1);
+      expect(retried[0]).toMatchObject({ statusCode: 200, error: null });
     });
   });
 
@@ -662,14 +746,14 @@ describe("Webhook Service", () => {
       );
       if (!createResult.success) return;
 
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      vi.mocked(postWebhook).mockResolvedValue(
         new Response("OK", { status: 200 })
       );
 
       await dispatchEvent({
         event: "governance.request.created",
         timestamp: "2025-01-01T00:00:00Z",
-        data: {},
+        data: { tenantId: "tenant-1" },
       });
 
       const result = await getDeliveries(createResult.data.id, adminCtx);
@@ -704,11 +788,103 @@ describe("Webhook Service", () => {
     });
   });
 
+  describe("tenant scoping and the destination check (KD-027)", () => {
+    const otherTenantCtx: ServiceContext = { ...adminCtx, tenantId: "tenant-2" };
+    const noTenantCtx: ServiceContext = {
+      userId: "admin-1",
+      userRole: "ADMIN",
+      assignments: [assign.global()],
+      prisma: {} as ServiceContext["prisma"],
+    };
+    const EVENT = { event: "emission.completed" as const, timestamp: "2025-01-01T00:00:00Z" };
+
+    it("an endpoint is recorded in the tenant the request acts in, whatever tenant the input names", async () => {
+      const result = await createEndpoint({ ...makeEndpointInput(), tenantId: "tenant-2" } as never, adminCtx);
+
+      expect(result.success).toBe(true);
+      expect(await _getEndpoints()).toEqual([expect.objectContaining({ tenantId: "tenant-1" })]);
+    });
+
+    it("a request that names no tenant creates nothing and reads, changes and lists nothing", async () => {
+      const made = await createEndpoint(makeEndpointInput(), adminCtx);
+      if (!made.success) throw new Error("setup: the endpoint was not made");
+      const id = made.data.id;
+
+      expect((await createEndpoint(makeEndpointInput({ url: "https://other.example.com/h" }), noTenantCtx)).success).toBe(false);
+      expect((await getEndpoints(noTenantCtx)).success).toBe(false);
+      expect((await updateEndpoint(id, { active: false }, noTenantCtx)).success).toBe(false);
+      expect((await deleteEndpoint(id, noTenantCtx)).success).toBe(false);
+      expect((await getDeliveries(id, noTenantCtx)).success).toBe(false);
+      expect(await _getEndpoints()).toEqual([expect.objectContaining({ id, active: true, tenantId: "tenant-1" })]);
+    });
+
+    it("the list shows only the endpoints of the tenant the request acts in", async () => {
+      await createEndpoint(makeEndpointInput({ url: "https://one.example.com/h" }), adminCtx);
+      await createEndpoint(makeEndpointInput({ url: "https://two.example.com/h" }), otherTenantCtx);
+
+      const list = await getEndpoints(adminCtx);
+
+      expect(list).toMatchObject({ success: true, data: [expect.objectContaining({ url: "https://one.example.com/h", tenantId: "tenant-1" })] });
+    });
+
+    it("another tenant's endpoint is answered as a missing one: it is not changed, deleted or shown", async () => {
+      const made = await createEndpoint(makeEndpointInput(), otherTenantCtx);
+      if (!made.success) throw new Error("setup: the endpoint was not made");
+      const id = made.data.id;
+
+      expect(await updateEndpoint(id, { active: false }, adminCtx)).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+      expect(await deleteEndpoint(id, adminCtx)).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+      expect(await getDeliveries(id, adminCtx)).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+      expect(await _getEndpoints()).toEqual([expect.objectContaining({ id, active: true, tenantId: "tenant-2" })]);
+    });
+
+    it("an event reaches only the active endpoints of the tenant it belongs to", async () => {
+      await createEndpoint(makeEndpointInput({ url: "https://mine.example.com/h", events: ["emission.completed"] }), adminCtx);
+      await createEndpoint(makeEndpointInput({ url: "https://theirs.example.com/h", events: ["emission.completed"] }), otherTenantCtx);
+      vi.mocked(postWebhook).mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
+
+      await dispatchEvent({ ...EVENT, data: { tenantId: "tenant-1", entityId: "e1" } });
+
+      expect(vi.mocked(postWebhook).mock.calls.map(([url]) => url)).toEqual(["https://mine.example.com/h"]);
+    });
+
+    it("an event that names no tenant reaches no endpoint, and the gap is logged", async () => {
+      await createEndpoint(makeEndpointInput(), adminCtx);
+      const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      await dispatchEvent({ ...EVENT, data: { entityId: "e1" } });
+
+      expect(vi.mocked(postWebhook)).not.toHaveBeenCalled();
+      expect(logged).toHaveBeenCalled();
+    });
+
+    it("the URL is checked when the endpoint is made, and a refused one is not stored", async () => {
+      vi.mocked(refuseEndpointUrl).mockResolvedValueOnce("Only https endpoints are accepted");
+
+      const result = await createEndpoint(makeEndpointInput({ url: "http://example.com/h" }), adminCtx);
+
+      expect(refuseEndpointUrl).toHaveBeenCalledWith("http://example.com/h");
+      expect(result).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR", message: "Only https endpoints are accepted" } });
+      expect(await _getEndpoints()).toHaveLength(0);
+    });
+
+    it("an update to a refused URL changes nothing", async () => {
+      const made = await createEndpoint(makeEndpointInput({ url: "https://example.com/h" }), adminCtx);
+      if (!made.success) throw new Error("setup: the endpoint was not made");
+      vi.mocked(refuseEndpointUrl).mockResolvedValueOnce("10.0.0.5 is not a public address");
+
+      const update = await updateEndpoint(made.data.id, { url: "https://10.0.0.5/h", active: false }, adminCtx);
+
+      expect(update).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR" } });
+      expect(await _getEndpoints()).toEqual([expect.objectContaining({ url: "https://example.com/h", active: true })]);
+    });
+  });
+
   describe("the signing secret at rest", () => {
     const payload = {
       event: "governance.request.created",
       timestamp: "2025-01-01T00:00:00Z",
-      data: {},
+      data: { tenantId: "tenant-1" },
     };
 
     it("the row keeps a sealed secret, and only the creation answer shows the plain one", async () => {
@@ -723,7 +899,7 @@ describe("Webhook Service", () => {
     it("a sealed secret signs deliveries with the value the creation answered", async () => {
       const created = await createEndpoint(makeEndpointInput(), adminCtx);
       if (!created.success) throw new Error("create failed");
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("OK", { status: 200 }));
+      const fetchSpy = vi.mocked(postWebhook).mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
 
       await dispatchEvent(payload);
 
@@ -741,10 +917,11 @@ describe("Webhook Service", () => {
         secret: "legacy-plain-secret",
         active: true,
         createdBy: "admin-1",
+        tenantId: "tenant-1",
         createdAt: new Date(),
         updatedAt: new Date(),
       });
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("OK", { status: 200 }));
+      const fetchSpy = vi.mocked(postWebhook).mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
 
       await dispatchEvent(payload);
 
@@ -758,7 +935,7 @@ describe("Webhook Service", () => {
       const created = await createEndpoint(makeEndpointInput(), adminCtx);
       if (!created.success) throw new Error("create failed");
       vi.stubEnv("SECRETS_ENCRYPTION_KEY", OTHER_SECRETS_KEY);
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("OK", { status: 200 }));
+      const fetchSpy = vi.mocked(postWebhook).mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
 
       await dispatchEvent(payload);
 
@@ -778,7 +955,7 @@ describe("Webhook Service", () => {
       vi.stubEnv("SECRETS_ENCRYPTION_KEY", OTHER_SECRETS_KEY);
       const second = await createEndpoint(makeEndpointInput({ url: "https://second.example.com/hook" }), adminCtx);
       if (!second.success) throw new Error("create failed");
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("OK", { status: 200 }));
+      const fetchSpy = vi.mocked(postWebhook).mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
 
       await dispatchEvent(payload);
 
@@ -796,6 +973,7 @@ describe("Webhook Service", () => {
         secret: "legacy-plain-secret",
         active: true,
         createdBy: "admin-1",
+        tenantId: "tenant-1",
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -815,6 +993,7 @@ describe("Webhook Service", () => {
         secret: "legacy-plain-secret",
         active: true,
         createdBy: "admin-1",
+        tenantId: "tenant-1",
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -836,6 +1015,7 @@ describe("Webhook Service", () => {
         secret: "legacy-plain-secret",
         active: true,
         createdBy: "admin-1",
+        tenantId: "tenant-1",
         createdAt: new Date(),
         updatedAt: new Date(),
       });

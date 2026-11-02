@@ -57,6 +57,9 @@ const TARGET_KEYS = SCHEMA_TARGETS_FOR_TESTS.map((t) => t.key).sort();
 const CLOSURE_TARGETS = ["avro", "java-pojo", "json-schema", "openapi3", "protobuf"];
 const DB_TARGETS = ["bigquery", "postgresql", "spanner"];
 const WEBHOOK_EVENT = "emission.completed";
+// An event no producer sends: an endpoint subscribed to it gets no delivery from an emission that another spec runs in parallel (the chromium
+// project runs the files in parallel), so the exact delivery counts below stay exact.
+const QUIET_EVENT = "drift.detected";
 
 interface EmittedFile { path: string; content: string; target: string; entityId: string }
 interface TargetResult { target: string; output: string; files?: EmittedFile[]; validationStatus: string; warnings: string[] }
@@ -69,7 +72,7 @@ interface ValidateData {
   ci: { pass: boolean; summary: string };
 }
 /** An endpoint as the API answers: the signing `secret` is in the answer of the creation only; `createdBy` is null for an endpoint the key made. */
-interface Webhook { id: string; url: string; events: string[]; secret?: string; active: boolean; createdBy: string | null; createdAt: string; updatedAt: string }
+interface Webhook { id: string; url: string; events: string[]; secret?: string; active: boolean; createdBy: string | null; tenantId: string | null; createdAt: string; updatedAt: string }
 interface Delivery { id: string; endpointId: string; event: string; payload: Record<string, unknown>; statusCode: number | null; error: string | null; attempt: number; nextRetryAt: string | null; deliveredAt: string }
 interface NotificationItem { id: string; userId: string; type: string; title: string; body: string; entityRef: Record<string, unknown>; read: boolean; createdAt: string }
 interface NotificationList { notifications: NotificationItem[]; unreadCount: number }
@@ -744,7 +747,7 @@ test.describe("webhooks", () => {
 
   test("the admin's own login (a platform administrator) uses every webhook endpoint: create, list, update, deliveries, delete (a session used to be a viewer, KD-025)", { tag: ["@regression"] }, async ({ api }) => {
     const url = `https://e2e-hook-${unique("session-")}.example.invalid/hook`;
-    const response = await api.session.post(`${API}/webhooks`, asJson({ url, events: [WEBHOOK_EVENT] }));
+    const response = await api.session.post(`${API}/webhooks`, asJson({ url, events: [QUIET_EVENT] }));
     const body = await expectApiSuccess<Webhook>(response, 201);
     created.push(body.data.id);
     expect(body.summary).toBe("Webhook endpoint created");
@@ -867,7 +870,7 @@ test.describe("webhooks", () => {
     const listed = body.data.find((w) => w.id === row.id) as Webhook;
     expect(listed).toBeDefined();
     // KD-027: the list never carries an endpoint's signing secret (it is in the answer of the creation, once).
-    expect(keysOf(listed)).toEqual(["active", "createdAt", "createdBy", "events", "id", "updatedAt", "url"]);
+    expect(keysOf(listed)).toEqual(["active", "createdAt", "createdBy", "events", "id", "tenantId", "updatedAt", "url"]);
     expect(listed).toMatchObject({ url: row.url, events: [WEBHOOK_EVENT, "drift.detected"], active: true });
     expect(JSON.stringify(body)).not.toContain(row.secret);
     expect(listed.createdBy).toBe((await webhookRow(row.id))?.createdBy);

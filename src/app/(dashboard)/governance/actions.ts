@@ -2,13 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { can } from "@/lib/access";
-import { authorizeSubject, guardActiveTenant } from "@/lib/action-context";
+import { authorizeSubject, contextOf, guardActiveTenant } from "@/lib/action-context";
+import { runAfterResponse } from "@/lib/after-response";
 import {
   getAllRequests,
   approveRequest,
   rejectRequest,
   type GovernanceContext,
 } from "@/services/governance.service";
+import { notifyGovernanceRequestDecided } from "@/services/notification.triggers";
 
 /**
  * Approving or rejecting a request can change an entity's status. `/schemas`
@@ -47,7 +49,8 @@ export async function getGovernanceRequestsAction() {
 async function decide(
   requestId: string,
   comment: string | null,
-  run: typeof approveRequest | typeof rejectRequest
+  run: typeof approveRequest | typeof rejectRequest,
+  decision: "approved" | "rejected"
 ) {
   const missing = { code: "NOT_FOUND" as const, message: `Governance request "${typeof requestId === "string" ? requestId : ""}" not found` };
   const access = await authorizeSubject("governance.decide", { kind: "governanceRequest", id: requestId }, missing);
@@ -57,13 +60,15 @@ async function decide(
   const result = await run(requestId, comment, ctx);
   if (!result.success) return { error: result.error.message };
   revalidateAfterDecision();
+  // The decision is committed: the requestor hears of it and the endpoints of the governance events are told, after the answer is sent.
+  runAfterResponse("Governance decision notification", () => notifyGovernanceRequestDecided(requestId, decision, principal.userId, contextOf(principal)));
   return { success: true, data: result.data };
 }
 
 export async function approveGovernanceRequestAction(requestId: string, comment: string | null) {
-  return decide(requestId, comment, approveRequest);
+  return decide(requestId, comment, approveRequest, "approved");
 }
 
 export async function rejectGovernanceRequestAction(requestId: string, comment: string | null) {
-  return decide(requestId, comment, rejectRequest);
+  return decide(requestId, comment, rejectRequest, "rejected");
 }

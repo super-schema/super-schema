@@ -251,7 +251,7 @@ const openApiSpec = {
       },
       post: {
         summary: "Create a webhook endpoint",
-        description: "Platform administrators only. The body is `{ url, events, active? }`; the signing secret is made up by the server and is in the answer of this call only. An endpoint made by the API key has no creator (`createdBy` is null).",
+        description: "Platform administrators only. The body is `{ url, events, active? }`; the signing secret is made up by the server and is in the answer of this call only. An endpoint made by the API key has no creator (`createdBy` is null). An endpoint belongs to the tenant the request acts in (the API key's tenant, or the signed-in session's active tenant); it receives that tenant's events only, and another tenant's endpoint is a 404. A URL is refused at creation and at update unless it is an `https` URL whose name resolves to public addresses only (no loopback, private, link-local or other reserved address, IPv4 or IPv6); the delivery checks the address again when it connects, and a redirect is not followed, so a 3xx answer is a failed delivery. Each payload carries `data.tenantId`. `emission.completed` carries `data.run` (`preview`: nothing stored; `stored`: a schema version was stored). `governance.request.created`, `drift.detected` and `compliance.gap.detected` can be subscribed to, but no part of the platform sends them yet.",
         tags: ["Webhooks"],
         requestBody: {
           required: true,

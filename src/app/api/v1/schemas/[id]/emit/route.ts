@@ -29,6 +29,8 @@ import { compileEntity } from "@/lib/compiler/compiler.service";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { emitTargetsForEntity } from "@/lib/emission/emission.service";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
+import { runAfterResponse } from "@/lib/after-response";
+import { notifyEntityEmitted } from "@/services/notification.triggers";
 import type {
   PrismaEntityInput,
   PrismaFieldInput,
@@ -76,12 +78,20 @@ export const POST = withApiAuth<{ id: string }>("entity.read", async (_request, 
     const invalidCount = results.filter((r) => r.validationStatus === "INVALID").length;
     const warningCount = results.length - validCount - invalidCount;
 
+    const typespec = generateTypeSpec(compileEntity(prismaEntity, prismaFields));
+
+    // A run that completed with no invalid target is an emission (a preview: nothing is stored). Its owner and the endpoints of `emission.completed`
+    // hear of it, after the answer. Scheduled only once the answer is built, so a failed build is never recorded as an emission.
+    if (results.length > 0 && invalidCount === 0) {
+      runAfterResponse("Emission notification", () => notifyEntityEmitted(id, results.length, api.ctx, "preview"));
+    }
+
     return apiSuccess(
       {
         entityId: id,
         entityName: entity.name,
         version: entity.version,
-        typespec: generateTypeSpec(compileEntity(prismaEntity, prismaFields)),
+        typespec,
         targets: results,
         files: run.results.flatMap(({ result }) => result.files ?? []),
         ...(run.resolution ? { resolution: run.resolution } : {}),

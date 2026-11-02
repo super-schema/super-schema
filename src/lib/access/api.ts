@@ -97,6 +97,21 @@ type RouteContext<P> = { params: Promise<P> };
 export type ApiHandler<P> = (request: Request, api: ApiAuth, route: RouteContext<P>) => Promise<Response> | Response;
 
 /**
+ * The tenant a PLATFORM action acts in. Its guard resolves none (a session's `tenantId` is null; an API key's is the key's own tenant), so the
+ * handler takes the tenant the caller's own resolution gives: the key's, or the session's active tenant. Null when the caller reaches no tenant
+ * (`NoTenantAccess`), which the route answers as a missing resource.
+ */
+export async function platformActingTenant(api: Pick<ApiAuth, "tenantId" | "principal">): Promise<string | null> {
+  if (api.tenantId !== null) return api.tenantId;
+  try {
+    return await getActiveTenantId(api.principal);
+  } catch (error: unknown) {
+    if (isNoTenantAccess(error)) return null;
+    throw error;
+  }
+}
+
+/**
  * Wrap a route handler. The returned function is what the route exports (`export const GET = withApiAuth("entity.read", async (request, api) => ...)`).
  * `action` is the policy action the route performs (src/lib/access/actions.ts); an id that is not in the table is refused for everyone.
  */

@@ -22,6 +22,7 @@ the known defects behind it, is at the end of this file.
 | `AUTH_PROVIDERS`, `AUTH_PROVIDER_<KEY>_*` | Identity providers. See [`auth.md`](auth.md). | None |
 | `AUTH_SECRET_1` to `_3` | Auth.js's secret rotation names. Auth.js reads them only when no secret is set; the middleware never does, so rotation is not supported. | Not used |
 | `SECRETS_ENCRYPTION_KEY` | The key that seals the stored Git credential and webhook signing secret: 32 random bytes in base64 (`openssl rand -base64 32`). See [Stored secrets](#stored-secrets-the-git-credential-and-the-webhook-signing-secret). | Unset: the key is derived from `AUTH_SECRET` |
+| `WEBHOOK_ALLOW_PRIVATE_TARGETS` | Development only: `true` lets a webhook delivery reach `http:` URLs and private or loopback addresses. Never set it in production. See [Webhooks](#webhooks-tenant-and-destination). | Unset: `https` to public addresses only |
 
 ## The secret
 
@@ -102,6 +103,16 @@ and they still write a sync status of SUCCESS for it (see `src/services/git.serv
 is not evidence that a host was reached: the old connection test wrote it without contacting anything.
 
 No secret is written to a log or to an error message: the errors and the warning name the variable or the field, never the value.
+
+## Webhooks: tenant and destination
+
+A webhook endpoint (`/api/v1/webhooks`, a platform administrator's item) belongs to **one tenant**: the tenant the request acts in, which is the API key's tenant (`API_KEY_TENANT_ID`) or the signed-in session's active tenant. The list, the reads, the changes, the deletion and the delivery history of an endpoint are scoped to that tenant; another tenant's endpoint is the same 404 as a missing one. An event (`emission.completed`, `governance.request.*`) is sent only to the active endpoints of the tenant it belongs to; its payload names that tenant in `data.tenantId`.
+
+The migration `20261101120000_webhook_endpoint_tenant` adds the column and backfills each existing endpoint from its creator's roles, when those roles name exactly one tenant. An endpoint it cannot attribute is **deactivated** and keeps no tenant, so it receives nothing: an endpoint the REST API key made (no creator), one whose creator holds only platform roles or no roles, and one whose creator's roles span more than one tenant. Such an endpoint is invisible to the REST routes until an administrator gives it a tenant: `UPDATE "webhook_endpoints" SET "tenantId" = '<tenant id>', "active" = true WHERE "id" = '<endpoint id>';`.
+
+**Destinations.** An endpoint URL must be `https`, and its address must be public: a loopback, private, link-local, shared (CGNAT), multicast, documentation or other reserved address is refused, IPv4 or IPv6. An IPv4-mapped (`::ffff:`) or NAT64 (`64:ff9b::/96`) address is judged by the IPv4 address it carries. A URL is checked when an endpoint is created or its URL is changed, and every delivery checks the address it connects to, so a name that later resolves to a private address is not called. A redirect is not followed (a 3xx answer is a failed delivery), a delivery times out after 10 seconds, and a refused destination is recorded as one failed delivery that is not retried.
+
+**Development only.** `WEBHOOK_ALLOW_PRIVATE_TARGETS=true` (or `1`) lets a delivery reach `http:` URLs and private or loopback addresses, so a receiver on the developer's machine can be tested. Never set it in production: an endpoint URL could then steer the server into its own network. `docs/testing/known-defects.md` (KD-027) still describes the endpoint policy as not built; this section describes the current behaviour.
 
 ## Trusting the host (`UntrustedHost`) and the proxy (`AUTH_TRUST_PROXY`)
 
@@ -278,7 +289,7 @@ A role limits what a user may change, and it also decides which tenants the user
 test fails for a new one that does not): the resource must lie in the tenant in view and a role of the user's must cover it (a domain- or product-scoped role judges at that domain or
 product; a viewer reads, an author edits, a steward publishes, deploys, makes a product or a domain and decides governance requests, a compliance officer reads the compliance pages, a tenant
 administrator deletes a domain or a product and manages the tenant's users and roles). Platform items (health, emitter configuration, webhooks, git configuration, the classification taxonomy and a
-*global* type-mapping override, which changes every tenant's mapping) are for a global administrator only, whatever a user holds in a tenant. Lists across the tenant (governance requests, the retention
+*global* type-mapping override, which changes every tenant's mapping) are for a global administrator only, whatever a user holds in a tenant. A webhook endpoint belongs to one tenant (`webhook_endpoints.tenantId`, see [Webhooks](#webhooks-tenant-and-destination)): an event reaches only the active endpoints of the tenant it belongs to. Lists across the tenant (governance requests, the retention
 page, the deployment overview, external event references, "who uses", a concept's linked fields) show a user only what their roles cover. Every route handler is held to the same rule by the
 deny-by-default scan (`tests/unit/access/deny-by-default.test.ts`): it fails for a handler that is neither guarded nor on the public list, and its pending lists are empty. The scan does not read page
 files. The dashboard layout sends a role-less user to `/no-access`, and KD-034 in `docs/testing/known-defects.md` records how the pages ask the policy and what the tenant-in-view cookie still allows.
@@ -330,7 +341,7 @@ The default is `ADMIN` so integrations that existed before access control keep w
 `ADMIN` key is a platform administrator**, as the key has always been (`/api/v1/webhooks*` are platform items and need one), while its schemas are confined
 to `API_KEY_TENANT_ID`. A key that only reads schemas for CI should be `API_KEY_ROLE=VIEWER`: it holds a role in its tenant only, reads that tenant's
 schemas, and is refused the webhook routes (403). An `API_KEY_ROLE` that is not one of the five roles turns the key OFF (every call is 401); it never falls
-back to `ADMIN`. Blank settings are the defaults. The key has no user row: it has no notifications, and a webhook endpoint it creates has no creator.
+back to `ADMIN`. Blank settings are the defaults. The key has no user row: it has no notifications, and a webhook endpoint it creates has no creator and belongs to the key's tenant (`API_KEY_TENANT_ID`).
 
 **A session on `/api/v1` has the signed-in user's real roles** (it used to be a viewer, the administrator's own login included): it reads the schemas of its
 active tenant that its roles cover (a domain- or product-scoped role sees only its own), and uses the webhook routes only when the user is a platform
@@ -366,18 +377,19 @@ migration is applied forward only, and a rollback is a decision taken with the a
 **Rolling back**, newest migration first, and only what you applied:
 
 1. Stop the application.
-2. The webhook endpoint migration (`20261026000000_webhook_endpoint_creator_optional`), only if you need `webhook_endpoints.createdBy` NOT NULL again. Its
+2. The webhook endpoint tenant migration (`20261101120000_webhook_endpoint_tenant`), only if you need the endpoints to belong to no tenant again: its `rollback.sql` drops `webhook_endpoints.tenantId`. The endpoints it deactivated stay inactive; re-activate the ones that should deliver. Run the file (`psql` with `-v ON_ERROR_STOP=1 -f`), then delete its tracking row: `DELETE FROM "_prisma_migrations" WHERE migration_name = '20261101120000_webhook_endpoint_tenant';`. On PGlite, use `"_pglite_migrations"` and `name`, as for the migration below.
+3. The webhook endpoint migration (`20261026000000_webhook_endpoint_creator_optional`), only if you need `webhook_endpoints.createdBy` NOT NULL again. Its
    `rollback.sql` refuses, changing nothing, while any endpoint has no creator, and every endpoint the REST API key created has none. Delete those endpoints, or
-   give each a creator first: `UPDATE "webhook_endpoints" SET "createdBy" = '<a user id>' WHERE "createdBy" IS NULL;`. Then run the file (`psql` with `-v ON_ERROR_STOP=1 -f`, as in step 3) and delete its tracking row: `DELETE FROM "_prisma_migrations" WHERE migration_name = '20261026000000_webhook_endpoint_creator_optional';`.
+   give each a creator first: `UPDATE "webhook_endpoints" SET "createdBy" = '<a user id>' WHERE "createdBy" IS NULL;`. Then run the file (`psql` with `-v ON_ERROR_STOP=1 -f`, as in step 4) and delete its tracking row: `DELETE FROM "_prisma_migrations" WHERE migration_name = '20261026000000_webhook_endpoint_creator_optional';`.
    On PGlite, run the file through a PGlite handle and delete its row: `DELETE FROM "_pglite_migrations" WHERE name = '20261026000000_webhook_endpoint_creator_optional';`.
    The access-control rollback does not need this step.
-3. The access-control migration:
+4. The access-control migration:
    - PostgreSQL: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/migrations/20261025230000_access_control/rollback.sql`. The file is one transaction: it completes or
      changes nothing. Then remove the record: `DELETE FROM "_prisma_migrations" WHERE migration_name = '20261025230000_access_control';`. Do not use
      `prisma migrate resolve --rolled-back`: it refuses a migration that succeeded (P3012).
    - PGlite: the same file runs through a PGlite handle on the data directory, then `DELETE FROM "_pglite_migrations" WHERE name = '20261025230000_access_control';`.
      The repository has no command for that; `tests/integration/access-control-migration.test.ts` runs it that way.
-4. Start the older application version, the one that predates access control.
+5. Start the older application version, the one that predates access control.
 
 **What the rollback does:**
 

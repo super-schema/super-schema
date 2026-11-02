@@ -34,6 +34,8 @@ import type { PublishNeedsReference } from "@/lib/entity-versioning/publish-plan
 import { TYPESPEC_STD_TYPE_NAMES } from "@/lib/compiler/typespec-identifiers";
 import { draftReferencedEntities, draftReferenceRefusal } from "@/lib/entity-versioning/schema-version-publishability";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { runAfterResponse } from "@/lib/after-response";
+import { notifyEntityEmitted } from "@/services/notification.triggers";
 import type { ClosureTargetResult } from "@/lib/emission/closure-generation";
 import type { EmittedFile } from "@/lib/typespec-official/closure-emit";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
@@ -575,6 +577,10 @@ export async function emitEntityAction(entityId: string) {
     const { pickRequestOfRefusal } = await import("@/lib/emission/closure-generation");
     // The preview emits the entity with everything it references, limited to what the caller's roles cover (KD-045): otherwise it comes back refused.
     const result = await emitEntity(entityId, entityReader(access.principal.assignments));
+    // A run that completed with no invalid target is an emission: its owner and the endpoints of `emission.completed` hear of it, after the answer.
+    if (result.success && !result.refusal && result.summary.totalTargets > 0) {
+      runAfterResponse("Emission notification", () => notifyEntityEmitted(entityId, result.summary.totalTargets, contextOf(access.principal), "preview"));
+    }
     // A name that two entities answer to is a question (the same one a generation asks): answered beside the result so the page can open
     // the pick dialog and run the emission again.
     const needsReference = pickRequestOfRefusal(result.refusal);
@@ -1300,7 +1306,8 @@ export async function saveSchemaFieldTypeOverrideAction(input: {
         }),
     });
 
-    const generation = await generateSchemaAction(input.entityId, input.target);
+    // A regeneration after an override save is not an emission: nobody asked for one (so nothing is notified or dispatched).
+    const generation = await generateSchema(input.entityId, input.target, undefined, false);
     if (generation.error) {
       return { error: generation.error };
     }
@@ -1537,8 +1544,16 @@ export async function setFieldReferenceAction(
  *
  * Emission itself writes nothing. When it succeeded, the ROOT's legacy name-only references that resolved to exactly one entity are
  * upgraded to the qualified form in a separate step that fails soft (see `upgradeLegacyReferences`).
+ *
+ * A UI generation is an emission of the entity to one target (a stored version): its owner and the endpoints of `emission.completed` hear of it,
+ * after the answer. The steps that call the generation themselves (a field-type override save, a publish that regenerates from the published
+ * versions) are not emissions, so they run `generateSchema` with `notifyEmission` false.
  */
 export async function generateSchemaAction(entityId: string, target: string, opts?: { mode?: ResolveMode }) {
+  return generateSchema(entityId, target, opts, true);
+}
+
+async function generateSchema(entityId: string, target: string, opts: { mode?: ResolveMode } | undefined, notifyEmission: boolean) {
 
   const requestedMode: unknown = opts?.mode;
   if (requestedMode !== undefined && requestedMode !== "draft" && requestedMode !== "published") {
@@ -1723,6 +1738,11 @@ export async function generateSchemaAction(entityId: string, target: string, opt
     if (closureRun) await upgradeLegacyReferences(entityId, access.principal, access.resource, closureRun.upgrades);
 
     revalidatePath("/schemas");
+    // A stored generation requested from the UI is an emission of the entity to one target: its owner and the endpoints of `emission.completed` hear of
+    // it, after the answer. Scheduled only once the version is stored and only for a generation that is not INVALID.
+    if (notifyEmission && targetOutput.validationStatus !== "INVALID") {
+      runAfterResponse("Emission notification", () => notifyEntityEmitted(entityId, 1, contextOf(access.principal), "stored"));
+    }
     return {
       success: true,
       schemaVersion: newVersion,
@@ -1845,7 +1865,8 @@ export async function publishSchemaAction(
             draftEntities: draftReferences,
           };
         }
-        const result = await generateSchemaAction(entityId, target, { mode: "published" });
+        // A regeneration of the published versions for a publish is not an emission (nothing is notified or dispatched for it).
+        const result = await generateSchema(entityId, target, { mode: "published" }, false);
         if ("error" in result && result.error) return { error: result.error, ...("code" in result && result.code ? { code: result.code } : {}) };
         if ("needsInput" in result && result.needsInput) {
           return { error: result.needsInput[0]?.message ?? "Regenerating from the published versions needs more input", code: "VALIDATION_ERROR" };
