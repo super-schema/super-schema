@@ -145,9 +145,9 @@ function distinctPins<T extends { field: string; ownerRef: EntityRef; pin?: stri
  * deliberately does not select `metadata` (it holds every stored schema version, `files` and `output` per target). A member's metadata
  * is read by `loadMemberMetadata` for the entities that end up in the closure only.
  */
-async function loadTenantIndex(db: DbClient, tenantId: string): Promise<Map<string, IndexedEntity>> {
+async function loadTenantIndex(db: DbClient, tenantId: string, readable: Prisma.EntityWhereInput): Promise<Map<string, IndexedEntity>> {
   const rows = await db.entity.findMany({
-    where: { tenantId },
+    where: { ...readable, tenantId },
     select: {
       id: true,
       name: true,
@@ -281,10 +281,17 @@ export type RefResolution = { target: EntityRef } | { ambiguous: EntityRef[]; na
  * The tenant's entities as qualified references (id, domain / product / entity), for resolving a name that is not on a field row yet (a
  * name written in TypeSpec source). Tenant-scoped like the closure walk, with the same light read (no metadata). A blank tenant id fails
  * closed (`CROSS_TENANT`): Prisma reads `tenantId: undefined` as "every tenant".
+ *
+ * `readable` narrows the list to the entities the caller may read (`readableWhere(assignments, "entity.read", tenantId)`, as the reference
+ * picker does): an entity outside it is not in the list at all, so a name that only it answers to resolves to nothing, exactly like a missing one.
  */
-export async function loadTenantEntityRefs(db: DbClient, tenantId: string): Promise<Result<EntityRef[], ClosureError>> {
+export async function loadTenantEntityRefs(
+  db: DbClient,
+  tenantId: string,
+  readable: Prisma.EntityWhereInput
+): Promise<Result<EntityRef[], ClosureError>> {
   if (typeof tenantId !== "string" || tenantId.trim() === "") return { success: false, error: { code: "CROSS_TENANT" } };
-  const index = await loadTenantIndex(db, tenantId);
+  const index = await loadTenantIndex(db, tenantId, readable);
   return ok([...index.values()].map((e) => e.ref));
 }
 
@@ -420,7 +427,9 @@ export async function loadReferenceClosure(
   // Fail closed: Prisma reads `where: { tenantId: undefined }` as "no filter", i.e. every tenant. A caller without a tenant gets the
   // same answer as a root outside it.
   if (typeof tenantId !== "string" || tenantId.trim() === "") return { success: false, error: { code: "CROSS_TENANT" } };
-  const index = await loadTenantIndex(db, tenantId);
+  // Every tenant entity is indexed here, on purpose: the walk asks `opts.reader` about each entity it would add (and about the candidates of an
+  // ambiguous name), so an unreadable one still refuses the closure. The reader is what gates the content, not this list.
+  const index = await loadTenantIndex(db, tenantId, {});
   const rootIndexed = index.get(rootEntityId);
   if (!rootIndexed) return { success: false, error: { code: "CROSS_TENANT" } };
   const reader = opts?.reader;
@@ -658,7 +667,8 @@ export async function loadInheritedFields(
   let baseName = baseNameOf(metadata);
   if (!baseName) return ok({ fields: [], notes: [] });
   if (typeof tenantId !== "string" || tenantId.trim() === "") return { success: false, error: { code: "CROSS_TENANT" } };
-  const index = await loadTenantIndex(db, tenantId);
+  // Every tenant entity is indexed (see loadReferenceClosure): each base is asked about by `opts.reader` before its content is read.
+  const index = await loadTenantIndex(db, tenantId, {});
   const root = index.get(entityId);
   if (!root) return { success: false, error: { code: "CROSS_TENANT" } };
 

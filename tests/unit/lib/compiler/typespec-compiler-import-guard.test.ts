@@ -18,7 +18,7 @@ vi.mock("@typespec/compiler", async (importOriginal) => {
 });
 
 import { compile, NodeHost } from "@typespec/compiler";
-import { compileTypeSpecDocument, compileTypeSpecWithGovernance } from "@/lib/compiler/typespec-compiler";
+import { compileTypeSpecDocument, compileTypeSpecWithGovernance, TypeSpecCompileError } from "@/lib/compiler/typespec-compiler";
 import { createLibraryOnlyHost } from "@/lib/compiler/library-only-host";
 import { TypeSpecImportGuardError } from "@/lib/typespec/import-guard";
 
@@ -93,8 +93,13 @@ describe("compileTypeSpecDocument (TypeSpec / OpenAPI importers)", () => {
     expect(compile).toHaveBeenCalledTimes(1);
   });
 
-  it("does not throw for a source with syntax errors and only allowed imports (the compiler recovers, as before)", async () => {
-    await expect(compileTypeSpecDocument('import "@typespec/http";\nmodel A { x: string; }\nmodel B {')).resolves.toBeDefined();
+  it("refuses a source with syntax errors and only allowed imports with the compiler's errors (not a guard error), and yields no document", async () => {
+    const error = await compileTypeSpecDocument('import "@typespec/http";\nmodel A { x: string; }\nmodel B {').then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(TypeSpecCompileError);
+    expect(error).not.toBeInstanceOf(TypeSpecImportGuardError);
   });
 });
 

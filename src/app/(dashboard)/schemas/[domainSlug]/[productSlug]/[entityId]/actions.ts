@@ -2,7 +2,7 @@
 
 import { activeDanglingRef, decoratorsAfterFieldEdit } from "@/lib/field-dangling";
 import { prisma } from "@/lib/db";
-import type { Prisma } from "@/generated/prisma/client";
+import type { Entity, Prisma } from "@/generated/prisma/client";
 import { withAudit, recordAuditFailure } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
@@ -11,7 +11,7 @@ import { TypeSpecDecoratorSchema } from "@/types/schemas/typespec-decorator.sche
 import { updateEntity, type UpdateEntityPatch } from "@/services/entity.service";
 import type { Relationship } from "@/types/schemas/entity-metadata.schema";
 import type { DiffResult } from "@/services/version-history/version.types";
-import { can, entityReader, type ActionId, type ResourceRef } from "@/lib/access";
+import { can, entityReader, readableWhere, type ActionId, type ResourceRef } from "@/lib/access";
 import { redactSchemaVersions } from "@/lib/access/schema-version-redaction";
 import type { Principal } from "@/lib/access/principal";
 import { authorizeSubject, contextOf, failureOf, guardActiveTenant, guardSubject, notFoundFailure, unexpectedFailure } from "@/lib/action-context";
@@ -31,7 +31,10 @@ import {
   type SourceReference,
 } from "@/lib/references/source-reference";
 import type { PublishNeedsReference } from "@/lib/entity-versioning/publish-plan";
-import { TYPESPEC_STD_TYPE_NAMES } from "@/lib/compiler/typespec-identifiers";
+import { TYPESPEC_STD_TYPE_NAMES, sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
+import type { ParsedTypeSpecModel } from "@/lib/compiler/typespec-parser";
+import { entityModelOf } from "@/lib/typespec-sync/entity-model";
+import { unwritableFieldTypes } from "@/lib/typespec-sync/field-types";
 import { draftReferencedEntities, draftReferenceRefusal } from "@/lib/entity-versioning/schema-version-publishability";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { runAfterResponse } from "@/lib/after-response";
@@ -912,19 +915,67 @@ type TypeSpecParsedField = {
   unionMembers?: string[];
 };
 
-export async function applyTypeSpecAction(
-  entityId: string,
-  parsedFields: Array<TypeSpecParsedField>,
-  fieldsToRemove?: string[],
-  /** Keyed by field name — semantic governance decorator values, from the real-compiler path (compileAndApplyTypeSpecSourceAction). Absent for the regex-parser path. */
-  fieldGovernance?: Record<string, FieldGovernanceInfo>
-): Promise<ApplyTypeSpecResult> {
-  return applyTypeSpecFields(entityId, parsedFields, fieldsToRemove, fieldGovernance);
+/** The fields of the entity's model as the rows are written from them (the compiler's reader, nothing a client supplied). */
+function typeSpecParsedFields(model: ParsedTypeSpecModel): TypeSpecParsedField[] {
+  return model.fields.map((f) => ({
+    name: f.name,
+    type: f.type,
+    isOptional: f.isOptional,
+    isKey: f.isKey,
+    decorators: f.decorators as Record<string, unknown>,
+    arrayElementType: f.arrayElementType,
+    ...(f.nullableType ? { nullableType: true } : {}),
+    ...(f.unionMembers ? { unionMembers: f.unionMembers } : {}),
+    ...(f.unionName ? { unionName: f.unionName } : {}),
+  }));
+}
+
+/** The first error messages of a refused text, as one line (for an action that answers with one `error`). */
+function diagnosticsError(diagnostics: readonly GovernanceDiagnostic[]): string {
+  const messages = diagnostics
+    .filter((d) => d.severity === "error")
+    .slice(0, 5)
+    .map((d) => d.message.slice(0, 300));
+  return messages.length > 0 ? `The TypeSpec does not compile: ${messages.join("; ")}` : "The TypeSpec could not be applied";
 }
 
 /**
- * `applyTypeSpecAction` plus what only the source compile knows and a client must not supply: the enums the source declares (the
- * compiler names an enum-typed field by its enum, which the merge reads back as an enum field).
+ * The TypeSpec preview's Apply: the text the person edited goes through the SAME server pipeline as the Source tab save (`planTypeSpecSource`:
+ * the real compiler, the entity's own model, the references the tenant's readable entities answer to, the enums and declared names) and is
+ * written to the field rows with the same merge. Nothing the browser parsed is stored: its regex reader only draws the diff.
+ *
+ * The text itself is not stored here (the preview never stored it): the rows are the truth after an Apply, and the entity is marked changed
+ * with a stale source, which the Source tab regenerates from the rows the next time it is opened.
+ *
+ * `removeFields` are the fields the person confirmed removing. A field is removed only when it is listed AND the text does not name it.
+ */
+export async function applyTypeSpecAction(entityId: string, source: string, removeFields?: string[]): Promise<ApplyTypeSpecResult> {
+  try {
+    const confirmed = new Set(Array.isArray(removeFields) ? removeFields.filter((n): n is string => typeof n === "string") : []);
+    const planned = await planTypeSpecSource(entityId, source, undefined, "apply", confirmed);
+    if (!planned.ok) {
+      return { added: 0, updated: 0, removed: [], error: planned.error ?? diagnosticsError(planned.diagnostics) };
+    }
+    const { plan } = planned;
+    const named = new Set(plan.model.fields.map((f) => f.name));
+    const fieldsToRemove = plan.existingFields.map((f) => f.name).filter((name) => !named.has(name) && confirmed.has(name));
+    return await applyTypeSpecFields(
+      entityId,
+      typeSpecParsedFields(plan.model),
+      fieldsToRemove,
+      plan.fieldGovernance,
+      plan.enums,
+      plan.references,
+      plan.declared,
+    );
+  } catch (e: unknown) {
+    return { added: 0, updated: 0, removed: [], error: unexpectedFailure("applyTypeSpecAction", e).error };
+  }
+}
+
+/**
+ * Writes the fields of the entity's model to its rows (the merge, the creates, the updates, the removals of the names given). Called only
+ * with what the server read from the compiled source (`planTypeSpecSource`), never with a list a client supplied.
  */
 async function applyTypeSpecFields(
   entityId: string,
@@ -933,8 +984,8 @@ async function applyTypeSpecFields(
   fieldGovernance?: Record<string, FieldGovernanceInfo>,
   enums?: ReadonlyMap<string, readonly string[]>,
   /**
-   * Field name -> the entity of the tenant the source's type name for it resolved to. Server-made only (`compileAndApplyTypeSpecSource`);
-   * this function is not exported, so a client cannot hand it one: `applyTypeSpecAction` never passes any.
+   * Field name -> the entity of the tenant the source's type name for it resolved to. Server-made only (`planTypeSpecSource`, for both the
+   * Source save and the preview's Apply); this function is not exported, so a client cannot hand it one.
    */
   references?: ReadonlyMap<string, SourceReference>,
   /** The names the source declares (models, enums, scalars, unions): what a union field's members may name besides the scalars. */
@@ -2315,8 +2366,8 @@ export async function compileAndApplyTypeSpecSourceAction(
 
 /**
  * The message of a built-in type name given to something the source declares, or null (the same names TypeSpec itself resolves without a
- * declaration). `own`: the model is the entity's own (the first model of the source), which is named after the ENTITY: the way out is to
- * rename the entity (or the model in the text). The lowercase built-ins people do not think of are named, since an entity called `Url` or
+ * declaration). `own`: the model is the entity's own, which is named after the ENTITY: the way out is to rename the entity (or the model in
+ * the text). The lowercase built-ins people do not think of are named, since an entity called `Url` or
  * `duration` is an easy way to meet this.
  */
 function stdTypeNameMessage(kind: string, name: string, own = false): string | null {
@@ -2326,34 +2377,95 @@ function stdTypeNameMessage(kind: string, name: string, own = false): string | n
   return `${kind} "${name}" is named like a TypeSpec built-in type: a field typed "${name}" would mean this ${noun} instead of the built-in. ${wayOut} (Lowercase names such as url, duration, float and decimal are TypeSpec built-ins too.)`;
 }
 
-async function compileAndApplyTypeSpecSource(
+/**
+ * The refusal of a single model named otherwise than the entity, when saving it would remove the stored fields it does not name: the model is
+ * not the entity's by name, and the removal is not made on that guess.
+ */
+function singleModelRemovalMessage(modelName: string, entityName: string, removed: readonly string[], purpose: "save" | "apply"): string {
+  const needed = sanitizeIdentifier(entityName);
+  const names = removed.slice(0, 5).map((n) => `"${n}"`).join(", ");
+  const more = removed.length > 5 ? ", ..." : "";
+  const noun = removed.length === 1 ? "field" : "fields";
+  const verb = purpose === "save" ? "saving" : "applying";
+  return `The source declares one model, "${modelName}", which is not the entity's model ("${needed}"), and ${verb} it would remove ${removed.length} stored ${noun} the source does not name (${names}${more}). Name the model "${needed}", or rename the entity, then ${purpose === "save" ? "save" : "apply"} again.`;
+}
+
+/** A reason the entity's own model cannot be found in the source: what it is named, and what the source declares instead. */
+function noEntityModelMessage(entityName: string, declared: readonly string[]): string {
+  const needed = sanitizeIdentifier(entityName);
+  const names = declared.slice(0, 5).map((n) => `"${n}"`).join(", ");
+  return `The source declares no model for this entity: its model is named "${needed}" (the entity's name as an identifier), and the source declares ${names || "no model"}. Declare "${needed}", or rename the entity, then save again.`;
+}
+
+/** The field-governance facts of the entity's own model, keyed by field name (the compiler keys them `Model.field`). */
+function governanceOfModel(governance: Record<string, FieldGovernanceInfo>, modelName: string): Record<string, FieldGovernanceInfo> {
+  const out: Record<string, FieldGovernanceInfo> = {};
+  for (const [key, info] of Object.entries(governance)) {
+    const [name, fieldName] = key.split(".");
+    if (name === modelName && fieldName) out[fieldName] = info;
+  }
+  return out;
+}
+
+/**
+ * What a TypeSpec text means for the entity's rows, or why it cannot: the one pipeline behind both writes, the Source tab save and the TypeSpec
+ * preview's Apply. The text is compiled for real; its model is the entity's own (named after the entity, see `entityModelOf`); the names its
+ * fields are typed with are resolved against the tenant's entities the caller can READ, and any name that is not a type of the app is refused.
+ * Nothing is written here.
+ */
+type TypeSpecSourcePlan = {
+  userId: string;
+  entity: Entity;
+  /** The entity's own model: its fields are the entity's fields. */
+  model: ParsedTypeSpecModel;
+  /** The compiler's non-blocking diagnostics (warnings). */
+  diagnostics: GovernanceDiagnostic[];
+  existingFields: Array<{ id: string; name: string; type: string; decorators: unknown }>;
+  fieldGovernance: Record<string, FieldGovernanceInfo>;
+  enums: ReadonlyMap<string, readonly string[]>;
+  /** The names the source declares (models, enums, scalars, unions): what a union's members may name. */
+  declared: ReadonlySet<string>;
+  /** Field name -> the entity of the tenant its type resolved to (or the reference it already stores). */
+  references?: ReadonlyMap<string, SourceReference>;
+};
+
+type TypeSpecPlanOutcome =
+  | { ok: true; plan: TypeSpecSourcePlan }
+  | { ok: false; diagnostics: GovernanceDiagnostic[]; error?: string; needsReference?: PublishNeedsReference };
+
+async function planTypeSpecSource(
   entityId: string,
   source: string,
-  picks?: unknown
-): Promise<TypeSpecSourceSaveResult> {
+  picks: unknown,
+  purpose: "save" | "apply",
+  /** The removals the person confirmed (Apply only): an Apply removes no other stored field, so it is refused only for a confirmed one. */
+  confirmedRemovals?: ReadonlySet<string>,
+): Promise<TypeSpecPlanOutcome> {
   // The guard BEFORE anything is loaded: a malformed, missing or foreign id is the same "Entity not found" (a malformed id is rejected without a
   // query, so it never reaches a Prisma validator), a role that cannot edit the entity is refused, and nothing is compiled or written.
   const access = await guardSubject("entity.write", { kind: "entity", id: entityId }, { label: "Entity" });
-  if (!access.allowed) return { success: false, diagnostics: [], error: access.refusal.error };
+  if (!access.allowed) return { ok: false, diagnostics: [], error: access.refusal.error };
   const userId = access.principal.userId;
   if (typeof source !== "string") {
-    return { success: false, diagnostics: [], error: "The TypeSpec source must be text" };
+    return { ok: false, diagnostics: [], error: "The TypeSpec source must be text" };
   }
 
   const entity = await prisma.entity.findUnique({ where: { id: entityId } });
   if (!entity) {
-    return { success: false, diagnostics: [], error: "Entity not found" };
+    return { ok: false, diagnostics: [], error: "Entity not found" };
   }
 
-  // The entity's own rows (which fields the source drops, which references it already stores) and its tenant's entities (what a name
-  // written as a field's type can mean; the entity was just checked to be in the active tenant). Each is read once, on first use: a
-  // source that does not compile, or names nothing outside itself, reads neither.
+  // The entity's own rows (which fields the source drops, which references it already stores) and the entities of its tenant that the caller
+  // may READ (what a name written as a field's type can mean). Each is read once, on first use: a source that does not compile, or names
+  // nothing outside itself, reads neither. An entity of the tenant the caller cannot read is no name here at all: a field typed with it is
+  // refused exactly like a name nothing answers to, so the answer does not reveal that it exists (not its name, id, domain or candidates).
   const readFieldRows = () =>
     prisma.field.findMany({ where: { entityId }, select: { id: true, name: true, type: true, decorators: true } });
   let fieldRows: ReturnType<typeof readFieldRows> | undefined;
   const loadFieldRows = () => (fieldRows ??= readFieldRows());
   let tenantRefs: ReturnType<typeof loadTenantEntityRefs> | undefined;
-  const loadRefs = () => (tenantRefs ??= loadTenantEntityRefs(prisma, entity.tenantId));
+  const loadRefs = () =>
+    (tenantRefs ??= loadTenantEntityRefs(prisma, entity.tenantId, readableWhere(access.principal.assignments, "entity.read", entity.tenantId)));
 
   // A field typed with the name of another entity compiles only when that name is declared somewhere, and in this one document it is
   // not. The compile is told which of the names it could not find are entities of the tenant (or references this entity already stores),
@@ -2381,32 +2493,58 @@ async function compileAndApplyTypeSpecSource(
       userId,
       details: { messages: result.diagnostics.slice(0, 5).map((d) => String((d as { message?: unknown }).message ?? "").slice(0, 300)) },
     });
-    return { success: false, diagnostics: result.diagnostics };
+    return { ok: false, diagnostics: result.diagnostics };
   }
   const existingFields = await loadFieldRows();
 
-  const model = result.document.models[0];
-  if (!model) {
+  const { models, enums = [], scalars = [], unions = [] } = result.document;
+  if (models.length === 0) {
     return {
-      success: false,
+      ok: false,
       diagnostics: [
         ...result.diagnostics,
         { severity: "error", code: "no-model", message: "No model found — define at least one model for this entity." },
       ],
     };
   }
+  // The entity's own model is the one named after the entity. Never the first model of the text: a helper model written above the entity is
+  // not the entity, and a text that declares several models with none of the entity's name is refused rather than guessed. A text with a single
+  // model has no other model to be mistaken for: that model is the entity's.
+  const model = models.length === 1 ? models[0] : entityModelOf(models, entity.name);
+  if (!model) {
+    return { ok: false, diagnostics: result.diagnostics, error: noEntityModelMessage(entity.name, models.map((m) => m.name)) };
+  }
+  // A single model named otherwise than the entity is taken as its own (there is no other model of the text to mistake it for). What saving
+  // it would REMOVE is not a guess the entity can afford: a save that removes stored fields the model does not name is refused. An Apply
+  // removes only the fields the person confirmed, so it is refused only when one of those would go.
+  if (model.name !== entity.name && model.name !== sanitizeIdentifier(entity.name)) {
+    const named = new Set(model.fields.map((f) => f.name));
+    const removed = existingFields
+      .map((f) => f.name)
+      .filter((name) => !named.has(name) && (purpose === "save" || confirmedRemovals?.has(name) === true));
+    if (removed.length > 0) {
+      return { ok: false, diagnostics: result.diagnostics, error: singleModelRemovalMessage(model.name, entity.name, removed, purpose) };
+    }
+  }
 
-  // The first model becomes the entity's field rows (`applyTypeSpecAction` refuses a NEW field named like a key the AsyncAPI parser cannot
-  // read). The other models of the source (the nested types the entity refers to) have no rows, so there is no "existing" field to spare:
-  // one of them with such a field is refused. INLINE anonymous models are not listed in the parsed document, so their property names are
-  // not visible here; the emit guard catches those.
+  // A NEW field of the entity's own model named like a key the AsyncAPI parser cannot read is refused, and the message names the model that holds
+  // it (a field can come in through a spread of another model). A field that already exists is left alone (see `applyTypeSpecFields`).
+  const storedNames = new Set(existingFields.map((f) => f.name));
+  for (const field of model.fields) {
+    if (storedNames.has(field.name)) continue;
+    const reserved = reservedFieldNameMessage(field.name);
+    if (reserved !== null) return { ok: false, diagnostics: result.diagnostics, error: `Model "${model.name}": ${reserved}` };
+  }
+  // The other models of the source (the nested types the entity refers to) have no rows, so there is no "existing" field to spare: one of them
+  // with a field named like a key the AsyncAPI parser cannot read is refused. INLINE anonymous models are not listed in the parsed document, so
+  // their property names are not visible here; the emit guard catches those.
   // The message says WHICH model, enum, scalar or union holds the name (`Model "Address": "x" is a reserved name: ...`).
-  for (const other of result.document.models.slice(1)) {
+  for (const other of models) {
+    if (other === model) continue;
     const reserved = reservedNameMessage(other.name) ?? firstReservedFieldNameMessage(other.fields);
-    if (reserved !== null) return { success: false, diagnostics: result.diagnostics, error: `Model "${other.name}": ${reserved}` };
+    if (reserved !== null) return { ok: false, diagnostics: result.diagnostics, error: `Model "${other.name}": ${reserved}` };
   }
   // The names of the enums, scalars and unions the source declares become definition keys of a payload too.
-  const { enums = [], scalars = [], unions = [] } = result.document;
   const declaredNames = [
     ...enums.map((d) => ["Enum", d.name]),
     ...scalars.map((d) => ["Scalar", d.name]),
@@ -2414,16 +2552,16 @@ async function compileAndApplyTypeSpecSource(
   ];
   for (const [kind, name] of declaredNames) {
     const reserved = reservedNameMessage(name);
-    if (reserved !== null) return { success: false, diagnostics: result.diagnostics, error: `${kind} "${name}": ${reserved}` };
+    if (reserved !== null) return { ok: false, diagnostics: result.diagnostics, error: `${kind} "${name}": ${reserved}` };
   }
 
   // A model, enum, scalar or union NAMED like a TypeSpec built-in (`model string`, `enum int32`) takes the name over: every field typed with
   // the built-in is then read as that declaration, or the declaration as the built-in. The save is refused rather than silently mistyped.
   const builtInOwn = stdTypeNameMessage("Model", model.name, true);
-  if (builtInOwn !== null) return { success: false, diagnostics: result.diagnostics, error: builtInOwn };
-  for (const [kind, name] of [...result.document.models.slice(1).map((m) => ["Model", m.name]), ...declaredNames]) {
+  if (builtInOwn !== null) return { ok: false, diagnostics: result.diagnostics, error: builtInOwn };
+  for (const [kind, name] of [...models.filter((m) => m !== model).map((m) => ["Model", m.name]), ...declaredNames]) {
     const builtIn = stdTypeNameMessage(kind, name);
-    if (builtIn !== null) return { success: false, diagnostics: result.diagnostics, error: builtIn };
+    if (builtIn !== null) return { ok: false, diagnostics: result.diagnostics, error: builtIn };
   }
 
   // The names the fields of the entity's model write as their type that are NOT declared by the source: an entity of the tenant, or this
@@ -2431,13 +2569,16 @@ async function compileAndApplyTypeSpecSource(
   const typeNames = result.fieldTypeNames ?? [];
   const external = result.externalModels ?? new Set<string>();
   // A member of a field's union is not stored as a reference (a union holds member NAMES): it only had to compile.
+  // Only the fields of the entity's own model: a field of another model of the text is not a field of the entity, whatever its type names.
   const candidates = typeNames.flatMap((n) =>
-    n.shape !== "union" && (external.has(n.written) || n.written === model.name) ? [{ field: n.field, written: n.written, shape: n.shape }] : [],
+    n.model === model.name && n.shape !== "union" && (external.has(n.written) || n.written === model.name)
+      ? [{ field: n.field, written: n.written, shape: n.shape }]
+      : [],
   );
   let references: ReadonlyMap<string, SourceReference> | undefined;
   if (candidates.length > 0) {
     const refs = await loadRefs();
-    if (!refs.success) return { success: false, diagnostics: result.diagnostics, error: "Entity not found" };
+    if (!refs.success) return { ok: false, diagnostics: result.diagnostics, error: "Entity not found" };
     const resolved = resolveSourceReferences({
       fields: candidates,
       stored: new Map(existingFields.map((f) => [f.name, f])),
@@ -2447,17 +2588,21 @@ async function compileAndApplyTypeSpecSource(
     });
     if (!resolved.ok) {
       const { field, name, candidates: matches, fieldId } = resolved.ambiguous;
+      const choice =
+        purpose === "save"
+          ? "Choose the entity it means on that field, then save again."
+          : "Choose the entity it means on the TypeSpec Source tab, then apply again.";
       return {
-        success: false,
+        ok: false,
         diagnostics: result.diagnostics,
         needsReference: { field, name, candidates: matches, entityId, fieldId },
-        error: `Field "${field}" refers to "${name}", which matches ${matches.length} entities. Choose the entity it means on that field, then save again.`,
+        error: `Field "${field}" refers to "${name}", which matches ${matches.length} entities. ${choice}`,
       };
     }
     // A name that compiled only because ANOTHER field already refers to it (and its entity is gone) is still unknown on this field.
     if (resolved.unresolved.length > 0) {
       return {
-        success: false,
+        ok: false,
         diagnostics: [
           ...result.diagnostics,
           ...resolved.unresolved.map((f) => ({ severity: "error" as const, code: "invalid-ref", message: `Unknown identifier ${f.written}` })),
@@ -2467,18 +2612,66 @@ async function compileAndApplyTypeSpecSource(
     references = resolved.references;
   }
 
-  const newFieldNames = new Set(model.fields.map((f) => f.name));
-  const fieldsToRemove = existingFields
-    .map((f) => f.name)
-    .filter((name) => !newFieldNames.has(name));
-
-  const fieldGovernance: Record<string, FieldGovernanceInfo> = {};
-  for (const [key, info] of Object.entries(result.fieldGovernance)) {
-    const [modelName, fieldName] = key.split(".");
-    if (modelName === model.name && fieldName) {
-      fieldGovernance[fieldName] = info;
-    }
+  // A field's type must be a type of the app: a standard TypeSpec type, an enum or union the source declares, or an entity that resolved above.
+  // A name that is none of these (a model of the source that is not an entity, a scalar with no base the app knows) is refused, not stored.
+  const unwritable = unwritableFieldTypes(model.fields, {
+    enums: new Set(enums.map((d) => d.name)),
+    resolved: new Set(references ? [...references.keys()] : []),
+    declaredModels: new Set(models.map((m) => m.name)),
+  });
+  if (unwritable.length > 0) {
+    const messages = unwritable.map((u) =>
+      // A union (`"open" | "closed"`) names no type: its values are declared as an enum, then used by its name.
+      u.written.includes("|")
+        ? `Field "${u.field}" is typed "${u.written}", which is not a type of this app: a union of values must be declared as an enum (enum Status { Open, Closed }) and used by its name.`
+        : `Field "${u.field}" is typed "${u.written}", which is not a type of this app: use a TypeSpec standard type, an enum or union the source declares, or an entity of the tenant.`,
+    );
+    return {
+      ok: false,
+      diagnostics: [
+        ...result.diagnostics,
+        ...messages.map((message) => ({ severity: "error" as const, code: "invalid-type", message })),
+      ],
+      error: messages[0],
+    };
   }
+
+  return {
+    ok: true,
+    plan: {
+      userId,
+      entity,
+      model,
+      diagnostics: result.diagnostics,
+      existingFields,
+      fieldGovernance: governanceOfModel(result.fieldGovernance, model.name),
+      enums: new Map(enums.map((d) => [d.name, d.values] as const)),
+      declared: new Set([...models.map((m) => m.name), ...enums.map((d) => d.name), ...scalars.map((d) => d.name), ...unions.map((d) => d.name)]),
+      references,
+    },
+  };
+}
+
+/**
+ * The Source tab save: the planned text becomes the entity's rows (the source is canonical, so every field the text does not name is dropped),
+ * its model tags and vendor extensions become the entity's, and the text is stored with the draft flagged changed and the stale marker cleared,
+ * all in one batch with the rows.
+ */
+async function compileAndApplyTypeSpecSource(entityId: string, source: string, picks?: unknown): Promise<TypeSpecSourceSaveResult> {
+  const planned = await planTypeSpecSource(entityId, source, picks, "save");
+  if (!planned.ok) {
+    return {
+      success: false,
+      diagnostics: planned.diagnostics,
+      ...(planned.error !== undefined ? { error: planned.error } : {}),
+      ...(planned.needsReference !== undefined ? { needsReference: planned.needsReference } : {}),
+    };
+  }
+  const { plan } = planned;
+  const { entity, model, userId } = plan;
+
+  const namedFields = new Set(model.fields.map((f) => f.name));
+  const fieldsToRemove = plan.existingFields.map((f) => f.name).filter((name) => !namedFields.has(name));
 
   // The source is canonical: its model tags (`x-tags`, or a legacy `@tag`) become the entity's tags, so a
   // tag edit made here persists and is not reverted by the next regeneration from `metadata.tags`.
@@ -2497,26 +2690,16 @@ async function compileAndApplyTypeSpecSource(
 
   const applyResult = await applyTypeSpecFields(
     entityId,
-    model.fields.map((f) => ({
-      name: f.name,
-      type: f.type,
-      isOptional: f.isOptional,
-      isKey: f.isKey,
-      decorators: f.decorators as Record<string, unknown>,
-      arrayElementType: f.arrayElementType,
-      ...(f.nullableType ? { nullableType: true } : {}),
-      ...(f.unionMembers ? { unionMembers: f.unionMembers } : {}),
-      ...(f.unionName ? { unionName: f.unionName } : {}),
-    })),
+    typeSpecParsedFields(model),
     fieldsToRemove,
-    fieldGovernance,
-    new Map(enums.map((d) => [d.name, d.values] as const)),
-    references,
-    new Set([...result.document.models.map((m) => m.name), ...enums.map((d) => d.name), ...scalars.map((d) => d.name), ...unions.map((d) => d.name)]),
+    plan.fieldGovernance,
+    plan.enums,
+    plan.references,
+    plan.declared,
   );
 
   if (applyResult.error) {
-    return { success: false, diagnostics: result.diagnostics, error: applyResult.error };
+    return { success: false, diagnostics: plan.diagnostics, error: applyResult.error };
   }
 
   await withAudit({
@@ -2550,7 +2733,7 @@ async function compileAndApplyTypeSpecSource(
   revalidatePath("/schemas");
   return {
     success: true,
-    diagnostics: result.diagnostics,
+    diagnostics: plan.diagnostics,
     applied: {
       added: applyResult.added,
       updated: applyResult.updated,

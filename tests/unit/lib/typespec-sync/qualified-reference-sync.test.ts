@@ -90,7 +90,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
   mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
-  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1", metadata: null });
+  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Customer", typespecSource: null, tenantId: "tenant-1", metadata: null });
   mockPrisma.field.create.mockResolvedValue({ id: "new" });
   mockPrisma.field.update.mockResolvedValue({ id: "upd" });
   mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
@@ -449,7 +449,7 @@ describe("a reference the entity already stores", () => {
     for (const written of ["Address", "Billing.Payments.Address"]) {
       vi.clearAllMocks();
       mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
-      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1", metadata: null });
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Customer", typespecSource: null, tenantId: "tenant-1", metadata: null });
       mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
       mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
       tenant({ id: "addr-1", name: "Location", domain: "Billing", product: "Payments" });
@@ -467,7 +467,7 @@ describe("a reference the entity already stores", () => {
     for (const entityStillThere of [true, false]) {
       vi.clearAllMocks();
       mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
-      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1", metadata: null });
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Customer", typespecSource: null, tenantId: "tenant-1", metadata: null });
       mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
       mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
       if (entityStillThere) tenant({ id: "item-1", name: "Order Item", domain: "Billing & Co", product: "Order Lines" });
@@ -698,7 +698,7 @@ describe("a self-reference", () => {
 
       vi.clearAllMocks();
       mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
-      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1", metadata: null });
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Customer", typespecSource: null, tenantId: "tenant-1", metadata: null });
       mockPrisma.field.update.mockResolvedValue({ id: "upd" });
       mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
       mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
@@ -741,16 +741,16 @@ describe("a self-reference", () => {
 });
 
 describe("a model the source declares itself keeps meaning that model", () => {
-  it("a field typed with a model declared in the same source is not resolved against the tenant, even when an entity has that name", async () => {
+  it("a field typed with a model declared in the same source is not resolved against the tenant, even when an entity has that name, and is refused (no model of the source is a type of the app)", async () => {
     tenant(ADDRESS_BILLING);
     const source = `${model("address: Address;")}\nmodel Address {\n  street: string;\n}\n`;
 
     const res = await save(source);
 
-    expect(res.success).toBe(true);
-    expect(created("address")?.type).toBe("Address");
-    expect(created("address")?.decorators).not.toHaveProperty("referencedEntityId");
+    expect(res.success).toBe(false);
+    expect(res.error).toBe('Field "address" is typed "Address", which is not a type of this app: use a TypeSpec standard type, an enum or union the source declares, or an entity of the tenant.');
     expect(mockPrisma.entity.findMany).not.toHaveBeenCalled();
+    nothingWritten();
   });
 });
 

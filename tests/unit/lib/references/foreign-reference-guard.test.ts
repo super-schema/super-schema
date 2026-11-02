@@ -39,7 +39,7 @@ describe("referencedEntityAllowed", () => {
 });
 
 describe("the TypeSpec Save merge does not carry a client-supplied entity id", () => {
-  // applyTypeSpecAction takes the parsed fields from the client; the merge keeps only what the source text can express, so a forged
+  // applyTypeSpecAction takes the TypeSpec text from the client and the server plans the rows from it; the merge keeps only what the source text can express, so a forged
   // `referencedEntityId` on a parsed field never reaches the stored decorators (a server-made `reference` is the only way in).
   const forged = { name: "x", type: "reference", isOptional: false, isKey: false, decorators: { referencedEntityId: "eForeign", referencedQualifiedName: "a/b/c", doc: "d" } };
 

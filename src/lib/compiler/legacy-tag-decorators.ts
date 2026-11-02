@@ -11,8 +11,8 @@
  *
  * `upgradeLegacyTagDecorators` rewrites them — losslessly, unlike the old strip — into the decorators the
  * generator emits now (governance-decorators.ts), adding any import they need. It is applied where a stored
- * source is handed to the Source tab (`getTypeSpecSourceAction`). Frozen `resolvedSource` text is display-only
- * and never recompiled; importers keep reading the legacy form directly.
+ * source is handed to the Source tab (`getTypeSpecSourceAction`), and to a TypeSpec import (`compileTypeSpecDocument`), which
+ * refuses any other compile error. Frozen `resolvedSource` text is display-only and never recompiled.
  *
  * Only a line that is nothing but a `@tag("...")` decorator is considered (the generator put every decorator
  * on its own line and escaped quotes / backslashes / newlines, so a string never spans lines). It is

@@ -76,6 +76,11 @@ export interface ParsedTypeSpecField {
    */
   unionName?: string;
   unionMembers?: string[];
+  /**
+   * Real-compiler reader only: the type is a union of two or more string values (`"a" | "b"`, or an array of one: `arrayElementType` is the
+   * union's text), `null` aside. The values are the symbols of the enum the property stands for; `type` names no type.
+   */
+  literalValues?: string[];
   defaultValue?: string;
   isNever?: boolean;
   isInternal?: boolean;

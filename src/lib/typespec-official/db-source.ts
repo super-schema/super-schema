@@ -31,7 +31,7 @@ import type {
 } from "@/types/super-schema-model";
 import { escapeString, propertyName, sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { isReservedWord, POSTGRES_SYSTEM_COLUMNS } from "./sql-reserved-words";
-import { mapType, stringMaxLength, tableComment, tableNotes, type DbDialect } from "./db-column-types";
+import { mapType, stringMaxLength, tableComment, tableNotes, unknownColumnType, type DbDialect } from "./db-column-types";
 
 const TARGET_TO_DIALECT: Record<string, DbDialect> = {
   spanner: "spanner",
@@ -264,6 +264,11 @@ export function buildDbTypeSpecTarget(model: SuperSchemaModel, targetKey: string
   }
   for (const [column, names] of byColumn) {
     if (names.length > 1) errors.push(`The fields ${quotedList(names)} would ${names.length > 2 ? "all" : "both"} become the column "${column}". Rename ${names.length > 2 ? "all but one of them" : "one of them"}.`);
+  }
+  // A type that is not one of the app's (a row written before the writers refused it) has no column type: it is refused, never a string column.
+  for (const { field } of columns) {
+    const written = unknownColumnType(field);
+    if (written !== null) errors.push(`The field "${field.name}" is typed "${written}", which is not a type of this app. Retype the field as one of the app's types.`);
   }
   if (errors.length > 0) return { source: "", warnings, errors };
 

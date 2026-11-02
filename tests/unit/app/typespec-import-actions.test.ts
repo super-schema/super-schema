@@ -80,6 +80,41 @@ describe("importTypeSpecDocumentAction", () => {
     expect(compileTypeSpecDocument).not.toHaveBeenCalled();
   });
 
+  it("refuses a text the compiler refuses: its errors are the answer, and a misspelt type is not imported as a type of its own", async () => {
+    const result = await importTypeSpecDocumentAction("model Order {\n  total: Moneyy;\n}\n");
+    expect(result).toMatchObject({ success: false, error: { code: "PARSE_ERROR" } });
+    expect(!result.success && result.error.message).toBe("The TypeSpec does not compile: Unknown identifier Moneyy");
+    expect(compileTypeSpecDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it("a name the text does not declare is refused with a hint that it must be declared in the text", async () => {
+    const result = await importTypeSpecDocumentAction("model Order {\n  customer: Customer;\n}\n");
+    expect(result).toMatchObject({ success: false, error: { code: "PARSE_ERROR" } });
+    expect(!result.success && result.error.message).toBe("The TypeSpec does not compile: Unknown identifier Customer");
+    expect(!result.success && result.error.suggestedFix).toContain("declared in the TypeSpec");
+  });
+
+  it("refuses a field typed with void: it is no type of the app, and is not imported as a value", async () => {
+    const result = await importTypeSpecDocumentAction("model Order {\n  note: void;\n}\n");
+    expect(result).toMatchObject({ success: false, error: { code: "PARSE_ERROR" } });
+    expect(!result.success && result.error.message).toBe('Model "Order": field "note" is typed "void", which is not a type of this app: use a TypeSpec standard type, an enum, a union or a model of the text.');
+  });
+
+  it("imports a field typed with a union of string values as an enum field with those symbols, never as a type named string | string", async () => {
+    const result = await importTypeSpecDocumentAction('model Order {\n  status: "open" | "closed";\n  tags: ("a" | "b")[];\n}\n');
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const fields = result.data.models.find((m) => m.name === "Order")?.fields ?? [];
+    expect(fields.find((f) => f.name === "status")).toMatchObject({ type: "enum", enumValues: ["open", "closed"] });
+    expect(fields.find((f) => f.name === "tags")).toMatchObject({ type: "array", arrayElementType: "enum", enumValues: ["a", "b"] });
+  });
+
+  it("refuses a field typed with a union that mixes a value and a type: it names no type of the app", async () => {
+    const result = await importTypeSpecDocumentAction('model Owner { email: string; }\nmodel Pet {\n  owner: Owner | "none";\n}\n');
+    expect(result).toMatchObject({ success: false, error: { code: "PARSE_ERROR" } });
+    expect(!result.success && result.error.message).toBe('Model "Pet": field "owner" is typed "Owner | string", which is not a type of this app: use a TypeSpec standard type, an enum, a union or a model of the text.');
+  });
+
   it("requires a session: nothing is compiled without one, or for a session whose user no longer exists", async () => {
     h.auth.mockResolvedValue(null);
     expect(await importTypeSpecDocumentAction(LEGIT)).toEqual({ success: false, error: { code: "UNAUTHORIZED", message: "Not authenticated" } });

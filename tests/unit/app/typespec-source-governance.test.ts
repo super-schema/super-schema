@@ -58,7 +58,7 @@ describe("TypeSpec Source tab save accepts the canonical source of a tagged + cl
         [fld("id", null, 0), fld("email", "PII", 1), fld("note", "SENSITIVE", 2), fld("code", "TOP_SECRET", 3)]
       )
     );
-    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Customer", typespecSource: null, tenantId: "tenant-1" });
 
     const res = await compileAndApplyTypeSpecSourceAction("ent-1", source);
 
@@ -80,7 +80,7 @@ describe("TypeSpec Source tab save accepts the canonical source of a tagged + cl
 
 describe("TypeSpec Source tab save applies the model's x-tags to metadata.tags (R53)", () => {
   const entityRow = (tags: string[] | undefined) => ({
-    id: "ent-1", typespecSource: null, tenantId: "tenant-1", metadata: tags === undefined ? null : { tags },
+    id: "ent-1", name: "Customer", typespecSource: null, tenantId: "tenant-1", metadata: tags === undefined ? null : { tags },
   });
   const sourceWithTags = (tags: string[]) =>
     generateTypeSpec(
@@ -127,23 +127,24 @@ describe("TypeSpec Source tab save refuses a field the AsyncAPI parser cannot re
   const MESSAGE = '"hasOwnProperty" is a reserved name: AsyncAPI documents cannot contain it. Choose another field name.';
 
   it("a new field named hasOwnProperty: the save is refused with the reserved-name message and nothing is written, not even the source", async () => {
-    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Customer", typespecSource: null, tenantId: "tenant-1" });
     const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  id: string;\n  hasOwnProperty: string;\n}\n");
-    expect(res).toMatchObject({ success: false, error: MESSAGE });
+    // The message names the model that holds the field (as the spread case below does).
+    expect(res).toMatchObject({ success: false, error: `Model "Customer": ${MESSAGE}` });
     expect(mockPrisma.field.create).not.toHaveBeenCalled();
     expect(mockPrisma.entity.update).not.toHaveBeenCalled();
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   }, 60_000);
 
   it("a field that was there before (an entity created before the rule) does not stop the source from being saved", async () => {
-    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Customer", typespecSource: null, tenantId: "tenant-1" });
     mockPrisma.field.findMany.mockResolvedValue([{ id: "f-1", entityId: "ent-1", name: "hasOwnProperty", sortOrder: 0, fieldNumber: 1, type: "string", nullable: true, isKey: false, description: "", classification: null, decorators: {} }]);
     const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  hasOwnProperty?: string;\n  id: string;\n}\n");
     expect(res.success).toBe(true);
   }, 60_000);
 
   describe("every model of the source is looked at, not only the first", () => {
-    const entityRow = () => mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
+    const entityRow = () => mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Customer", typespecSource: null, tenantId: "tenant-1" });
     const nothingWritten = () => {
       expect(mockPrisma.field.create).not.toHaveBeenCalled();
       expect(mockPrisma.entity.update).not.toHaveBeenCalled();
@@ -183,7 +184,7 @@ describe("TypeSpec Source tab save refuses a field the AsyncAPI parser cannot re
 
     it("the look-alikes in a second model are fine", async () => {
       entityRow();
-      const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  id: string;\n  address: Address;\n}\nmodel Address {\n  hasownproperty: string;\n  HasOwnProperty: string;\n}\n");
+      const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  id: string;\n}\nmodel Address {\n  hasownproperty: string;\n  HasOwnProperty: string;\n}\n");
       expect(res.success).toBe(true);
     });
 

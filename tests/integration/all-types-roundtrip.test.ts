@@ -119,8 +119,10 @@ describe("all-data-types emission + round-trip", () => {
     expect(byName.field_int64.type).toBe("int64");
   });
 
+  // The TypeSpec text is compiled for real and a compile error refuses the import, so the reference field (which names an entity this
+  // single-entity text does not declare) is left out of the compile, as for Avro above. The reference is covered by its own tests.
   it("TypeSpec round-trip (real compiler): every field survives and scalars map back", async () => {
-    const model = compileEntity(entity, fields);
+    const model = compileEntity(entity, realCompileFields);
     const tsp = generateTypeSpec(model);
     const doc = await compileTypeSpecDocument(tsp);
     const result = mapDocumentToImportResult(doc, tsp);

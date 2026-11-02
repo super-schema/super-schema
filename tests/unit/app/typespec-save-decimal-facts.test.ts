@@ -20,7 +20,6 @@ vi.mock("@/lib/access/principal", async () => (await import("../../helpers/acces
 vi.mock("@/lib/auth", () => ({ auth: vi.fn().mockResolvedValue({ user: { id: "user-1" } }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
-vi.mock("@/lib/compiler/typespec-compiler", () => ({ compileTypeSpecWithGovernance: vi.fn() }));
 
 import { applyTypeSpecAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 
@@ -40,7 +39,9 @@ const stored = (type: string, precision: number | null, scale: number | null) =>
   precision,
   scale,
 });
-const parsed = (type: string) => ({ name: "total", type, isOptional: true, isKey: false, decorators: {} });
+
+/** The TypeSpec the Apply is given: the entity's own model (named after the entity) with one optional `total` of the type. */
+const source = (type: string) => `model Customer {\n  total?: ${type};\n}\n`;
 
 const updateData = () => {
   expect(mockPrisma.field.update).toHaveBeenCalledTimes(1);
@@ -50,7 +51,7 @@ const updateData = () => {
 beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
-  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", tenantId: "tenant-1", metadata: {} });
+  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Customer", tenantId: "tenant-1", metadata: {}, typespecSource: null });
   mockPrisma.field.update.mockResolvedValue({ id: "fld-1" });
   mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
 });
@@ -58,45 +59,45 @@ beforeEach(() => {
 describe("a TypeSpec save and the precision and scale of a decimal field", () => {
   it.each(["string", "int32", "float64", "boolean", "utcDateTime"])("clears precision and scale when decimal becomes %s", async (type) => {
     mockPrisma.field.findMany.mockResolvedValue([stored("decimal", 12, 2)]);
-    expect(await applyTypeSpecAction("ent-1", [parsed(type)])).toEqual({ added: 0, updated: 1, removed: [] });
+    expect(await applyTypeSpecAction("ent-1", source(type))).toEqual({ added: 0, updated: 1, removed: [] });
     expect(updateData()).toMatchObject({ precision: null, scale: null });
-  });
+  }, 60_000);
 
   it("clears them when decimal128 becomes a non-decimal type too", async () => {
     mockPrisma.field.findMany.mockResolvedValue([stored("decimal128", 34, 10)]);
-    await applyTypeSpecAction("ent-1", [parsed("string")]);
+    await applyTypeSpecAction("ent-1", source("string"));
     expect(updateData()).toMatchObject({ precision: null, scale: null });
-  });
+  }, 60_000);
 
   it("keeps them when the type stays decimal (the text cannot say them), and writes nothing for an unchanged field", async () => {
     mockPrisma.field.findMany.mockResolvedValue([stored("decimal", 12, 2)]);
-    expect(await applyTypeSpecAction("ent-1", [parsed("decimal")])).toEqual({ added: 0, updated: 0, removed: [] });
+    expect(await applyTypeSpecAction("ent-1", source("decimal"))).toEqual({ added: 0, updated: 0, removed: [] });
     expect(mockPrisma.field.update).not.toHaveBeenCalled();
-  });
+  }, 60_000);
 
   it("keeps them when decimal becomes decimal128 (both are decimals), while the other changes of the row are written", async () => {
     mockPrisma.field.findMany.mockResolvedValue([stored("decimal", 12, 2)]);
-    await applyTypeSpecAction("ent-1", [parsed("decimal128")]);
+    await applyTypeSpecAction("ent-1", source("decimal128"));
     const data = updateData();
     expect(data).toMatchObject({ type: "decimal128" });
     expect(data).not.toHaveProperty("precision");
     expect(data).not.toHaveProperty("scale");
-  });
+  }, 60_000);
 
   it("does not touch the pair of a field that was never a decimal, or become one", async () => {
     mockPrisma.field.findMany.mockResolvedValue([stored("string", null, null)]);
-    await applyTypeSpecAction("ent-1", [parsed("int32")]);
+    await applyTypeSpecAction("ent-1", source("int32"));
     const data = updateData();
     expect(data).not.toHaveProperty("precision");
     expect(data).not.toHaveProperty("scale");
-  });
+  }, 60_000);
 
   it("does not invent a pair when a field becomes a decimal (the person sets it in the field editor)", async () => {
     mockPrisma.field.findMany.mockResolvedValue([stored("string", null, null)]);
-    await applyTypeSpecAction("ent-1", [parsed("decimal")]);
+    await applyTypeSpecAction("ent-1", source("decimal"));
     const data = updateData();
     expect(data).toMatchObject({ type: "decimal" });
     expect(data).not.toHaveProperty("precision");
     expect(data).not.toHaveProperty("scale");
-  });
+  }, 60_000);
 });

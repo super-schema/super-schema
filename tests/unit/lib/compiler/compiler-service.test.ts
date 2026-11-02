@@ -298,12 +298,25 @@ describe("compileEntity", () => {
     expect(model2.entity.metadata).toEqual({});
   });
 
-  it("handles unknown field types by falling back to string", () => {
+  it("keeps a stored type that is not a type of the app as it is, never coerced to string (the generator writes it, so the TypeSpec compile reports it)", () => {
     const model = compileEntity(makeEntity(), [
       makeField({ name: "weird", type: "unknownType", sortOrder: 0 }),
+      makeField({ name: "price", type: "Price", sortOrder: 1 }),
     ]);
 
-    expect(model.fields[0].type).toBe("string");
+    expect(model.fields.map((f) => f.type)).toEqual(["unknownType", "Price"]);
+  });
+
+  it("keeps every type the app stores: its data types, an enum, an array, a reference and a union", () => {
+    const model = compileEntity(makeEntity(), [
+      makeField({ name: "a", type: "decimal", sortOrder: 0 }),
+      makeField({ name: "b", type: "enum", sortOrder: 1 }),
+      makeField({ name: "c", type: "array", decorators: { arrayElementType: "string" }, sortOrder: 2 }),
+      makeField({ name: "d", type: "reference", decorators: { referencedEntityId: "e-1" }, sortOrder: 3 }),
+      makeField({ name: "e", type: "union", sortOrder: 4 }),
+    ]);
+
+    expect(model.fields.map((f) => f.type)).toEqual(["decimal", "enum", "array", "reference", "union"]);
   });
 
   it("compiles aliases and classification", () => {

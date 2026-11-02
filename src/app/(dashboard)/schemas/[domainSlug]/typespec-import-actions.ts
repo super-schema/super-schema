@@ -17,7 +17,7 @@
 import type { Result } from "@/types/result";
 import { ok, err } from "@/types/result";
 import { authorizeActiveTenant, authorizeSubject, sanitizeActionError } from "@/lib/action-context";
-import { compileTypeSpecDocument } from "@/lib/compiler/typespec-compiler";
+import { compileTypeSpecDocument, TypeSpecCompileError } from "@/lib/compiler/typespec-compiler";
 import { checkImportSize, withCompileTimeout } from "@/lib/compiler/import-limits";
 import { TypeSpecImportGuardError } from "@/lib/typespec/import-guard";
 import {
@@ -25,6 +25,7 @@ import {
   isEmptyTypeSpecDocument,
   type TypeSpecImportResult,
 } from "@/lib/importers/typespec.importer";
+import { refusedImportFieldMessage } from "@/lib/typespec-sync/field-types";
 
 export async function importTypeSpecDocumentAction(
   content: string,
@@ -64,6 +65,15 @@ async function runTypeSpecImport(content: string, domainId: string | null): Prom
         suggestedFix: "Remove the import; only @typespec/* libraries can be imported.",
       });
     }
+    // A text with compile errors is not imported: its errors are the answer (an unresolved or misspelt type is not read as a type of its own).
+    if (e instanceof TypeSpecCompileError) {
+      return err({
+        code: "PARSE_ERROR",
+        message: e.message,
+        suggestedFix:
+          "Fix the errors in the TypeSpec and import it again. A name it uses must be declared in the TypeSpec itself: an entity of another import is not in its text.",
+      });
+    }
     throw e; // sanitizeActionError logs it and returns the generic message
   }
   if (!compiled.success) return compiled;
@@ -78,5 +88,15 @@ async function runTypeSpecImport(content: string, domainId: string | null): Prom
     });
   }
 
-  return ok(mapDocumentToImportResult(doc, content));
+  const result = mapDocumentToImportResult(doc, content);
+  // A field typed with something that is not a type of the app is refused, not stored (the Source save and the preview refuse the same types).
+  const refused = refusedImportFieldMessage(result);
+  if (refused !== null) {
+    return err({
+      code: "PARSE_ERROR",
+      message: refused,
+      suggestedFix: "Change the field's type in the TypeSpec to a standard type, an enum, a union or a model of the text, and import it again.",
+    });
+  }
+  return ok(result);
 }

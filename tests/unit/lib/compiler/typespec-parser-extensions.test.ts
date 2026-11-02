@@ -137,8 +137,8 @@ describe("compile (AST) path", () => {
     expect(f.decorators.classification).toBe("PII");
   });
 
-  it("keeps the legacy bare string extension", async () => {
-    const doc = await compiler.compileTypeSpecDocument('model M {\n  @extension("k", "v")\n  f?: string;\n}\n');
+  it("keeps a string extension, written the way the generator writes it (fully qualified, with its library)", async () => {
+    const doc = await compiler.compileTypeSpecDocument('import "@typespec/openapi";\nmodel M {\n  @TypeSpec.OpenAPI.extension("k", "v")\n  f?: string;\n}\n');
     expect(doc.models[0].fields[0].decorators.extensions).toEqual({ k: "v" });
   });
 });
@@ -175,7 +175,7 @@ describe("hostile input", () => {
 
   it("compile path boundary: 63 nested survives intact, 70 drops only that key and does not throw", async () => {
     const src = (n: number) =>
-      `model M {\n  @extension("deep", ${nest(n)})\n  @extension("ok", #{a: 1})\n  f?: string;\n}\n`;
+      `import "@typespec/openapi";\nmodel M {\n  @TypeSpec.OpenAPI.extension("deep", ${nest(n)})\n  @TypeSpec.OpenAPI.extension("ok", #{a: 1})\n  f?: string;\n}\n`;
     const under = await compiler.compileTypeSpecDocument(src(63));
     expect(under.models[0].fields[0].decorators.extensions).toEqual({ deep: nested(63), ok: { a: 1 } });
     const over = await compiler.compileTypeSpecDocument(src(70));
@@ -227,7 +227,7 @@ describe("hostile input", () => {
   });
 
   it("compile path keeps them as own keys", async () => {
-    const doc = await compiler.compileTypeSpecDocument(`model M {\n  @extension("x", ${hostile})\n  f?: string;\n}\n`);
+    const doc = await compiler.compileTypeSpecDocument(`import "@typespec/openapi";\nmodel M {\n  @TypeSpec.OpenAPI.extension("x", ${hostile})\n  f?: string;\n}\n`);
     checkOwn(doc.models[0].fields[0].decorators.extensions!.x);
   });
 });

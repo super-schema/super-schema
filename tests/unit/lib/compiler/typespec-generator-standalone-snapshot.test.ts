@@ -16,14 +16,14 @@ const entity = (name: string, metadata: unknown = {}) => ({
 });
 
 const noRefs = compileEntity(entity("Customer", { tags: ["core", "pii"] }), [
-  fld("id", "uuid", 0, { isKey: true, description: "Identifier" }),
+  fld("id", "string", 0, { isKey: true, description: "Identifier" }),
   fld("email", "string", 1, { classification: "PII", decorators: { typespec: { validation: { maxLength: 80 } } } }),
   fld("age", "int32", 2, { nullable: true }),
   fld("tags", "array", 3, { decorators: { arrayElementType: "string" } }),
 ]);
 
 const withRefs = compileEntity(entity("Order"), [
-  fld("id", "uuid", 0, { isKey: true }),
+  fld("id", "string", 0, { isKey: true }),
   fld("customer", "reference", 1, { decorators: { referencedEntityName: "Customer" } }),
   fld("lines", "array", 2, { decorators: { arrayElementType: "reference", referencedEntityName: "Line Item" } }),
   fld("owner", "reference", 3, {

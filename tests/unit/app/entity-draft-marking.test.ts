@@ -80,12 +80,18 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
   });
 
   it("applyTypeSpecAction (preview apply) marks the source stale only when something changed", async () => {
-    await applyTypeSpecAction("ent-1", []);
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Order", tenantId: "tenant-1", metadata: {}, typespecSource: null });
+    mockCompile.mockResolvedValue({ success: true, diagnostics: [], document: { models: [{ name: "Order", fields: [] }] }, fieldGovernance: {} });
+    await applyTypeSpecAction("ent-1", "model Order {}");
     expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
 
     mockPrisma.field.create.mockResolvedValue({ id: "fld-2" });
-    await applyTypeSpecAction("ent-1", [{ name: "phone", type: "string", isOptional: true, isKey: false, decorators: {} }]);
+    const phone = { name: "phone", type: "string", isOptional: true, isKey: false, decorators: {} };
+    mockCompile.mockResolvedValue({ success: true, diagnostics: [], document: { models: [{ name: "Order", fields: [phone] }] }, fieldGovernance: {} });
+    await applyTypeSpecAction("ent-1", "model Order { phone?: string; }");
     expectFieldsEdited();
+    // The preview's Apply never stores the text: only the rows and the stale marker change.
+    expect(mockPrisma.entity.update).not.toHaveBeenCalled();
   });
 
   it("updateEntityDescriptionAction writes the description and marks the draft changed + source stale in ONE $transaction batch (R45)", async () => {
@@ -159,7 +165,7 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
   });
 
   it("compileAndApplyTypeSpecSourceAction saves source + draft flag and clears sourceStale atomically", async () => {
-    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Order", typespecSource: null, tenantId: "tenant-1" });
     mockCompile.mockResolvedValue({
       success: true,
       diagnostics: [],

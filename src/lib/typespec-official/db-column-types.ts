@@ -17,6 +17,7 @@
  */
 
 import type { LogicalType, SuperSchemaField } from "@/types/super-schema-model";
+import { ALL_DATA_TYPES } from "@/lib/data-types";
 import type { ReservedWordDialect } from "./sql-reserved-words";
 
 export type DbDialect = ReservedWordDialect;
@@ -87,6 +88,20 @@ function elementType(field: SuperSchemaField): string | undefined {
 /** The TypeSpec type of a field's property: its scalar, or `scalar[]` for an array. */
 export function mapType(field: SuperSchemaField): string {
   return field.type === "array" ? `${scalarOf(elementType(field))}[]` : scalarOf(field.type);
+}
+
+/** The field types a column can be written for: the app's data types and a union (its members are declared where they are). */
+const COLUMN_TYPES: ReadonlySet<string> = new Set<string>([...ALL_DATA_TYPES, "union"]);
+
+/**
+ * The type name a field carries that is not a type of this app (a row written before the writers refused it, such as a model
+ * or scalar name), or null when the field's type, or its array's element type, is one of the app's. An array whose element
+ * type was never set is not unknown. {@link buildDbTypeSpecTarget} refuses such a field: {@link scalarOf} would otherwise write
+ * it as a string column, with no diagnostic.
+ */
+export function unknownColumnType(field: SuperSchemaField): string | null {
+  const written = field.type === "array" ? elementType(field) : field.type;
+  return written === undefined || COLUMN_TYPES.has(written) ? null : written;
 }
 
 /**

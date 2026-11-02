@@ -219,9 +219,9 @@ const CASES: Case[] = [
     mustNotRun: () => [mk(p.field.findMany), ...ALL_EFFECTS()], main: () => mk(p.field.findMany), failing: () => [mk(p.field.findMany)], revalidates: false,
   },
   {
-    label: "applyTypeSpecAction", call: () => actions.applyTypeSpecAction("ent-1", [{ name: "phone", type: "string", isOptional: true, isKey: false, decorators: {} }]),
+    label: "applyTypeSpecAction", call: () => actions.applyTypeSpecAction("ent-1", "model Order {}"),
     lookup: entityLookup, row: (t) => entityRow(t), notFound: { added: 0, updated: 0, removed: [], error: "Entity not found" },
-    mustNotRun: () => [mk(p.field.findMany), ...ALL_EFFECTS()], main: () => mk(p.field.create), failing: () => [mk(p.field.create)], ok: { added: 1, updated: 0, removed: [] },
+    mustNotRun: () => [mk(p.field.findMany), ...ALL_EFFECTS()], main: () => mk(p.field.findMany), failing: () => [mk(p.field.findMany)], ok: { added: 0, updated: 0, removed: [] },
   },
   {
     label: "getSchemaVersionsAction", call: () => actions.getSchemaVersionsAction("ent-1"),
@@ -495,9 +495,12 @@ describe("input validation that used to reach a spread / a Prisma validator", ()
     expect(p.$transaction).not.toHaveBeenCalled();
   });
 
-  it("applyTypeSpecAction rejects parsed fields that are not a list", async () => {
-    expect(await actions.applyTypeSpecAction("ent-1", asAny(null))).toMatchObject({ error: "The parsed fields must be a list", added: 0 });
+  it("applyTypeSpecAction rejects a source that is not text, before it reads the fields", async () => {
+    for (const bad of [null, undefined, 5, {}, ["x"]]) {
+      expect(await actions.applyTypeSpecAction("ent-1", asAny(bad))).toMatchObject({ error: "The TypeSpec source must be text", added: 0 });
+    }
     expect(p.field.findMany).not.toHaveBeenCalled();
+    expect(h.compile).not.toHaveBeenCalled();
   });
 
   it("createTypeMappingOverrideAction: a GLOBAL override names no entity (no entity lookup); an unknown scope or a non-object input is a validation failure", async () => {

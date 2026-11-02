@@ -157,13 +157,53 @@ function extractConstraints(decorators: ParsedTypeSpecDecorators): ParsedFieldCo
 // Map a single ParsedTypeSpecField to a ParsedField
 // ---------------------------------------------------------------------------
 
-function mapField(tsField: ParsedTypeSpecField): ParsedField {
+/** The enums a document declares: name -> symbols. */
+type DeclaredEnums = ReadonlyMap<string, readonly string[]>;
+
+/**
+ * The type a property is imported with. A property typed with an enum the document declares is an `enum` field with its symbols (an array of
+ * one an array of `enum`), as the Avro importer writes them: its type name is not a type of the app. A property typed with a model the document
+ * declares is a reference to that model's entity, by its name (an array of one an array of references), as the JSON Schema importer keeps a
+ * reference to a definition of the same file. A union of string values (`"a" | "b"`, as an OpenAPI inline enum converts to) is an `enum` field with
+ * those symbols and no declared name (an inline enum, as the JSON Schema importer keeps one). A union is a `union` field with its members and
+ * declared name. Anything else keeps the type the compiler gave it (a declared scalar already is its base type).
+ */
+function fieldShape(
+  tsField: ParsedTypeSpecField,
+  enums: DeclaredEnums,
+  models: ReadonlySet<string>
+): Pick<ParsedField, "type" | "arrayElementType" | "enumName" | "enumValues" | "unionName" | "unionMembers" | "referencedEntityName"> {
+  const symbolsOf = (name: string | undefined) => (name !== undefined && enums.has(name) ? [...(enums.get(name) ?? [])] : undefined);
+  if (tsField.literalValues && tsField.literalValues.length > 0) {
+    const values = [...tsField.literalValues];
+    return tsField.type === "array" ? { type: "array", arrayElementType: "enum", enumValues: values } : { type: "enum", enumValues: values };
+  }
+  if (tsField.type === "array" && tsField.arrayElementType !== undefined) {
+    const symbols = symbolsOf(tsField.arrayElementType);
+    if (symbols !== undefined) return { type: "array", arrayElementType: "enum", enumName: tsField.arrayElementType, enumValues: symbols };
+    if (models.has(tsField.arrayElementType)) {
+      return { type: "array", arrayElementType: "reference", referencedEntityName: tsField.arrayElementType };
+    }
+  }
+  const symbols = symbolsOf(tsField.type);
+  if (symbols !== undefined) return { type: "enum", enumName: tsField.type, enumValues: symbols };
+  if (tsField.unionMembers && tsField.unionMembers.length > 0) {
+    const union = { unionMembers: [...tsField.unionMembers], ...(tsField.unionName ? { unionName: tsField.unionName } : {}) };
+    return tsField.type === "array" ? { type: "array", arrayElementType: "union", ...union } : { type: "union", ...union };
+  }
+  if (tsField.type !== "array" && models.has(tsField.type)) {
+    return { type: "reference", referencedEntityName: tsField.type };
+  }
+  return { type: tsField.type, ...(tsField.arrayElementType !== undefined ? { arrayElementType: tsField.arrayElementType } : {}) };
+}
+
+function mapField(tsField: ParsedTypeSpecField, enums: DeclaredEnums = new Map(), models: ReadonlySet<string> = new Set()): ParsedField {
   const classification = extractClassification(tsField.decorators);
   const constraints = extractConstraints(tsField.decorators);
 
   const field: ParsedField = {
     name: tsField.name,
-    type: tsField.type,
+    ...fieldShape(tsField, enums, models),
     nullable: tsField.isOptional,
     confidence: "high",
     originalType: tsField.type,
@@ -348,7 +388,7 @@ export function parseTypeSpecSchema(content: string): Result<ParsedEntity> {
     });
   }
 
-  const fields: ParsedField[] = model.fields.map(mapField);
+  const fields: ParsedField[] = model.fields.map((f) => mapField(f));
 
   return ok({
     name: model.name,
@@ -386,6 +426,7 @@ export function mapDocumentToImportResult(
   const warnings: string[] = [];
 
   const modelNameSet = new Set(doc.models.map((model) => model.name));
+  const declaredEnums: DeclaredEnums = new Map(doc.enums.map((e) => [e.name, e.values] as const));
   const referencedByMap = new Map<string, Set<string>>();
 
   for (const model of doc.models) {
@@ -404,7 +445,7 @@ export function mapDocumentToImportResult(
     return {
       name: model.name,
       description: model.doc,
-      fields: model.fields.map(mapField),
+      fields: model.fields.map((f) => mapField(f, declaredEnums, modelNameSet)),
       sourceFormat: "typespec" as const,
       originalContent: content,
       extends: model.extends,

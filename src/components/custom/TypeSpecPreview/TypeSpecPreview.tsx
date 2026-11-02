@@ -199,29 +199,14 @@ export function TypeSpecPreview({
     setDiffSummary(diff);
   }, [editSource, existingFields]);
 
-  // Apply changes
+  // Apply changes. The text goes to the server as written: the server compiles it and writes what it means (the browser parse above only
+  // draws the diff, it never decides what is stored).
   const handleApply = useCallback(async (removeFields?: string[]) => {
     setIsApplying(true);
     setApplyError(null);
 
     try {
-      const parsed = parseTypeSpec(editSource);
-      if (!parsed) {
-        setApplyError("Could not parse TypeSpec.");
-        setIsApplying(false);
-        return;
-      }
-
-      const fieldsPayload = parsed.fields.map((f) => ({
-        name: f.name,
-        type: f.type,
-        isOptional: f.isOptional,
-        isKey: f.isKey,
-        decorators: f.decorators as unknown as Record<string, unknown>,
-        arrayElementType: (f as unknown as Record<string, unknown>).arrayElementType as string | undefined,
-      }));
-
-      const result = await applyTypeSpecAction(entityId, fieldsPayload, removeFields);
+      const result = await applyTypeSpecAction(entityId, editSource, removeFields);
 
       if (result.error) {
         setApplyError(result.error);

@@ -25,7 +25,7 @@ import { convertOpenAPI3Document } from "@typespec/openapi3";
 import type { Result } from "@/types/result";
 import { ok, err } from "@/types/result";
 import { authorizeActiveTenant, authorizeSubject, sanitizeActionError } from "@/lib/action-context";
-import { compileTypeSpecDocument } from "@/lib/compiler/typespec-compiler";
+import { compileTypeSpecDocument, TypeSpecCompileError } from "@/lib/compiler/typespec-compiler";
 import { checkImportSize, withCompileTimeout } from "@/lib/compiler/import-limits";
 import { TypeSpecImportGuardError } from "@/lib/typespec/import-guard";
 import {
@@ -33,6 +33,7 @@ import {
   isEmptyTypeSpecDocument,
   type TypeSpecImportResult,
 } from "@/lib/importers/typespec.importer";
+import { refusedImportFieldMessage } from "@/lib/typespec-sync/field-types";
 
 const LABEL = "importOpenApiDocumentAction";
 
@@ -122,6 +123,14 @@ async function runOpenApiImport(content: string, domainId: string | null): Promi
         suggestedFix: "The OpenAPI document converted to TypeSpec that imports something other than a TypeSpec library.",
       });
     }
+    // The converted TypeSpec is imported like a TypeSpec text: a compile error refuses the document (its errors are the answer).
+    if (e instanceof TypeSpecCompileError) {
+      return err({
+        code: "PARSE_ERROR",
+        message: e.message,
+        suggestedFix: "Check that the document is a valid OpenAPI 3.x specification.",
+      });
+    }
     throw e; // sanitizeActionError logs it and returns the generic message
   }
   if (!compiled.success) return compiled;
@@ -135,5 +144,16 @@ async function runOpenApiImport(content: string, domainId: string | null): Promi
     });
   }
 
-  return ok({ ...mapDocumentToImportResult(doc, tspSource), sourceFormat: "openapi" });
+  const result = mapDocumentToImportResult(doc, tspSource);
+  // A field typed with something that is not a type of the app is refused, not stored (the same refusal as the TypeSpec import; an inline
+  // enum is an enum field, so it does not reach here).
+  const refused = refusedImportFieldMessage(result);
+  if (refused !== null) {
+    return err({
+      code: "PARSE_ERROR",
+      message: refused,
+      suggestedFix: "Change the field's type in the OpenAPI document to a standard type, an enum, or a schema of the document, and import it again.",
+    });
+  }
+  return ok({ ...result, sourceFormat: "openapi" });
 }

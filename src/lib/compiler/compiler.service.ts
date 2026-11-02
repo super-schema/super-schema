@@ -21,7 +21,6 @@ import type {
   SuperSchemaSharedEnum,
   SuperSchemaUnionType,
 } from "@/types/super-schema-model";
-import { ALL_DATA_TYPES } from "@/lib/data-types";
 import { readFieldReference } from "@/lib/references/entity-reference";
 
 function asString(v: unknown): string | undefined {
@@ -134,15 +133,14 @@ function compileField(field: PrismaFieldInput): SuperSchemaField {
 // Type resolution
 // ---------------------------------------------------------------------------
 
-// `union` is not a pickable data type (it needs a declared union to point at), but an imported field may carry it.
-const VALID_LOGICAL_TYPES = new Set<string>([...ALL_DATA_TYPES, "union"]);
-
+/**
+ * The logical type a stored field type names. A name that is not one of the app's types (a type name a row was written with, such as a
+ * declared scalar or a model name, or a misspelt one) is kept AS STORED, never coerced to `string`: the generator writes it as the TypeSpec
+ * type it names, so the TypeSpec compile of that text refuses it (an unknown identifier) and the emission or publish reports it. The writers
+ * refuse such a name before it is stored (see `@/lib/typespec-sync`), so only rows written before that reach here.
+ */
 function resolveLogicalType(typeId: string): LogicalType {
-  if (VALID_LOGICAL_TYPES.has(typeId)) {
-    return typeId as LogicalType;
-  }
-  // Fallback: treat unknown types as string
-  return "string";
+  return typeId as LogicalType;
 }
 
 // ---------------------------------------------------------------------------

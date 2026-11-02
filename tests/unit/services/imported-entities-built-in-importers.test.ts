@@ -95,8 +95,9 @@ describe("an entity named like a built-in type, per importer", () => {
     const source = `namespace Shop;\nmodel Duration { seconds: int32; }\nmodel Order { timeout: Duration; history: Duration[]; }\n`;
     const r = await persist(mapDocumentToImportResult(await compileTypeSpecDocument(source), source));
     expectWhole(r);
-    // the importer carries a model-typed field's type as the model's NAME; an array of models is `array` (its element is not carried by it)
-    expect(r.byName("Order")!.fields.create.map((f) => f.type)).toEqual(["Duration2", "array"]);
+    // a model-typed field is a reference to the model's entity, by its NAME (the rename follows the name); an array of models is an array of references
+    expect(r.byName("Order")!.fields.create.map((f) => f.type)).toEqual(["reference", "array"]);
+    expect(r.byName("Order")!.fields.create.map((f) => f.decorators?.referencedEntityName)).toEqual(["Duration2", "Duration2"]);
   });
 
   it("OpenAPI: components.schemas Duration and Order (through the real converter and compiler), the references follow", async () => {
@@ -115,6 +116,7 @@ describe("an entity named like a built-in type, per importer", () => {
     const compiled = await compileTypeSpecDocument(tsp);
     const r = await persist({ ...mapDocumentToImportResult(compiled, tsp), sourceFormat: "openapi" });
     expectWhole(r);
-    expect(r.byName("Order")!.fields.create.map((f) => f.type)).toEqual(["Duration2", "array"]);
+    expect(r.byName("Order")!.fields.create.map((f) => f.type)).toEqual(["reference", "array"]);
+    expect(r.byName("Order")!.fields.create.map((f) => f.decorators?.referencedEntityName)).toEqual(["Duration2", "Duration2"]);
   }, 60_000);
 });

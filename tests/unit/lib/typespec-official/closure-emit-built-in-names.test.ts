@@ -34,7 +34,7 @@ function member(id: string, entity: string, fields: PrismaFieldInput[] = [], dom
     ref,
     source: "published",
     version: "1.0",
-    fields: [field("id", "uuid", 0, {}, { isKey: true }), ...fields],
+    fields: [field("id", "string", 0, {}, { isKey: true }), ...fields],
     entity: { id, name: entity, description: "", status: "PUBLISHED", version: 1, domainId: null, metadata: {}, domain: null },
   };
 }

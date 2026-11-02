@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // A field named like a key the AsyncAPI parser cannot read (`hasOwnProperty`, `PARSER_UNSAFE_KEYS`) is refused wherever a person creates or
-// renames an entity field through the entity actions: the add and the update of one field, and the TypeSpec source save (`applyTypeSpecAction`).
+// renames an entity field through the entity actions: the add and the update of one field, and the TypeSpec Apply (`applyTypeSpecAction`).
 
 const { mockPrisma } = vi.hoisted(() => ({
   mockPrisma: {
@@ -18,7 +18,6 @@ vi.mock("@/lib/access/principal", async () => (await import("../../helpers/acces
 vi.mock("@/lib/auth", () => ({ auth: vi.fn().mockResolvedValue({ user: { id: "user-1" } }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
-vi.mock("@/lib/compiler/typespec-compiler", () => ({ compileTypeSpecWithGovernance: vi.fn() }));
 
 import {
   addFieldAction,
@@ -30,12 +29,13 @@ const MESSAGE = '"hasOwnProperty" is a reserved name: AsyncAPI documents cannot 
 const REFUSED = { error: MESSAGE, code: "VALIDATION_ERROR" };
 
 const OWN_FIELD = { id: "fld-1", entityId: "ent-1", name: "email", slug: "email", type: "string", entity: { tenantId: "tenant-1" } };
-const parsedField = (name: string) => ({ name, type: "string", isOptional: true, isKey: false, decorators: {} });
+/** The entity's own model (named after the entity) with the given fields. */
+const modelOf = (...fields: string[]) => `model Customer {\n${fields.map((f) => `  ${f};`).join("\n")}\n}\n`;
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
-  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", tenantId: "tenant-1", metadata: {} });
+  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Customer", tenantId: "tenant-1", metadata: {}, typespecSource: null });
   mockPrisma.field.findUnique.mockResolvedValue(OWN_FIELD);
   mockPrisma.field.findFirst.mockResolvedValue(null);
   mockPrisma.field.findMany.mockResolvedValue([]);
@@ -87,22 +87,25 @@ describe("updateFieldAction (rename)", () => {
   });
 });
 
-describe("applyTypeSpecAction (the TypeSpec source save projects the model's fields onto field rows)", () => {
+describe("applyTypeSpecAction (the TypeSpec preview's Apply writes the fields its text means, through the source pipeline)", () => {
   it("refuses a model with a NEW field named hasOwnProperty, before it writes anything", async () => {
-    const result = await applyTypeSpecAction("ent-1", [parsedField("id"), parsedField("hasOwnProperty")]);
-    expect(result).toEqual({ added: 0, updated: 0, removed: [], error: MESSAGE });
+    const result = await applyTypeSpecAction("ent-1", modelOf("id: string", "hasOwnProperty: string"));
+    // The message names the model that holds the field, as the Source save's does.
+    expect(result).toEqual({ added: 0, updated: 0, removed: [], error: `Model "Customer": ${MESSAGE}` });
     nothingWritten();
   });
 
-  it("looks at the trimmed name, and at the new fields only: a field that already exists is left alone", async () => {
-    expect(await applyTypeSpecAction("ent-1", [parsedField(" hasOwnProperty ")])).toMatchObject({ error: MESSAGE });
+  it("looks at the new fields only: a field that already exists is left alone", async () => {
+    expect(await applyTypeSpecAction("ent-1", modelOf("hasOwnProperty: string"))).toMatchObject({ error: `Model "Customer": ${MESSAGE}` });
     nothingWritten();
     mockPrisma.field.findMany.mockResolvedValue([{ id: "fld-9", entityId: "ent-1", name: "hasOwnProperty", sortOrder: 0, fieldNumber: 1, type: "string", nullable: true, isKey: false, description: "", classification: null, decorators: {} }]);
-    expect(await applyTypeSpecAction("ent-1", [parsedField("hasOwnProperty"), parsedField("id")])).toEqual({ added: 1, updated: 0, removed: [] });
+    expect(await applyTypeSpecAction("ent-1", modelOf("hasOwnProperty: string", "id: string"))).toMatchObject({ added: 1, removed: [] });
+    // The new field is the one written: the existing `hasOwnProperty` is never created again (and never refused).
     expect(mockPrisma.field.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.field.create.mock.calls[0][0].data).toMatchObject({ name: "id" });
   });
 
   it("accepts the look-alikes", async () => {
-    expect(await applyTypeSpecAction("ent-1", [parsedField("hasownproperty"), parsedField("HasOwnProperty"), parsedField("hasOwnProperty2")])).toEqual({ added: 3, updated: 0, removed: [] });
+    expect(await applyTypeSpecAction("ent-1", modelOf("hasownproperty: string", "HasOwnProperty: string", "hasOwnProperty2: string"))).toEqual({ added: 3, updated: 0, removed: [] });
   });
 });

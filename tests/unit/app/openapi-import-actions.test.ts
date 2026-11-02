@@ -135,6 +135,58 @@ describe("OpenAPI import action (real converter + compiler)", () => {
     expect(allOps.length).toBeGreaterThan(0);
   });
 
+  it("imports an inline string enum as an enum field with its symbols, not as a field typed \"string | string\"", async () => {
+    const doc = JSON.stringify({
+      openapi: "3.0.0",
+      info: { title: "Shop", version: "1.0.0" },
+      paths: {},
+      components: {
+        schemas: {
+          Item: {
+            type: "object",
+            properties: {
+              status: { type: "string", enum: ["available", "sold"] },
+              tags: { type: "array", items: { type: "string", enum: ["new", "used"] } },
+            },
+          },
+        },
+      },
+    });
+    const result = await importOpenApiDocumentAction(doc);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const item = result.data.models.find((m) => m.name === "Item");
+    expect(item?.fields.find((f) => f.name === "status")).toMatchObject({ type: "enum", enumValues: ["available", "sold"] });
+    expect(item?.fields.find((f) => f.name === "tags")).toMatchObject({ type: "array", arrayElementType: "enum", enumValues: ["new", "used"] });
+  });
+
+  it("imports an inline enum of numbers and of booleans as an enum field of their text: the whole document still imports", async () => {
+    const doc = JSON.stringify({
+      openapi: "3.0.0",
+      info: { title: "Shop", version: "1.0.0" },
+      paths: {},
+      components: {
+        schemas: {
+          Item: {
+            type: "object",
+            properties: {
+              code: { type: "integer", enum: [1, 2, 3] },
+              active: { type: "boolean", enum: [true, false] },
+              name: { type: "string" },
+            },
+          },
+        },
+      },
+    });
+    const result = await importOpenApiDocumentAction(doc);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const item = result.data.models.find((m) => m.name === "Item");
+    expect(item?.fields.find((f) => f.name === "code")).toMatchObject({ type: "enum", enumValues: ["1", "2", "3"] });
+    expect(item?.fields.find((f) => f.name === "active")).toMatchObject({ type: "enum", enumValues: ["true", "false"] });
+    expect(item?.fields.find((f) => f.name === "name")).toMatchObject({ type: "string" });
+  });
+
   it("rejects empty content", async () => {
     const result = await importOpenApiDocumentAction("");
     expect(result.success).toBe(false);

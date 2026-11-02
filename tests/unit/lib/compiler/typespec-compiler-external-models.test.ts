@@ -28,15 +28,15 @@ describe("without the option nothing changes", () => {
     if (!good.success) return;
     expect(good.externalModels.size).toBe(0);
     expect(good.fieldTypeNames).toEqual([
-      { field: "id", written: "string", shape: "direct" },
-      { field: "tags", written: "string", shape: "array" },
-      { field: "owner", written: "Customer", shape: "direct" },
+      { model: "Customer", field: "id", written: "string", shape: "direct" },
+      { model: "Customer", field: "tags", written: "string", shape: "array" },
+      { model: "Customer", field: "owner", written: "Customer", shape: "direct" },
     ]);
   });
 });
 
 describe("externalModels", () => {
-  it("is asked once, about the names of the FIRST model's fields the compiler could not find, as written, each once", async () => {
+  it("is asked once, about the names the fields of EVERY model of the source could not find, as written, each once; the model is named in the list", async () => {
     const ask = accepting();
     const source = [
       "model Local { x: string; }",
@@ -53,29 +53,13 @@ describe("externalModels", () => {
       "  z: Zip;",
       "}",
     ].join("\n");
-    // The model the document lists first is the entity's, whatever it is called: here `Local`, which names nothing unknown.
-    await compileTypeSpecWithGovernance(source, { externalModels: ask });
-    expect(ask).not.toHaveBeenCalled();
+    const res = await compileTypeSpecWithGovernance(source, { externalModels: ask });
 
-    const entityFirst = [
-      "model Customer {",
-      "  @key id: string;",
-      "  a: Address;",
-      "  b: Billing.Payments.Address[];",
-      "  d: Record<Pair>;",
-      "  e: Mixed | string;",
-      "  f: Address;",
-      "}",
-      "model Other {",
-      "  z: Zip;",
-      "}",
-    ].join("\n");
-    const res = await compileTypeSpecWithGovernance(entityFirst, { externalModels: ask });
-
-    // The shapes of a field's type: Name, Name[], Record<Name>, a member of the field's own union. `Zip` is a field of the second model.
+    // The shapes of a field's type: Name, Name[], Record<Name>, a member of the field's own union. `Local` is declared, so it names nothing
+    // unknown. A helper model (`Other`) is asked about too: the caller decides which model is the entity's, and links only that one's names.
     expect(res.success).toBe(false);
     expect(ask).toHaveBeenCalledTimes(1);
-    expect(ask.mock.calls[0][0].sort()).toEqual(["Address", "Billing.Payments.Address", "Mixed", "Pair"]);
+    expect(ask.mock.calls[0][0].sort()).toEqual(["Address", "Billing.Payments.Address", "Mixed", "Pair", "Zip"]);
     // `Mixed` is only ever a union member (not stored as a reference); the others are references
     expect([...((ask.mock.calls[0] as unknown[])[1] as ReadonlySet<string>)]).toEqual(["Mixed"]);
   });
@@ -88,13 +72,13 @@ describe("externalModels", () => {
     expect(res.success).toBe(true);
     if (!res.success) return;
     expect(res.fieldTypeNames).toEqual([
-      { field: "id", written: "string", shape: "direct" },
-      { field: "a", written: "Address", shape: "direct" },
-      { field: "b", written: "Address", shape: "array" },
-      { field: "c", written: "Address", shape: "map" },
-      { field: "d", written: "Card", shape: "union" },
-      { field: "d", written: "Bank", shape: "union" },
-      { field: "e", written: "string", shape: "array" },
+      { model: "Customer", field: "id", written: "string", shape: "direct" },
+      { model: "Customer", field: "a", written: "Address", shape: "direct" },
+      { model: "Customer", field: "b", written: "Address", shape: "array" },
+      { model: "Customer", field: "c", written: "Address", shape: "map" },
+      { model: "Customer", field: "d", written: "Card", shape: "union" },
+      { model: "Customer", field: "d", written: "Bank", shape: "union" },
+      { model: "Customer", field: "e", written: "string", shape: "array" },
     ]);
     expect(res.document.models.map((m) => m.name)).toEqual(["Customer"]);
   });
@@ -109,9 +93,9 @@ describe("externalModels", () => {
     expect(res.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
     expect([...res.externalModels].sort()).toEqual(["Address", "Billing.Payments.Address"]);
     expect(res.fieldTypeNames).toEqual([
-      { field: "id", written: "string", shape: "direct" },
-      { field: "a", written: "Address", shape: "direct" },
-      { field: "b", written: "Billing.Payments.Address", shape: "array" },
+      { model: "Customer", field: "id", written: "string", shape: "direct" },
+      { model: "Customer", field: "a", written: "Address", shape: "direct" },
+      { model: "Customer", field: "b", written: "Billing.Payments.Address", shape: "array" },
     ]);
     expect(res.document.models.map((m) => m.name)).toEqual(["Customer"]);
     expect(res.document.models[0].fields.map((f) => [f.name, f.type, f.arrayElementType])).toEqual([

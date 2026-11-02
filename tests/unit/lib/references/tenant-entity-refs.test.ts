@@ -28,7 +28,7 @@ describe("loadTenantEntityRefs", () => {
     for (const tenantId of ["", "   ", undefined, null, 7] as unknown[]) {
       const { db, findMany } = fakeDb([row("e-1", "Address", "Billing", "Payments")]);
 
-      const res = await loadTenantEntityRefs(db, tenantId as string);
+      const res = await loadTenantEntityRefs(db, tenantId as string, {});
 
       expect(res, String(tenantId)).toEqual({ success: false, error: { code: "CROSS_TENANT" } });
       expect(findMany, String(tenantId)).not.toHaveBeenCalled();
@@ -38,7 +38,7 @@ describe("loadTenantEntityRefs", () => {
   it("reads only the tenant's entities, as qualified references with their ids (`_tenant` for a missing domain / product)", async () => {
     const { db, findMany } = fakeDb([row("e-1", "Address", "Billing", "Payments"), row("e-2", "Note")]);
 
-    const res = await loadTenantEntityRefs(db, "tenant-1");
+    const res = await loadTenantEntityRefs(db, "tenant-1", {});
 
     expect(findMany.mock.calls[0][0]).toMatchObject({ where: { tenantId: "tenant-1" } });
     expect(res).toEqual({
@@ -48,6 +48,17 @@ describe("loadTenantEntityRefs", () => {
         { entityId: "e-2", domain: "_tenant", product: "_tenant", entity: "Note" },
       ],
     });
+  });
+
+  it("with a readable filter, asks only for the entities the filter admits; the filter cannot widen the tenant", async () => {
+    const readable = { OR: [{ domainId: { in: ["dom-billing"] } }] };
+    const { db, findMany } = fakeDb([row("e-1", "Address", "Billing", "Payments")]);
+
+    await loadTenantEntityRefs(db, "tenant-1", readable);
+    expect(findMany.mock.calls[0][0]).toMatchObject({ where: { OR: readable.OR, tenantId: "tenant-1" } });
+
+    await loadTenantEntityRefs(db, "tenant-1", { tenantId: "tenant-2" });
+    expect(findMany.mock.calls[1][0]).toMatchObject({ where: { tenantId: "tenant-1" } });
   });
 });
 

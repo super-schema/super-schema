@@ -22,6 +22,9 @@ import {
   type Enum,
   type Scalar,
   type Union,
+  type StringLiteral,
+  type NumericLiteral,
+  type BooleanLiteral,
   type Interface,
   type Operation,
   type Type,
@@ -33,6 +36,8 @@ import { SyntaxKind } from "@typespec/compiler/ast";
 import { mkdtemp, writeFile, rm, mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { mapTypeSpecType } from "./typespec-parser";
+import { DATA_TYPE_HIERARCHY } from "@/lib/data-types";
+import { upgradeLegacyTagDecorators } from "./legacy-tag-decorators";
 import { createLibraryOnlyHost } from "./library-only-host";
 import { isPlainIdentifier, quoteIdentifier } from "./typespec-identifiers";
 import { assertTypeSpecImportsAllowed, TypeSpecImportGuardError } from "@/lib/typespec/import-guard";
@@ -143,9 +148,38 @@ function isFromSource(type: Type, mainPath: string): boolean {
 // Type → our logical type string
 // ---------------------------------------------------------------------------
 
+/**
+ * The logical types a scalar can stand for: every data type that is a plain value (not a structure or a reference, which a scalar cannot be).
+ */
+const SCALAR_LOGICAL_TYPES: ReadonlySet<string> = new Set(
+  DATA_TYPE_HIERARCHY.filter((t) => t.category !== "Structured" && t.category !== "Special").map((t) => t.id),
+);
+
+/**
+ * The logical type of a scalar. A declared scalar is its base: `scalar Price extends decimal;` is `decimal`, `scalar Money extends Price;`
+ * the same, walking up the chain to the first scalar the app has a type for. A scalar with no such base keeps its own name, which the
+ * source save refuses as a type it does not know (it is never stored as `string`).
+ */
+function scalarLogicalType(scalar: Scalar): string {
+  for (let cur: Scalar | undefined = scalar; cur; cur = cur.baseScalar) {
+    const id = mapTypeSpecType(cur.name).type;
+    if (SCALAR_LOGICAL_TYPES.has(id)) return id;
+  }
+  return scalar.name;
+}
+
+/** The type of a property that never has a value (`x: never;`): the property is not a field (see `extractModel`). */
+const isNeverType = (t: Type): boolean => t.kind === "Intrinsic" && (t as { name?: string }).name === "never";
+
+/**
+ * The logical type an unresolved name stands for: none. A property whose type did not resolve is refused by the callers (the compile that
+ * found it failed, and a document with errors is not read), so this value is never stored: it is not a type of the app.
+ */
+const UNRESOLVED_TYPE = "unresolved";
+
 function elementName(type: Type | undefined): string {
   if (!type) return "string";
-  if (type.kind === "Scalar") return (type as Scalar).name;
+  if (type.kind === "Scalar") return scalarLogicalType(type as Scalar);
   // An array whose element is itself an array (`int32[][]`): the element is the logical type `array`, as the importers store it. The
   // model's own name, `Array`, is not a type of ours and generates `Array` with no element (`invalid-template-args`).
   if (type.kind === "Model" && (type as Model).name === "Array") return "array";
@@ -162,6 +196,8 @@ interface MappedProperty {
   nullableType?: boolean;
   unionName?: string;
   unionMembers?: string[];
+  /** The type is a union of two or more literal values (`"a" | "b"`, `1 | 2`, `true | false`): the text of each, the symbols of the enum it stands for (`type` / `arrayElementType` is not a type). */
+  literalValues?: string[];
 }
 
 const isNullType = (t: Type): boolean => t.kind === "Intrinsic" && (t as { name?: string }).name === "null";
@@ -173,10 +209,27 @@ function unionMembersOf(u: Union): { members: Type[]; hasNull: boolean } {
   return { members, hasNull: members.length !== all.length };
 }
 
+/** A member that names a type of the text (a scalar, model, enum or union), not a value. */
+const isTypeMember = (t: Type): boolean => t.kind === "Scalar" || t.kind === "Model" || t.kind === "Enum" || t.kind === "Union";
+
+/**
+ * The symbols of a union of two or more literal values (`"a" | "b"`, `1 | 2`, `true | false`), each as its text: an enum of the app holds text
+ * (OpenAPI's inline enums of numbers and booleans import this way, so the document still imports). Undefined when a member is a type or a mix.
+ */
+function literalSymbols(members: readonly Type[]): string[] | undefined {
+  if (members.length < 2) return undefined;
+  const values: string[] = [];
+  for (const m of members) {
+    if (m.kind === "String") values.push((m as StringLiteral).value);
+    else if (m.kind === "Number") values.push(String((m as NumericLiteral).value));
+    else if (m.kind === "Boolean") values.push(String((m as BooleanLiteral).value));
+    else return undefined;
+  }
+  return values;
+}
+
 function mapPropertyType(type: Type): MappedProperty {
   switch (type.kind) {
-    case "Scalar":
-      return { type: mapTypeSpecType((type as Scalar).name).type };
     case "Model": {
       const m = type as Model;
       if (m.name === "Array") {
@@ -184,6 +237,12 @@ function mapPropertyType(type: Type): MappedProperty {
         if (value?.kind === "Union") {
           // An array of a union: `(A | B)[]` is an array whose element is a union; `(T | null)[]` an array of T (the element's null is not kept).
           const { members } = unionMembersOf(value as Union);
+          // A union of values (`("a" | "b")[]`) or a mix of values and types names no type: its element is the union's text, which the
+          // planner refuses (the import reads the values as an enum).
+          if (members.length >= 2 && !members.every(isTypeMember)) {
+            const literals = literalSymbols(members);
+            return { type: "array", arrayElementType: members.map(elementName).join(" | "), ...(literals ? { literalValues: literals } : {}) };
+          }
           if (members.length >= 2 || ((value as Union).name && members.length >= 1)) {
             return { type: "array", arrayElementType: "union", unionName: (value as Union).name || undefined, unionMembers: members.map(elementName) };
           }
@@ -204,13 +263,26 @@ function mapPropertyType(type: Type): MappedProperty {
       // `T | null` (an inline union of one type and null): the type is T, and the null is the field's own fact.
       if (!u.name && members.length === 1) return { ...mapPropertyType(members[0]), nullableType: true };
       const names = members.map(elementName);
-      // A union of literals (`"a" | "b"`) is values, not types: it has no members to name.
-      const ofTypes = members.every((t) => t.kind === "Scalar" || t.kind === "Model" || t.kind === "Enum" || t.kind === "Union");
+      // A union of literals (`"a" | "b"`) is values, not types: it has no members to name (its symbols ride in `literalValues`).
+      const ofTypes = members.every(isTypeMember);
+      const literals = literalSymbols(members);
       return {
         type: names.join(" | "),
         ...(ofTypes ? { ...(u.name ? { unionName: u.name } : {}), unionMembers: names } : {}),
+        ...(literals ? { literalValues: literals } : {}),
         ...(hasNull ? { nullableType: true } : {}),
       };
+    }
+    case "Scalar":
+      return { type: scalarLogicalType(type as Scalar) };
+    case "Intrinsic": {
+      const name = (type as { name?: string }).name;
+      // `void` / `never` / an unresolved name have no logical type: they are never read as `string` (`never` properties are skipped
+      // before they get here, and a document that did not compile is refused before anything is mapped). `unknown` stays the generic
+      // string: the generator writes a dangling reference as `unknown` plus its `$ref` extension, which reads back as this.
+      if (name === "void") return { type: "void" };
+      if (name === "ErrorType") return { type: UNRESOLVED_TYPE };
+      return { type: "string" };
     }
     case "EnumMember":
     case "Number":
@@ -420,6 +492,7 @@ function extractField(program: Program, prop: ModelProperty): ParsedTypeSpecFiel
     ...(mapped.nullableType ? { nullableType: true } : {}),
     ...(mapped.unionMembers && mapped.unionMembers.length > 0 ? { unionMembers: mapped.unionMembers } : {}),
     ...(mapped.unionName ? { unionName: mapped.unionName } : {}),
+    ...(mapped.literalValues ? { literalValues: mapped.literalValues } : {}),
     isOptional: prop.optional,
     isKey: hasKeyDecorator(prop),
     decorators: readDecorators(prop),
@@ -430,6 +503,8 @@ function extractField(program: Program, prop: ModelProperty): ParsedTypeSpecFiel
 function extractModel(program: Program, model: Model): ParsedTypeSpecModel {
   const fields: ParsedTypeSpecField[] = [];
   for (const [, prop] of model.properties) {
+    // A property typed `never` can hold no value: it is no field (the text reader skips it the same way).
+    if (isNeverType(prop.type)) continue;
     fields.push(extractField(program, prop));
   }
   const decorators = readDecorators(model);
@@ -461,8 +536,33 @@ function namespaceName(ns: Namespace | undefined): string | undefined {
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * A TypeSpec text the compiler refused (it has errors): it has no document to import, so the import answers with its diagnostics. Thrown by
+ * `compileTypeSpecDocument`, which never returns the document of a text with errors (an unresolved name would otherwise be read as a type).
+ */
+export class TypeSpecCompileError extends Error {
+  readonly code = "TYPESPEC_COMPILE_ERROR";
+
+  constructor(readonly diagnostics: GovernanceDiagnostic[]) {
+    // The first few errors, each bounded: the message is shown to the person who imports.
+    const messages = diagnostics.slice(0, 5).map((d) => d.message.slice(0, 300));
+    super(`The TypeSpec does not compile: ${messages.join("; ")}`);
+    this.name = "TypeSpecCompileError";
+  }
+}
+
+/**
+ * The document of a TypeSpec text, for an import. A text the compiler refuses throws `TypeSpecCompileError` with its errors: an unresolved or
+ * misspelt name is not read as a type of its own, and nothing is imported from a text that does not compile (the Source save refuses the same).
+ */
 export async function compileTypeSpecDocument(source: string): Promise<ParsedTypeSpecDocument> {
-  const { program, mainPath } = await compileSource(source);
+  // A stored source from before Story 16.6 can carry `@tag` lines that real TypeSpec refuses: they are read in the form the generator emits now
+  // (a no-op for any other text), so an import of such text keeps its classifications and tags, and everything else is still compiled as written.
+  const { program, mainPath } = await compileSource(upgradeLegacyTagDecorators(source));
+  const errors: GovernanceDiagnostic[] = (program.diagnostics ?? [])
+    .filter((d: Diagnostic) => d.severity === "error")
+    .map((d: Diagnostic) => ({ severity: "error", code: d.code, message: d.message, target: describeDiagnosticTarget(d, mainPath) }));
+  if (errors.length > 0) throw new TypeSpecCompileError(errors);
   return compileTypeSpecDocumentFromProgram(program, mainPath);
 }
 
@@ -621,13 +721,15 @@ export interface ModelGovernanceInfo {
 }
 
 /**
- * A plain NAME (`Address`, `Billing.Payments.Address`) that the type of a field of the entity's model (its first model) is, or is made
- * of, and how: `direct` (`Address`), `array` (`Address[]`), `map` (`Record<Address>`), `union` (`Card | Bank`: one entry per member,
- * the union being the field's own type). Read from the syntax tree, so a qualified name is as written (the semantic type only knows the
- * model's short name). Anything else (a template instance other than `Record<Name>`, an array of a union, an inline model, a name inside
- * a nested expression) is not listed: a name only there is never offered for a stand-in.
+ * A plain NAME (`Address`, `Billing.Payments.Address`) that the type of a field of a model of the source is, or is made of, and how: `direct`
+ * (`Address`), `array` (`Address[]`), `map` (`Record<Address>`), `union` (`Card | Bank`: one entry per member, the union being the field's own
+ * type). `model` is the model the field belongs to (the caller picks the entity's own model by name; the names of the other models are listed
+ * too, so the compile can be told about each of them). Read from the syntax tree, so a qualified name is as written (the semantic type only
+ * knows the model's short name). Anything else (a template instance other than `Record<Name>`, an array of a union, an inline model, a name
+ * inside a nested expression) is not listed: a name only there is never offered for a stand-in.
  */
 export interface FieldTypeName {
+  model: string;
   field: string;
   written: string;
   shape: "direct" | "array" | "map" | "union";
@@ -641,7 +743,7 @@ export type CompileWithGovernanceResult =
       fieldGovernance: Record<string, FieldGovernanceInfo>;
       modelGovernance: Record<string, ModelGovernanceInfo>;
       diagnostics: GovernanceDiagnostic[];
-      /** The plain type names the fields of the entity's model write (see {@link FieldTypeName}), in field order. */
+      /** The plain type names the fields of every model of the source write (see {@link FieldTypeName}), in declaration order. */
       fieldTypeNames: FieldTypeName[];
       /** The names `options.externalModels` accepted: the source compiled only because they were given a stand-in. Empty for a source that compiled on its own. */
       externalModels: ReadonlySet<string>;
@@ -654,7 +756,7 @@ export type CompileWithGovernanceResult =
 export interface CompileWithGovernanceOptions {
   /**
    * The Source tab saves a source whose fields may be typed with the name of ANOTHER entity of the tenant, a model that source does not
-   * declare, so on its own it fails with `invalid-ref`. When it does, for a name a field of the entity's model WRITES that the compiler
+   * declare, so on its own it fails with `invalid-ref`. When it does, for a name a field of a model of the source WRITES that the compiler
    * could not find (as written: `Address` or `Billing.Payments.Address`), this is asked which of them the caller resolves (an entity of
    * the tenant); the source is compiled once more with an empty stand-in model for each name it accepts, so the rest of the source is
    * still checked for real. The stand-ins live in a separate file: they are not in the document read back, so nothing of them is stored
@@ -726,39 +828,47 @@ function recordValueName(node: unknown): string | undefined {
 }
 
 /**
- * {@link FieldTypeName}s of the first model of the source (the entity's model; the same one `compileTypeSpecDocumentFromProgram` lists first).
+ * {@link FieldTypeName}s of every model of the source, in declaration order (the same models `compileTypeSpecDocumentFromProgram` lists).
  * An array of a union (`(A | B)[]`) is not listed on purpose: the reader reports the element of such an array as `string`, so a save would
  * overwrite the row with an array of strings.
  */
 function entityFieldTypeNames(program: Program, mainPath: string): FieldTypeName[] {
-  const found: { model?: Model } = {};
+  const models: Model[] = [];
   navigateProgram(program, {
     model(m: Model) {
-      if (found.model || !isFromSource(m, mainPath)) return;
+      if (!isFromSource(m, mainPath)) return;
       if (m.name === "Array" || m.name === "Record" || !m.name) return;
-      found.model = m;
+      models.push(m);
     },
   });
   const names: FieldTypeName[] = [];
-  if (!found.model) return names;
-  for (const [, prop] of found.model.properties) {
-    const node = prop.node as { kind?: SyntaxKind; value?: { kind?: SyntaxKind; elementType?: unknown; options?: readonly unknown[] } } | undefined;
-    if (node?.kind !== SyntaxKind.ModelProperty || !node.value) continue;
-    const push = (written: string, shape: FieldTypeName["shape"]) => names.push({ field: prop.name, written, shape });
-    const direct = plainTypeName(node.value);
-    if (direct !== undefined) {
-      push(direct, "direct");
-    } else if (node.value.kind === SyntaxKind.ArrayExpression) {
-      const element = plainTypeName(node.value.elementType);
-      if (element !== undefined) push(element, "array");
-    } else if (node.value.kind === SyntaxKind.UnionExpression) {
-      for (const option of node.value.options ?? []) {
-        const member = plainTypeName(option);
-        if (member !== undefined) push(member, "union");
+  for (const model of models) {
+    for (const [, prop] of model.properties) {
+      const node = prop.node as { kind?: SyntaxKind; value?: { kind?: SyntaxKind; elementType?: unknown; options?: readonly unknown[] } } | undefined;
+      if (node?.kind !== SyntaxKind.ModelProperty || !node.value) continue;
+      const push = (written: string, shape: FieldTypeName["shape"]) => names.push({ model: model.name, field: prop.name, written, shape });
+      const direct = plainTypeName(node.value);
+      if (direct !== undefined) {
+        push(direct, "direct");
+      } else if (node.value.kind === SyntaxKind.ArrayExpression) {
+        const element = plainTypeName(node.value.elementType);
+        if (element !== undefined) push(element, "array");
+      } else if (node.value.kind === SyntaxKind.UnionExpression) {
+        // `T | null` is T, nullable (the compiler's own reading, see `mapPropertyType`): its name is a direct type, not a union member.
+        const options = (node.value.options ?? []).filter((option) => plainTypeName(option) !== "null");
+        if (options.length === 1) {
+          const only = plainTypeName(options[0]);
+          if (only !== undefined) push(only, "direct");
+        } else {
+          for (const option of options) {
+            const member = plainTypeName(option);
+            if (member !== undefined) push(member, "union");
+          }
+        }
+      } else {
+        const value = recordValueName(node.value);
+        if (value !== undefined) push(value, "map");
       }
-    } else {
-      const value = recordValueName(node.value);
-      if (value !== undefined) push(value, "map");
     }
   }
   return names;
@@ -772,7 +882,8 @@ export async function compileTypeSpecWithGovernance(
   if (first.result.success || !options?.externalModels || !first.program) return first.result;
 
   // The type of a field names something the source does not declare: is it an entity of the tenant? Only the names the compiler could
-  // not find are offered, and only when written as the type of a field (or of an array's element) of the entity's model.
+  // not find are offered, and only when written as the type of a field (or of an array's element) of some model of the source. Which model is
+  // the entity's is the caller's to pick (`FieldTypeName.model`): a name a helper model writes may compile, and is linked by nothing.
   const unknown = unknownIdentifiers(first.result.diagnostics);
   if (unknown.size === 0) return first.result;
   const typed = entityFieldTypeNames(first.program, first.mainPath).filter((n) => unknown.has(n.written.split(".")[0]));

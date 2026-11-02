@@ -38,6 +38,7 @@ import {
 import {
   enumMemberName,
   escapeString,
+  isPlainIdentifier,
   propertyName,
   quoteIdentifier,
   sanitizeIdentifier,
@@ -981,6 +982,15 @@ const STRUCTURED_MEMBER_TYPES: Record<string, string> = {
 };
 
 /**
+ * A stored type name as the TypeSpec type it is written as. A name that is no plain identifier (a row written before the writers refused it may
+ * hold any text, such as `string; } model X {`) is never written bare: as a quoted identifier, which names nothing the text declares, so the
+ * compile refuses it instead of reading a second declaration. `unknown` is TypeSpec's own type and stays as it is.
+ */
+function storedTypeName(name: string): string {
+  return isPlainIdentifier(name) || name === "unknown" ? name : quoteIdentifier(name);
+}
+
+/**
  * TypeSpec type of an array element / map value: a reference resolves to the
  * referenced entity, an enum to the field's generated enum, structured types to
  * their generic form; anything else as before (scalar, or a declared type name).
@@ -1004,7 +1014,7 @@ function resolveCollectionMemberType(
   if (STRUCTURED_MEMBER_TYPES[memberType]) {
     return STRUCTURED_MEMBER_TYPES[memberType];
   }
-  return getTypeInfo(memberType)?.typespecScalar ?? memberType;
+  return storedTypeName(getTypeInfo(memberType)?.typespecScalar ?? memberType);
 }
 
 /**
@@ -1065,7 +1075,7 @@ function resolveTypeSpecType(
       return typespecScalar;
     }
     default: {
-      return typespecScalar;
+      return storedTypeName(typespecScalar);
     }
   }
 }

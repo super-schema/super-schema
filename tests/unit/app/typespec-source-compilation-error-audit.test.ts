@@ -28,7 +28,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
   mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
-  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
+  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Customer", typespecSource: null, tenantId: "tenant-1" });
   mockPrisma.field.findMany.mockResolvedValue([]);
   mockPrisma.field.create.mockResolvedValue({ id: "new" });
   mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));

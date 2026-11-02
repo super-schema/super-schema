@@ -40,7 +40,7 @@ describe("TypeSpec decorator fidelity (compiler path)", () => {
         @secret token: string;
         @summary("Display name") name: string;
         #deprecated "use name"
-        @deprecated legacyName?: string;
+        legacyName?: string;
       }
     `);
 
@@ -78,18 +78,22 @@ describe("TypeSpec decorator fidelity (compiler path)", () => {
   });
 
   it("maps @tag(\"classification:PII\") → classification PII", async () => {
+    // A stored legacy source: the `@tag` line stands alone, as the generator wrote it (the import reads it in the form the generator writes now).
     const model = await importModel(`
-      model M { @tag("classification:PII") ssn: string; }
+      model M {
+        @tag("classification:PII")
+        ssn: string;
+      }
     `);
     expect(field(model.fields, "ssn").classification).toBe("PII");
   });
 
   it("maps @visibility and @extension (no std getter in 1.10 — read from AST)", async () => {
     const model = await importModel(`
-      using TypeSpec;
+      import "@typespec/openapi";
       model M {
         @visibility(Lifecycle.Read, Lifecycle.Create) a: string;
-        @extension("x-custom", "val") b: string;
+        @TypeSpec.OpenAPI.extension("x-custom", "val") b: string;
       }
     `);
     expect(field(model.fields, "a").visibility).toEqual(["Read", "Create"]);

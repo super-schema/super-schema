@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { SuperSchemaField, SuperSchemaModel } from "@/types/super-schema-model";
-import { buildDbTypeSpecSource, isDbTypeSpecTarget } from "@/lib/typespec-official/db-source";
+import { buildDbTypeSpecSource, buildDbTypeSpecTarget, isDbTypeSpecTarget } from "@/lib/typespec-official/db-source";
 
 /**
  * The DB DDL emitter packages (@typespec/spanner|postgres|bigquery) are self-contained: each declares its OWN
@@ -142,5 +142,36 @@ describe("buildDbTypeSpecSource: retention and keys", () => {
 
   it("rejects a target that is not a DB target", () => {
     expect(() => buildDbTypeSpecSource(model({ fields: FIELDS }), "avro")).toThrow(/not a DB target/);
+  });
+});
+
+describe("buildDbTypeSpecTarget: a type the app does not have", () => {
+  // A row written before the writers refused a model or scalar name as a field type (`Price`): no column type exists for it.
+  const legacy = (overrides: Partial<SuperSchemaField>) => field({ name: "price", type: "string", sortOrder: 3, ...overrides });
+
+  it.each(DIALECTS)("is an error on $target, never a string column", ({ target }) => {
+    const built = buildDbTypeSpecTarget(model({ fields: [...FIELDS, legacy({ type: "Price" as SuperSchemaField["type"] })] }), target);
+    expect(built.source).toBe("");
+    expect(built.errors).toEqual([`The field "price" is typed "Price", which is not a type of this app. Retype the field as one of the app's types.`]);
+  });
+
+  it("is an error for an array whose element type the app does not have", () => {
+    const built = buildDbTypeSpecTarget(model({ fields: [...FIELDS, legacy({ type: "array", complexType: { arrayElementType: "Price" } as unknown as SuperSchemaField["complexType"] })] }), "postgresql");
+    expect(built.source).toBe("");
+    expect(built.errors).toEqual([expect.stringContaining('typed "Price"')]);
+  });
+
+  it("is not an error for the app's own types, a union, an enum, a reference or an array with no element type", () => {
+    const own = [
+      legacy({ name: "status", type: "enum" }),
+      legacy({ name: "other", type: "union", sortOrder: 4 }),
+      legacy({ name: "customer", type: "reference", sortOrder: 5 }),
+      legacy({ name: "tags", type: "array", sortOrder: 6 }),
+    ];
+    for (const target of ["spanner", "postgresql", "bigquery"]) {
+      const built = buildDbTypeSpecTarget(model({ fields: [...FIELDS, ...own] }), target);
+      expect(built.errors, target).toEqual([]);
+      expect(built.source, target).toContain("status");
+    }
   });
 });
