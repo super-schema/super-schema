@@ -56,7 +56,8 @@ describe("the protobuf target generates an entity with a nullable type", () => {
     expect(compileEntity(entity, fields).fields[1].nullableType).toBe(true);
     const result = await emitOfficialTypeSpecTargetFromData(entity, fields, "protobuf");
     expect(result.errors).toEqual([]);
-    expect(result.output).toMatch(/^  string reqNull = \d+;/m);
-    expect(result.output).toMatch(/^  int64 optNull = \d+;/m);
+    // @typespec/protobuf 0.82+ writes an optional scalar with proto3's explicit `optional` (presence tracking; the wire format is the same).
+    expect(result.output).toMatch(/^  optional string reqNull = \d+;/m);
+    expect(result.output).toMatch(/^  optional int64 optNull = \d+;/m);
   });
 });
