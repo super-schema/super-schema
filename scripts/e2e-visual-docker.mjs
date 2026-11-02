@@ -30,7 +30,7 @@ export const VISUAL_CONTAINER_PREFIX = "ss-e2e-visual-";
 /** The name docker's VM gives the host on macOS and Windows. */
 export const DOCKER_HOST_NAME = "host.docker.internal";
 
-/** `mcr.microsoft.com/playwright:v1.59.1-jammy`: the image that matches an installed @playwright/test, to the patch version. */
+/** `mcr.microsoft.com/playwright:v<MAJOR.MINOR.PATCH>-jammy`: the image that matches an installed @playwright/test, to the patch version. */
 export function visualImageFor(playwrightVersion, distro = PLAYWRIGHT_IMAGE_DISTRO) {
   if (!/^\d+\.\d+\.\d+$/.test(playwrightVersion)) throw new Error(`not a Playwright version: "${playwrightVersion}" (the image tag needs MAJOR.MINOR.PATCH)`);
   return `${PLAYWRIGHT_IMAGE_REPO}:v${playwrightVersion}-${distro}`;

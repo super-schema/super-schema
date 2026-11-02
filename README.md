@@ -178,7 +178,7 @@ flowchart LR
 
 | Layer | Technology |
 | --- | --- |
-| Framework | [Next.js 16](https://nextjs.org/) (App Router), [React 19](https://react.dev/), TypeScript 5 |
+| Framework | [Next.js 16](https://nextjs.org/) (App Router), [React 19](https://react.dev/), TypeScript 6 |
 | Schema engine | [TypeSpec](https://typespec.io/) compiler and emitters, AsyncAPI parser, protobuf.js |
 | Data | [Prisma 7](https://www.prisma.io/) on PostgreSQL 16 or embedded [PGlite](https://pglite.dev/) |
 | Auth | [Auth.js v5](https://authjs.dev/) |

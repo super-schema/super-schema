@@ -468,12 +468,12 @@ works, how to rewrite it (`UPDATE_A11Y_BASELINE=1`), what was fixed and what is 
 
 `tests/e2e/visual.spec.ts` takes nine screenshots (login, register, the domain grid, an empty product, the entity editor, admin settings, the type mapping
 table, the governance dashboard with nothing to decide, the shell's 404) and compares them with `toHaveScreenshot`. **Snapshots are made, and compared, only
-inside the official Playwright Docker image**, `mcr.microsoft.com/playwright:v<the installed @playwright/test>-jammy` (today `v1.59.1-jammy`): the same page
+inside the official Playwright Docker image**, `mcr.microsoft.com/playwright:v<the installed @playwright/test>-jammy`: the same page
 renders differently on macOS and on Linux, and a snapshot made on a laptop would fail everywhere else. The `visual` project does not exist outside the
 image (`playwright.config.ts`: `E2E_VISUAL_IN_DOCKER=1`, which only the script below sets): it is not a test that skips itself, and a run that names it says why.
 
 ```bash
-docker pull mcr.microsoft.com/playwright:v1.59.1-jammy      # once; about 2.5 GB. The runner never pulls it for you
+docker pull mcr.microsoft.com/playwright:v$(node -p "require('@playwright/test/package.json').version")-jammy   # once; about 2.5 GB. The runner never pulls it for you
 npm run test:e2e:visual                                       # compare to the committed snapshots (a difference fails, nothing is written)
 npm run test:e2e:update-snapshots                             # take every snapshot again and write it to tests/e2e/visual.spec.ts-snapshots/
 npm run test:e2e:update-snapshots -- --reuse-build -- --grep "login"   # options before the second --, Playwright's after it
