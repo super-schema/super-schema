@@ -13,6 +13,7 @@ import { isLibraryTrait, type DocExternalRef, type DocumentProblem, type EventDo
 import { referenceableItems } from "@/lib/events/external-refs";
 import { isJsonObject } from "@/lib/events/inputs";
 import type { EntityPin, FrozenTrait } from "@/lib/events/types";
+import { legacyVersionNumber } from "@/lib/entity-versioning/version-math";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import type { ArtifactRenderer, ArtifactSubject } from "./artifact-renderer";
 
@@ -34,7 +35,7 @@ export interface EventSnapshot {
    * The latest published version. `sourceDocument`, `frozenTraits` and `compatReport` are stored JSON, handed over as read: whoever
    * uses them parses and shape-checks them (publish does — `event-publish-facts.ts`).
    */
-  latest: { id: string; major: number; minor: number; sequence: number; sourceDocument: unknown; resolvedSpec: unknown; frozenTraits: unknown; compatReport: unknown } | null;
+  latest: { id: string; major: number; minor: number; patch: number; sequence: number; sourceDocument: unknown; resolvedSpec: unknown; frozenTraits: unknown; compatReport: unknown } | null;
   /** The tenant's library traits the document points at, by `libraryTraitId`. A trait that was not found is simply absent. */
   libraryTraits: Map<string, FrozenTrait>;
   /** What each `externalRefs[]` entry resolves to, by ref key, from the referenced version's stored `resolvedSpec`. A ref that cannot be resolved is absent. */
@@ -142,7 +143,7 @@ export async function loadEventSnapshot(db: Db, eventId: string, override?: Even
     document,
     latest: row.latestVersion
       ? {
-          id: row.latestVersion.id, major: row.latestVersion.major, minor: row.latestVersion.minor, sequence: row.latestVersion.sequence,
+          id: row.latestVersion.id, ...legacyVersionNumber(row.latestVersion), sequence: row.latestVersion.sequence,
           sourceDocument: row.latestVersion.sourceDocument, resolvedSpec: row.latestVersion.resolvedSpec, frozenTraits: row.latestVersion.frozenTraits,
           compatReport: row.latestVersion.compatReport,
         }

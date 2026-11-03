@@ -15,7 +15,7 @@ export interface PublishState {
     hasUnpublishedChanges: boolean;
     typespecSource: string | null;
   };
-  latest: { id: string; major: number; minor: number; sequence: number; fieldSnapshot: FieldSnapshot[] } | null;
+  latest: { id: string; major: number; minor: number; patch: number; sequence: number; fieldSnapshot: FieldSnapshot[] } | null;
   currentFields: FieldSnapshot[];
   /** One entry per referenced entity; `entityName: null` means it no longer exists. */
   references: Array<{ entityId: string; entityName: string | null; latestVersionId: string | null }>;
@@ -190,6 +190,7 @@ export function analyzePublish(state: PublishState): PublishAnalysis {
     candidateLabels: {
       MAJOR: formatVersionLabel(nextVersionNumber(latest, "MAJOR").version),
       MINOR: formatVersionLabel(nextVersionNumber(latest, "MINOR").version),
+      PATCH: formatVersionLabel(nextVersionNumber(latest, "PATCH").version),
     },
     initialLabel,
     reasons: suggestion.reasons,

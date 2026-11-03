@@ -104,9 +104,9 @@ describe("loadPublishClosure", () => {
     expect(res.success).toBe(true);
     if (!res.success) return;
     expect(res.data.referencedVersions).toEqual([
-      { ref: { entityId: "b", domain: "sales", product: "orders", entity: "B" }, version: "2.0", pinned: false },
-      { ref: { entityId: "c", domain: "sales", product: "orders", entity: "C" }, version: "1.0", pinned: true },
-      { ref: { entityId: "d", domain: "sales", product: "orders", entity: "D" }, version: "1.3", pinned: false },
+      { ref: { entityId: "b", domain: "sales", product: "orders", entity: "B" }, version: "2.0.0", pinned: false },
+      { ref: { entityId: "c", domain: "sales", product: "orders", entity: "C" }, version: "1.0.0", pinned: true },
+      { ref: { entityId: "d", domain: "sales", product: "orders", entity: "D" }, version: "1.3.0", pinned: false },
     ]);
   });
 
@@ -120,7 +120,7 @@ describe("loadPublishClosure", () => {
     expect(res.success).toBe(true);
     if (!res.success) return;
     expect(res.data.referencedVersions).toEqual([
-      { ref: { entityId: "b", domain: "sales", product: "orders", entity: "B" }, version: "1.0", pinned: true },
+      { ref: { entityId: "b", domain: "sales", product: "orders", entity: "B" }, version: "1.0.0", pinned: true },
     ]);
     expect(res.data.closure.notes[0]).toContain("is unpinned but A.b_pinned pins B 1.0");
   });

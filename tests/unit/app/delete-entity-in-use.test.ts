@@ -79,7 +79,7 @@ describe("deleteEntityAction — pinned entities", () => {
 
     const result = (await deleteEntityAction("ent-1")) as { error: string };
 
-    expect(result.error).toContain('Entity "Order" cannot be deleted: it is referenced by published versions of Entity "Cart" (v1.0).');
+    expect(result.error).toContain('Entity "Order" cannot be deleted: it is referenced by published versions of Entity "Cart" (v1.0.0).');
     expect(result.error).toContain("Published versions cannot be changed");
     expect(mockPrisma.entity.delete).not.toHaveBeenCalled();
     expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();

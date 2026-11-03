@@ -68,7 +68,7 @@ describe("setFieldReferenceAction", () => {
     expect(mockPrisma.entityVersion.findUnique).toHaveBeenCalledWith({
       where: { entityId_major_minor: { entityId: "ent-2", major: 2, minor: 1 } },
     });
-    expect(written().referencedEntityVersion).toBe("2.1");
+    expect(written().referencedEntityVersion).toBe("2.1.0");
   });
 
   it("clearing the pin (null) removes referencedEntityVersion", async () => {

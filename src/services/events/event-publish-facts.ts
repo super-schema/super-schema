@@ -3,7 +3,7 @@
 // what blocks it without needing an emission, what the bump classifier compares, which entities the write must lock. Reads only.
 // `publishEvent` gathers them twice — once to plan, once more under the locks — and refuses to write when the two differ.
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
-import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
 import { stableStringify, type BumpTraitHeadersPin } from "@/lib/events/bump-rules";
 import { toFrozenTrait } from "@/lib/events/catalog-mapping";
 import type { EventBumpPinFact, EventBumpSide } from "@/lib/events/document/bump";
@@ -135,7 +135,7 @@ export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promi
     Object.fromEntries(
       sites.flatMap(({ pin }): Array<[string, EventBumpPinFact]> => {
         const row = versionOf(pin.entityId, pin.entityVersionId);
-        return row && pin.entityVersionId ? [[pin.entityVersionId, { entityId: row.entityId, entityName: row.entity.name, label: formatVersionLabel(row), major: row.major }]] : [];
+        return row && pin.entityVersionId ? [[pin.entityVersionId, { entityId: row.entityId, entityName: row.entity.name, label: formatVersionLabel(legacyVersionNumber(row)), major: row.major }]] : [];
       })
     );
   /** What a library trait's headers pin identifies. A version that no longer resolves leaves major / label unknown, never MAJOR. */
@@ -145,7 +145,7 @@ export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promi
     const name = row?.entity.name ?? entityName.get(trait.headersEntityId);
     return {
       entityId: trait.headersEntityId, ...(name !== undefined && { entityName: name }), entityVersionId: trait.headersEntityVersionId,
-      major: row?.major ?? null, label: row ? formatVersionLabel(row) : null,
+      major: row?.major ?? null, label: row ? formatVersionLabel(legacyVersionNumber(row)) : null,
     };
   };
 
@@ -205,7 +205,7 @@ export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promi
   const hasChanges = previousDocument === null || stableStringify(document) !== stableStringify(previousDocument) || drifted || representationsChanged;
 
   return ok({
-    latest: latest ? { major: latest.major, minor: latest.minor, sequence: latest.sequence } : null,
+    latest: latest ? { major: latest.major, minor: latest.minor, patch: latest.patch, sequence: latest.sequence } : null,
     hasChanges,
     previous,
     current,

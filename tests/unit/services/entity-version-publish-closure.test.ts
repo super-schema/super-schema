@@ -372,7 +372,7 @@ describe("publishEntity: records the versions it used", () => {
     const { prisma } = fakePrisma();
     expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
     expect(readReferencedVersions(createdReport())).toEqual([
-      { ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.2", pinned: false },
+      { ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.2.0", pinned: false },
     ]);
   });
 
@@ -382,7 +382,7 @@ describe("publishEntity: records the versions it used", () => {
     const { prisma } = fakePrisma();
     expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
     expect(readReferencedVersions(createdReport())).toEqual([
-      { ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.0", pinned: true },
+      { ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.0.0", pinned: true },
     ]);
     // The compile saw the pinned version's content, not 1.2's.
     expect(compiledSource()).not.toContain("extra");
@@ -399,8 +399,8 @@ describe("publishEntity: records the versions it used", () => {
     const { prisma } = fakePrisma();
     expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
     expect(readReferencedVersions(createdReport()).map((r) => [r.ref.entity, r.version, r.pinned])).toEqual([
-      ["Customer", "1.0", false],
-      ["Address", "2.1", false],
+      ["Customer", "1.0.0", false],
+      ["Address", "2.1.0", false],
     ]);
   });
 
@@ -409,7 +409,7 @@ describe("publishEntity: records the versions it used", () => {
     const { prisma } = fakePrisma();
     await publishEntity("order", {}, ctxFor(prisma));
     expect(JSON.parse(JSON.stringify(createdReport()))).toEqual({
-      referencedVersions: [{ ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.0", pinned: false }],
+      referencedVersions: [{ ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.0.0", pinned: false }],
       // (the entity's own name, description, status and metadata as published: final wave 2b, G7)
       entitySnapshot: { name: "Order", description: "", status: "DRAFT", metadata: {} },
     });
@@ -455,7 +455,7 @@ describe("publishEntity: records the versions it used", () => {
     h.afterCompile = null;
     const retried = await publishEntity("order", {}, ctxFor(prisma));
     expect(retried.success).toBe(true);
-    expect(readReferencedVersions(createdReport())[0].version).toBe("1.1");
+    expect(readReferencedVersions(createdReport())[0].version).toBe("1.1.0");
   });
 });
 
@@ -470,7 +470,7 @@ describe("publishEntity: the SchemaReference edges agree with the recorded versi
     const { prisma, tx } = fakePrisma();
     expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
     expect(edges(tx)).toEqual([expect.objectContaining({ fromId: "order-v1.0", toId: "cust-v1.2", role: "FIELD", isDraft: false })]);
-    expect(readReferencedVersions(createdReport())[0]).toMatchObject({ version: "1.2", pinned: false });
+    expect(readReferencedVersions(createdReport())[0]).toMatchObject({ version: "1.2.0", pinned: false });
   });
 
   it("a PINNED direct reference points at the pinned version, not at the latest published one", async () => {
@@ -479,7 +479,7 @@ describe("publishEntity: the SchemaReference edges agree with the recorded versi
     const { prisma, tx } = fakePrisma();
     expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
     expect(edges(tx).map((e) => e.toId)).toEqual(["cust-v1.0"]);
-    expect(readReferencedVersions(createdReport())[0]).toMatchObject({ version: "1.0", pinned: true });
+    expect(readReferencedVersions(createdReport())[0]).toMatchObject({ version: "1.0.0", pinned: true });
   });
 
   it("every edge names exactly the version recorded for its entity (pinned and unpinned side by side)", async () => {
@@ -497,10 +497,10 @@ describe("publishEntity: the SchemaReference edges agree with the recorded versi
     const recorded = readReferencedVersions(createdReport());
     const edgeLabels = edges(tx).map((e) => {
       const v = versions().find((row) => row.id === e.toId)!;
-      return [v.entityId, `${v.major}.${v.minor}`];
+      return [v.entityId, `${v.major}.${v.minor}.0`];
     });
     expect(edgeLabels.sort()).toEqual(recorded.map((r) => [r.ref.entityId, r.version]).sort());
-    expect(edgeLabels.sort()).toEqual([["addr", "3.0"], ["cust", "1.0"]]);
+    expect(edgeLabels.sort()).toEqual([["addr", "3.0.0"], ["cust", "1.0.0"]]);
   });
 
   it("a direct reference the closure did not use (found only through the relationships metadata) keeps the latest published version", async () => {
@@ -543,7 +543,7 @@ describe("loadReferenceStaleness", () => {
     const res = await loadReferenceStaleness(prisma as never, "order");
     expect(res).toEqual({
       success: true,
-      data: [{ ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, recorded: "1.0", latest: "1.1" }],
+      data: [{ ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, recorded: "1.0.0", latest: "1.1.0" }],
     });
   });
 

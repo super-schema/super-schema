@@ -4,7 +4,7 @@ import { blockersOfFailedPublish, foldPublishBlockers } from "@/lib/events/publi
 
 function analysis(blockers: EventPublishBlocker[]): EventPublishAnalysis {
   return {
-    isFirstPublish: false, latestLabel: "1.0", suggestedBump: "MINOR", candidateLabels: { MAJOR: "2.0", MINOR: "1.1" },
+    isFirstPublish: false, latestLabel: "1.0", suggestedBump: "MINOR", candidateLabels: { MAJOR: "2.0", MINOR: "1.1", PATCH: "1.0.1" },
     initialLabel: "1.0", reasons: ["Message added"], blockers,
   };
 }

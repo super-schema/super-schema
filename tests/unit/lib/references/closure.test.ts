@@ -252,7 +252,7 @@ describe("loadReferenceClosure", () => {
       if (!r.success) return;
       expect(names(r.data)).toEqual(["A", "B", "D"]);
       expect(r.data.entities.map((e) => e.source)).toEqual(["published", "published", "published"]);
-      expect(r.data.entities[1].version).toBe("1.1");
+      expect(r.data.entities[1].version).toBe("1.1.0");
       expect(r.data.draftEntities).toEqual([]);
     });
 
@@ -278,7 +278,7 @@ describe("loadReferenceClosure", () => {
       if (!r.success) return;
       expect(names(r.data)).toEqual(["A", "B", "C"]);
       expect(r.data.entities[1].source).toBe("pinned");
-      expect(r.data.entities[1].version).toBe("1.0");
+      expect(r.data.entities[1].version).toBe("1.0.0");
     });
 
     it("a pin overrides draft mode too", async () => {
@@ -524,8 +524,8 @@ describe("loadReferenceClosure: rootAtDraft (the closure a PUBLISH of the root i
     if (!r.success) return;
     expect(r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
       ["A", "draft", undefined],
-      ["B", "published", "1.0"],
-      ["C", "published", "1.0"],
+      ["B", "published", "1.0.0"],
+      ["C", "published", "1.0.0"],
     ]);
     // B's saved draft references D, B's published 1.0 does not: D is not part of a published closure.
     expect(names(r.data)).not.toContain("D");
@@ -567,7 +567,7 @@ describe("loadReferenceClosure: rootAtDraft (the closure a PUBLISH of the root i
     const r = await loadReferenceClosure(db, "t1", "a", "published", { rootAtDraft: true });
     expect(r.success && r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
       ["A", "draft", undefined],
-      ["B", "pinned", "1.0"],
+      ["B", "pinned", "1.0.0"],
     ]);
   });
 });
@@ -589,7 +589,7 @@ describe("loadReferenceClosure: several edges to one entity, one of them pinned"
     if (!r.success) return;
     expect(r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
       ["A", "draft", undefined],
-      ["B", "pinned", "1.0"],
+      ["B", "pinned", "1.0.0"],
       ["C", "draft", undefined],
     ]);
     // Both facts are recorded: which field was unpinned, which pinned.
@@ -610,9 +610,9 @@ describe("loadReferenceClosure: several edges to one entity, one of them pinned"
     ]);
     const r = await loadReferenceClosure(db, "t1", "a", "published");
     expect(r.success && r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
-      ["A", "published", "1.0"],
-      ["B", "pinned", "1.0"],
-      ["C", "published", "1.0"],
+      ["A", "published", "1.0.0"],
+      ["B", "pinned", "1.0.0"],
+      ["C", "published", "1.0.0"],
     ]);
   });
 
@@ -622,7 +622,7 @@ describe("loadReferenceClosure: several edges to one entity, one of them pinned"
     if (!r.success) return;
     expect(r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
       ["A", "draft", undefined],
-      ["B", "pinned", "1.0"],
+      ["B", "pinned", "1.0.0"],
       ["C", "draft", undefined],
     ]);
     expect(r.data.notes.filter((n) => n.includes("unpinned but"))).toEqual([]);
@@ -639,7 +639,7 @@ describe("loadReferenceClosure: several edges to one entity, one of them pinned"
     if (!r.success) return;
     expect(r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
       ["A", "draft", undefined],
-      ["B", "pinned", "1.0"],
+      ["B", "pinned", "1.0.0"],
       ["M", "draft", undefined],
       ["C", "draft", undefined],
     ]);
@@ -716,9 +716,9 @@ describe("loadReferenceClosure: an ambiguous bare name inside a frozen snapshot"
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(r.data.entities.map((e) => [e.entityId, e.source, e.version])).toEqual([
-      ["x", "published", "1.0"],
-      ["y", "published", "1.1"],
-      ["ad2", "published", "1.0"],
+      ["x", "published", "1.0.0"],
+      ["y", "published", "1.1.0"],
+      ["ad2", "published", "1.0.0"],
     ]);
   });
 });
@@ -748,7 +748,7 @@ describe("loadReferenceClosure: names that hold '/' and '%'", () => {
 
   it("keeps the pin: the pinned version is used (not the latest), in draft and in published mode", async () => {
     const r = await loadReferenceClosure(world(written({ pin: "1.0" })), "t1", "a", "draft");
-    expect(r.success && r.data.entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "draft", undefined], ["t", "pinned", "1.0"]]);
+    expect(r.success && r.data.entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "draft", undefined], ["t", "pinned", "1.0.0"]]);
   });
 
   it("an old row whose qualified string cannot be split (raw '/' in the domain AND the entity name, no segment keys) still resolves by id, keeps its pin, and is upgraded ONCE", async () => {
@@ -756,13 +756,13 @@ describe("loadReferenceClosure: names that hold '/' and '%'", () => {
     const r = await loadReferenceClosure(world(old), "t1", "a", "draft");
     expect(r.success).toBe(true);
     if (!r.success) return;
-    expect(r.data.entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "draft", undefined], ["t", "pinned", "1.0"]]);
+    expect(r.data.entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "draft", undefined], ["t", "pinned", "1.0.0"]]);
     expect(r.data.upgrades).toHaveLength(1);
     // what the upgrade writes reads as qualified: the next generation reports nothing to upgrade
     const upgraded = upgradeLegacyReference(old, r.data.upgrades[0].ref);
     const again = await loadReferenceClosure(world(upgraded), "t1", "a", "draft");
     expect(again.success && again.data.upgrades).toEqual([]);
-    expect(again.success && again.data.entities.map((e) => [e.entityId, e.version])).toEqual([["a", undefined], ["t", "1.0"]]);
+    expect(again.success && again.data.entities.map((e) => [e.entityId, e.version])).toEqual([["a", undefined], ["t", "1.0.0"]]);
   });
 });
 
@@ -831,7 +831,7 @@ describe("loadReferenceClosure: the entity snapshot of a published version", () 
     expect(r.success).toBe(true);
     if (!r.success) return;
     expect(r.data.entities.find((e) => e.entityId === "b")?.entity).toMatchObject({ name: "B", description: "LIVE edit", metadata: { tags: ["draft"] } });
-    expect(r.data.notes).toContain("B 1.0: metadata read from the live row: published before snapshots.");
+    expect(r.data.notes).toContain("B 1.0.0: metadata read from the live row: published before snapshots.");
   });
 
   it.each([["null", null], ["an array", []], ["a string", "x"], ["no name", { entitySnapshot: { description: "d", status: "ACTIVE", metadata: {} } }], ["a bad status", { entitySnapshot: { name: "n", description: "d", status: 3, metadata: {} } }]])(
@@ -869,7 +869,7 @@ describe("loadReferenceClosure: an entity that extends another (metadata.extends
     const r = await loadReferenceClosure(db, "t1", "a", "published", { rootAtDraft: true });
     expect(r.success).toBe(true);
     if (!r.success) return;
-    expect(r.data.entities[1].version).toBe("2.0");
+    expect(r.data.entities[1].version).toBe("2.0.0");
   });
 
   it("refuses a base that was never published when published schemas are asked for", async () => {

@@ -204,7 +204,7 @@ describe("loadEntityWorkspace", () => {
 
     const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
 
-    expect(data?.props.entity).toMatchObject({ latestVersionLabel: "2.1", hasUnpublishedChanges: true });
+    expect(data?.props.entity).toMatchObject({ latestVersionLabel: "2.1.0", hasUnpublishedChanges: true });
   });
 
   describe("stale references (Task 8)", () => {
@@ -221,7 +221,7 @@ describe("loadEntityWorkspace", () => {
       const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
 
       expect(mockEntityFindUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "ent-1" } }));
-      expect(data?.props.referenceStaleness).toEqual([{ ref: customerRef, recorded: "1.0", latest: "1.2" }]);
+      expect(data?.props.referenceStaleness).toEqual([{ ref: customerRef, recorded: "1.0", latest: "1.2.0" }]);
     });
 
     it("is empty when nothing is stale", async () => {

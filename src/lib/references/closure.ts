@@ -2,7 +2,7 @@ import type { PrismaClient, Prisma } from "@/generated/prisma/client";
 import { ok, type Result } from "@/types/result";
 import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-generator";
-import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import { readEntitySnapshot, withoutSchemaVersions, type EntitySnapshot } from "@/lib/entity-versioning/entity-snapshot";
 import {
   TENANT_PLACEHOLDER,
@@ -330,7 +330,7 @@ async function loadContent(
     return {
       fields: [...snapshot].sort((a, b) => a.sortOrder - b.sortOrder),
       source,
-      version: formatVersionLabel(v),
+      version: formatVersionLabel(legacyVersionNumber(v)),
       sequence: v.sequence,
       ...(entitySnapshot ? { snapshot: entitySnapshot } : {}),
     };

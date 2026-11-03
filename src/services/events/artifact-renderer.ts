@@ -11,7 +11,7 @@ import { findEmptyEnumFields, generateTypeSpec } from "@/lib/compiler/typespec-g
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { resolveEntityReferences } from "@/lib/entity-versioning/line-references";
 import { isSourceStale } from "@/lib/entity-versioning/draft-state";
-import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import {
   DEFAULT_EMITTER_TIMEOUT_MS,
@@ -97,7 +97,7 @@ async function loadVersionPart(db: Db, versionId: string, tenantId?: string): Pr
     orderBy: { toId: "asc" },
   });
   const snapshot = Array.isArray(v.fieldSnapshot) ? (v.fieldSnapshot as unknown as FieldSnapshot[]) : [];
-  const label = `${v.entity.name}@${formatVersionLabel(v)}`;
+  const label = `${v.entity.name}@${formatVersionLabel(legacyVersionNumber(v))}`;
   const rootModel = rootModelFor(v.resolvedSource, v.entity.name, label);
   if (!rootModel.success) return rootModel;
   return ok({

@@ -21,7 +21,7 @@ import { isUsableId, optionalParam, queryProblem } from "@/app/api/v1/request";
 import { apiError, apiServerError } from "@/app/api/v1/error-handler";
 import { withApiAuth } from "@/lib/access/api";
 import { ctxCan } from "@/lib/access";
-import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
 import type { Diagnostic } from "@/lib/event-specs";
 import { emitEventDraft, emitEventStoredVersion, type EventEmission } from "@/services/events/event-emit.service";
 import type { Result, ServiceError } from "@/types/result";
@@ -115,7 +115,7 @@ export const GET = withApiAuth<{ id: string }>("event.read", async (request, api
       if (!owned.latestVersion) {
         return apiError({ code: "NOT_FOUND", message: "The event spec has no published version", suggestedFix: "Pass ?version=draft to emit the current draft." });
       }
-      version = formatVersionLabel(owned.latestVersion);
+      version = formatVersionLabel(legacyVersionNumber(owned.latestVersion));
     }
 
     const emission: Result<EventEmission> =

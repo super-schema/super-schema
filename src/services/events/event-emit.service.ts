@@ -6,7 +6,7 @@ import {
   type Diagnostic, type EmitOutput, type EventSpecValidator, type JsonObject, type ResolvedEventSpec,
 } from "@/lib/event-specs";
 import { AsyncApiParserValidator } from "@/lib/event-specs/validation/asyncapi-parser-validator";
-import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { isJsonObject } from "@/lib/events/inputs";
 import { ok, err, type Result } from "@/types/result";
@@ -108,7 +108,7 @@ export async function emitEventStoredVersion(eventId: string, productId: string,
       return err({ code: "NOT_FOUND", message: `Version ${formatVersionLabel(parsed.data)} of event "${eventId}" not found`, suggestedFix: "List the published versions and pick one." });
     }
     if (!isJsonObject(row.document)) {
-      return err({ code: "DATA_CORRUPT", message: `Stored document of version ${formatVersionLabel(row)} is invalid` });
+      return err({ code: "DATA_CORRUPT", message: `Stored document of version ${formatVersionLabel(legacyVersionNumber(row))} is invalid` });
     }
     // jsonb returns keys shortest-first; serialize in the assembler's canonical order, like the draft emission.
     const document = canonicalizeDocumentOrder(row.document);

@@ -11,7 +11,7 @@
 //    (fromKind EVENT_SPEC_VERSION) written at publish; an edge whose referrer no longer exists is not a referrer;
 //  - the draft documents themselves (JSONB containment) for what has no edge: an unpinned pin names an entity but no version.
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
-import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
 import type { DeleteGuardScope } from "@/services/events/delete-guards";
 import type { ServiceError } from "@/types/result";
 
@@ -163,7 +163,7 @@ export async function findEntityEventReferrers(db: Db, entity: { id: string; ten
   if (versions.length > 0) {
     const scan = await scanEdges(db, "ENTITY_VERSION", versions.map((v) => v.id));
     truncated = scan.truncated;
-    hits.push(...(await hitsOfEdges(db, entity.tenantId, scan.edges, new Map(versions.map((v) => [v.id, formatVersionLabel(v)])))));
+    hits.push(...(await hitsOfEdges(db, entity.tenantId, scan.edges, new Map(versions.map((v) => [v.id, formatVersionLabel(legacyVersionNumber(v))])))));
   }
   const named = await db.eventSpec.findMany({
     where: { tenantId: entity.tenantId, OR: namesEntity(entity.id) },
@@ -191,7 +191,7 @@ export async function findEntityLatestVersionEventReferrers(
   const scan = await scanEdges(db, "ENTITY_VERSION", [latestId]);
   if (scan.edges.length === 0) return referrerList([], false);
   const latest = await db.entityVersion.findUnique({ where: { id: latestId }, select: { major: true, minor: true } });
-  const labelOf = new Map([[latestId, latest ? formatVersionLabel(latest) : latestId]]);
+  const labelOf = new Map([[latestId, latest ? formatVersionLabel(legacyVersionNumber(latest)) : latestId]]);
   return collect(await hitsOfEdges(db, entity.tenantId, scan.edges, labelOf), scan.truncated);
 }
 
@@ -226,7 +226,7 @@ export async function findLibraryTraitEventReferrers(db: Db, trait: { id: string
   return collect(
     [
       ...drafts.slice(0, MAX_REFERRER_SCAN).map((spec) => ({ spec, draft: true, label: null })),
-      ...versions.slice(0, MAX_REFERRER_SCAN).map((v) => ({ spec: v.eventSpec, draft: false, label: formatVersionLabel(v) })),
+      ...versions.slice(0, MAX_REFERRER_SCAN).map((v) => ({ spec: v.eventSpec, draft: false, label: formatVersionLabel(legacyVersionNumber(v)) })),
     ],
     truncated
   );
@@ -240,7 +240,7 @@ export async function findEventVersionReferrers(db: Db, eventId: string): Promis
   const event = await db.eventSpec.findUnique({ where: { id: eventId }, select: { tenantId: true, versions: { select: { id: true, major: true, minor: true } } } });
   if (!event || event.versions.length === 0) return referrerList([], false);
   const scan = await scanEdges(db, "EVENT_SPEC_VERSION", event.versions.map((v) => v.id));
-  const hits = await hitsOfEdges(db, event.tenantId, scan.edges, new Map(event.versions.map((v) => [v.id, formatVersionLabel(v)])));
+  const hits = await hitsOfEdges(db, event.tenantId, scan.edges, new Map(event.versions.map((v) => [v.id, formatVersionLabel(legacyVersionNumber(v))])));
   return collect(hits, scan.truncated, (spec) => spec.id === eventId);
 }
 
@@ -259,7 +259,7 @@ export async function findCrossProductEventRefs(db: Db, scope: DeleteGuardScope)
     { fromKind: "EVENT_SPEC", fromId: { in: insideEvents.map((e) => e.id) } },
     { fromKind: "EVENT_SPEC_VERSION", fromId: { in: versions.map((v) => v.id) } },
   ]);
-  const hits = await hitsOfEdges(db, scope.tenantId, scan.edges, new Map(versions.map((v) => [v.id, formatVersionLabel(v)])));
+  const hits = await hitsOfEdges(db, scope.tenantId, scan.edges, new Map(versions.map((v) => [v.id, formatVersionLabel(legacyVersionNumber(v))])));
   // Kept as the backstop for the query's filter (an edge from a row the scope owns can never be a referrer).
   const isInside = (spec: SpecRow) => (scope.kind === "product" ? spec.productId === scope.productId : spec.domainId === scope.domainId);
   return collect(hits, scan.truncated, isInside);

@@ -8,7 +8,7 @@ import { UsedByPanel } from "@/features/events/shared/UsedByPanel";
 import type { EntityAlert } from "@/lib/validation/entity-alerts";
 const mocks = vi.hoisted(() => ({ usages: vi.fn() }));
 vi.mock("@/app/(dashboard)/schemas/usage-actions", () => ({ listUsagesAction: mocks.usages }));
-const preview = { isFirstPublish: false, latestLabel: "1.0", suggestedBump: "MAJOR" as const, candidateLabels: { MINOR: "1.1", MAJOR: "2.0" }, initialLabel: "1.0", reasons: ["Required field email was removed"], blockers: [] };
+const preview = { isFirstPublish: false, latestLabel: "1.0", suggestedBump: "MAJOR" as const, candidateLabels: { MINOR: "1.1", MAJOR: "2.0", PATCH: "1.0.1" }, initialLabel: "1.0", reasons: ["Required field email was removed"], blockers: [] };
 beforeEach(() => { vi.clearAllMocks(); mocks.usages.mockResolvedValue({ success: true, data: { rows: [], truncated: false } }); });
 afterEach(cleanup);
 

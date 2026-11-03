@@ -269,7 +269,7 @@ describe("generateSchemaAction: draft and published modes", () => {
     const result = await actions.generateSchemaAction("a", "json-schema", { mode: "published" });
     expect(result).toMatchObject({ success: true });
     // Customer's saved draft references Address; its published 1.0 does not, so Address is not in the closure at all.
-    expect(closureGiven().entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "published", "1.0"], ["b", "published", "1.0"]]);
+    expect(closureGiven().entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "published", "1.0.0"], ["b", "published", "1.0.0"]]);
     const resolution = storedVersion("a", "json-schema").resolution;
     expect(resolution).toMatchObject({ mode: "published", preview: false });
     expect(resolution?.entities.some((e) => e.source === "draft")).toBe(false);
@@ -295,8 +295,8 @@ describe("generateSchemaAction: draft and published modes", () => {
       entity("c", "Address"),
     ];
     await actions.generateSchemaAction("a", "json-schema");
-    expect(closureGiven().entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "draft", undefined], ["b", "pinned", "1.0"]]);
-    expect(storedVersion("a", "json-schema").resolution?.entities[1]).toMatchObject({ source: "pinned", version: "1.0" });
+    expect(closureGiven().entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "draft", undefined], ["b", "pinned", "1.0.0"]]);
+    expect(storedVersion("a", "json-schema").resolution?.entities[1]).toMatchObject({ source: "pinned", version: "1.0.0" });
   });
 
   // FINAL WAVE 2b, G1: several fields reach one entity and one of them pins a version.
@@ -308,13 +308,13 @@ describe("generateSchemaAction: draft and published modes", () => {
     ];
     const result = await actions.generateSchemaAction("a", "json-schema");
     expect(result).toMatchObject({ success: true });
-    expect(closureGiven().entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "draft", undefined], ["b", "pinned", "1.0"]]);
+    expect(closureGiven().entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "draft", undefined], ["b", "pinned", "1.0.0"]]);
     const resolution = storedVersion("a", "json-schema").resolution;
-    expect(resolution?.entities[1]).toMatchObject({ source: "pinned", version: "1.0" });
+    expect(resolution?.entities[1]).toMatchObject({ source: "pinned", version: "1.0.0" });
     expect(resolution?.notes).toEqual([
       expect.stringContaining("Order.a_plain is unpinned but Order.b_pinned pins Customer 1.0: the pin was used for both"),
       // (the fixture version predates entity snapshots: its entity-level content is read from the live row, and the version says so)
-      "Customer 1.0: metadata read from the live row: published before snapshots.",
+      "Customer 1.0.0: metadata read from the live row: published before snapshots.",
     ]);
   });
 

@@ -1,7 +1,7 @@
 // src/services/events/entity-pin-usage.ts
 import type { PrismaClient, Prisma } from "@/generated/prisma/client";
 import { dbErrorResult } from "@/lib/db-error";
-import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
 import { findEntityEventReferrers, withEventsInUse } from "@/services/events/event-guards";
 import { isConcurrentWriteFailure } from "@/services/events/publish-concurrency";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
@@ -71,7 +71,7 @@ async function findEntityReferrers(db: Db, entity: { id: string; tenantId: strin
   const byEntity = new Map<string, EntityReferrer>();
   for (const v of sources) {
     const entry = byEntity.get(v.entity.id) ?? { id: v.entity.id, name: v.entity.name, versions: [] };
-    entry.versions.push(formatVersionLabel(v));
+    entry.versions.push(formatVersionLabel(legacyVersionNumber(v)));
     byEntity.set(v.entity.id, entry);
   }
   return [...byEntity.values()];

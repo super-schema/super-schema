@@ -20,13 +20,13 @@ function state(overrides: Partial<PublishState> = {}): PublishState {
   return { entity: ENTITY, latest: null, currentFields: [ID], references: [], ...overrides };
 }
 
-const published = (fields: FieldSnapshot[]) => ({ id: "v-5", major: 2, minor: 1, sequence: 5, fieldSnapshot: fields });
+const published = (fields: FieldSnapshot[]) => ({ id: "v-5", major: 2, minor: 1, patch: 0, sequence: 5, fieldSnapshot: fields });
 
 describe("first publish", () => {
-  it("is 1.0 INITIAL with sequence mirroring Entity.version", () => {
+  it("is 1.0.0 INITIAL with sequence mirroring Entity.version", () => {
     expect(planPublish(state())).toEqual({
       success: true,
-      data: { version: { major: 1, minor: 0 }, label: "1.0", sequence: 1, changeKind: "INITIAL", pins: [], referencedVersions: [] },
+      data: { version: { major: 1, minor: 0, patch: 0 }, label: "1.0.0", sequence: 1, changeKind: "INITIAL", pins: [], referencedVersions: [] },
     });
     const legacy = planPublish(state({ entity: { ...ENTITY, version: 4 } }));
     expect(legacy.success && legacy.data.sequence).toBe(4);
@@ -34,12 +34,12 @@ describe("first publish", () => {
 
   it("ignores a requested bump", () => {
     const res = planPublish(state(), "MAJOR");
-    expect(res.success && res.data.label).toBe("1.0");
+    expect(res.success && res.data.label).toBe("1.0.0");
   });
 
   it("offers only the initial label", () => {
     expect(analyzePublish(state())).toMatchObject({
-      isFirstPublish: true, latestLabel: null, suggestedBump: null, candidateLabels: null, initialLabel: "1.0", blockers: [],
+      isFirstPublish: true, latestLabel: null, suggestedBump: null, candidateLabels: null, initialLabel: "1.0.0", blockers: [],
     });
   });
 });
@@ -48,10 +48,10 @@ describe("later publishes", () => {
   it("suggests MINOR for an additive change and allows raising to MAJOR", () => {
     const s = state({ latest: published([ID]), currentFields: [ID, EMAIL] });
     expect(analyzePublish(s)).toMatchObject({
-      isFirstPublish: false, suggestedBump: "MINOR", latestLabel: "2.1", candidateLabels: { MINOR: "2.2", MAJOR: "3.0" },
+      isFirstPublish: false, suggestedBump: "MINOR", latestLabel: "2.1.0", candidateLabels: { PATCH: "2.1.1", MINOR: "2.2.0", MAJOR: "3.0.0" },
     });
-    expect(planPublish(s)).toMatchObject({ success: true, data: { label: "2.2", changeKind: "MINOR", sequence: 6 } });
-    expect(planPublish(s, "MAJOR")).toMatchObject({ success: true, data: { label: "3.0", changeKind: "MAJOR", sequence: 6 } });
+    expect(planPublish(s)).toMatchObject({ success: true, data: { label: "2.2.0", changeKind: "MINOR", sequence: 6 } });
+    expect(planPublish(s, "MAJOR")).toMatchObject({ success: true, data: { label: "3.0.0", changeKind: "MAJOR", sequence: 6 } });
   });
 
   it("suggests MAJOR for a breaking change and refuses MINOR", () => {
@@ -59,14 +59,14 @@ describe("later publishes", () => {
     expect(analyzePublish(s).suggestedBump).toBe("MAJOR");
     const low = planPublish(s, "MINOR");
     expect(!low.success && low.error.code).toBe("BUMP_TOO_LOW");
-    expect(planPublish(s)).toMatchObject({ success: true, data: { label: "3.0", changeKind: "MAJOR" } });
+    expect(planPublish(s)).toMatchObject({ success: true, data: { label: "3.0.0", changeKind: "MAJOR" } });
   });
 });
 
 describe("blockers and pins", () => {
   it("blocks when nothing changed since the latest version", () => {
     const s = state({ latest: published([ID]), entity: { ...ENTITY, hasUnpublishedChanges: false } });
-    expect(analyzePublish(s).blockers).toEqual([{ kind: "NO_CHANGES", message: "No unpublished changes since v2.1." }]);
+    expect(analyzePublish(s).blockers).toEqual([{ kind: "NO_CHANGES", message: "No unpublished changes since v2.1.0." }]);
   });
 
   it("reports every blocker together", () => {

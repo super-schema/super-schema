@@ -144,7 +144,7 @@ describe("an enum field without values", () => {
       const r = await createArtifactRenderer({ db: fakeDb() as never, emitFiles }).render(subject("vEmpty"), format);
       expect(r.success, format).toBe(false);
       expect(!r.success && r.error.code, format).toBe("ARTIFACT_RENDER_FAILED");
-      expect(!r.success && r.error.message, format).toBe(`Empty@1.0 → ${format}: enum field "status" has no values`);
+      expect(!r.success && r.error.message, format).toBe(`Empty@1.0.0 → ${format}: enum field "status" has no values`);
       expect(!r.success && r.error.details, format).toEqual({ cause: "ENUM_NO_VALUES" });
       expect(!r.success && r.error.suggestedFix, format).toBe("Give the enum field at least one value.");
     }

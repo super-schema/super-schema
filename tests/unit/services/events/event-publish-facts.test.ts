@@ -52,7 +52,7 @@ describe("gatherPublishFacts: a version whose entity was deleted between the two
     const facts = await gatherPublishFacts(db, snapshotOf(documentWithPayload()));
     if (!facts.success) throw new Error(facts.error.message);
     expect(facts.data.blockers).toEqual([]);
-    expect(facts.data.current.pins).toEqual({ "ver-order": { entityId: "ent-order", entityName: "Order", label: "1.2", major: 1 } });
+    expect(facts.data.current.pins).toEqual({ "ver-order": { entityId: "ent-order", entityName: "Order", label: "1.2.0", major: 1 } });
   });
 
   it("leaves a frozen library trait's headers pin unknown (no major, no label), never a TypeError", async () => {
@@ -61,7 +61,7 @@ describe("gatherPublishFacts: a version whose entity was deleted between the two
       id: "trait-1", name: "Audit", kind: "MESSAGE", ownerSlug: "acme", spec: {}, headersEntityId: "ent-headers", headersEntityVersionId: "ver-headers",
     };
     const latest: EventSnapshot["latest"] = {
-      id: "v-1", major: 1, minor: 0, sequence: 1, sourceDocument: document, resolvedSpec: {}, frozenTraits: [frozen], compatReport: null,
+      id: "v-1", major: 1, minor: 0, patch: 0, sequence: 1, sourceDocument: document, resolvedSpec: {}, frozenTraits: [frozen], compatReport: null,
     };
     const db = fakeDb([
       { id: "ver-order", entityId: "ent-order", major: 1, minor: 0, entity: { name: "Order" } },

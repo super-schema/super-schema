@@ -1,5 +1,5 @@
 // src/services/events/usage.service.ts
-import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
 import { describeUsage, parseUsageSubject, usageRowList, type UsageLookups, type UsageRow, type UsageRowList, type UsageSubject } from "@/lib/events/usage";
 import { MAX_EVENT_REFERRERS, MAX_REFERRER_SCAN } from "@/services/events/event-guards";
 import { guardRead, requireId } from "@/services/events/service-guards";
@@ -61,7 +61,7 @@ async function lookupEntityUsages(entityId: string, ctx: ServiceContext, tenantI
   const db = ctx.prisma;
   const entity = await db.entity.findFirst({ where: { id: entityId, tenantId }, select: { name: true, versions: { select: { id: true, major: true, minor: true } } } });
   if (!entity) return err({ code: "NOT_FOUND", message: `Entity "${entityId}" not found` });
-  const targets = entity.versions.map((v) => ({ id: v.id, label: `${entity.name} v${formatVersionLabel(v)}` }));
+  const targets = entity.versions.map((v) => ({ id: v.id, label: `${entity.name} v${formatVersionLabel(legacyVersionNumber(v))}` }));
   if (targets.length === 0) return ok(usageRowList([], false));
 
   const refs = await db.schemaReference.findMany({ where: { toKind: "ENTITY_VERSION", toId: { in: targets.map((t) => t.id) } }, orderBy: BY_USE });
@@ -77,7 +77,7 @@ async function lookupEventUsages(eventId: string, ctx: ServiceContext, tenantId:
   const db = ctx.prisma;
   const event = await db.eventSpec.findFirst({ where: { id: eventId, tenantId }, select: { name: true, versions: { select: { id: true, major: true, minor: true } } } });
   if (!event) return err({ code: "NOT_FOUND", message: `Event "${eventId}" not found` });
-  const targets = event.versions.map((v) => ({ id: v.id, label: `${event.name} v${formatVersionLabel(v)}` }));
+  const targets = event.versions.map((v) => ({ id: v.id, label: `${event.name} v${formatVersionLabel(legacyVersionNumber(v))}` }));
   if (targets.length === 0) return ok(usageRowList([], false));
   const targetIds = targets.map((t) => t.id);
 
@@ -120,9 +120,9 @@ async function describeReferences(
   const t = inTenant(traits, (x) => x.id, (x) => x.tenantId, tenantId, "TRAIT", foreign, readable("trait"));
 
   const lookups: UsageLookups = {
-    entityVersions: Object.fromEntries(ev.map((v) => [v.id, { label: formatVersionLabel(v), entity: { name: v.entity.name, slug: v.entity.slug, ...at(v.entity) } }])),
+    entityVersions: Object.fromEntries(ev.map((v) => [v.id, { label: formatVersionLabel(legacyVersionNumber(v)), entity: { name: v.entity.name, slug: v.entity.slug, ...at(v.entity) } }])),
     eventSpecs: Object.fromEntries(s.map((x) => [x.id, { id: x.id, name: x.name, ...at(x) }])),
-    eventSpecVersions: Object.fromEntries(sv.map((v) => [v.id, { label: formatVersionLabel(v), eventSpec: { id: v.eventSpec.id, name: v.eventSpec.name, ...at(v.eventSpec) } }])),
+    eventSpecVersions: Object.fromEntries(sv.map((v) => [v.id, { label: formatVersionLabel(legacyVersionNumber(v)), eventSpec: { id: v.eventSpec.id, name: v.eventSpec.name, ...at(v.eventSpec) } }])),
     traits: Object.fromEntries(t.map((x) => [x.id, { id: x.id, name: x.name, ...at(x) }])),
   };
   return refs.filter((r) => !foreign.has(`${r.fromKind}:${r.fromId}`)).map((r) => describeUsage(r, lookups, targetLabels));

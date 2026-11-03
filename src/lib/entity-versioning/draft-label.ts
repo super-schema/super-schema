@@ -13,7 +13,7 @@ export function describeDraftState(state: DraftVersionState): string {
   return `Published · v${state.latestVersionLabel}`;
 }
 
-/** Page loaders call this with the entity row (+ `latestVersion: { major, minor }` include). */
+/** Page loaders call this with the entity row (+ `latestVersion: { major, minor, patch }`). */
 export function toDraftVersionState(entity: {
   hasUnpublishedChanges: boolean;
   latestVersion: VersionNumber | null;

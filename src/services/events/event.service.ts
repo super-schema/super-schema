@@ -3,7 +3,7 @@
 // document. The table is still `event_specs` (E5); the old catalog-id (version 1) documents and their service are gone.
 import type { Prisma } from "@/generated/prisma/client";
 import type { ScopeTarget } from "@/lib/asset-scope";
-import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
 import { collectDocumentEdges, collectDocumentRefs, collectPinSites } from "@/lib/events/document/edges";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { emptyEventDocument, isLibraryTrait, type DocumentProblem, type EventDocument } from "@/lib/events/document/types";
@@ -54,7 +54,7 @@ function toDetail(row: EventRow): Result<EventDetail> {
   }
   return ok({
     id: row.id, name: row.name, specType: row.specType, document: document.data,
-    latestVersionLabel: row.latestVersion ? formatVersionLabel(row.latestVersion) : null,
+    latestVersionLabel: row.latestVersion ? formatVersionLabel(legacyVersionNumber(row.latestVersion)) : null,
     hasUnpublishedChanges: row.hasUnpublishedChanges,
     tenantId: row.tenantId, domainId: row.domainId, productId: row.productId,
   });
@@ -144,7 +144,7 @@ async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, even
       problems.push({ pointer: `${pointer}/eventVersionId`, message: "An event cannot reference its own version" });
       return;
     }
-    const label = `Version ${formatVersionLabel(version)} of "${version.eventSpec.name}"`;
+    const label = `Version ${formatVersionLabel(legacyVersionNumber(version))} of "${version.eventSpec.name}"`;
     const items = referenceableItems(version.resolvedSpec, r.kind);
     if (items === null) {
       problems.push({ pointer, message: `${label} cannot be referenced: it has no resolved spec (published before event documents v2)` });

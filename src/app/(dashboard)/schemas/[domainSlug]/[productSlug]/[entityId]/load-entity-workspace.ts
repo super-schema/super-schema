@@ -6,6 +6,7 @@ import { getPrincipal } from "@/lib/access/principal";
 import type { Prisma } from "@/generated/prisma/client";
 import { domainLabel } from "@/lib/entity-placement";
 import { toDraftVersionState } from "@/lib/entity-versioning/draft-label";
+import { legacyVersionNumber } from "@/lib/entity-versioning/version-math";
 import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-versions";
 import { loadReferenceStaleness } from "@/services/entity-version.service";
 import { loadPickableEntities } from "@/lib/references/pickable-entities";
@@ -156,7 +157,7 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
         // The stored generated schemas are not part of the page (the Schemas tab asks for them through `getSchemaVersionsAction`, which redacts them for
         // the reader): they would put the files of every entity of a closure, a wider role's included, into the page a reader of this entity receives (KD-046).
         metadata: omitSchemaVersions(entity.metadata) as Record<string, unknown> | null,
-        ...toDraftVersionState({ hasUnpublishedChanges: entity.hasUnpublishedChanges, latestVersion: entity.latestVersion }),
+        ...toDraftVersionState({ hasUnpublishedChanges: entity.hasUnpublishedChanges, latestVersion: entity.latestVersion && legacyVersionNumber(entity.latestVersion) }),
       },
       domainPolicy: domainPolicy as Record<string, unknown> | null,
       fields: entity.fields.map((f) => ({

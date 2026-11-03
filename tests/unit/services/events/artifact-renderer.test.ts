@@ -69,7 +69,7 @@ describe("artifact renderer", () => {
     const failing = vi.fn<EmitFiles>(async () => ({ success: false, error: { code: "EMITTER_FAILED", message: "boom" } }));
     const r2 = createArtifactRenderer({ db: fakeDb() as never, emitFiles: failing });
     const first = await r2.render({ kind: "version", entityVersionId: "vBroken" }, "avro");
-    expect(!first.success && first.error).toEqual({ code: "ARTIFACT_RENDER_FAILED", message: "Broken@1.0 → avro: boom", details: { cause: "EMITTER_FAILED" } });
+    expect(!first.success && first.error).toEqual({ code: "ARTIFACT_RENDER_FAILED", message: "Broken@1.0.0 → avro: boom", details: { cause: "EMITTER_FAILED" } });
     await r2.render({ kind: "version", entityVersionId: "vBroken" }, "avro");
     expect(failing).toHaveBeenCalledTimes(2);
   });
@@ -377,7 +377,7 @@ describe("artifact renderer — failures never throw and are never cached", () =
     const emitFiles = vi.fn<EmitFiles>();
     const r = await createArtifactRenderer({ db: conflicting as never, emitFiles }).render(order, "avro");
     expect(!r.success && r.error.code).toBe("ARTIFACT_RENDER_FAILED");
-    expect(!r.success && r.error.message).toContain("Order@2.1 → avro:");
+    expect(!r.success && r.error.message).toContain("Order@2.1.0 → avro:");
     expect(!r.success && r.error.details).toMatchObject({ cause: "TYPESPEC_DECLARATION_CONFLICT", name: "Status" });
     expect(emitFiles).not.toHaveBeenCalled();
   });

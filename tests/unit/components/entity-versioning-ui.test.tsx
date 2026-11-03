@@ -9,7 +9,7 @@ afterEach(cleanup);
 
 function analysis(overrides: Partial<PublishAnalysis> = {}): PublishAnalysis {
   return {
-    isFirstPublish: false, latestLabel: "2.1", suggestedBump: "MINOR", candidateLabels: { MAJOR: "3.0", MINOR: "2.2" },
+    isFirstPublish: false, latestLabel: "2.1", suggestedBump: "MINOR", candidateLabels: { MAJOR: "3.0", MINOR: "2.2", PATCH: "2.1.1" },
     initialLabel: "1.0", reasons: [], diffSummary: { added: 1, removed: 0, modified: 0 }, blockers: [], warnings: [], pins: [],
     ...overrides,
   };
@@ -110,8 +110,8 @@ describe("EntityVersionList", () => {
     render(
       <EntityVersionList
         versions={[
-          { id: "v2", entityId: "e", major: 1, minor: 1, label: "1.1", sequence: 2, changeKind: "MINOR", changeSummary: "add email", publishedById: "u", publishedByName: "Ada", publishedAt: "2026-10-14T10:00:00.000Z" },
-          { id: "v1", entityId: "e", major: 1, minor: 0, label: "1.0", sequence: 1, changeKind: "INITIAL", changeSummary: null, publishedById: "u", publishedByName: null, publishedAt: "2026-10-13T10:00:00.000Z" },
+          { id: "v2", entityId: "e", major: 1, minor: 1, patch: 0, stage: "RELEASED", label: "1.1", sequence: 2, changeKind: "MINOR", changeSummary: "add email", publishedById: "u", publishedByName: "Ada", publishedAt: "2026-10-14T10:00:00.000Z", releasedAt: "2026-10-14T10:00:00.000Z" },
+          { id: "v1", entityId: "e", major: 1, minor: 0, patch: 0, stage: "RELEASED", label: "1.0", sequence: 1, changeKind: "INITIAL", changeSummary: null, publishedById: "u", publishedByName: null, publishedAt: "2026-10-13T10:00:00.000Z", releasedAt: "2026-10-13T10:00:00.000Z" },
         ]}
       />
     );

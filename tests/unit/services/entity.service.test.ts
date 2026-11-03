@@ -556,7 +556,7 @@ describe("Entity Service", () => {
           error: {
             code: "IN_USE",
             message: 'Entity "Customer" cannot be retired: its latest version is pinned by event checkout (payments/checkout).',
-            details: { referrers: [{ eventId: "ev-1", name: "checkout", referencedVersions: ["2.0"], draft: true, published: false }], truncated: false },
+            details: { referrers: [{ eventId: "ev-1", name: "checkout", referencedVersions: ["2.0.0"], draft: true, published: false }], truncated: false },
           },
         });
         expect(prisma.schemaReference.findMany).toHaveBeenCalledWith(
@@ -680,8 +680,8 @@ describe("Entity Service", () => {
           success: false,
           error: {
             code: "IN_USE",
-            message: 'Entity "Order" cannot be deleted: it is referenced by published versions of Entity "Cart" (v1.0).',
-            details: { entities: [{ id: "ent-cart", name: "Cart", versions: ["1.0"] }] },
+            message: 'Entity "Order" cannot be deleted: it is referenced by published versions of Entity "Cart" (v1.0.0).',
+            details: { entities: [{ id: "ent-cart", name: "Cart", versions: ["1.0.0"] }] },
           },
         });
         expect(prisma.schemaReference.findMany).toHaveBeenCalledWith(

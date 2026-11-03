@@ -61,6 +61,7 @@ export function analyzeVersionedPublish(input: VersionedPublishInput): EventPubl
     candidateLabels: {
       MAJOR: formatVersionLabel(nextVersionNumber(input.latest, "MAJOR").version),
       MINOR: formatVersionLabel(nextVersionNumber(input.latest, "MINOR").version),
+      PATCH: formatVersionLabel(nextVersionNumber(input.latest, "PATCH").version),
     },
     initialLabel,
     reasons: [...(input.bump?.reasons ?? [])],

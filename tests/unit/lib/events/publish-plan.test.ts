@@ -3,13 +3,13 @@ import { analyzeVersionedPublish, planVersionedPublish, provisionalLabel } from 
 
 // The generic planner the event publish is built on (document/bump.ts feeds it the classification).
 
-const latest = { major: 1, minor: 3, sequence: 4 };
+const latest = { major: 1, minor: 3, patch: 0, sequence: 4 };
 
 describe("versioned publish planner", () => {
-  it("first publish is 1.0 INITIAL at sequence 1", () => {
+  it("first publish is 1.0.0 INITIAL at sequence 1", () => {
     const input = { latest: null, hasChanges: true, blockers: [], bump: null };
-    expect(analyzeVersionedPublish(input)).toMatchObject({ isFirstPublish: true, initialLabel: "1.0", candidateLabels: null });
-    expect(planVersionedPublish(input)).toEqual({ success: true, data: { version: { major: 1, minor: 0 }, label: "1.0", sequence: 1, changeKind: "INITIAL", reasons: [] } });
+    expect(analyzeVersionedPublish(input)).toMatchObject({ isFirstPublish: true, initialLabel: "1.0.0", candidateLabels: null });
+    expect(planVersionedPublish(input)).toEqual({ success: true, data: { version: { major: 1, minor: 0, patch: 0 }, label: "1.0.0", sequence: 1, changeKind: "INITIAL", reasons: [] } });
   });
 
   it("blocks with NO_CHANGES (first) plus every other blocker, all together", () => {
@@ -21,11 +21,11 @@ describe("versioned publish planner", () => {
   it("is raise-only (spec Q6)", () => {
     const major = { latest, hasChanges: true, blockers: [], bump: { bump: "MAJOR" as const, reasons: ["Trait removed"] } };
     expect(planVersionedPublish(major, "MINOR")).toMatchObject({ success: false, error: { code: "BUMP_TOO_LOW" } });
-    expect(planVersionedPublish(major)).toMatchObject({ success: true, data: { label: "2.0", sequence: 5, changeKind: "MAJOR", reasons: ["Trait removed"] } });
+    expect(planVersionedPublish(major)).toMatchObject({ success: true, data: { label: "2.0.0", sequence: 5, changeKind: "MAJOR", reasons: ["Trait removed"] } });
     const minor = { ...major, bump: { bump: "MINOR" as const, reasons: [] } };
-    expect(planVersionedPublish(minor)).toMatchObject({ success: true, data: { label: "1.4", changeKind: "MINOR" } });
-    expect(planVersionedPublish(minor, "MAJOR")).toMatchObject({ success: true, data: { label: "2.0" } });
-    expect(provisionalLabel(analyzeVersionedPublish(minor))).toBe("1.4");
+    expect(planVersionedPublish(minor)).toMatchObject({ success: true, data: { label: "1.4.0", changeKind: "MINOR" } });
+    expect(planVersionedPublish(minor, "MAJOR")).toMatchObject({ success: true, data: { label: "2.0.0" } });
+    expect(provisionalLabel(analyzeVersionedPublish(minor))).toBe("1.4.0");
   });
 
   it("fails closed when a republish has no classification: INVALID_PLAN_INPUT, never a silent MINOR", () => {
@@ -40,8 +40,8 @@ describe("versioned publish planner", () => {
   it("provisionalLabel never defaults an unclassified bump to MINOR", () => {
     const analysis = analyzeVersionedPublish({ latest, hasChanges: true, blockers: [{ kind: "NAME_CONFLICT", message: "taken" }], bump: null });
     expect(analysis.suggestedBump).toBeNull();
-    expect(provisionalLabel(analysis)).toBe("2.0");
-    expect(provisionalLabel(analyzeVersionedPublish({ latest: null, hasChanges: true, blockers: [], bump: null }))).toBe("1.0");
+    expect(provisionalLabel(analysis)).toBe("2.0.0");
+    expect(provisionalLabel(analyzeVersionedPublish({ latest: null, hasChanges: true, blockers: [], bump: null }))).toBe("1.0.0");
   });
 
   it("returns fresh objects: mutating a plan or analysis never leaks into later plans or the input", () => {

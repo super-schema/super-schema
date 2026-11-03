@@ -1,5 +1,5 @@
 import type { ChangeKind } from "@/lib/entity-versioning/types";
-import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
 import type { EventVersionSummary } from "@/lib/events/types";
 
 /** Shared by MessageVersion and EventSpecVersion selects (same column names). */
@@ -21,7 +21,7 @@ export interface VersionSummaryRow {
 
 export function toEventVersionSummary(row: VersionSummaryRow): EventVersionSummary {
   return {
-    id: row.id, major: row.major, minor: row.minor, label: formatVersionLabel(row), sequence: row.sequence,
+    id: row.id, major: row.major, minor: row.minor, label: formatVersionLabel(legacyVersionNumber(row)), sequence: row.sequence,
     changeKind: row.changeKind, changeSummary: row.changeSummary, publishedByName: row.publishedBy.name,
     publishedAt: row.publishedAt.toISOString(),
   };

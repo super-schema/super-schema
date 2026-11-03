@@ -6,7 +6,7 @@
 // Every function is scoped by `tenantId`, which the caller takes from the authenticated context, never from the client: an
 // event or version of another tenant reads exactly like a missing one (NOT_FOUND naming only the id the caller sent).
 import { Prisma } from "@/generated/prisma/client";
-import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
 import {
   externalItemSummaries, isNewerVersion, missingItemKeys,
   type ExternalEventCandidate, type ExternalRefInput, type ExternalRefStatus, type ExternalVersionItems, type ExternalVersionOption,
@@ -108,7 +108,7 @@ export async function listExternalEventCandidates(ctx: ServiceContext, input: Li
       if (!row.latestVersion || !row.domain || !row.product) continue;
       candidates.push({
         eventId: row.id, eventName: row.name, domainName: row.domain.name, productName: row.product.name,
-        latestVersionId: row.latestVersion.id, latestLabel: formatVersionLabel(row.latestVersion),
+        latestVersionId: row.latestVersion.id, latestLabel: formatVersionLabel(legacyVersionNumber(row.latestVersion)),
       });
     }
     return ok(candidates);
@@ -133,7 +133,7 @@ export async function listExternalEventVersions(ctx: ServiceContext, input: { te
       },
     });
     if (!event) return notFound("Event", eventId.data);
-    return ok(event.versions.map((v) => ({ versionId: v.id, label: formatVersionLabel(v), publishedAt: v.publishedAt.toISOString() })));
+    return ok(event.versions.map((v) => ({ versionId: v.id, label: formatVersionLabel(legacyVersionNumber(v)), publishedAt: v.publishedAt.toISOString() })));
   });
 }
 
@@ -158,7 +158,7 @@ export async function getExternalVersionItems(ctx: ServiceContext, input: { tena
     if (!version) return notFound("Event version", versionId.data);
     return ok({
       eventName: version.eventSpec.name,
-      label: formatVersionLabel(version),
+      label: formatVersionLabel(legacyVersionNumber(version)),
       channels: externalItemSummaries(version.resolvedSpec, "channel") ?? [],
       messages: externalItemSummaries(version.resolvedSpec, "message") ?? [],
     });
@@ -218,15 +218,15 @@ export async function getExternalRefStatuses(ctx: ServiceContext, input: { tenan
       const latest = eventSpec.latestVersion;
       if (!latest) {
         statuses.push({
-          eventVersionId: version.id, eventId: eventSpec.id, eventName: eventSpec.name, label: formatVersionLabel(version),
-          latestVersionId: version.id, latestLabel: formatVersionLabel(version), newerAvailable: false, newerIsMajor: false, itemsMissingInLatest: [],
+          eventVersionId: version.id, eventId: eventSpec.id, eventName: eventSpec.name, label: formatVersionLabel(legacyVersionNumber(version)),
+          latestVersionId: version.id, latestLabel: formatVersionLabel(legacyVersionNumber(version)), newerAvailable: false, newerIsMajor: false, itemsMissingInLatest: [],
         });
         continue;
       }
       const newerAvailable = isNewerVersion(version, latest);
       statuses.push({
-        eventVersionId: version.id, eventId: eventSpec.id, eventName: eventSpec.name, label: formatVersionLabel(version),
-        latestVersionId: latest.id, latestLabel: formatVersionLabel(latest),
+        eventVersionId: version.id, eventId: eventSpec.id, eventName: eventSpec.name, label: formatVersionLabel(legacyVersionNumber(version)),
+        latestVersionId: latest.id, latestLabel: formatVersionLabel(legacyVersionNumber(latest)),
         newerAvailable, newerIsMajor: newerAvailable && latest.major > version.major,
         itemsMissingInLatest: missingItemKeys(latest.resolvedSpec, versionRefs),
       });
