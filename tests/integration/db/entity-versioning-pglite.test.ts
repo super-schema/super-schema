@@ -535,7 +535,7 @@ describe("entity snapshots and promotion (service, PGlite)", () => {
     expect(readReferencedVersions(row.compatReport).map((r) => r.version)).toEqual(["1.0.0"]);
   });
 
-  it("promote refuses a snapshot whose referenced snapshot was saved again after it, until it is saved again itself", async () => {
+  it("promote refuses a snapshot whose referenced snapshot was saved again after it; saving it again needs no draft edit", async () => {
     const sc = await scope();
     const customer = await sc.entity("Customer");
     unwrap(await publishEntity(customer.id, {}, ctx)); // Customer 1.0.0_snapshot, content C1
@@ -550,16 +550,35 @@ describe("entity snapshots and promotion (service, PGlite)", () => {
     // Customer 1.0.0 is released, but at content Order's gate never checked.
     const refused = await promoteEntityVersion(order.id, ctx);
     expect(codeOf(refused)).toBe("SNAPSHOT_REFERENCES");
-    expect(!refused.success && refused.error.message).toContain("Customer");
+    expect(!refused.success && refused.error.message).toBe("Customer changed since v1.0.0_snapshot was saved.");
+    expect(!refused.success && refused.error.suggestedFix).toBe("Save the snapshot again, then promote.");
     expect((await prisma().entityVersion.findUniqueOrThrow({ where: { id: oSnap.id } })).stage).toBe("SNAPSHOT");
+    expect((await entityRow(order.id)).hasUnpublishedChanges).toBe(false);
 
-    // Saved again (gated against the released content), it promotes.
-    await sc.edit(order.id);
+    // Saved again with no edit (the snapshot no longer holds what it was gated against, so this is not NO_CHANGES), it promotes.
     unwrap(await publishEntity(order.id, {}, ctx));
     const promoted = unwrap(await promoteEntityVersion(order.id, ctx));
     expect(promoted).toMatchObject({ id: oSnap.id, label: "1.0.0" });
     const row = await prisma().entityVersion.findUniqueOrThrow({ where: { id: oSnap.id } });
     expect(readReferencedVersions(row.compatReport).map((r) => r.version)).toEqual(["1.0.0"]);
+  });
+
+  it("a referenced snapshot saved again in place between a save's compile and its lock is a CONFLICT, nothing written", async () => {
+    const sc = await scope();
+    const customer = await sc.entity("Customer");
+    const cSnap = unwrap(await publishEntity(customer.id, {}, ctx));
+    const order = await sc.entity("Order");
+    await sc.reference(order.id, "buyer", customer);
+    // Same label and number: only the save stamp moves (what the entity service's save does to the row's content).
+    holder.afterCompile = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await prisma().entityVersion.update({ where: { id: cSnap.id }, data: { publishedAt: new Date() } });
+    };
+    const raced = await publishEntity(order.id, {}, ctx);
+    expect(codeOf(raced)).toBe("CONFLICT");
+    expect(await versionsOf(order.id)).toHaveLength(0);
+    // retried, it saves against the current content
+    expect(unwrap(await publishEntity(order.id, {}, ctx)).label).toBe("1.0.0_snapshot");
   });
 
   it("promote refuses a dirty draft and a retired entity", async () => {

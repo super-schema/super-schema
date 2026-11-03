@@ -58,6 +58,8 @@ describe("gatherPublishFacts: a version whose entity was deleted between the two
     if (!facts.success) throw new Error(facts.error.message);
     expect(facts.data.blockers).toEqual([]);
     expect(facts.data.current.pins).toEqual({ "ver-order": { entityId: "ent-order", entityName: "Order", label: "1.2.0", major: 1 } });
+    // when the pinned version's content was last saved: what the locked re-check compares
+    expect(facts.data.pinStamps).toEqual({ "ver-order": AT.getTime() });
   });
 
   it("leaves a frozen library trait's headers pin unknown (no major, no label), never a TypeError", async () => {

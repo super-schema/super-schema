@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 type Decorators = Record<string, unknown>;
 type FieldRow = { id: string; entityId: string; name: string; type: string; decorators: Decorators; sortOrder: number };
-type VersionRow = { id: string; entityId: string; major: number; minor: number; patch: number; stage: "SNAPSHOT" | "RELEASED"; sequence: number; fieldSnapshot: unknown[]; compatReport?: unknown };
+type VersionRow = { id: string; entityId: string; major: number; minor: number; patch: number; stage: "SNAPSHOT" | "RELEASED"; sequence: number; fieldSnapshot: unknown[]; compatReport?: unknown; publishedAt?: Date };
 type EntityRow = {
   id: string;
   tenantId: string;
@@ -89,6 +89,8 @@ function publishAs(id: string, major: number, minor: number, frozen: Array<[stri
   return row;
 }
 
+const SAVED_AT = new Date("2026-10-01T00:00:00Z");
+
 function fakePrisma() {
   const rowOf = (e: EntityRow) => ({
     id: e.id, tenantId: e.tenantId, name: e.name, description: "", status: "DRAFT", version: 1, hasUnpublishedChanges: e.hasUnpublishedChanges,
@@ -157,6 +159,8 @@ function fakePrisma() {
     findMany: vi.fn(async ({ where }: { where: { OR: Array<{ entityId: string; major: number; minor: number; patch: number; stage: string }> } }) =>
       versions()
         .filter((v) => where.OR.some((k) => k.entityId === v.entityId && k.major === v.major && k.minor === v.minor && v.patch === k.patch && v.stage === k.stage))
+        // when each was last saved (the publish compares these between its compile and its lock)
+        .map((v) => ({ ...v, publishedAt: v.publishedAt ?? SAVED_AT }))
     ),
     create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
       h.created.push(data);
@@ -177,7 +181,7 @@ function fakePrisma() {
     entity: entityApi,
     field: fieldApi,
     entityVersion: versionApi,
-    schemaReference: { createMany: vi.fn() },
+    schemaReference: { createMany: vi.fn(), findMany: vi.fn(async () => []), deleteMany: vi.fn() },
   };
   return { prisma: { ...tx, $transaction: async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx) }, tx };
 }

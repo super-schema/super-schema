@@ -46,7 +46,7 @@ function fakeDb(referencedEntityId: string) {
     entityVersion: {
       // The owner has no stored version yet: no release, no open snapshot.
       findFirst: vi.fn(async () => null),
-      findMany: vi.fn(async () => [{ id: "vC1", entityId: "eC", major: 1, minor: 0, patch: 0, stage: "RELEASED" }]),
+      findMany: vi.fn(async () => [{ id: "vC1", entityId: "eC", major: 1, minor: 0, patch: 0, stage: "RELEASED", publishedAt: new Date("2026-10-01T00:00:00Z") }]),
       create: vi.fn(async () => ({ id: "vNew", entityId: "eA", major: 1, minor: 0, patch: 0, stage: "SNAPSHOT", sequence: 1, changeKind: "INITIAL", changeSummary: null, publishedById: "u1", publishedAt: new Date(0), publishedBy: { name: "U" } })),
     },
     schemaReference: { createMany: vi.fn(async () => ({ count: 1 })) },

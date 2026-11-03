@@ -34,6 +34,11 @@ export interface PublishState {
   closureBlocker?: { code: string; message: string; entityId?: string; details?: object };
   /** The version of every referenced entity the closure used, to record on the published version (empty: references nothing). */
   referencedVersions?: ReferencedVersion[];
+  /**
+   * Entities the open snapshot references that were saved again after it was saved (a snapshot updated in place): the snapshot no
+   * longer holds what it was checked against, so a save is possible (no NO_CHANGES) even with a clean draft.
+   */
+  changedReferences?: string[];
 }
 
 export type PublishBlocker =
@@ -133,7 +138,7 @@ export function analyzePublish(state: PublishState): PublishAnalysis {
   if (entity.status === "RETIRED") {
     blockers.push({ kind: "RETIRED", message: "Retired entities are read-only and cannot be published." });
   }
-  if (!entity.hasUnpublishedChanges) {
+  if (!entity.hasUnpublishedChanges && (state.changedReferences ?? []).length === 0) {
     if (openSnapshot) {
       blockers.push({ kind: "NO_CHANGES", message: `No unsaved changes since v${formatVersionLabel(openSnapshot, "SNAPSHOT")}.` });
     } else if (latestRelease) {
@@ -264,14 +269,16 @@ export interface PromoteState {
   openSnapshot: (VersionNumber & { id: string }) | null;
   /** The draft has edits the snapshot does not hold (save first). */
   draftDirty: boolean;
-  /** Names of what the snapshot references only at a snapshot (a release may only reference releases). */
+  /** Names of what the snapshot references only at a snapshot (a release may only reference releases): promote those first. */
   snapshotReferences: string[];
+  /** Names of what the snapshot references that was saved again after it was saved: save this snapshot again first. */
+  changedReferences?: string[];
 }
 
 /**
  * Whether the open snapshot can be promoted to its release, and to which label (entities and events alike). `draftDirty`: the draft
- * has edits the snapshot does not hold (save first). `snapshotReferences`: names of entities (or events) the snapshot references only
- * at a snapshot (a release may only reference releases).
+ * has edits the snapshot does not hold (save first). `snapshotReferences` / `changedReferences`: what the snapshot references only at
+ * a snapshot, or saved again since (SNAPSHOT_REFERENCES, the message saying which action each needs).
  */
 export function planPromote(state: PromoteState): Result<{ snapshotId: string; label: string }> {
   const { openSnapshot, latestRelease } = state;
@@ -286,12 +293,24 @@ export function planPromote(state: PromoteState): Result<{ snapshotId: string; l
       suggestedFix: "Save the draft to the snapshot, then promote.",
     });
   }
-  if (state.snapshotReferences.length > 0) {
+  const snapshots = state.snapshotReferences;
+  const changed = state.changedReferences ?? [];
+  if (snapshots.length > 0 || changed.length > 0) {
+    const messages: string[] = [];
+    const fixes: string[] = [];
+    if (snapshots.length > 0) {
+      messages.push(`v${snapshotLabel} references snapshot versions of ${snapshots.join(", ")}; a release may only reference released versions.`);
+      fixes.push("Promote those first, then promote this one.");
+    }
+    if (changed.length > 0) {
+      messages.push(`${changed.join(", ")} changed since v${snapshotLabel} was saved.`);
+      fixes.push("Save the snapshot again, then promote.");
+    }
     return err({
       code: "SNAPSHOT_REFERENCES",
-      message: `v${snapshotLabel} references snapshot versions of ${state.snapshotReferences.join(", ")}; a release may only reference released versions.`,
-      details: { entities: state.snapshotReferences },
-      suggestedFix: "Promote those entities first, then promote this one.",
+      message: messages.join(" "),
+      details: { entities: [...new Set([...snapshots, ...changed])].sort(), snapshots, changed },
+      suggestedFix: fixes.join(" "),
     });
   }
   if (latestRelease && compareVersions(openSnapshot, latestRelease) <= 0) {

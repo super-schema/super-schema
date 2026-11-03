@@ -35,7 +35,8 @@ import {
   type PublishState,
 } from "@/lib/entity-versioning/publish-plan";
 import { formatVersionLabel, parseVersionLabel, storedVersionWhere } from "@/lib/entity-versioning/version-math";
-import type { EntityVersionSummary, PublishInput, VersionNumber } from "@/lib/entity-versioning/types";
+import { savedSince, savedStamps, snapshotKey, versionsMoved } from "@/lib/entity-versioning/snapshot-drift";
+import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
 import { isSourceStale, WRITE_BACK_SOURCE_SQL } from "@/lib/entity-versioning/draft-state";
 import {
   needsRegeneration,
@@ -123,6 +124,8 @@ type LoadedPublishState = PublishState & {
   closure: ReferenceClosure | null;
   /** The tenant of the entity being published: every other entity or version the publish reads or links to must belong to it. */
   tenantId: string;
+  /** When each version the closure used was last saved (`referencedStamps`): compared between a save's compile and its lock. */
+  referencedStamps: Record<string, number>;
 };
 
 /**
@@ -174,17 +177,29 @@ function versionStateKey(s: Pick<LoadedPublishState, "latestRelease" | "openSnap
   return `${s.latestRelease?.id ?? "-"}|${snapshotKey(s.openSnapshot, s.openSnapshotUpdatedAt)}`;
 }
 
-/** The open snapshot as one comparable value: which row, at which number, last written when ("-": none open). */
-function snapshotKey(snapshot: (VersionNumber & { id: string }) | null, updatedAt: Date | null): string {
-  return snapshot ? `${snapshot.id}@${formatVersionLabel(snapshot)}@${updatedAt?.getTime() ?? ""}` : "-";
-}
-
 /** Another save or promote of the entity committed between what the caller decided on and the row lock: retryable. */
-const VERSIONS_MOVED = {
+const VERSIONS_MOVED = versionsMoved("entity");
+
+/** A referenced entity's version moved (published, re-pinned, or a snapshot saved again in place) between a save's compile and its lock. */
+const REFERENCE_MOVED = {
   code: "CONFLICT",
-  message: "Another save or promote of this entity completed first, try again",
-  suggestedFix: "Reload the entity and try again.",
+  message: "A referenced entity changed during publish, try again",
+  suggestedFix: "Publish again.",
 } as const;
+
+/**
+ * When the content of every version the closure used was last saved (`savedStamps`), bound to the tenant: a referenced snapshot saved
+ * again in place keeps its label, so only this tells a save that what its compile checked is no longer what the closure holds.
+ */
+async function referencedStamps(db: Db, referenced: readonly ReferencedVersion[], tenantId: string): Promise<Record<string, number>> {
+  const wanted = referenced.flatMap((r) => {
+    const parsed = parseVersionLabel(r.version);
+    return r.ref.entityId && parsed.success ? [{ entityId: r.ref.entityId, ...storedVersionWhere(parsed.data) }] : [];
+  });
+  if (wanted.length === 0) return {};
+  const rows = await db.entityVersion.findMany({ where: { OR: wanted, entity: { tenantId } }, select: { id: true, publishedAt: true } });
+  return savedStamps(rows);
+}
 
 function failure(e: unknown, fallback: string): Result<never> {
   if (e instanceof ServiceErrorRejection) return err(e.serviceError);
@@ -249,11 +264,16 @@ async function loadPublishState(db: Db, entityId: string, reader: ClosureReader)
   // The real closure: the draft at its saved rows, every member at its published version or pin. The direct references above only
   // see one level (and only by id or by name in the line); this sees the whole closure, and what it used is what gets recorded.
   const published = await loadPublishClosure(db, { id: entity.id, tenantId: entity.tenantId, name: entity.name }, { reader });
+  const referencedVersions = published.success ? published.data.referencedVersions : [];
+  // What the open snapshot references that was saved again since it was: something to save even with a clean draft.
+  const changedReferences = openSnapshot ? (await snapshotReferences(db, openSnapshot.id, entity.tenantId)).changed : [];
 
   return ok({
     closure: published.success ? published.data.closure : null,
     closureBlocker: published.success ? undefined : published.error,
-    referencedVersions: published.success ? published.data.referencedVersions : [],
+    referencedVersions,
+    referencedStamps: await referencedStamps(db, referencedVersions, entity.tenantId),
+    changedReferences,
     sourceStale: isSourceStale(entity.metadata),
     tenantId: entity.tenantId,
     entity: {
@@ -349,12 +369,12 @@ export async function publishEntity(
 
             // The compile in phase 1 vouches for the closure it compiled. If a referenced entity published (or a pin moved) since,
             // what would be recorded is no longer what was checked: abort, retryable, like an edit to the entity itself.
-            if (!sameReferencedVersions(prePlan.data.referencedVersions, plan.data.referencedVersions)) {
-              throw new ServiceErrorRejection({
-                code: "CONFLICT",
-                message: "A referenced entity changed during publish, try again",
-                suggestedFix: "Publish again.",
-              });
+            // A referenced snapshot saved again in place keeps its label: its save stamp is what moves.
+            if (
+              !sameReferencedVersions(prePlan.data.referencedVersions, plan.data.referencedVersions) ||
+              JSON.stringify(pre.data.referencedStamps) !== JSON.stringify(state.data.referencedStamps)
+            ) {
+              throw new ServiceErrorRejection(REFERENCE_MOVED);
             }
 
             // Phase 2 — the source to freeze (R42/R45/R46). A fresh stored source is used as-is, except
@@ -467,24 +487,23 @@ export async function publishEntity(
 
 /**
  * What stands between the open snapshot and a release, besides the planner's checks: the entities it references only at a snapshot
- * (a release may only reference releases), and its recorded `referencedVersions` with every snapshot label that has since been
- * released rewritten to the released label (`null` when nothing needs rewriting).
+ * (`snapshots`: a release may only reference releases — promote them first), the entities it references that were saved again after
+ * it was (`changed`: shared drift rule `savedSince` — save this snapshot again first), and its recorded `referencedVersions` with every
+ * snapshot label that has since been released rewritten to the released label (`null` when nothing needs rewriting).
  *
- * A snapshot reference is a pin edge from the snapshot whose target row is still a SNAPSHOT, or a recorded snapshot label that does
- * not name a RELEASED row of the same number (still a snapshot, or renumbered since). A released or legacy label ("2.1" is 2.1.0)
- * never names a snapshot. A target that was saved again AFTER this snapshot was saved counts too, even once released: its content is
- * not what this snapshot's compile gate checked, so this snapshot must be saved again (against the current content) before release.
- * Every row read is bound to the entity's tenant.
+ * A pin edge whose target was saved again since is `changed` (even once released: its content is not what this snapshot's compile gate
+ * checked); one whose target is still a SNAPSHOT is a snapshot reference. A recorded snapshot label whose row is gone (renumbered by a
+ * later save) or was saved again since is `changed`; one that still names a SNAPSHOT is a snapshot reference. A released or legacy label
+ * ("2.1" is 2.1.0) never counts. Every row read is bound to the entity's tenant.
  */
 async function snapshotReferences(
   db: Db,
   snapshotId: string,
   tenantId: string
-): Promise<{ names: string[]; releasedRecord: ReferencedVersion[] | null; compatReport: unknown }> {
-  const names = new Set<string>();
+): Promise<{ snapshots: string[]; changed: string[]; releasedRecord: ReferencedVersion[] | null; compatReport: unknown }> {
+  const snapshots = new Set<string>();
+  const changed = new Set<string>();
   const own = await db.entityVersion.findUnique({ where: { id: snapshotId }, select: { compatReport: true, publishedAt: true } });
-  // Saved again since this snapshot was saved (what this snapshot was gated against is gone).
-  const resavedSince = (target: { publishedAt: Date }) => !!own && target.publishedAt.getTime() > own.publishedAt.getTime();
 
   const edges = await db.schemaReference.findMany({
     where: { fromKind: "ENTITY_VERSION", fromId: snapshotId, toKind: "ENTITY_VERSION" },
@@ -495,7 +514,10 @@ async function snapshotReferences(
       where: { id: { in: edges.map((edge) => edge.toId) }, entity: { tenantId } },
       select: { stage: true, publishedAt: true, entity: { select: { name: true } } },
     });
-    for (const target of targets) if (target.stage === "SNAPSHOT" || resavedSince(target)) names.add(target.entity.name);
+    for (const target of targets) {
+      if (savedSince(target, own)) changed.add(target.entity.name);
+      else if (target.stage === "SNAPSHOT") snapshots.add(target.entity.name);
+    }
   }
 
   const recorded = readReferencedVersions(own?.compatReport);
@@ -514,16 +536,18 @@ async function snapshotReferences(
           select: { stage: true, publishedAt: true },
         })
       : null;
-    if (target?.stage === "RELEASED" && !resavedSince(target)) {
+    if (target?.stage === "RELEASED" && !savedSince(target, own)) {
       releasedRecord.push({ ...entry, version: formatVersionLabel(parsed.data) });
       rewritten = true;
-    } else {
-      names.add(entry.ref.entity);
-      releasedRecord.push(entry);
+      continue;
     }
+    if (!target || savedSince(target, own)) changed.add(entry.ref.entity);
+    else snapshots.add(entry.ref.entity);
+    releasedRecord.push(entry);
   }
 
-  return { names: [...names].sort(), releasedRecord: rewritten ? releasedRecord : null, compatReport: own?.compatReport };
+  const names = (set: Set<string>) => [...set].sort();
+  return { snapshots: names(snapshots), changed: names(changed), releasedRecord: rewritten ? releasedRecord : null, compatReport: own?.compatReport };
 }
 
 /**
@@ -563,7 +587,7 @@ export async function promoteEntityVersion(entityId: string, ctx: ServiceContext
 
             // `hasUnpublishedChanges` is false exactly when the draft is what the open snapshot holds (a save clears it, an edit sets it).
             const draftDirty = state.data.entity.hasUnpublishedChanges;
-            const basic = planPromote({ ...state.data, draftDirty, snapshotReferences: [] });
+            const basic = planPromote({ ...state.data, draftDirty, snapshotReferences: [], changedReferences: [] });
             if (!basic.success) throw new ServiceErrorRejection(basic.error);
 
             // The save's blockers still hold for a release: a retired entity is read-only, and a closure that no longer resolves (a
@@ -579,7 +603,7 @@ export async function promoteEntityVersion(entityId: string, ctx: ServiceContext
             }
 
             const refs = await snapshotReferences(tx, basic.data.snapshotId, state.data.tenantId);
-            const plan = planPromote({ ...state.data, draftDirty, snapshotReferences: refs.names });
+            const plan = planPromote({ ...state.data, draftDirty, snapshotReferences: refs.snapshots, changedReferences: refs.changed });
             if (!plan.success) throw new ServiceErrorRejection(plan.error);
 
             const releasedRecord = refs.releasedRecord;

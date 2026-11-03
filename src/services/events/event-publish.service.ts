@@ -11,7 +11,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { planPromote } from "@/lib/entity-versioning/publish-plan";
-import { isBumpKind, MAX_CHANGE_SUMMARY, type BumpKind, type PublishInput, type VersionNumber } from "@/lib/entity-versioning/types";
+import { isBumpKind, MAX_CHANGE_SUMMARY, type BumpKind, type PublishInput } from "@/lib/entity-versioning/types";
+import { savedSince, snapshotKey, versionsMoved } from "@/lib/entity-versioning/snapshot-drift";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import {
   GENERIC_VALIDATION_FAILURE, normalizeDiagnostics, type Diagnostic, type EmitOutput, type ResolvedEventSpec,
@@ -248,14 +249,8 @@ export async function publishEvent(eventId: string, productId: string, input: Pu
   });
 }
 
-/** The open snapshot as one comparable value: which row, at which number, last written when ("-": none open). */
-function snapshotKey(snapshot: (VersionNumber & { id: string; updatedAt: Date }) | null): string {
-  return snapshot ? `${snapshot.id}@${formatVersionLabel(snapshot)}@${snapshot.updatedAt.getTime()}` : "-";
-}
-
 /** Another save or promote of the event committed between what the caller decided on and the row lock: retryable. */
-const versionsMoved = () =>
-  err({ code: "CONFLICT", message: "Another save or promote of this event completed first, try again.", suggestedFix: "Reload the event and try again." });
+const versionsMovedErr = () => err(versionsMoved("event"));
 
 /** `stored` with `info.version` set to `label` (the rest untouched), or null when it is not a document with an `info` object. */
 function withInfoVersion(stored: unknown, label: string): Prisma.InputJsonValue | null {
@@ -264,18 +259,19 @@ function withInfoVersion(stored: unknown, label: string): Prisma.InputJsonValue 
 }
 
 /**
- * The names of what the open snapshot references only at a snapshot (a release may only reference releases), after locking what it
+ * What the open snapshot references only at a snapshot or saved again since it was (a release may only reference releases), after locking what it
  * references so no save or promote of it can land while the promote decides: every entity version it pins (a payload / key /
  * headers pin, a frozen library trait's headers pin, the entities' rows FOR SHARE) and every event version it references (an external
- * ref, the events' rows FOR SHARE). A target counts when it is still a SNAPSHOT, or when it was saved again AFTER this snapshot was
- * saved, even if released since: its content is not what this snapshot rendered, so this event must be saved again first. Every row
+ * ref, the events' rows FOR SHARE). `changed`: saved again AFTER this snapshot was saved (`savedSince`), even if released since — its
+ * content is not what this snapshot rendered, so this event must be saved again first. `snapshots`: otherwise still a SNAPSHOT —
+ * promote it first. Every row
  * read is bound to the event's tenant. Lock order: the event's own row (held by the caller) → entities by id → events by id.
  */
 async function snapshotReferences(
   tx: Prisma.TransactionClient,
   own: { publishedAt: Date; sourceDocument: unknown; frozenTraits: unknown },
   tenantId: string
-): Promise<Result<string[]>> {
+): Promise<Result<{ snapshots: string[]; changed: string[] }>> {
   const parsed = parseEventDocument(own.sourceDocument);
   const traits = parseFrozenTraits(own.frozenTraits);
   if (!parsed.success || !traits) return err({ code: "DATA_CORRUPT", message: "The stored snapshot is not a valid event document (v2)" });
@@ -296,8 +292,12 @@ async function snapshotReferences(
     if (eventIds.length > 0) await tx.$queryRaw`SELECT "id" FROM "event_specs" WHERE "id" IN (${Prisma.join(eventIds)}) ORDER BY "id" FOR SHARE`;
   }
 
-  const counts = (target: { stage: string; publishedAt: Date }) => target.stage === "SNAPSHOT" || target.publishedAt.getTime() > own.publishedAt.getTime();
-  const names = new Set<string>();
+  const snapshots = new Set<string>();
+  const changed = new Set<string>();
+  const classify = (target: { stage: string; publishedAt: Date }, name: string) => {
+    if (savedSince(target, own)) changed.add(name);
+    else if (target.stage === "SNAPSHOT") snapshots.add(name);
+  };
   const [entityTargets, eventTargets] = await Promise.all([
     entityVersionIds.length > 0
       ? tx.entityVersion.findMany({
@@ -312,9 +312,9 @@ async function snapshotReferences(
         })
       : [],
   ]);
-  for (const t of entityTargets) if (counts(t)) names.add(t.entity.name);
-  for (const t of eventTargets) if (counts(t)) names.add(t.eventSpec.name);
-  return ok([...names].sort());
+  for (const t of entityTargets) classify(t, t.entity.name);
+  for (const t of eventTargets) classify(t, t.eventSpec.name);
+  return ok({ snapshots: [...snapshots].sort(), changed: [...changed].sort() });
 }
 
 /**
@@ -353,7 +353,7 @@ export async function promoteEvent(eventId: string, productId: string, ctx: Serv
             const fresh = await loadEventSnapshot(tx, eventId);
             if (!fresh.success) return fresh;
             const open = fresh.data.openSnapshot;
-            if (snapshotKey(seen.data) !== snapshotKey(open)) return versionsMoved();
+            if (snapshotKey(seen.data, seen.data?.updatedAt) !== snapshotKey(open, open?.updatedAt)) return versionsMovedErr();
             const facts = await gatherPublishFacts(tx, fresh.data);
             if (!facts.success) return facts;
 
@@ -372,17 +372,16 @@ export async function promoteEvent(eventId: string, productId: string, ctx: Serv
 
             const refs = await snapshotReferences(tx, open!, fresh.data.event.tenantId);
             if (!refs.success) return refs;
-            const plan = planPromote({ ...state, snapshotReferences: refs.data });
-            if (!plan.success) {
-              return plan.error.code === "SNAPSHOT_REFERENCES"
-                ? err({ ...plan.error, suggestedFix: "Promote those first (or save this event again if they were saved after it), then promote this one." })
-                : plan;
-            }
+            const plan = planPromote({ ...state, snapshotReferences: refs.data.snapshots, changedReferences: refs.data.changed });
+            if (!plan.success) return plan;
 
             const stored = await tx.eventSpecVersion.findUniqueOrThrow({ where: { id: plan.data.snapshotId }, select: { document: true, resolvedSpec: true } });
             const document = withInfoVersion(stored.document, plan.data.label);
             if (!document) return err({ code: "DATA_CORRUPT", message: `The stored document of v${formatVersionLabel(open!, "SNAPSHOT")} is invalid` });
             const resolvedSpec = stored.resolvedSpec === null ? null : withInfoVersion(stored.resolvedSpec, plan.data.label);
+            if (stored.resolvedSpec !== null && !resolvedSpec) {
+              return err({ code: "DATA_CORRUPT", message: `The stored resolved spec of v${formatVersionLabel(open!, "SNAPSHOT")} is invalid` });
+            }
             const updated = await tx.eventSpecVersion.updateMany({
               where: { id: plan.data.snapshotId, eventSpecId: eventId, stage: "SNAPSHOT" },
               data: {
@@ -393,7 +392,7 @@ export async function promoteEvent(eventId: string, productId: string, ctx: Serv
                 ...(resolvedSpec ? { resolvedSpec } : {}),
               },
             });
-            if (updated.count !== 1) return versionsMoved();
+            if (updated.count !== 1) return versionsMovedErr();
 
             await tx.eventSpec.update({ where: { id: eventId }, data: { latestVersionId: plan.data.snapshotId }, select: { id: true } });
             const version = await tx.eventSpecVersion.findUniqueOrThrow({ where: { id: plan.data.snapshotId }, select: VERSION_SUMMARY_SELECT });
@@ -402,7 +401,7 @@ export async function promoteEvent(eventId: string, productId: string, ctx: Serv
           { timeout: 15_000 }
         );
       } catch (e: unknown) {
-        if (isConcurrentWriteFailure(e)) return versionsMoved();
+        if (isConcurrentWriteFailure(e)) return versionsMovedErr();
         throw e;
       }
     },

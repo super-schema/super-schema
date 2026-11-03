@@ -3,6 +3,7 @@
 // what blocks it without needing an emission, what the bump classifier compares, which entities the write must lock. Reads only.
 // `publishEvent` gathers them twice — once to plan, once more under the locks — and refuses to write when the two differ.
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
+import { savedSince, savedStamps } from "@/lib/entity-versioning/snapshot-drift";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { stableStringify, type BumpTraitHeadersPin } from "@/lib/events/bump-rules";
 import { toFrozenTrait } from "@/lib/events/catalog-mapping";
@@ -43,6 +44,12 @@ export interface PublishFacts {
   blockers: EventPublishBlocker[];
   /** False when a pin has no facts or is unpinned: the bump cannot be classified yet (planner input `bump: null`). */
   classifiable: boolean;
+  /**
+   * When the content of every version the draft pins or references was last saved (`savedStamps`: payload / key / headers pins,
+   * library traits' headers pins, external event refs). A snapshot saved again in place keeps its label and number, so this is what
+   * tells the locked re-check that the unlocked render is stale (CONFLICT, retryable) instead of storing it as current.
+   */
+  pinStamps: Record<string, number>;
   /** Entity ids to lock FOR SHARE, sorted and unique: every pinned entity of the document and of its library traits' header pins. */
   lockEntityIds: string[];
 }
@@ -244,14 +251,23 @@ export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promi
   });
   const baseStored = base?.representations ?? null;
   const representationsChanged = baseStored !== null && stableStringify(baseStored) !== stableStringify(currentRepresentations);
-  const savedAfterBase = (row: { publishedAt: Date } | undefined) =>
-    !!row && !!baseVersion && row.publishedAt.getTime() > baseVersion.publishedAt.getTime();
+  const savedAfterBase = (row: { publishedAt: Date } | undefined) => savedSince(row, baseVersion);
   const currentPinIds = unique([...currentSites.map((s) => s.pin.entityVersionId), ...[...currentLibrary.values()].map((t) => t.headersEntityVersionId)]);
   const externalById = new Map(externalRows.map((r) => [r.id, r]));
   const pinsResaved =
     currentPinIds.some((id) => savedAfterBase(versionById.get(id))) || currentExternalIds.some((id) => savedAfterBase(externalById.get(id)));
   const draftChanged = base === null || stableStringify(document) !== stableStringify(base.document) || drifted || representationsChanged;
   const hasChanges = draftChanged || pinsResaved;
+  const pinStamps = savedStamps([
+    ...currentPinIds.flatMap((id) => {
+      const row = versionById.get(id);
+      return row ? [{ id, publishedAt: row.publishedAt }] : [];
+    }),
+    ...currentExternalIds.flatMap((id) => {
+      const row = externalById.get(id);
+      return row ? [{ id, publishedAt: row.publishedAt }] : [];
+    }),
+  ]);
 
   return ok({
     latestRelease: numberOf(latestRelease),
@@ -262,6 +278,7 @@ export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promi
     current,
     blockers,
     classifiable: blockers.length === 0,
+    pinStamps,
     lockEntityIds,
   });
 }

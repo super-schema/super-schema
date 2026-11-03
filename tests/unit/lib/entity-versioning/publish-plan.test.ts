@@ -301,6 +301,19 @@ describe("snapshot saves (phase 1)", () => {
   });
 });
 
+describe("analyzePublish: a reference changed since the open snapshot was saved", () => {
+  it("is something to save: no NO_CHANGES with a clean draft", () => {
+    const s = state({
+      entity: { ...state().entity, hasUnpublishedChanges: false },
+      latestRelease: null,
+      openSnapshot: { id: "snap-1", major: 1, minor: 0, patch: 0, sequence: 1 },
+      changedReferences: ["Customer"],
+    });
+    expect(analyzePublish(s).blockers).toEqual([]);
+    expect(planPublish(s)).toMatchObject({ success: true, data: { mode: "UPDATE", snapshotId: "snap-1" } });
+  });
+});
+
 describe("planPromote", () => {
   const base = (overrides: Partial<PublishState> = {}) => ({
     ...state({
@@ -326,6 +339,22 @@ describe("planPromote", () => {
     expect(!res.success && res.error.code).toBe("SNAPSHOT_REFERENCES");
     expect(!res.success && res.error.message).toContain("Customer");
     expect(!res.success && res.error.message).toContain("Address");
+  });
+
+  it("promote names what changed since the snapshot was saved, with the fix that needs (save again), apart from snapshot references", () => {
+    const changed = planPromote({ ...base(), changedReferences: ["Customer"] });
+    expect(changed).toMatchObject({
+      success: false,
+      error: {
+        code: "SNAPSHOT_REFERENCES", message: "Customer changed since v1.1.0_snapshot was saved.", suggestedFix: "Save the snapshot again, then promote.",
+        details: { entities: ["Customer"], snapshots: [], changed: ["Customer"] },
+      },
+    });
+    const both = planPromote({ ...base(), snapshotReferences: ["Address"], changedReferences: ["Customer"] });
+    expect(!both.success && both.error.message).toBe(
+      "v1.1.0_snapshot references snapshot versions of Address; a release may only reference released versions. Customer changed since v1.1.0_snapshot was saved."
+    );
+    expect(!both.success && both.error.suggestedFix).toBe("Promote those first, then promote this one. Save the snapshot again, then promote.");
   });
 
   it("promote without snapshot fails", () => {

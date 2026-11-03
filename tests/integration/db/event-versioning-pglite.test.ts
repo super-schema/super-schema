@@ -99,13 +99,50 @@ async function scope() {
   const edit = (eventId: string, doc: EventDocument) =>
     prisma().eventSpec.update({ where: { id: eventId }, data: { document: doc as unknown as Prisma.InputJsonValue, hasUnpublishedChanges: true } });
 
-  const save = (eventId: string, bump?: "MAJOR" | "MINOR" | "PATCH") => publishEvent(eventId, product.id, bump ? { bump } : {}, ctx, deps);
-  const promote = (eventId: string) => promoteEvent(eventId, product.id, ctx);
+  const save = (eventId: string, bump?: "MAJOR" | "MINOR" | "PATCH", with_: EmitDeps = deps) =>
+    publishEvent(eventId, product.id, bump ? { bump } : {}, ctx, with_);
+  const promote = (eventId: string, on: ServiceContext = ctx) => promoteEvent(eventId, product.id, on);
   return { product, entity, document, event, edit, save, promote };
 }
 
 const versionsOf = (eventId: string) => prisma().eventSpecVersion.findMany({ where: { eventSpecId: eventId }, orderBy: { sequence: "asc" } });
 const eventRow = (eventId: string) => prisma().eventSpec.findUniqueOrThrow({ where: { id: eventId }, select: { latestVersionId: true, hasUnpublishedChanges: true } });
+const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+/** What the entity service's save does to a snapshot row's content: same row, same label, a new save stamp. */
+const resaveEntityVersion = async (versionId: string) => {
+  await tick();
+  await prisma().entityVersion.update({ where: { id: versionId }, data: { publishedAt: new Date() } });
+};
+/** A renderer that runs `before` once, on its FIRST call: after the save read its snapshot and before it takes any lock. */
+function racingRenderer(before: () => Promise<unknown>): ArtifactRenderer {
+  let fired = false;
+  return {
+    async render(subject, format) {
+      if (!fired) {
+        fired = true;
+        await before();
+      }
+      return renderer.render(subject, format);
+    },
+  };
+}
+/** `ctx` whose `$transaction` first runs `before` (after the caller's unlocked read, before its row lock). */
+function beforeTransaction(before: () => Promise<unknown>): ServiceContext {
+  const real = prisma();
+  const proxied = new Proxy(real, {
+    get(target, prop) {
+      if (prop === "$transaction") {
+        return async (...args: unknown[]) => {
+          await before();
+          return (target.$transaction as (...a: unknown[]) => Promise<unknown>)(...args);
+        };
+      }
+      return Reflect.get(target, prop) as unknown;
+    },
+  });
+  return { ...ctx, prisma: proxied };
+}
+
 /** What the entity service's promote does to the row (stage → RELEASED, same row). */
 const releaseEntityVersion = (versionId: string) =>
   prisma().entityVersion.update({ where: { id: versionId }, data: { stage: "RELEASED", releasedAt: new Date(), releasedById: ctx.userId } });
@@ -265,5 +302,102 @@ describe("event snapshots and promotion (service, PGlite)", () => {
 
     unwrap(await sc.promote(sourceId));
     expect(unwrap(await sc.promote(id)).label).toBe("1.0.0");
+  });
+
+  it("an entity snapshot saved again in place between the save's render and its lock is a CONFLICT, nothing written", async () => {
+    const sc = await scope();
+    const customer = await sc.entity("Customer", "SNAPSHOT");
+    const id = await sc.event(sc.document(customer));
+    const raced = await sc.save(id, undefined, { ...deps, renderer: racingRenderer(() => resaveEntityVersion(customer.versionId)) });
+    expect(codeOf(raced)).toBe("CONFLICT");
+    expect(await versionsOf(id)).toHaveLength(0);
+    // retried, it renders the current content
+    expect(unwrap(await sc.save(id)).label).toBe("1.0.0_snapshot");
+  });
+
+  it("a referenced event snapshot saved again after this one: SNAPSHOT_REFERENCES (changed), then a save with no edit, then the promote", async () => {
+    const sc = await scope();
+    const order = await sc.entity("Order");
+    const sourceDoc = sc.document(order);
+    const sourceId = await sc.event(sourceDoc);
+    const source = unwrap(await sc.save(sourceId));
+    const sourceName = (await prisma().eventSpec.findUniqueOrThrow({ where: { id: sourceId } })).name;
+    const doc: EventDocument = {
+      ...emptyEventDocument("fraud-scorer"),
+      servers: [{ key: "kafka-in", protocol: "kafka", host: "kafka-in.internal:9092" }],
+      channels: [{ key: "inbox", address: "fraud.inbox.v1", protocol: "kafka", serverKeys: ["kafka-in"], format: "avro", messageKeys: ["payment-received"] }],
+      externalRefs: [{ key: "payment-received", eventVersionId: source.id, kind: "message", itemKey: "order-created" }],
+      operations: [{ key: "consumePayment", action: "receive", channelKey: "inbox", messageKeys: ["payment-received"], traitKeys: [] }],
+    };
+    const id = await sc.event(doc);
+    unwrap(await sc.save(id));
+
+    await tick();
+    await sc.edit(sourceId, { ...sourceDoc, info: { ...sourceDoc.info, description: "re-saved" } });
+    unwrap(await sc.save(sourceId)); // same row, same 1.0.0_snapshot, new content
+    unwrap(await sc.promote(sourceId));
+
+    const refused = await sc.promote(id);
+    expect(refused).toMatchObject({
+      success: false,
+      error: { code: "SNAPSHOT_REFERENCES", message: `${sourceName} changed since v1.0.0_snapshot was saved.`, suggestedFix: "Save the snapshot again, then promote." },
+    });
+    expect(unwrap(await sc.save(id)).label).toBe("1.0.0_snapshot"); // no edit needed
+    expect(unwrap(await sc.promote(id)).label).toBe("1.0.0");
+  });
+
+  it("promote is a CONFLICT when a save lands between its unlocked read and its lock", async () => {
+    const sc = await scope();
+    const order = await sc.entity("Order");
+    const id = await sc.event(sc.document(order));
+    unwrap(await sc.save(id));
+    await sc.edit(id, sc.document(order, "edited"));
+    const raced = await sc.promote(id, beforeTransaction(async () => {
+      await tick();
+      unwrap(await sc.save(id));
+    }));
+    expect(codeOf(raced)).toBe("CONFLICT");
+    expect((await versionsOf(id))[0].stage).toBe("SNAPSHOT");
+    expect(unwrap(await sc.promote(id)).label).toBe("1.0.0");
+  });
+
+  it("promote refuses a snapshot that is not above the latest release (SNAPSHOT_NOT_AHEAD)", async () => {
+    const sc = await scope();
+    const order = await sc.entity("Order");
+    const id = await sc.event(sc.document(order));
+    unwrap(await sc.save(id));
+    const [snap] = await versionsOf(id);
+    // a release above it (legacy data / a number the snapshot was not renumbered past)
+    const { id: _id, stage: _stage, sequence: _seq, releasedAt: _r, releasedById: _rb, updatedAt: _u, ...columns } = snap;
+    await prisma().eventSpecVersion.create({
+      data: {
+        ...(columns as unknown as Prisma.EventSpecVersionUncheckedCreateInput), major: 2, minor: 0, patch: 0, sequence: 2, stage: "RELEASED",
+        releasedAt: new Date(), releasedById: ctx.userId,
+      },
+    });
+    expect(codeOf(await sc.promote(id))).toBe("SNAPSHOT_NOT_AHEAD");
+    expect((await versionsOf(id)).find((r) => r.id === snap.id)?.stage).toBe("SNAPSHOT");
+  });
+
+  it("promote refuses a snapshot whose pin no longer resolves (PUBLISH_BLOCKED, the save's blockers)", async () => {
+    const sc = await scope();
+    const order = await sc.entity("Order");
+    const id = await sc.event(sc.document(order));
+    unwrap(await sc.save(id));
+    await prisma().entity.delete({ where: { id: order.id } }); // its versions go with it
+    const refused = await sc.promote(id);
+    expect(codeOf(refused)).toBe("PUBLISH_BLOCKED");
+    expect(!refused.success && (refused.error.details as { blockers: Array<{ kind: string }> }).blockers.map((b) => b.kind)).toEqual(["MISSING_ENTITY"]);
+    expect((await versionsOf(id))[0].stage).toBe("SNAPSHOT");
+  });
+
+  it("promote refuses a snapshot whose stored resolved spec has no info (DATA_CORRUPT), never releasing it with a stale info.version", async () => {
+    const sc = await scope();
+    const order = await sc.entity("Order");
+    const id = await sc.event(sc.document(order));
+    const snap = unwrap(await sc.save(id));
+    await prisma().eventSpecVersion.update({ where: { id: snap.id }, data: { resolvedSpec: { channels: [], messages: [] } } });
+    expect(codeOf(await sc.promote(id))).toBe("DATA_CORRUPT");
+    expect((await versionsOf(id))[0].stage).toBe("SNAPSHOT");
   });
 });
