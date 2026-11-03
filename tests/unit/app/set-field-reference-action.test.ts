@@ -71,6 +71,17 @@ describe("setFieldReferenceAction", () => {
     expect(written().referencedEntityVersion).toBe("2.1.0");
   });
 
+  // Until the patch / stage columns land every stored version is a released x.y.0: the 2.1 row must not stand in for 2.1.7 or a snapshot.
+  it.each([
+    ["2.1.7", "Customer has no published version 2.1.7"],
+    ["2.1.0_snapshot", "Customer has no published version 2.1.0_snapshot"],
+  ])("refuses pin %j, which names no stored version, without looking up the 2.1 row", async (pinnedVersion, message) => {
+    const r = await setFieldReferenceAction("ent-1", "fld-1", { entityId: "ent-2", pinnedVersion });
+    expect(r).toEqual({ success: false, error: { code: "VALIDATION_ERROR", message } });
+    expect(mockPrisma.entityVersion.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.field.update).not.toHaveBeenCalled();
+  });
+
   it("clearing the pin (null) removes referencedEntityVersion", async () => {
     const r = await setFieldReferenceAction("ent-1", "fld-1", { entityId: "ent-2", pinnedVersion: null });
     expect(r.success).toBe(true);

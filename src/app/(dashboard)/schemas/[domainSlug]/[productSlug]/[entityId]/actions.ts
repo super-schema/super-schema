@@ -37,7 +37,7 @@ import { draftReferencedEntities, draftReferenceRefusal } from "@/lib/entity-ver
 import { getActiveTenantId } from "@/lib/active-tenant";
 import type { ClosureTargetResult } from "@/lib/emission/closure-generation";
 import type { EmittedFile } from "@/lib/typespec-official/closure-emit";
-import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, parseVersionLabel, storedVersionKey } from "@/lib/entity-versioning/version-math";
 import {
   buildSchemaTargetFieldMappings,
   parseSchemaTargetTypeOverrides,
@@ -1370,11 +1370,13 @@ export async function setFieldReferenceAction(
       const parsed = parseVersionLabel(ref.pinnedVersion);
       if (!parsed.success) return err({ code: "VALIDATION_ERROR", message: `"${ref.pinnedVersion}" is not a published version label` });
       // Every EntityVersion row is a published version; a draft has no row, so it cannot be pinned.
-      const published = await prisma.entityVersion.findUnique({
-        where: { entityId_major_minor: { entityId: target.id, major: parsed.data.major, minor: parsed.data.minor } },
-      });
+      const key = storedVersionKey(parsed.data);
+      const published = key && (await prisma.entityVersion.findUnique({ where: { entityId_major_minor: { entityId: target.id, ...key } } }));
       if (!published) {
-        return err({ code: "VALIDATION_ERROR", message: `${target.name} has no published version ${formatVersionLabel(parsed.data)}` });
+        return err({
+          code: "VALIDATION_ERROR",
+          message: `${target.name} has no published version ${formatVersionLabel(parsed.data, parsed.data.stage)}`,
+        });
       }
       pinnedVersion = formatVersionLabel(parsed.data);
     }

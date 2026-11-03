@@ -6,7 +6,7 @@ import {
   type Diagnostic, type EmitOutput, type EventSpecValidator, type JsonObject, type ResolvedEventSpec,
 } from "@/lib/event-specs";
 import { AsyncApiParserValidator } from "@/lib/event-specs/validation/asyncapi-parser-validator";
-import { formatVersionLabel, legacyVersionNumber, parseVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber, parseVersionLabel, storedVersionKey } from "@/lib/entity-versioning/version-math";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { isJsonObject } from "@/lib/events/inputs";
 import { ok, err, type Result } from "@/types/result";
@@ -100,12 +100,13 @@ export async function emitEventStoredVersion(eventId: string, productId: string,
     if (!label.success) return label;
     const parsed = parseVersionLabel(label.data);
     if (!parsed.success) return parsed;
-    const row = await ctx.prisma.eventSpecVersion.findUnique({
-      where: { eventSpecId_major_minor: { eventSpecId: eventId, major: parsed.data.major, minor: parsed.data.minor } },
+    const key = storedVersionKey(parsed.data);
+    const row = key && (await ctx.prisma.eventSpecVersion.findUnique({
+      where: { eventSpecId_major_minor: { eventSpecId: eventId, ...key } },
       select: { document: true, major: true, minor: true, compatReport: true },
-    });
+    }));
     if (!row) {
-      return err({ code: "NOT_FOUND", message: `Version ${formatVersionLabel(parsed.data)} of event "${eventId}" not found`, suggestedFix: "List the published versions and pick one." });
+      return err({ code: "NOT_FOUND", message: `Version ${formatVersionLabel(parsed.data, parsed.data.stage)} of event "${eventId}" not found`, suggestedFix: "List the published versions and pick one." });
     }
     if (!isJsonObject(row.document)) {
       return err({ code: "DATA_CORRUPT", message: `Stored document of version ${formatVersionLabel(legacyVersionNumber(row))} is invalid` });

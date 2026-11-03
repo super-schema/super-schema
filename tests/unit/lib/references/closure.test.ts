@@ -303,6 +303,19 @@ describe("loadReferenceClosure", () => {
       expect(r.error).toMatchObject({ code: "PIN_NOT_FOUND", field: "b", version: "9.9" });
     });
 
+    // Until the patch / stage columns land every stored version is a released x.y.0: a patch or a snapshot pin names no row, and must
+    // not resolve to the x.y row by its major/minor.
+    it.each(["1.0.7", "1.0.0_snapshot"])("returns PIN_NOT_FOUND for pin %j instead of resolving the 1.0 row", async (pin) => {
+      const db = fakeDb([
+        ent("a", {}, [["b", qref("b", "_tenant/_tenant/B", pin)]]),
+        ent("b", { versions: [version("b", 1, 0, [])], latest: "b-v1.0" }),
+      ]);
+      const r = await loadReferenceClosure(db, "t1", "a", "draft");
+      expect(r.success).toBe(false);
+      if (r.success) return;
+      expect(r.error).toMatchObject({ code: "PIN_NOT_FOUND", field: "b", version: pin });
+    });
+
     it("published mode returns NEVER_PUBLISHED for a never-published target", async () => {
       const db = fakeDb([ent("a", { versions: [version("a", 1, 0, ["B"])], latest: "a-v1.0" }), ent("b")]);
       const r = await loadReferenceClosure(db, "t1", "a", "published");

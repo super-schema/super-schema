@@ -26,7 +26,7 @@ import type { FieldSnapshot } from "@/services/version-history/version.types";
 import { toFieldSnapshot } from "@/lib/diff/field-snapshot";
 import { resolveEntityReferences } from "@/lib/entity-versioning/line-references";
 import { analyzePublish, planPublish, type PublishAnalysis, type PublishPlan, type PublishState } from "@/lib/entity-versioning/publish-plan";
-import { formatVersionLabel, legacyVersionNumber, parseVersionLabel, storableChangeKind } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, legacyVersionNumber, parseVersionLabel, storableChangeKind, storedVersionKey } from "@/lib/entity-versioning/version-math";
 import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
 import { isSourceStale, WRITE_BACK_SOURCE_SQL } from "@/lib/entity-versioning/draft-state";
 import {
@@ -122,7 +122,8 @@ async function edgeTargetVersionIds(db: Db, plan: PublishPlan, tenantId: string)
   const wanted = plan.pins.flatMap((pin) => {
     const label = used.get(pin.entityId);
     const parsed = label === undefined ? undefined : parseVersionLabel(label);
-    return parsed?.success ? [{ entityId: pin.entityId, major: parsed.data.major, minor: parsed.data.minor }] : [];
+    const key = parsed?.success ? storedVersionKey(parsed.data) : null;
+    return key ? [{ entityId: pin.entityId, ...key }] : [];
   });
   // Bound to the publishing entity's tenant: an edge never links to a version another tenant owns, whatever the pins say.
   const rows =
@@ -402,7 +403,7 @@ export async function listEntityVersions(
   return ok(rows.map(toSummary));
 }
 
-/** One frozen version by label ("2.1" or "v2.1"), incl. resolvedSource + fieldSnapshot. */
+/** One frozen version by label ("2.1.0", "v2.1.0", legacy "2.1"), incl. resolvedSource + fieldSnapshot. */
 export async function getEntityVersion(
   entityId: string,
   label: string,
@@ -410,13 +411,12 @@ export async function getEntityVersion(
 ): Promise<Result<EntityVersion>> {
   const parsed = parseVersionLabel(label);
   if (!parsed.success) return parsed;
-  const row = await ctx.prisma.entityVersion.findUnique({
-    where: { entityId_major_minor: { entityId, major: parsed.data.major, minor: parsed.data.minor } },
-  });
+  const key = storedVersionKey(parsed.data);
+  const row = key && (await ctx.prisma.entityVersion.findUnique({ where: { entityId_major_minor: { entityId, ...key } } }));
   if (!row) {
     return err({
       code: "NOT_FOUND",
-      message: `Version ${formatVersionLabel(parsed.data)} of entity "${entityId}" not found`,
+      message: `Version ${formatVersionLabel(parsed.data, parsed.data.stage)} of entity "${entityId}" not found`,
       suggestedFix: "List the entity's published versions and pick one of them.",
     });
   }

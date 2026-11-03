@@ -77,6 +77,15 @@ export function legacyVersionNumber(row: { major: number; minor: number; patch?:
   return { major: row.major, minor: row.minor, patch: 0 };
 }
 
+/**
+ * TEMPORARY until the `patch` / `stage` columns land (phase 1 Task 3): the `major_minor` unique key of the stored row a parsed label
+ * names, or null when no stored row can be it. Every row today is a released `x.y.0`, so a label with a patch or a `_snapshot` stage
+ * names nothing; looking it up by major/minor alone would find the wrong version.
+ */
+export function storedVersionKey(v: VersionNumber & { stage: VersionStage }): { major: number; minor: number } | null {
+  return v.patch === 0 && v.stage === "RELEASED" ? { major: v.major, minor: v.minor } : null;
+}
+
 /** TEMPORARY until phase 1 Task 3 adds `PATCH` to the stored `EntityVersionChangeKind` enum: the change kinds a version row can hold. */
 export type StoredChangeKind = Exclude<ChangeKind, "PATCH">;
 
