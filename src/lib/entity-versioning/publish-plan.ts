@@ -1,7 +1,7 @@
 import { ok, err, type Result } from "@/types/result";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
 import { suggestBump } from "./bump-suggestion";
-import { INITIAL_VERSION, formatVersionLabel, nextVersionNumber, resolveBump } from "./version-math";
+import { INITIAL_VERSION, compareVersions, formatVersionLabel, nextVersionNumber, resolveBump } from "./version-math";
 import type { BumpKind, ChangeKind, VersionNumber } from "./types";
 import type { ReferencedVersion } from "./referenced-versions";
 import type { EntityRef } from "@/lib/references/entity-reference";
@@ -15,7 +15,13 @@ export interface PublishState {
     hasUnpublishedChanges: boolean;
     typespecSource: string | null;
   };
-  latest: { id: string; major: number; minor: number; patch: number; sequence: number; fieldSnapshot: FieldSnapshot[] } | null;
+  /**
+   * The latest RELEASED version: new snapshot numbers are counted from it and the bump is suggested from the diff against its fields.
+   * `fieldSnapshot` (and `id`) are what the diff needs on top of the number.
+   */
+  latestRelease: (VersionNumber & { id: string; sequence: number; fieldSnapshot: FieldSnapshot[] }) | null;
+  /** The entity's one open (mutable) snapshot, if any: a save updates it in place instead of creating a version. */
+  openSnapshot: (VersionNumber & { id: string; sequence: number }) | null;
   currentFields: FieldSnapshot[];
   /** One entry per referenced entity; `entityName: null` means it no longer exists. */
   references: Array<{ entityId: string; entityName: string | null; latestVersionId: string | null }>;
@@ -85,11 +91,15 @@ export interface ReferencePin {
 }
 
 export interface PublishAnalysis {
+  /** Nothing released yet: the snapshot is 1.0.0_snapshot whatever the bump. */
   isFirstPublish: boolean;
+  /** The latest released label ("2.1.0"), null before the first release. */
   latestLabel: string | null;
-  /** null on a first publish (always 1.0). */
+  /** The open snapshot's label ("2.2.0_snapshot"), null when none is open. */
+  openSnapshotLabel: string | null;
+  /** Suggested from the diff against the latest release; null before the first release (always 1.0.0). */
   suggestedBump: BumpKind | null;
-  /** Next label per bump; null on a first publish. */
+  /** The snapshot label a save at each bump would produce (an open snapshot is never lowered); null before the first release. */
   candidateLabels: Record<BumpKind, string> | null;
   initialLabel: string;
   reasons: string[];
@@ -100,7 +110,12 @@ export interface PublishAnalysis {
 }
 
 export interface PublishPlan {
+  /** CREATE a new snapshot row, or UPDATE the open one (`snapshotId`) in place, possibly at a raised number. */
+  mode: "CREATE" | "UPDATE";
+  /** The open snapshot an UPDATE writes; null for CREATE. */
+  snapshotId: string | null;
   version: VersionNumber;
+  /** The snapshot label, e.g. "2.2.0_snapshot". */
   label: string;
   sequence: number;
   changeKind: ChangeKind;
@@ -111,14 +126,18 @@ export interface PublishPlan {
 
 /** Everything the publish dialog shows. Never fails — blockers are data. */
 export function analyzePublish(state: PublishState): PublishAnalysis {
-  const { entity, latest } = state;
+  const { entity, latestRelease, openSnapshot } = state;
   const blockers: PublishBlocker[] = [];
 
   if (entity.status === "RETIRED") {
     blockers.push({ kind: "RETIRED", message: "Retired entities are read-only and cannot be published." });
   }
-  if (latest && !entity.hasUnpublishedChanges) {
-    blockers.push({ kind: "NO_CHANGES", message: `No unpublished changes since v${formatVersionLabel(latest)}.` });
+  if (!entity.hasUnpublishedChanges) {
+    if (openSnapshot) {
+      blockers.push({ kind: "NO_CHANGES", message: `No unsaved changes since v${formatVersionLabel(openSnapshot, "SNAPSHOT")}.` });
+    } else if (latestRelease) {
+      blockers.push({ kind: "NO_CHANGES", message: `No unpublished changes since v${formatVersionLabel(latestRelease)}.` });
+    }
   }
 
   const pins: ReferencePin[] = [];
@@ -167,10 +186,12 @@ export function analyzePublish(state: PublishState): PublishAnalysis {
   }));
 
   const initialLabel = formatVersionLabel(INITIAL_VERSION);
-  if (!latest) {
+  const openSnapshotLabel = openSnapshot ? formatVersionLabel(openSnapshot, "SNAPSHOT") : null;
+  if (!latestRelease) {
     return {
       isFirstPublish: true,
       latestLabel: null,
+      openSnapshotLabel,
       suggestedBump: null,
       candidateLabels: null,
       initialLabel,
@@ -182,16 +203,14 @@ export function analyzePublish(state: PublishState): PublishAnalysis {
     };
   }
 
-  const suggestion = suggestBump(latest.fieldSnapshot, state.currentFields);
+  const suggestion = suggestBump(latestRelease.fieldSnapshot, state.currentFields);
+  const candidate = (bump: BumpKind) => formatVersionLabel(snapshotNumber(latestRelease, openSnapshot, bump), "SNAPSHOT");
   return {
     isFirstPublish: false,
-    latestLabel: formatVersionLabel(latest),
+    latestLabel: formatVersionLabel(latestRelease),
+    openSnapshotLabel,
     suggestedBump: suggestion.bump,
-    candidateLabels: {
-      MAJOR: formatVersionLabel(nextVersionNumber(latest, "MAJOR").version),
-      MINOR: formatVersionLabel(nextVersionNumber(latest, "MINOR").version),
-      PATCH: formatVersionLabel(nextVersionNumber(latest, "PATCH").version),
-    },
+    candidateLabels: { MAJOR: candidate("MAJOR"), MINOR: candidate("MINOR"), PATCH: candidate("PATCH") },
     initialLabel,
     reasons: suggestion.reasons,
     diffSummary: suggestion.summary,
@@ -201,7 +220,29 @@ export function analyzePublish(state: PublishState): PublishAnalysis {
   };
 }
 
-/** The version publishEntity will write, or why it cannot (all blockers at once, spec §10). */
+/**
+ * The number a save at `bump` gives the snapshot: counted from the latest RELEASE (so it always exceeds it), and an open snapshot
+ * keeps its own number unless that is higher (never lowered). Before any release it is 1.0.0 whatever the bump.
+ */
+function snapshotNumber(latestRelease: VersionNumber | null, openSnapshot: VersionNumber | null, bump: BumpKind): VersionNumber {
+  const next = nextVersionNumber(latestRelease, bump).version;
+  if (!openSnapshot) return next;
+  const kept = { major: openSnapshot.major, minor: openSnapshot.minor, patch: openSnapshot.patch };
+  return compareVersions(next, kept) > 0 ? next : kept;
+}
+
+/** What a number is relative to the latest release: the first part that differs; INITIAL before any release. */
+function changeKindOf(version: VersionNumber, latestRelease: VersionNumber | null): ChangeKind {
+  if (!latestRelease) return "INITIAL";
+  if (version.major !== latestRelease.major) return "MAJOR";
+  if (version.minor !== latestRelease.minor) return "MINOR";
+  return "PATCH";
+}
+
+/**
+ * The snapshot a save writes, or why it cannot (all blockers at once, spec §10): CREATE a snapshot when none is open, numbered from the
+ * latest release; otherwise UPDATE the open one, raised when the resolved bump yields a higher number, never lowered.
+ */
 export function planPublish(state: PublishState, requested?: BumpKind): Result<PublishPlan> {
   const analysis = analyzePublish(state);
   if (analysis.blockers.length > 0) {
@@ -213,29 +254,61 @@ export function planPublish(state: PublishState, requested?: BumpKind): Result<P
     });
   }
 
-  const { latest, entity } = state;
-  const referencedVersions = state.referencedVersions ?? [];
-  if (!latest) {
-    const { version, changeKind } = nextVersionNumber(null, "MINOR");
-    return ok({
-      version,
-      label: formatVersionLabel(version),
-      sequence: Math.max(entity.version, 1),
-      changeKind,
-      pins: analysis.pins,
-      referencedVersions,
+  const { latestRelease, openSnapshot, entity } = state;
+  let bump: BumpKind = "MINOR";
+  if (latestRelease) {
+    const resolved = resolveBump(analysis.suggestedBump ?? "MINOR", requested);
+    if (!resolved.success) return resolved;
+    bump = resolved.data;
+  }
+  const version = snapshotNumber(latestRelease, openSnapshot, bump);
+  const sequence = openSnapshot ? openSnapshot.sequence : latestRelease ? latestRelease.sequence + 1 : Math.max(entity.version, 1);
+  return ok({
+    mode: openSnapshot ? "UPDATE" : "CREATE",
+    snapshotId: openSnapshot?.id ?? null,
+    version,
+    label: formatVersionLabel(version, "SNAPSHOT"),
+    sequence,
+    changeKind: changeKindOf(version, latestRelease),
+    pins: analysis.pins,
+    referencedVersions: state.referencedVersions ?? [],
+  });
+}
+
+/**
+ * Whether the open snapshot can be promoted to its release, and to which label. `draftDirty`: the draft has edits the snapshot does
+ * not hold (save first). `snapshotReferences`: names of entities the snapshot references only at a snapshot (a release may only
+ * reference releases).
+ */
+export function planPromote(
+  state: PublishState & { draftDirty: boolean; snapshotReferences: string[] }
+): Result<{ snapshotId: string; label: string }> {
+  const { openSnapshot, latestRelease } = state;
+  if (!openSnapshot) {
+    return err({ code: "NO_SNAPSHOT", message: "There is no snapshot to promote.", suggestedFix: "Save a snapshot first." });
+  }
+  const snapshotLabel = formatVersionLabel(openSnapshot, "SNAPSHOT");
+  if (state.draftDirty) {
+    return err({
+      code: "DRAFT_NOT_SAVED",
+      message: `The draft has changes that are not in v${snapshotLabel}.`,
+      suggestedFix: "Save the draft to the snapshot, then promote.",
     });
   }
-
-  const bump = resolveBump(analysis.suggestedBump ?? "MINOR", requested);
-  if (!bump.success) return bump;
-  const { version, changeKind } = nextVersionNumber(latest, bump.data);
-  return ok({
-    version,
-    label: formatVersionLabel(version),
-    sequence: latest.sequence + 1,
-    changeKind,
-    pins: analysis.pins,
-    referencedVersions,
-  });
+  if (state.snapshotReferences.length > 0) {
+    return err({
+      code: "SNAPSHOT_REFERENCES",
+      message: `v${snapshotLabel} references snapshot versions of ${state.snapshotReferences.join(", ")}; a release may only reference released versions.`,
+      details: { entities: state.snapshotReferences },
+      suggestedFix: "Promote those entities first, then promote this one.",
+    });
+  }
+  if (latestRelease && compareVersions(openSnapshot, latestRelease) <= 0) {
+    return err({
+      code: "SNAPSHOT_NOT_AHEAD",
+      message: `v${snapshotLabel} is not above the latest release v${formatVersionLabel(latestRelease)}; released numbers are never reused.`,
+      suggestedFix: "Save the snapshot again to renumber it, then promote.",
+    });
+  }
+  return ok({ snapshotId: openSnapshot.id, label: formatVersionLabel(openSnapshot) });
 }

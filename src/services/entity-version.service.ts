@@ -210,7 +210,8 @@ async function loadPublishState(db: Db, entityId: string, reader: ClosureReader)
       hasUnpublishedChanges: entity.hasUnpublishedChanges,
       typespecSource: entity.typespecSource,
     },
-    latest: entity.latestVersion
+    // Until snapshot saves land (phase 1 Task 5) every stored version is a release: the latest one is the latest release, no snapshot is open.
+    latestRelease: entity.latestVersion
       ? {
           id: entity.latestVersion.id,
           major: entity.latestVersion.major,
@@ -220,6 +221,7 @@ async function loadPublishState(db: Db, entityId: string, reader: ClosureReader)
           fieldSnapshot: entity.latestVersion.fieldSnapshot as unknown as FieldSnapshot[],
         }
       : null,
+    openSnapshot: null,
     currentFields: entity.fields.map(toFieldSnapshot),
     references: targetIds.filter((id) => !unreadable.has(id)).map((id) => {
       const t = byId.get(id);

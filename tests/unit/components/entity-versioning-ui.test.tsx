@@ -9,7 +9,7 @@ afterEach(cleanup);
 
 function analysis(overrides: Partial<PublishAnalysis> = {}): PublishAnalysis {
   return {
-    isFirstPublish: false, latestLabel: "2.1", suggestedBump: "MINOR", candidateLabels: { MAJOR: "3.0", MINOR: "2.2", PATCH: "2.1.1" },
+    isFirstPublish: false, latestLabel: "2.1", openSnapshotLabel: null, suggestedBump: "MINOR", candidateLabels: { MAJOR: "3.0", MINOR: "2.2", PATCH: "2.1.1" },
     initialLabel: "1.0", reasons: [], diffSummary: { added: 1, removed: 0, modified: 0 }, blockers: [], warnings: [], pins: [],
     ...overrides,
   };
