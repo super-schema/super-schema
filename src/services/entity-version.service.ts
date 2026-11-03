@@ -193,8 +193,8 @@ function failure(e: unknown, fallback: string): Result<never> {
     // The (entity, number) key, the (entity, sequence) key or the one-open-snapshot index decided a race the row lock did not see.
     return err({
       code: "CONFLICT",
-      message: "Another publish of this entity completed first.",
-      suggestedFix: "Reload the entity and publish again.",
+      message: "Another save or promote of this entity completed first.",
+      suggestedFix: "Reload the entity and try again.",
     });
   }
   return err({ code: "DB_ERROR", message: e instanceof Error ? e.message : fallback });
@@ -472,7 +472,9 @@ export async function publishEntity(
  *
  * A snapshot reference is a pin edge from the snapshot whose target row is still a SNAPSHOT, or a recorded snapshot label that does
  * not name a RELEASED row of the same number (still a snapshot, or renumbered since). A released or legacy label ("2.1" is 2.1.0)
- * never names a snapshot. Every row read is bound to the entity's tenant.
+ * never names a snapshot. A target that was saved again AFTER this snapshot was saved counts too, even once released: its content is
+ * not what this snapshot's compile gate checked, so this snapshot must be saved again (against the current content) before release.
+ * Every row read is bound to the entity's tenant.
  */
 async function snapshotReferences(
   db: Db,
@@ -480,6 +482,9 @@ async function snapshotReferences(
   tenantId: string
 ): Promise<{ names: string[]; releasedRecord: ReferencedVersion[] | null; compatReport: unknown }> {
   const names = new Set<string>();
+  const own = await db.entityVersion.findUnique({ where: { id: snapshotId }, select: { compatReport: true, publishedAt: true } });
+  // Saved again since this snapshot was saved (what this snapshot was gated against is gone).
+  const resavedSince = (target: { publishedAt: Date }) => !!own && target.publishedAt.getTime() > own.publishedAt.getTime();
 
   const edges = await db.schemaReference.findMany({
     where: { fromKind: "ENTITY_VERSION", fromId: snapshotId, toKind: "ENTITY_VERSION" },
@@ -487,14 +492,13 @@ async function snapshotReferences(
   });
   if (edges.length > 0) {
     const targets = await db.entityVersion.findMany({
-      where: { id: { in: edges.map((edge) => edge.toId) }, stage: "SNAPSHOT", entity: { tenantId } },
-      select: { entity: { select: { name: true } } },
+      where: { id: { in: edges.map((edge) => edge.toId) }, entity: { tenantId } },
+      select: { stage: true, publishedAt: true, entity: { select: { name: true } } },
     });
-    for (const target of targets) names.add(target.entity.name);
+    for (const target of targets) if (target.stage === "SNAPSHOT" || resavedSince(target)) names.add(target.entity.name);
   }
 
-  const row = await db.entityVersion.findUnique({ where: { id: snapshotId }, select: { compatReport: true } });
-  const recorded = readReferencedVersions(row?.compatReport);
+  const recorded = readReferencedVersions(own?.compatReport);
   let rewritten = false;
   const releasedRecord: ReferencedVersion[] = [];
   for (const entry of recorded) {
@@ -507,10 +511,10 @@ async function snapshotReferences(
     const target = entry.ref.entityId
       ? await db.entityVersion.findFirst({
           where: { entityId: entry.ref.entityId, major, minor, patch, entity: { tenantId } },
-          select: { stage: true },
+          select: { stage: true, publishedAt: true },
         })
       : null;
-    if (target?.stage === "RELEASED") {
+    if (target?.stage === "RELEASED" && !resavedSince(target)) {
       releasedRecord.push({ ...entry, version: formatVersionLabel(parsed.data) });
       rewritten = true;
     } else {
@@ -519,7 +523,7 @@ async function snapshotReferences(
     }
   }
 
-  return { names: [...names].sort(), releasedRecord: rewritten ? releasedRecord : null, compatReport: row?.compatReport };
+  return { names: [...names].sort(), releasedRecord: rewritten ? releasedRecord : null, compatReport: own?.compatReport };
 }
 
 /**

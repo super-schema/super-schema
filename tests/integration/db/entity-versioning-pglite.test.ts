@@ -535,6 +535,33 @@ describe("entity snapshots and promotion (service, PGlite)", () => {
     expect(readReferencedVersions(row.compatReport).map((r) => r.version)).toEqual(["1.0.0"]);
   });
 
+  it("promote refuses a snapshot whose referenced snapshot was saved again after it, until it is saved again itself", async () => {
+    const sc = await scope();
+    const customer = await sc.entity("Customer");
+    unwrap(await publishEntity(customer.id, {}, ctx)); // Customer 1.0.0_snapshot, content C1
+    const order = await sc.entity("Order");
+    await sc.reference(order.id, "buyer", customer);
+    const oSnap = unwrap(await publishEntity(order.id, {}, ctx)); // gated against C1
+
+    await sc.edit(customer.id);
+    unwrap(await publishEntity(customer.id, {}, ctx)); // C2, same row and number
+    unwrap(await promoteEntityVersion(customer.id, ctx)); // released 1.0.0 at C2
+
+    // Customer 1.0.0 is released, but at content Order's gate never checked.
+    const refused = await promoteEntityVersion(order.id, ctx);
+    expect(codeOf(refused)).toBe("SNAPSHOT_REFERENCES");
+    expect(!refused.success && refused.error.message).toContain("Customer");
+    expect((await prisma().entityVersion.findUniqueOrThrow({ where: { id: oSnap.id } })).stage).toBe("SNAPSHOT");
+
+    // Saved again (gated against the released content), it promotes.
+    await sc.edit(order.id);
+    unwrap(await publishEntity(order.id, {}, ctx));
+    const promoted = unwrap(await promoteEntityVersion(order.id, ctx));
+    expect(promoted).toMatchObject({ id: oSnap.id, label: "1.0.0" });
+    const row = await prisma().entityVersion.findUniqueOrThrow({ where: { id: oSnap.id } });
+    expect(readReferencedVersions(row.compatReport).map((r) => r.version)).toEqual(["1.0.0"]);
+  });
+
   it("promote refuses a dirty draft and a retired entity", async () => {
     const sc = await scope();
     const e = await sc.entity("Order");
@@ -550,7 +577,7 @@ describe("entity snapshots and promotion (service, PGlite)", () => {
     expect((await versionsOf(e.id))[0].stage).toBe("SNAPSHOT");
   });
 
-  it("promote racing save: one wins, the other gets CONFLICT", async () => {
+  it("promote racing save: a CONFLICT when the other lands first, and never a second snapshot or a changed release", async () => {
     const sc = await scope();
     const e = await sc.entity("Order");
     unwrap(await publishEntity(e.id, {}, ctx));
@@ -596,15 +623,29 @@ describe("entity snapshots and promotion (service, PGlite)", () => {
     expect(codeOf(promote2)).toBe("CONFLICT");
     expect((await prisma().entityVersion.findUniqueOrThrow({ where: { id: s2.id } })).stage).toBe("SNAPSHOT");
 
-    // 3. Both at once: exactly one wins; the loser is refused (CONFLICT, or the refusal it would have met in the other order). Never a
-    //    second snapshot, never an update of a released row.
+    // 3. Both at once, on a dirty draft (only the save is valid at the start). The save always wins. The promote is refused (CONFLICT
+    //    when the save committed between its first look and its lock, DRAFT_NOT_SAVED when it locked first), or, when the save had
+    //    fully committed before the promote even looked, promotes exactly what the save wrote (a valid serial order). Either way: never a
+    //    second snapshot, never an update of a released row, never a released number twice.
     await sc.edit(e.id);
-    const results = await Promise.allSettled([publishEntity(e.id, {}, ctx), promoteEntityVersion(e.id, ctx)]);
-    const outcomes = results.map((r) => (r.status === "fulfilled" ? codeOf(r.value) : "THREW"));
-    expect(outcomes.filter((c) => c === "OK")).toHaveLength(1);
-    expect(outcomes.filter((c) => c !== "OK").every((c) => ["CONFLICT", "DRAFT_NOT_SAVED", "PUBLISH_BLOCKED"].includes(c))).toBe(true);
+    const releasedBeforeRace = await prisma().entityVersion.findMany({ where: { entityId: e.id, stage: "RELEASED" }, orderBy: { id: "asc" } });
+    const [saveResult, promoteResult] = await Promise.allSettled([publishEntity(e.id, {}, ctx), promoteEntityVersion(e.id, ctx)]);
+    const saveCode = saveResult.status === "fulfilled" ? codeOf(saveResult.value) : "THREW";
+    const promoteCode = promoteResult.status === "fulfilled" ? codeOf(promoteResult.value) : "THREW";
+    expect(saveCode).toBe("OK");
+    expect(["OK", "CONFLICT", "DRAFT_NOT_SAVED"]).toContain(promoteCode);
+    const saved = saveResult.status === "fulfilled" && saveResult.value.success ? saveResult.value.data : undefined;
+    if (promoteCode === "OK") {
+      // The promote saw the new snapshot: it released that row, at the save's content.
+      const promotedNow = await prisma().entityVersion.findUniqueOrThrow({ where: { id: saved!.id } });
+      expect(promotedNow.stage).toBe("RELEASED");
+      expect(promotedNow.publishedAt.toISOString()).toBe(saved!.publishedAt);
+    }
     expect(await prisma().entityVersion.count({ where: { entityId: e.id, stage: "SNAPSHOT" } })).toBeLessThanOrEqual(1);
     expect(await prisma().entityVersion.findUniqueOrThrow({ where: { id: release.id } })).toEqual(releasedBefore);
+    for (const before of releasedBeforeRace) {
+      expect(await prisma().entityVersion.findUniqueOrThrow({ where: { id: before.id } })).toEqual(before);
+    }
     const released = await prisma().entityVersion.findMany({ where: { entityId: e.id, stage: "RELEASED" } });
     expect(new Set(released.map((v) => `${v.major}.${v.minor}.${v.patch}`)).size).toBe(released.length);
   });
