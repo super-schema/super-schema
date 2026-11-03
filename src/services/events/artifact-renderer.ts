@@ -88,7 +88,7 @@ function rootModelFor(source: string, entityName: string, label: string): Result
 async function loadVersionPart(db: Db, versionId: string, tenantId?: string): Promise<Result<{ part: ProgramPart; pins: string[]; tenantId: string }>> {
   const v = await db.entityVersion.findUnique({
     where: { id: versionId, ...(tenantId !== undefined ? { entity: { tenantId } } : {}) },
-    select: { id: true, entityId: true, major: true, minor: true, patch: true, resolvedSource: true, fieldSnapshot: true, entity: { select: { name: true, tenantId: true } } },
+    select: { id: true, entityId: true, major: true, minor: true, patch: true, stage: true, resolvedSource: true, fieldSnapshot: true, entity: { select: { name: true, tenantId: true } } },
   });
   if (!v) return err({ code: "NOT_FOUND", message: `Entity version "${versionId}" not found` });
   const pins = await db.schemaReference.findMany({
@@ -97,7 +97,7 @@ async function loadVersionPart(db: Db, versionId: string, tenantId?: string): Pr
     orderBy: { toId: "asc" },
   });
   const snapshot = Array.isArray(v.fieldSnapshot) ? (v.fieldSnapshot as unknown as FieldSnapshot[]) : [];
-  const label = `${v.entity.name}@${formatVersionLabel(v)}`;
+  const label = `${v.entity.name}@${formatVersionLabel(v, v.stage)}`;
   const rootModel = rootModelFor(v.resolvedSource, v.entity.name, label);
   if (!rootModel.success) return rootModel;
   return ok({

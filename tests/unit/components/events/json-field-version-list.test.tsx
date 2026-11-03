@@ -29,7 +29,7 @@ describe("EventVersionList", () => {
       <EventVersionList
         emptyText="-"
         hrefFor={(label) => `/x?version=${label}`}
-        versions={[{ id: "v2", major: 1, minor: 1, label: "1.1", sequence: 2, changeKind: "MINOR", changeSummary: "docs", publishedByName: "Ada", publishedAt: "2026-10-14T00:00:00.000Z" }]}
+        versions={[{ id: "v2", major: 1, minor: 1, patch: 0, stage: "RELEASED", label: "1.1", sequence: 2, changeKind: "MINOR", changeSummary: "docs", publishedByName: "Ada", publishedAt: "2026-10-14T00:00:00.000Z", releasedAt: "2026-10-14T00:00:00.000Z" }]}
       />
     );
     expect(screen.getByRole("link", { name: "v1.1" }).getAttribute("href")).toBe("/x?version=1.1");

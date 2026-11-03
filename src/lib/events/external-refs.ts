@@ -1,12 +1,12 @@
 // src/lib/events/external-refs.ts
 // Client-safe types and pure helpers for the READ side of external event references (spec 2026-10-16 §5): what the picker lists
 // and what the "newer version available" badge says. A reference points at an item (channel / message) of another event's
-// PUBLISHED version; the item is found in that version's stored `resolvedSpec` by id (= the reference's `itemKey`), exactly as
+// stored version (a release, or another event's open snapshot); the item is found in that version's stored `resolvedSpec` by id (= the reference's `itemKey`), exactly as
 // `externalItems` (event-snapshot) and `validateDocumentRefs` (event.service) read it.
 import { isJsonObject } from "./inputs";
 import type { JsonObject } from "@/lib/event-specs/types";
 import { compareVersions } from "@/lib/entity-versioning/version-math";
-import type { VersionNumber } from "@/lib/entity-versioning/types";
+import type { VersionNumber, VersionStage } from "@/lib/entity-versioning/types";
 
 /** A published event the picker offers: its latest version carries a resolved spec. */
 export interface ExternalEventCandidate { eventId: string; eventName: string; domainName: string; productName: string; latestVersionId: string; latestLabel: string }
@@ -26,9 +26,14 @@ export type ExternalItemKind = "channel" | "message";
 /** What the status loader needs to know about one reference of a document: which item of which published version. */
 export interface ExternalRefInput { eventVersionId: string; kind: ExternalItemKind; itemKey: string }
 
-/** True when `latest` is a later version than `current` (`MAJOR.MINOR.PATCH`, compared as numbers, so 1.9.0 < 1.10.0 and 1.2.0 < 1.2.1). */
-export function isNewerVersion(current: VersionNumber, latest: VersionNumber): boolean {
-  return compareVersions(latest, current) > 0;
+/**
+ * True when `latest` is a later version than `current` (`MAJOR.MINOR.PATCH`, compared as numbers, so 1.9.0 < 1.10.0 and 1.2.0 < 1.2.1).
+ * At the same number a release supersedes a snapshot (`1.1.0` is newer than `1.1.0_snapshot`); a missing stage is RELEASED.
+ */
+export function isNewerVersion(current: VersionNumber & { stage?: VersionStage }, latest: VersionNumber & { stage?: VersionStage }): boolean {
+  const order = compareVersions(latest, current);
+  if (order !== 0) return order > 0;
+  return current.stage === "SNAPSHOT" && (latest.stage ?? "RELEASED") === "RELEASED";
 }
 
 /**

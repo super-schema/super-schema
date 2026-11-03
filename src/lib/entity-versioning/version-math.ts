@@ -49,6 +49,25 @@ export function nextVersionNumber(
   }
 }
 
+/**
+ * The number a save at `bump` gives an open snapshot (entities and events alike): counted from the latest RELEASE (so it always exceeds
+ * it), and an open snapshot keeps its own number unless that is lower (never lowered). Before any release it is 1.0.0 whatever the bump.
+ */
+export function snapshotVersionNumber(latestRelease: VersionNumber | null, openSnapshot: VersionNumber | null, bump: BumpKind): VersionNumber {
+  const next = nextVersionNumber(latestRelease, bump).version;
+  if (!openSnapshot) return { ...next };
+  const kept = { major: openSnapshot.major, minor: openSnapshot.minor, patch: openSnapshot.patch };
+  return compareVersions(next, kept) > 0 ? { ...next } : kept;
+}
+
+/** What a number is relative to the latest release: the first part that differs; INITIAL before any release. */
+export function changeKindFrom(version: VersionNumber, latestRelease: VersionNumber | null): ChangeKind {
+  if (!latestRelease) return "INITIAL";
+  if (version.major !== latestRelease.major) return "MAJOR";
+  if (version.minor !== latestRelease.minor) return "MINOR";
+  return "PATCH";
+}
+
 const BUMP_RANK: Record<BumpKind, number> = { PATCH: 0, MINOR: 1, MAJOR: 2 };
 
 /** Raise-only: the user may raise PATCH < MINOR < MAJOR, never lower below the suggestion. */

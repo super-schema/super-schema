@@ -1,7 +1,7 @@
 import { ok, err, type Result } from "@/types/result";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
 import { suggestBump } from "./bump-suggestion";
-import { INITIAL_VERSION, compareVersions, formatVersionLabel, nextVersionNumber, resolveBump } from "./version-math";
+import { INITIAL_VERSION, changeKindFrom, compareVersions, formatVersionLabel, resolveBump, snapshotVersionNumber as snapshotNumber } from "./version-math";
 import type { BumpKind, ChangeKind, VersionNumber } from "./types";
 import type { ReferencedVersion } from "./referenced-versions";
 import type { EntityRef } from "@/lib/references/entity-reference";
@@ -223,25 +223,6 @@ export function analyzePublish(state: PublishState): PublishAnalysis {
 }
 
 /**
- * The number a save at `bump` gives the snapshot: counted from the latest RELEASE (so it always exceeds it), and an open snapshot
- * keeps its own number unless that is higher (never lowered). Before any release it is 1.0.0 whatever the bump.
- */
-function snapshotNumber(latestRelease: VersionNumber | null, openSnapshot: VersionNumber | null, bump: BumpKind): VersionNumber {
-  const next = nextVersionNumber(latestRelease, bump).version;
-  if (!openSnapshot) return next;
-  const kept = { major: openSnapshot.major, minor: openSnapshot.minor, patch: openSnapshot.patch };
-  return compareVersions(next, kept) > 0 ? next : kept;
-}
-
-/** What a number is relative to the latest release: the first part that differs; INITIAL before any release. */
-function changeKindOf(version: VersionNumber, latestRelease: VersionNumber | null): ChangeKind {
-  if (!latestRelease) return "INITIAL";
-  if (version.major !== latestRelease.major) return "MAJOR";
-  if (version.minor !== latestRelease.minor) return "MINOR";
-  return "PATCH";
-}
-
-/**
  * The snapshot a save writes, or why it cannot (all blockers at once, spec §10): CREATE a snapshot when none is open, numbered from the
  * latest release; otherwise UPDATE the open one, raised when the resolved bump yields a higher number, never lowered.
  */
@@ -271,20 +252,28 @@ export function planPublish(state: PublishState, requested?: BumpKind): Result<P
     version,
     label: formatVersionLabel(version, "SNAPSHOT"),
     sequence,
-    changeKind: changeKindOf(version, latestRelease),
+    changeKind: changeKindFrom(version, latestRelease),
     pins: analysis.pins,
     referencedVersions: state.referencedVersions ?? [],
   });
 }
 
+/** What a promote is decided on; an entity's `PublishState` and an event's planner input both carry it. */
+export interface PromoteState {
+  latestRelease: VersionNumber | null;
+  openSnapshot: (VersionNumber & { id: string }) | null;
+  /** The draft has edits the snapshot does not hold (save first). */
+  draftDirty: boolean;
+  /** Names of what the snapshot references only at a snapshot (a release may only reference releases). */
+  snapshotReferences: string[];
+}
+
 /**
- * Whether the open snapshot can be promoted to its release, and to which label. `draftDirty`: the draft has edits the snapshot does
- * not hold (save first). `snapshotReferences`: names of entities the snapshot references only at a snapshot (a release may only
- * reference releases).
+ * Whether the open snapshot can be promoted to its release, and to which label (entities and events alike). `draftDirty`: the draft
+ * has edits the snapshot does not hold (save first). `snapshotReferences`: names of entities (or events) the snapshot references only
+ * at a snapshot (a release may only reference releases).
  */
-export function planPromote(
-  state: PublishState & { draftDirty: boolean; snapshotReferences: string[] }
-): Result<{ snapshotId: string; label: string }> {
+export function planPromote(state: PromoteState): Result<{ snapshotId: string; label: string }> {
   const { openSnapshot, latestRelease } = state;
   if (!openSnapshot) {
     return err({ code: "NO_SNAPSHOT", message: "There is no snapshot to promote.", suggestedFix: "Save a snapshot first." });

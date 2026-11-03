@@ -30,7 +30,7 @@ export async function loadEntityOptions(tenantId: string, readable: Prisma.Entit
     where: { ...readable, tenantId },
     orderBy: { name: "asc" },
     select: {
-      id: true, name: true, slug: true, latestVersionId: true, metadata: true, latestVersion: { select: { major: true, minor: true, patch: true } },
+      id: true, name: true, slug: true, latestVersionId: true, metadata: true, latestVersion: { select: { major: true, minor: true, patch: true, stage: true } },
       domain: { select: { name: true, slug: true } }, product: { select: { name: true, slug: true } },
     },
   });
@@ -38,7 +38,7 @@ export async function loadEntityOptions(tenantId: string, readable: Prisma.Entit
     const sourceFormat = entitySourceFormat(r.metadata);
     return {
       id: r.id, name: r.name, ownerLabel: ownerLabel(r), latestVersionId: r.latestVersionId,
-      latestVersionLabel: r.latestVersion ? formatVersionLabel(r.latestVersion) : null,
+      latestVersionLabel: r.latestVersion ? formatVersionLabel(r.latestVersion, r.latestVersion.stage) : null,
       href: assetHref({ kind: "entity", slug: r.slug, domainSlug: r.domain?.slug ?? null, productSlug: r.product?.slug ?? null }),
       ...(sourceFormat && { sourceFormat }),
     };
@@ -48,17 +48,18 @@ export async function loadEntityOptions(tenantId: string, readable: Prisma.Entit
 /**
  * Published versions of one entity, newest first, for the pin picker's version list. The entity id comes
  * from the client, so it is only honoured inside `tenantId`: an entity of another tenant (or an unknown
- * id) yields `null`, indistinguishable from "does not exist". Versions are immutable published rows, so
- * every row is pinnable — drafts are never versions.
+ * id) yields `null`, indistinguishable from "does not exist". Every stored version is pinnable: the releases
+ * (immutable) and the entity's open snapshot, labelled `x.y.z_snapshot` (a release may not pin it: promote refuses
+ * until the entity is promoted) — drafts are never versions.
  */
 export async function loadPinnableVersions(tenantId: string, entityId: string): Promise<VersionOption[] | null> {
   if (typeof entityId !== "string" || entityId.length === 0) return null;
   const entity = await prisma.entity.findFirst({
     where: { id: entityId, tenantId },
-    select: { versions: { orderBy: { sequence: "desc" }, select: { id: true, major: true, minor: true, patch: true } } },
+    select: { versions: { orderBy: { sequence: "desc" }, select: { id: true, major: true, minor: true, patch: true, stage: true } } },
   });
   if (!entity) return null;
-  return entity.versions.map((v) => ({ id: v.id, label: formatVersionLabel(v) }));
+  return entity.versions.map((v) => ({ id: v.id, label: formatVersionLabel(v, v.stage) }));
 }
 
 export interface TraitOption {

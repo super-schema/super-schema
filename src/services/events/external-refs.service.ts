@@ -100,7 +100,7 @@ export async function listExternalEventCandidates(ctx: ServiceContext, input: Li
       select: {
         id: true, name: true,
         domain: { select: { name: true } }, product: { select: { name: true } },
-        latestVersion: { select: { id: true, major: true, minor: true, patch: true } },
+        latestVersion: { select: { id: true, major: true, minor: true, patch: true, stage: true } },
       },
     });
     const candidates: ExternalEventCandidate[] = [];
@@ -108,7 +108,7 @@ export async function listExternalEventCandidates(ctx: ServiceContext, input: Li
       if (!row.latestVersion || !row.domain || !row.product) continue;
       candidates.push({
         eventId: row.id, eventName: row.name, domainName: row.domain.name, productName: row.product.name,
-        latestVersionId: row.latestVersion.id, latestLabel: formatVersionLabel(row.latestVersion),
+        latestVersionId: row.latestVersion.id, latestLabel: formatVersionLabel(row.latestVersion, row.latestVersion.stage),
       });
     }
     return ok(candidates);
@@ -129,11 +129,11 @@ export async function listExternalEventVersions(ctx: ServiceContext, input: { te
     const event = await ctx.prisma.eventSpec.findFirst({
       where: { id: eventId.data, tenantId: tenantId.data, AND: [within(input.restrictTo)] },
       select: {
-        versions: { where: HAS_RESOLVED_SPEC, orderBy: { sequence: "desc" }, select: { id: true, major: true, minor: true, patch: true, publishedAt: true } },
+        versions: { where: HAS_RESOLVED_SPEC, orderBy: { sequence: "desc" }, select: { id: true, major: true, minor: true, patch: true, stage: true, publishedAt: true } },
       },
     });
     if (!event) return notFound("Event", eventId.data);
-    return ok(event.versions.map((v) => ({ versionId: v.id, label: formatVersionLabel(v), publishedAt: v.publishedAt.toISOString() })));
+    return ok(event.versions.map((v) => ({ versionId: v.id, label: formatVersionLabel(v, v.stage), publishedAt: v.publishedAt.toISOString() })));
   });
 }
 
@@ -153,12 +153,12 @@ export async function getExternalVersionItems(ctx: ServiceContext, input: { tena
   return guardRead(async () => {
     const version = await ctx.prisma.eventSpecVersion.findFirst({
       where: { id: versionId.data, eventSpec: { tenantId: tenantId.data, AND: [within(input.restrictTo)] } },
-      select: { major: true, minor: true, patch: true, resolvedSpec: true, eventSpec: { select: { name: true } } },
+      select: { major: true, minor: true, patch: true, stage: true, resolvedSpec: true, eventSpec: { select: { name: true } } },
     });
     if (!version) return notFound("Event version", versionId.data);
     return ok({
       eventName: version.eventSpec.name,
-      label: formatVersionLabel(version),
+      label: formatVersionLabel(version, version.stage),
       channels: externalItemSummaries(version.resolvedSpec, "channel") ?? [],
       messages: externalItemSummaries(version.resolvedSpec, "message") ?? [],
     });
@@ -205,8 +205,8 @@ export async function getExternalRefStatuses(ctx: ServiceContext, input: { tenan
     const versions = await ctx.prisma.eventSpecVersion.findMany({
       where: { id: { in: [...refsByVersion.keys()] }, eventSpec: { tenantId: tenantId.data, AND: [within(input.restrictTo)] } },
       select: {
-        id: true, major: true, minor: true, patch: true,
-        eventSpec: { select: { id: true, name: true, latestVersion: { select: { id: true, major: true, minor: true, patch: true, resolvedSpec: true } } } },
+        id: true, major: true, minor: true, patch: true, stage: true,
+        eventSpec: { select: { id: true, name: true, latestVersion: { select: { id: true, major: true, minor: true, patch: true, stage: true, resolvedSpec: true } } } },
       },
     });
     const versionById = new Map(versions.map((v) => [v.id, v]));
@@ -218,15 +218,15 @@ export async function getExternalRefStatuses(ctx: ServiceContext, input: { tenan
       const latest = eventSpec.latestVersion;
       if (!latest) {
         statuses.push({
-          eventVersionId: version.id, eventId: eventSpec.id, eventName: eventSpec.name, label: formatVersionLabel(version),
-          latestVersionId: version.id, latestLabel: formatVersionLabel(version), newerAvailable: false, newerIsMajor: false, itemsMissingInLatest: [],
+          eventVersionId: version.id, eventId: eventSpec.id, eventName: eventSpec.name, label: formatVersionLabel(version, version.stage),
+          latestVersionId: version.id, latestLabel: formatVersionLabel(version, version.stage), newerAvailable: false, newerIsMajor: false, itemsMissingInLatest: [],
         });
         continue;
       }
       const newerAvailable = isNewerVersion(version, latest);
       statuses.push({
-        eventVersionId: version.id, eventId: eventSpec.id, eventName: eventSpec.name, label: formatVersionLabel(version),
-        latestVersionId: latest.id, latestLabel: formatVersionLabel(latest),
+        eventVersionId: version.id, eventId: eventSpec.id, eventName: eventSpec.name, label: formatVersionLabel(version, version.stage),
+        latestVersionId: latest.id, latestLabel: formatVersionLabel(latest, latest.stage),
         newerAvailable, newerIsMajor: newerAvailable && latest.major > version.major,
         itemsMissingInLatest: missingItemKeys(latest.resolvedSpec, versionRefs),
       });

@@ -20,6 +20,15 @@ describe("isNewerVersion", () => {
     expect(isNewerVersion({ major: 1, minor: 3, patch: 0 }, { major: 1, minor: 2, patch: 5 })).toBe(false);
   });
 
+  it("at the same number a release supersedes a snapshot, never the other way round", () => {
+    expect(isNewerVersion({ major: 1, minor: 1, patch: 0, stage: "SNAPSHOT" }, { major: 1, minor: 1, patch: 0, stage: "RELEASED" })).toBe(true);
+    expect(isNewerVersion({ major: 1, minor: 1, patch: 0, stage: "SNAPSHOT" }, { major: 1, minor: 1, patch: 0 })).toBe(true);
+    expect(isNewerVersion({ major: 1, minor: 1, patch: 0 }, { major: 1, minor: 1, patch: 0, stage: "SNAPSHOT" })).toBe(false);
+    // a newer snapshot is newer; an older release is not
+    expect(isNewerVersion({ major: 1, minor: 0, patch: 0 }, { major: 1, minor: 1, patch: 0, stage: "SNAPSHOT" })).toBe(true);
+    expect(isNewerVersion({ major: 1, minor: 2, patch: 0, stage: "SNAPSHOT" }, { major: 1, minor: 1, patch: 0 })).toBe(false);
+  });
+
   it("compares the patch when major and minor are equal", () => {
     expect(isNewerVersion({ major: 1, minor: 2, patch: 0 }, { major: 1, minor: 2, patch: 1 })).toBe(true);
     expect(isNewerVersion({ major: 1, minor: 2, patch: 9 }, { major: 1, minor: 2, patch: 10 })).toBe(true);
