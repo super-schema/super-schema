@@ -39,6 +39,7 @@ const mutated = (fn: (d: EventDocument) => void): EventDocument => { const d = b
 const major = (...reasons: string[]): BumpDecision => ({ bump: "MAJOR", reasons });
 const minor = (...reasons: string[]): BumpDecision => ({ bump: "MINOR", reasons });
 const patch: BumpDecision = { bump: "PATCH", reasons: [] };
+const patchOf = (...reasons: string[]): BumpDecision => ({ bump: "PATCH", reasons });
 const REPS: Reps = { OrderCreated: "avro", RefundIssued: "json-schema" };
 
 describe("a changed effective representation is MAJOR", () => {
@@ -160,33 +161,17 @@ describe("AsyncAPI properties that are MINOR when they are all that changed", ()
     ["message name", (d) => { d.messages[0].name = "order.created"; }, 'Message "OrderCreated" name changed'],
     ["message deprecated", (d) => { d.messages[0].deprecated = true; }, 'Message "OrderCreated" deprecation changed'],
     ["message deprecated flag cleared to false", (d) => { d.messages[0].deprecated = false; }, 'Message "OrderCreated" deprecation changed'],
-    ["operation title", (d) => { d.operations[0].title = "Publish an order"; }, 'Operation "publishOrderCreated" details changed'],
     ["operation security", (d) => { d.operations[0].security = ["basic"]; }, 'Operation "publishOrderCreated" details changed'],
-    ["operation tags", (d) => { d.operations[0].tags = [{ name: "orders" }]; }, 'Operation "publishOrderCreated" details changed'],
-    ["operation externalDocs", (d) => { d.operations[0].externalDocs = { url: "https://example.com/op" }; }, 'Operation "publishOrderCreated" details changed'],
     ["operation reply address", (d) => { d.operations[0].reply = { ...d.operations[0].reply, address: { location: "$message.header#/replyTo" } }; }, 'Operation "publishOrderCreated" reply address changed'],
-    ["info terms of service", (d) => { d.info.termsOfService = "https://example.com/terms"; }, "Info changed"],
-    ["info contact", (d) => { d.info.contact = { email: "platform@example.com" }; }, "Info changed"],
-    ["info license", (d) => { d.info.license = { name: "MIT" }; }, "Info changed"],
-    ["info tags", (d) => { d.info.tags = [{ name: "payments" }]; }, "Info changed"],
-    ["info externalDocs", (d) => { d.info.externalDocs = { url: "https://example.com/docs" }; }, "Info changed"],
-    ["server title", (d) => { d.servers[0].title = "Production"; }, 'Server "kafka-prod" changed'],
-    ["server summary", (d) => { d.servers[0].summary = "Prod cluster"; }, 'Server "kafka-prod" changed'],
     ["server variables", (d) => { d.servers[0].host = "{env}.kafka:9092"; d.servers[0].variables = { env: { default: "prod" } }; }, 'Server "kafka-prod" changed'],
     ["server security", (d) => { d.servers[0].security = ["basic"]; }, 'Server "kafka-prod" changed'],
-    ["server tags", (d) => { d.servers[0].tags = [{ name: "prod" }]; }, 'Server "kafka-prod" changed'],
-    ["server externalDocs", (d) => { d.servers[0].externalDocs = { url: "https://example.com/kafka" }; }, 'Server "kafka-prod" changed'],
     ["server bindings", (d) => { d.servers[0].bindings = { kafka: { schemaRegistryUrl: "https://registry" } }; }, 'Server "kafka-prod" changed'],
-    ["channel summary", (d) => { d.channels[0].summary = "Orders"; }, 'Channel "orders" details changed'],
     ["channel parameters", (d) => { d.channels[0].parameters = { region: { description: "Region" } }; }, 'Channel "orders" details changed'],
-    ["channel tags", (d) => { d.channels[0].tags = [{ name: "orders" }]; }, 'Channel "orders" details changed'],
-    ["channel externalDocs", (d) => { d.channels[0].externalDocs = { url: "https://example.com/orders" }; }, 'Channel "orders" details changed'],
     ["channel bindings", (d) => { d.channels[0].bindings = { kafka: { partitions: 3 } }; }, 'Channel "orders" details changed'],
     ["message trait spec", (d) => { d.traits[0] = { key: "CloudEvents", kind: "MESSAGE", spec: { summary: "ce", tags: [{ name: "x" }] } }; }, 'Trait "CloudEvents" changed'],
     ["message trait bindings", (d) => { d.traits[0] = { key: "CloudEvents", kind: "MESSAGE", spec: { summary: "ce", bindings: { kafka: { schemaIdLocation: "header" } } } }; }, 'Trait "CloudEvents" changed'],
     ["operation trait spec", (d) => { d.traits[1] = { key: "Audited", kind: "OPERATION", spec: { summary: "audited", security: ["basic"] } }; }, 'Trait "Audited" changed'],
     ["operation trait bindings", (d) => { d.traits[1] = { key: "Audited", kind: "OPERATION", spec: { summary: "audited", bindings: { kafka: { groupId: { type: "string" } } } } }; }, 'Trait "Audited" changed'],
-    ["message correlation-free documentation", (d) => { d.messages[1].title = "Refund issued"; }, 'Message "RefundIssued" documentation changed'],
   ];
 
   it.each(cases)("%s is MINOR with its own reason", (_name, change, reason) => {
@@ -202,15 +187,57 @@ describe("AsyncAPI properties that are MINOR when they are all that changed", ()
     }
   });
 
-  it("changing several of them reports each one", () => {
-    const next = mutated((d) => { d.messages[0].name = "order.created"; d.operations[0].title = "Publish"; d.info.termsOfService = "https://example.com/terms"; });
+  it("changing several of them reports each one, documentation (PATCH) reasons last", () => {
+    const next = mutated((d) => { d.messages[0].name = "order.created"; d.operations[0].security = ["basic"]; d.info.termsOfService = "https://example.com/terms"; });
     expect(classifyEventBump(side(base(), REPS), side(next, REPS))).toEqual(
-      minor('Operation "publishOrderCreated" details changed', 'Message "OrderCreated" name changed', "Info changed"),
+      minor('Operation "publishOrderCreated" details changed', 'Message "OrderCreated" name changed', "Info documentation changed"),
     );
   });
+
 
   it("origin stays ignored", () => {
     const next = mutated((d) => { d.channels[0].origin = { provider: "confluent", ref: "lkc-1", syncedAt: "2026-10-15T00:00:00Z" }; });
     expect(classifyEventBump(side(base(), REPS), side(next, REPS))).toEqual(patch);
+  });
+});
+
+describe("AsyncAPI documentation properties that are PATCH when they are all that changed", () => {
+  const cases: Array<[string, (d: EventDocument) => void, string]> = [
+    ["operation title", (d) => { d.operations[0].title = "Publish an order"; }, 'Operation "publishOrderCreated" documentation changed'],
+    ["operation tags", (d) => { d.operations[0].tags = [{ name: "orders" }]; }, 'Operation "publishOrderCreated" documentation changed'],
+    ["operation externalDocs", (d) => { d.operations[0].externalDocs = { url: "https://example.com/op" }; }, 'Operation "publishOrderCreated" documentation changed'],
+    ["info terms of service", (d) => { d.info.termsOfService = "https://example.com/terms"; }, "Info documentation changed"],
+    ["info contact", (d) => { d.info.contact = { email: "platform@example.com" }; }, "Info documentation changed"],
+    ["info license", (d) => { d.info.license = { name: "MIT" }; }, "Info documentation changed"],
+    ["info tags", (d) => { d.info.tags = [{ name: "payments" }]; }, "Info documentation changed"],
+    ["info externalDocs", (d) => { d.info.externalDocs = { url: "https://example.com/docs" }; }, "Info documentation changed"],
+    ["server title", (d) => { d.servers[0].title = "Production"; }, 'Server "kafka-prod" documentation changed'],
+    ["server summary", (d) => { d.servers[0].summary = "Prod cluster"; }, 'Server "kafka-prod" documentation changed'],
+    ["server tags", (d) => { d.servers[0].tags = [{ name: "prod" }]; }, 'Server "kafka-prod" documentation changed'],
+    ["server externalDocs", (d) => { d.servers[0].externalDocs = { url: "https://example.com/kafka" }; }, 'Server "kafka-prod" documentation changed'],
+    ["channel summary", (d) => { d.channels[0].summary = "Orders"; }, 'Channel "orders" documentation changed'],
+    ["channel tags", (d) => { d.channels[0].tags = [{ name: "orders" }]; }, 'Channel "orders" documentation changed'],
+    ["channel externalDocs", (d) => { d.channels[0].externalDocs = { url: "https://example.com/orders" }; }, 'Channel "orders" documentation changed'],
+    ["message correlation-free documentation", (d) => { d.messages[1].title = "Refund issued"; }, 'Message "RefundIssued" documentation changed'],
+    ["channel title", (d) => { d.channels[0].title = "Orders"; }, 'Channel "orders" documentation changed'],
+    ["channel description", (d) => { d.channels[0].description = "Order lifecycle"; }, 'Channel "orders" documentation changed'],
+    ["operation description", (d) => { d.operations[0].description = "Publishes an order"; }, 'Operation "publishOrderCreated" documentation changed'],
+    ["info description", (d) => { d.info.description = "Checkout events"; }, "Info documentation changed"],
+    ["server description", (d) => { d.servers[0].description = "Production"; }, 'Server "kafka-prod" documentation changed'],
+    ["message examples", (d) => { d.messages[0].examples = [{ name: "e", payload: { id: 1 } }]; }, 'Message "OrderCreated" examples changed'],
+  ];
+
+  it.each(cases)("%s is PATCH with its own reason", (_name, change, reason) => {
+    expect(classifyEventBump(side(base(), REPS), side(mutated(change), REPS))).toEqual(patchOf(reason));
+  });
+
+  it("is symmetric: removing the property is PATCH as well", () => {
+    for (const [, change, reason] of cases) {
+      expect(classifyEventBump(side(mutated(change), REPS), side(base(), REPS))).toEqual(patchOf(reason));
+    }
+  });
+
+  it("the info title is not documentation: it stays MINOR", () => {
+    expect(classifyEventBump(side(base(), REPS), side(mutated((d) => { d.info.title = "payments"; }), REPS))).toEqual(minor("Info changed"));
   });
 });

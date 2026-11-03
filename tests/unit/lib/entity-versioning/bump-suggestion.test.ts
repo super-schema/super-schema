@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { suggestBump } from "@/lib/entity-versioning/bump-suggestion";
+import { isDocOnly, suggestBump } from "@/lib/entity-versioning/bump-suggestion";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
 
 function f(name: string, extra: Partial<FieldSnapshot> = {}): FieldSnapshot {
@@ -42,6 +42,14 @@ describe("suggestBump", () => {
 
   it("a description edit alongside a type change suggests MAJOR", () => {
     expect(suggestBump([ID, EMAIL], [ID, f("email", { description: "Primary email", type: "int32" })]).bump).toBe("MAJOR");
+  });
+
+  it("isDocOnly fails closed: a modified field without changedProperties is not documentation only", () => {
+    const diff = {
+      fromVersion: 0, toVersion: 0, summary: { added: 0, removed: 0, modified: 1, unchanged: 0 },
+      fields: [{ fieldName: "email", changeType: "modified" as const, versionA: EMAIL, versionB: EMAIL }],
+    };
+    expect(isDocOnly(diff)).toBe(false);
   });
 
   it("added optional field suggests MINOR", () => {

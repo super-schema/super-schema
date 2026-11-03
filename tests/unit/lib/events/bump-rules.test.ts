@@ -36,6 +36,12 @@ describe("decide", () => {
     expect(decide([], ["b"])).toEqual({ bump: "MINOR", reasons: ["b"] });
     expect(decide([], [])).toEqual({ bump: "PATCH", reasons: [] });
   });
+
+  it("is PATCH when only documentation (patch) reasons exist, listing them; patch reasons come last otherwise", () => {
+    expect(decide([], [], ["p"])).toEqual({ bump: "PATCH", reasons: ["p"] });
+    expect(decide([], ["b"], ["p"])).toEqual({ bump: "MINOR", reasons: ["b", "p"] });
+    expect(decide(["a"], ["b"], ["p"])).toEqual({ bump: "MAJOR", reasons: ["a", "b", "p"] });
+  });
 });
 
 describe("comparePin (spec §6.1, D6)", () => {

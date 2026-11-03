@@ -14,10 +14,11 @@ export interface BumpSuggestion {
 const DOC_ONLY_PROPERTIES: ReadonlySet<string> = new Set(["description", "sortOrder"]);
 
 /** No field added or removed, and every modified field changed only documentation-only properties (or nothing changed). */
-function isDocOnly(diff: DiffResult): boolean {
+export function isDocOnly(diff: DiffResult): boolean {
   if (diff.summary.added > 0 || diff.summary.removed > 0) return false;
   return diff.fields.every(
-    (field) => field.changeType !== "modified" || (field.changedProperties ?? []).every((change) => DOC_ONLY_PROPERTIES.has(change.property))
+    // Fail closed: a modified field that does not say what changed is not documentation only.
+    (field) => field.changeType !== "modified" || (field.changedProperties !== undefined && field.changedProperties.every((change) => DOC_ONLY_PROPERTIES.has(change.property)))
   );
 }
 
