@@ -3,7 +3,7 @@
 // document. The table is still `event_specs` (E5); the old catalog-id (version 1) documents and their service are gone.
 import type { Prisma } from "@/generated/prisma/client";
 import type { ScopeTarget } from "@/lib/asset-scope";
-import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { collectDocumentEdges, collectDocumentRefs, collectPinSites } from "@/lib/events/document/edges";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { emptyEventDocument, isLibraryTrait, type DocumentProblem, type EventDocument } from "@/lib/events/document/types";
@@ -39,7 +39,7 @@ export interface CreateEventInput {
 
 export const EVENT_SELECT = {
   id: true, name: true, specType: true, document: true, hasUnpublishedChanges: true,
-  tenantId: true, domainId: true, productId: true, latestVersion: { select: { major: true, minor: true } },
+  tenantId: true, domainId: true, productId: true, latestVersion: { select: { major: true, minor: true, patch: true } },
 } satisfies Prisma.EventSpecSelect;
 type EventRow = Prisma.EventSpecGetPayload<{ select: typeof EVENT_SELECT }>;
 
@@ -54,7 +54,7 @@ function toDetail(row: EventRow): Result<EventDetail> {
   }
   return ok({
     id: row.id, name: row.name, specType: row.specType, document: document.data,
-    latestVersionLabel: row.latestVersion ? formatVersionLabel(legacyVersionNumber(row.latestVersion)) : null,
+    latestVersionLabel: row.latestVersion ? formatVersionLabel(row.latestVersion) : null,
     hasUnpublishedChanges: row.hasUnpublishedChanges,
     tenantId: row.tenantId, domainId: row.domainId, productId: row.productId,
   });
@@ -98,7 +98,7 @@ async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, even
       ? []
       : ctx.prisma.eventSpecVersion.findMany({
           where: { id: { in: refs.externalVersionIds }, eventSpec: { tenantId } },
-          select: { id: true, eventSpecId: true, major: true, minor: true, resolvedSpec: true, eventSpec: { select: { name: true } } },
+          select: { id: true, eventSpecId: true, major: true, minor: true, patch: true, resolvedSpec: true, eventSpec: { select: { name: true } } },
         }),
   ]);
   const entityById = new Map(entities.map((e) => [e.id, e]));
@@ -144,7 +144,7 @@ async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, even
       problems.push({ pointer: `${pointer}/eventVersionId`, message: "An event cannot reference its own version" });
       return;
     }
-    const label = `Version ${formatVersionLabel(legacyVersionNumber(version))} of "${version.eventSpec.name}"`;
+    const label = `Version ${formatVersionLabel(version)} of "${version.eventSpec.name}"`;
     const items = referenceableItems(version.resolvedSpec, r.kind);
     if (items === null) {
       problems.push({ pointer, message: `${label} cannot be referenced: it has no resolved spec (published before event documents v2)` });

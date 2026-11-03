@@ -34,7 +34,7 @@ function fakeDb(f: Fixture = {}) {
   };
 }
 
-const source = (entityId: string, name: string, major: number, minor: number) => ({ major, minor, entity: { id: entityId, name } });
+const source = (entityId: string, name: string, major: number, minor: number) => ({ major, minor, patch: 0, entity: { id: entityId, name } });
 const E1 = { id: "e1", tenantId: "t1" };
 const NO_USAGE: EntityPinUsage = { traits: [], entities: [] };
 

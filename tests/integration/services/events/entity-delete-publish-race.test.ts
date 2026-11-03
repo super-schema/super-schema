@@ -68,7 +68,7 @@ async function publishedEntity(label: string): Promise<Versioned> {
   const entity = await scope.entity(name);
   const row = await prisma.entityVersion.create({
     data: {
-      entityId: entity.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId,
+      entityId: entity.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId, releasedAt: new Date(),
       resolvedSource: `model ${name} {\n  id: string;\n}\n`, fieldSnapshot: [{ name: "id", fieldNumber: 1 }],
     },
   });

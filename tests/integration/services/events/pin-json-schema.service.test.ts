@@ -47,7 +47,7 @@ async function scope(ctx: ServiceContext) {
 /** A published-looking version row, written directly (no publish audit rows): the renderers read only `resolvedSource`, the snapshot and the pins. */
 async function version(ctx: ServiceContext, entityId: string, resolvedSource: string) {
   return prisma.entityVersion.create({
-    data: { entityId, major: 1, minor: 0, sequence: 1, resolvedSource, changeKind: "INITIAL", publishedById: ctx.userId, fieldSnapshot: [{ name: "id", fieldNumber: 1 }] },
+    data: { entityId, major: 1, minor: 0, sequence: 1, resolvedSource, changeKind: "INITIAL", publishedById: ctx.userId, releasedAt: new Date(), fieldSnapshot: [{ name: "id", fieldNumber: 1 }] },
   });
 }
 const asPrisma = (p: object) => p as unknown as PrismaClient;

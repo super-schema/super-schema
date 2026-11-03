@@ -28,8 +28,8 @@ async function seed(db: PGlite) {
   );
   const version = (id: string, entityId: string, sequence: number) =>
     db.exec(
-      `INSERT INTO "entity_versions" ("id","entityId","major","minor","sequence","resolvedSource","fieldSnapshot","changeKind","publishedById")
-       VALUES ('${id}','${entityId}',${sequence},0,${sequence},'model M {}','[]','INITIAL','u1')`
+      `INSERT INTO "entity_versions" ("id","entityId","major","minor","sequence","resolvedSource","fieldSnapshot","changeKind","publishedById","releasedAt")
+       VALUES ('${id}','${entityId}',${sequence},0,${sequence},'model M {}','[]','INITIAL','u1',CURRENT_TIMESTAMP)`
     );
   await version("v-a1", "eA", 1);
   await version("v-a2", "eA", 2);

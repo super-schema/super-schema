@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
-import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import type { LevelScope } from "@/lib/levels";
 import { isBundledTrait, propertySummary, type PropertySummaryRow } from "@/lib/events/bundled-traits";
 import { entitySourceFormat } from "@/lib/events/document/representation";
@@ -30,7 +30,7 @@ export async function loadEntityOptions(tenantId: string, readable: Prisma.Entit
     where: { ...readable, tenantId },
     orderBy: { name: "asc" },
     select: {
-      id: true, name: true, slug: true, latestVersionId: true, metadata: true, latestVersion: { select: { major: true, minor: true } },
+      id: true, name: true, slug: true, latestVersionId: true, metadata: true, latestVersion: { select: { major: true, minor: true, patch: true } },
       domain: { select: { name: true, slug: true } }, product: { select: { name: true, slug: true } },
     },
   });
@@ -38,7 +38,7 @@ export async function loadEntityOptions(tenantId: string, readable: Prisma.Entit
     const sourceFormat = entitySourceFormat(r.metadata);
     return {
       id: r.id, name: r.name, ownerLabel: ownerLabel(r), latestVersionId: r.latestVersionId,
-      latestVersionLabel: r.latestVersion ? formatVersionLabel(legacyVersionNumber(r.latestVersion)) : null,
+      latestVersionLabel: r.latestVersion ? formatVersionLabel(r.latestVersion) : null,
       href: assetHref({ kind: "entity", slug: r.slug, domainSlug: r.domain?.slug ?? null, productSlug: r.product?.slug ?? null }),
       ...(sourceFormat && { sourceFormat }),
     };
@@ -55,10 +55,10 @@ export async function loadPinnableVersions(tenantId: string, entityId: string): 
   if (typeof entityId !== "string" || entityId.length === 0) return null;
   const entity = await prisma.entity.findFirst({
     where: { id: entityId, tenantId },
-    select: { versions: { orderBy: { sequence: "desc" }, select: { id: true, major: true, minor: true } } },
+    select: { versions: { orderBy: { sequence: "desc" }, select: { id: true, major: true, minor: true, patch: true } } },
   });
   if (!entity) return null;
-  return entity.versions.map((v) => ({ id: v.id, label: formatVersionLabel(legacyVersionNumber(v)) }));
+  return entity.versions.map((v) => ({ id: v.id, label: formatVersionLabel(v) }));
 }
 
 export interface TraitOption {

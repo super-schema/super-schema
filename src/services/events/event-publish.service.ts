@@ -6,7 +6,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { isBumpKind, MAX_CHANGE_SUMMARY, type BumpKind, type PublishInput } from "@/lib/entity-versioning/types";
-import { storableChangeKind } from "@/lib/entity-versioning/version-math";
 import {
   GENERIC_VALIDATION_FAILURE, normalizeDiagnostics, type Diagnostic, type EmitOutput, type ResolvedEventSpec,
 } from "@/lib/event-specs";
@@ -156,8 +155,6 @@ export async function publishEvent(eventId: string, productId: string, input: Pu
   if (!prepared.success) return prepared;
   const plan = planVersionedPublish(prepared.data.input, bump);
   if (!plan.success) return plan; // PUBLISH_BLOCKED (all blockers), BUMP_TOO_LOW, INVALID_PLAN_INPUT — straight to the UI
-  const changeKind = storableChangeKind(plan.data.changeKind);
-  if (!changeKind.success) return changeKind;
   const { snapshot, facts, resolved, output, diagnostics } = prepared.data;
   if (!output || !resolved) return err({ code: "PUBLISH_BLOCKED", message: "The event could not be emitted" });
 
@@ -181,17 +178,19 @@ export async function publishEvent(eventId: string, productId: string, input: Pu
             if (!freshFacts.success) return freshFacts;
             if (!isDeepStrictEqual(fresh.data, snapshot) || !isDeepStrictEqual(freshFacts.data, facts)) return changedDuringPublish();
 
+            const releasedAt = new Date();
             const version = await tx.eventSpecVersion.create({
               data: {
                 eventSpecId: eventId,
                 major: plan.data.version.major,
                 minor: plan.data.version.minor,
+                patch: plan.data.version.patch,
                 sequence: plan.data.sequence,
                 document: output.document as unknown as Prisma.InputJsonValue, // the assembled AsyncAPI, info.version = label
                 sourceDocument: snapshot.document as unknown as Prisma.InputJsonValue, // the v2 draft: input of the next classification
                 resolvedSpec: resolved as unknown as Prisma.InputJsonValue, // external refs reuse this without re-rendering
                 frozenTraits: [...snapshot.libraryTraits.values()] as unknown as Prisma.InputJsonValue,
-                changeKind: changeKind.data,
+                changeKind: plan.data.changeKind,
                 // reasons / diagnostics as before; `representations` = the format every message was emitted in: the baseline the next
                 // publish compares an entity's recorded source format against (it is not part of the draft document)
                 compatReport: {
@@ -201,6 +200,10 @@ export async function publishEvent(eventId: string, productId: string, input: Pu
                 } as unknown as Prisma.InputJsonValue,
                 changeSummary,
                 publishedById: ctx.userId,
+                // Every publish is still a release (snapshot / promote arrive in phase 1 Task 6): released when published, by the publisher.
+                publishedAt: releasedAt,
+                releasedAt,
+                releasedById: ctx.userId,
               },
               select: VERSION_SUMMARY_SELECT,
             });

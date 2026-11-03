@@ -44,8 +44,8 @@ function fakeDb(referencedEntityId: string) {
       update: vi.fn(async () => ({ id: "eA" })),
     },
     entityVersion: {
-      findMany: vi.fn(async () => [{ id: "vC1", entityId: "eC", major: 1, minor: 0 }]),
-      create: vi.fn(async () => ({ id: "vNew", entityId: "eA", major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", changeSummary: null, publishedById: "u1", publishedAt: new Date(0), publishedBy: { name: "U" } })),
+      findMany: vi.fn(async () => [{ id: "vC1", entityId: "eC", major: 1, minor: 0, patch: 0, stage: "RELEASED" }]),
+      create: vi.fn(async () => ({ id: "vNew", entityId: "eA", major: 1, minor: 0, patch: 0, stage: "RELEASED", sequence: 1, changeKind: "INITIAL", changeSummary: null, publishedById: "u1", publishedAt: new Date(0), publishedBy: { name: "U" } })),
     },
     schemaReference: { createMany: vi.fn(async () => ({ count: 1 })) },
     $queryRaw: vi.fn(async () => []),

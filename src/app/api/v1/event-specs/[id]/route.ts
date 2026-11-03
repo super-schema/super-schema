@@ -21,7 +21,7 @@ import { isUsableId, optionalParam, queryProblem } from "@/app/api/v1/request";
 import { apiError, apiServerError } from "@/app/api/v1/error-handler";
 import { withApiAuth } from "@/lib/access/api";
 import { ctxCan } from "@/lib/access";
-import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import type { Diagnostic } from "@/lib/event-specs";
 import { emitEventDraft, emitEventStoredVersion, type EventEmission } from "@/services/events/event-emit.service";
 import type { Result, ServiceError } from "@/types/result";
@@ -99,7 +99,7 @@ export const GET = withApiAuth<{ id: string }>("event.read", async (request, api
     const tenantId = api.tenantId as string; // content action: `withApiAuth` always resolves it
     const owned = await ctx.prisma.eventSpec.findFirst({
       where: { id, tenantId },
-      select: { name: true, productId: true, domainId: true, product: { select: { domainId: true } }, latestVersion: { select: { major: true, minor: true } } },
+      select: { name: true, productId: true, domainId: true, product: { select: { domainId: true } }, latestVersion: { select: { major: true, minor: true, patch: true } } },
     });
     if (!owned || !owned.productId) return specNotFound();
     if (!ctxCan(ctx, "event.read", { tenantId, domainId: owned.domainId ?? owned.product?.domainId ?? null, productId: owned.productId })) return specNotFound();
@@ -115,7 +115,7 @@ export const GET = withApiAuth<{ id: string }>("event.read", async (request, api
       if (!owned.latestVersion) {
         return apiError({ code: "NOT_FOUND", message: "The event spec has no published version", suggestedFix: "Pass ?version=draft to emit the current draft." });
       }
-      version = formatVersionLabel(legacyVersionNumber(owned.latestVersion));
+      version = formatVersionLabel(owned.latestVersion);
     }
 
     const emission: Result<EventEmission> =

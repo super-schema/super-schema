@@ -150,7 +150,7 @@ describe("event option loaders (tenant scoping)", () => {
       const published = await own.publishedEntity(`Order${own.s}`); // 1.0, sequence 1
       const second = await prisma.entityVersion.create({
         data: {
-          entityId: published.entity.id, major: 1, minor: 1, sequence: 2, changeKind: "MINOR", publishedById: ctx.userId,
+          entityId: published.entity.id, major: 1, minor: 1, sequence: 2, changeKind: "MINOR", publishedById: ctx.userId, releasedAt: new Date(),
           resolvedSource: "model Order {}", fieldSnapshot: [],
         },
       });

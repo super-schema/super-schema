@@ -14,8 +14,8 @@ async function seed(db: PGlite) {
      VALUES ('e1','Order','order','tenant_default','d1','p1','u1',${NOW})`
   );
   await db.exec(
-    `INSERT INTO "entity_versions" ("id","entityId","major","minor","sequence","resolvedSource","fieldSnapshot","changeKind","publishedById")
-     VALUES ('v1','e1',1,0,1,'model Order {}','[]','INITIAL','u1')`
+    `INSERT INTO "entity_versions" ("id","entityId","major","minor","sequence","resolvedSource","fieldSnapshot","changeKind","publishedById","releasedAt")
+     VALUES ('v1','e1',1,0,1,'model Order {}','[]','INITIAL','u1',CURRENT_TIMESTAMP)`
   );
   await db.exec(
     `INSERT INTO "traits" ("id","kind","name","tenantId","headersEntityId","headersEntityVersionId","updatedAt")
@@ -26,8 +26,8 @@ async function seed(db: PGlite) {
      VALUES ('s1','checkout-service','{"documentVersion":2,"info":{"title":"checkout-service"}}','tenant_default','d1','p1',${NOW})`
   );
   await db.exec(
-    `INSERT INTO "event_spec_versions" ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","resolvedSpec","changeKind","publishedById")
-     VALUES ('sv1','s1',1,0,1,'{}','{}','[]','{"documentVersion":2}','INITIAL','u1')`
+    `INSERT INTO "event_spec_versions" ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","resolvedSpec","changeKind","publishedById","releasedAt")
+     VALUES ('sv1','s1',1,0,1,'{}','{}','[]','{"documentVersion":2}','INITIAL','u1',CURRENT_TIMESTAMP)`
   );
   await db.exec(
     `INSERT INTO "schema_references" ("id","fromKind","fromId","role","toKind","toId","isDraft") VALUES

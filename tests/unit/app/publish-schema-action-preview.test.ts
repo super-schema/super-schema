@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type Decorators = Record<string, unknown>;
 type FieldRow = { id: string; entityId: string; name: string; type: string; decorators: Decorators; sortOrder: number };
-type VersionRow = { id: string; entityId: string; major: number; minor: number; sequence: number; fieldSnapshot: unknown[] };
+type VersionRow = { id: string; entityId: string; major: number; minor: number; patch: number; stage: "SNAPSHOT" | "RELEASED"; sequence: number; fieldSnapshot: unknown[] };
 type EntityRow = {
   id: string;
   tenantId: string;
@@ -92,6 +92,8 @@ function publish(id: string, major: number, minor: number, fields: Array<[string
     entityId: id,
     major,
     minor,
+    patch: 0,
+    stage: "RELEASED",
     sequence: major * 10 + minor,
     fieldSnapshot: fields.map(([name, decorators], i) => ({
       id: `${id}.${name}`, name, type: "reference", precision: null, scale: null, nullable: true, isKey: false, fieldNumber: null,
@@ -145,10 +147,11 @@ beforeEach(() => {
     }))
   );
   p.field.findUnique.mockResolvedValue(null);
-  p.entityVersion.findUnique.mockImplementation(async ({ where }: { where: { id?: string; entityId_major_minor?: { entityId: string; major: number; minor: number } } }) => {
+  p.entityVersion.findUnique.mockImplementation(async ({ where }: { where: { id?: string; entityId_major_minor_patch?: { entityId: string; major: number; minor: number; patch: number }; stage?: string } }) => {
     if (where.id) return versions().find((v) => v.id === where.id) ?? null;
-    const k = where.entityId_major_minor!;
-    return versions().find((v) => v.entityId === k.entityId && v.major === k.major && v.minor === k.minor) ?? null;
+    // Like Prisma: the full number on the unique key and the extra `stage` filter must both match.
+    const k = where.entityId_major_minor_patch!;
+    return versions().find((v) => v.entityId === k.entityId && v.major === k.major && v.minor === k.minor && v.patch === k.patch && v.stage === where.stage) ?? null;
   });
   h.emitClosure.mockResolvedValue({ success: true, data: { files: FILES, warnings: [], entityFiles: { a: ["Order.json"], b: ["Customer.json"] } } });
   h.emitOfficial.mockResolvedValue({ output: "DDL", validationStatus: "VALID", warnings: [], errors: [] });

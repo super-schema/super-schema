@@ -37,7 +37,7 @@ import { draftReferencedEntities, draftReferenceRefusal } from "@/lib/entity-ver
 import { getActiveTenantId } from "@/lib/active-tenant";
 import type { ClosureTargetResult } from "@/lib/emission/closure-generation";
 import type { EmittedFile } from "@/lib/typespec-official/closure-emit";
-import { formatVersionLabel, parseVersionLabel, storedVersionKey } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, parseVersionLabel, storedVersionWhere } from "@/lib/entity-versioning/version-math";
 import {
   buildSchemaTargetFieldMappings,
   parseSchemaTargetTypeOverrides,
@@ -1369,9 +1369,9 @@ export async function setFieldReferenceAction(
     if (ref.pinnedVersion !== undefined && ref.pinnedVersion !== null) {
       const parsed = parseVersionLabel(ref.pinnedVersion);
       if (!parsed.success) return err({ code: "VALIDATION_ERROR", message: `"${ref.pinnedVersion}" is not a published version label` });
-      // Every EntityVersion row is a published version; a draft has no row, so it cannot be pinned.
-      const key = storedVersionKey(parsed.data);
-      const published = key && (await prisma.entityVersion.findUnique({ where: { entityId_major_minor: { entityId: target.id, ...key } } }));
+      // A pin names one stored version row (number and stage); a draft has no row, so it cannot be pinned.
+      const { stage, ...number } = storedVersionWhere(parsed.data);
+      const published = await prisma.entityVersion.findUnique({ where: { entityId_major_minor_patch: { entityId: target.id, ...number }, stage } });
       if (!published) {
         return err({
           code: "VALIDATION_ERROR",

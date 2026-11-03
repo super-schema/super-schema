@@ -47,7 +47,7 @@ async function frozenEntity(name: string) {
   const entity = await own.entity(name, [{ name: "id", type: "string" }]);
   const version = await prisma.entityVersion.create({
     data: {
-      entityId: entity.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId,
+      entityId: entity.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId, releasedAt: new Date(),
       resolvedSource: `model ${name} {\n  id: string;\n}\n`, fieldSnapshot: [{ name: "id", fieldNumber: 1 }],
     },
   });

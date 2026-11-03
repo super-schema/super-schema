@@ -7,9 +7,7 @@ import {
   resolveBump,
   compareVersions,
   INITIAL_VERSION,
-  legacyVersionNumber,
-  storableChangeKind,
-  storedVersionKey,
+  storedVersionWhere,
 } from "@/lib/entity-versioning/version-math";
 import { isBumpKind } from "@/lib/entity-versioning/types";
 
@@ -143,37 +141,14 @@ describe("isBumpKind", () => {
   });
 });
 
-// TEMPORARY helpers until the patch / stage columns and the PATCH change kind are stored (phase 1 Task 3).
-describe("legacyVersionNumber", () => {
-  it("reads a major/minor row as x.y.0, keeping nothing else", () => {
-    expect(legacyVersionNumber({ major: 2, minor: 1 })).toEqual({ major: 2, minor: 1, patch: 0 });
-    const row = { id: "v1", major: 3, minor: 4, sequence: 9 };
-    expect(legacyVersionNumber(row)).toEqual({ major: 3, minor: 4, patch: 0 });
-    expect(formatVersionLabel(legacyVersionNumber(row))).toBe("3.4.0");
+describe("storedVersionWhere", () => {
+  it("filters a stored row by its full number and its stage", () => {
+    expect(storedVersionWhere({ major: 2, minor: 1, patch: 7, stage: "RELEASED" })).toEqual({ major: 2, minor: 1, patch: 7, stage: "RELEASED" });
+    expect(storedVersionWhere({ major: 2, minor: 1, patch: 0, stage: "SNAPSHOT" })).toEqual({ major: 2, minor: 1, patch: 0, stage: "SNAPSHOT" });
   });
-});
 
-describe("storedVersionKey", () => {
-  it("keys a released x.y.0 label (and a legacy x.y one) by major/minor", () => {
-    expect(storedVersionKey({ major: 2, minor: 1, patch: 0, stage: "RELEASED" })).toEqual({ major: 2, minor: 1 });
+  it("reads a legacy x.y label as the released x.y.0 row", () => {
     const legacy = parseVersionLabel("v2.1");
-    expect(legacy.success && storedVersionKey(legacy.data)).toEqual({ major: 2, minor: 1 });
-  });
-
-  it("names no stored row for a patch or a snapshot", () => {
-    expect(storedVersionKey({ major: 2, minor: 1, patch: 7, stage: "RELEASED" })).toBeNull();
-    expect(storedVersionKey({ major: 2, minor: 1, patch: 0, stage: "SNAPSHOT" })).toBeNull();
-  });
-});
-
-describe("storableChangeKind", () => {
-  it("passes the stored change kinds through", () => {
-    for (const kind of ["INITIAL", "MINOR", "MAJOR"] as const) expect(storableChangeKind(kind)).toEqual(ok(kind));
-  });
-
-  it("refuses PATCH, which the version tables cannot store yet", () => {
-    const res = storableChangeKind("PATCH");
-    expect(res.success).toBe(false);
-    if (!res.success) expect(res.error.code).toBe("VALIDATION_ERROR");
+    expect(legacy.success && storedVersionWhere(legacy.data)).toEqual({ major: 2, minor: 1, patch: 0, stage: "RELEASED" });
   });
 });

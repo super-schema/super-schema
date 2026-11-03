@@ -14,12 +14,12 @@ export const CORPUS_TENANT = "corpus-tenant";
 
 const idOf = (domain: string | undefined, tag: string): string | null => (domain === undefined ? null : `${tag}-${domain}`);
 
-type VersionRow = { id: string; entityId: string; major: number; minor: number; sequence: number; fieldSnapshot: unknown[] };
+type VersionRow = { id: string; entityId: string; major: number; minor: number; patch: number; stage: "RELEASED"; sequence: number; fieldSnapshot: unknown[] };
 
 function versionRows(member: BuiltMember): VersionRow[] {
   return member.published.map((p, index) => {
-    const [major, minor] = p.version.split(".").map(Number);
-    return { id: `${member.entity.id}-v${p.version}`, entityId: member.entity.id, major, minor, sequence: index + 1, fieldSnapshot: p.fields };
+    const [major, minor, patch = 0] = p.version.split(".").map(Number);
+    return { id: `${member.entity.id}-v${p.version}`, entityId: member.entity.id, major, minor, patch, stage: "RELEASED", sequence: index + 1, fieldSnapshot: p.fields };
   });
 }
 
@@ -51,10 +51,17 @@ export function createMemoryDb(members: readonly BuiltMember[]): PrismaClient {
       findMany: async ({ where }: { where: { entityId: string } }) => members.find((m) => m.entity.id === where.entityId)?.fields ?? [],
     },
     entityVersion: {
-      findUnique: async ({ where }: { where: { id?: string; entityId_major_minor?: { entityId: string; major: number; minor: number } } }) => {
+      findUnique: async ({
+        where,
+      }: {
+        where: { id?: string; entityId_major_minor_patch?: { entityId: string; major: number; minor: number; patch: number }; stage?: string };
+      }) => {
         if (where.id) return versions.find((v) => v.id === where.id) ?? null;
-        const key = where.entityId_major_minor;
-        return key ? (versions.find((v) => v.entityId === key.entityId && v.major === key.major && v.minor === key.minor) ?? null) : null;
+        // Like Prisma: the full number on the unique key and the extra `stage` filter must both match.
+        const key = where.entityId_major_minor_patch;
+        return key
+          ? (versions.find((v) => v.entityId === key.entityId && v.major === key.major && v.minor === key.minor && v.patch === key.patch && v.stage === where.stage) ?? null)
+          : null;
       },
     },
   };

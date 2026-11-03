@@ -26,7 +26,7 @@ import type { FieldSnapshot } from "@/services/version-history/version.types";
 import { toFieldSnapshot } from "@/lib/diff/field-snapshot";
 import { resolveEntityReferences } from "@/lib/entity-versioning/line-references";
 import { analyzePublish, planPublish, type PublishAnalysis, type PublishPlan, type PublishState } from "@/lib/entity-versioning/publish-plan";
-import { formatVersionLabel, legacyVersionNumber, parseVersionLabel, storableChangeKind, storedVersionKey } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, parseVersionLabel, storedVersionWhere } from "@/lib/entity-versioning/version-math";
 import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
 import { isSourceStale, WRITE_BACK_SOURCE_SQL } from "@/lib/entity-versioning/draft-state";
 import {
@@ -57,32 +57,35 @@ const SUMMARY_SELECT = {
   entityId: true,
   major: true,
   minor: true,
+  patch: true,
+  stage: true,
   sequence: true,
   changeKind: true,
   changeSummary: true,
   publishedById: true,
   publishedAt: true,
+  releasedAt: true,
   publishedBy: { select: { name: true } },
 } satisfies Prisma.EntityVersionSelect;
 
 type SummaryRow = Prisma.EntityVersionGetPayload<{ select: typeof SUMMARY_SELECT }>;
 
 function toSummary(v: SummaryRow): EntityVersionSummary {
-  const version = legacyVersionNumber(v);
   return {
     id: v.id,
     entityId: v.entityId,
-    ...version,
-    // TEMPORARY until phase 1 Task 3 adds the stage / release columns: every stored version is a release, released when published.
-    stage: "RELEASED",
-    label: formatVersionLabel(version),
+    major: v.major,
+    minor: v.minor,
+    patch: v.patch,
+    stage: v.stage,
+    label: formatVersionLabel(v, v.stage),
     sequence: v.sequence,
     changeKind: v.changeKind,
     changeSummary: v.changeSummary,
     publishedById: v.publishedById,
     publishedByName: v.publishedBy.name,
     publishedAt: v.publishedAt.toISOString(),
-    releasedAt: v.publishedAt.toISOString(),
+    releasedAt: v.releasedAt ? v.releasedAt.toISOString() : null,
   };
 }
 
@@ -122,22 +125,21 @@ async function edgeTargetVersionIds(db: Db, plan: PublishPlan, tenantId: string)
   const wanted = plan.pins.flatMap((pin) => {
     const label = used.get(pin.entityId);
     const parsed = label === undefined ? undefined : parseVersionLabel(label);
-    const key = parsed?.success ? storedVersionKey(parsed.data) : null;
-    return key ? [{ entityId: pin.entityId, ...key }] : [];
+    return parsed?.success ? [{ entityId: pin.entityId, ...storedVersionWhere(parsed.data) }] : [];
   });
   // Bound to the publishing entity's tenant: an edge never links to a version another tenant owns, whatever the pins say.
   const rows =
     wanted.length === 0
       ? []
-      : await db.entityVersion.findMany({ where: { OR: wanted, entity: { tenantId } }, select: { id: true, entityId: true, major: true, minor: true } });
-  const idOf = new Map(rows.map((row) => [`${row.entityId}@${formatVersionLabel(legacyVersionNumber(row))}`, row.id]));
+      : await db.entityVersion.findMany({ where: { OR: wanted, entity: { tenantId } }, select: { id: true, entityId: true, major: true, minor: true, patch: true, stage: true } });
+  const idOf = new Map(rows.map((row) => [`${row.entityId}@${formatVersionLabel(row, row.stage)}`, row.id]));
 
   return plan.pins.map((pin) => {
     const label = used.get(pin.entityId);
     if (label === undefined) return pin.versionId;
     // Compared in the form the rows are keyed by: a recorded label in an older form ("2.1") names the same version as "2.1.0".
     const parsed = parseVersionLabel(label);
-    const id = idOf.get(`${pin.entityId}@${parsed.success ? formatVersionLabel(parsed.data) : label}`);
+    const id = idOf.get(`${pin.entityId}@${parsed.success ? formatVersionLabel(parsed.data, parsed.data.stage) : label}`);
     if (!id) {
       throw new ServiceErrorRejection({
         code: "CONFLICT",
@@ -164,7 +166,7 @@ async function loadPublishState(db: Db, entityId: string, reader: ClosureReader)
     where: { id: entityId },
     include: {
       fields: { orderBy: { sortOrder: "asc" } },
-      latestVersion: { select: { id: true, major: true, minor: true, sequence: true, fieldSnapshot: true } },
+      latestVersion: { select: { id: true, major: true, minor: true, patch: true, sequence: true, fieldSnapshot: true } },
     },
   });
   if (!entity) return entityNotFound(entityId);
@@ -211,7 +213,9 @@ async function loadPublishState(db: Db, entityId: string, reader: ClosureReader)
     latest: entity.latestVersion
       ? {
           id: entity.latestVersion.id,
-          ...legacyVersionNumber(entity.latestVersion),
+          major: entity.latestVersion.major,
+          minor: entity.latestVersion.minor,
+          patch: entity.latestVersion.patch,
           sequence: entity.latestVersion.sequence,
           fieldSnapshot: entity.latestVersion.fieldSnapshot as unknown as FieldSnapshot[],
         }
@@ -280,8 +284,6 @@ export async function publishEntity(
             if (!state.success) throw new ServiceErrorRejection(state.error);
             const plan = planPublish(state.data, opts.bump);
             if (!plan.success) throw new ServiceErrorRejection(plan.error);
-            const changeKind = storableChangeKind(plan.data.changeKind);
-            if (!changeKind.success) throw new ServiceErrorRejection(changeKind.error);
 
             // The compile in phase 1 vouches for the closure it compiled. If a referenced entity published (or a pin moved) since,
             // what would be recorded is no longer what was checked: abort, retryable, like an edit to the entity itself.
@@ -319,15 +321,17 @@ export async function publishEntity(
               writeBack = true;
             }
 
+            const releasedAt = new Date();
             const version = await tx.entityVersion.create({
               data: {
                 entityId,
                 major: plan.data.version.major,
                 minor: plan.data.version.minor,
+                patch: plan.data.version.patch,
                 sequence: plan.data.sequence,
                 resolvedSource: source,
                 fieldSnapshot: state.data.currentFields as unknown as Prisma.InputJsonValue,
-                changeKind: changeKind.data,
+                changeKind: plan.data.changeKind,
                 // The exact version of every referenced entity the closure used (pinned or latest published); no column needed.
                 // The entity's own name, description, status and metadata as they are now (the closure's root is read from its saved rows,
                 // under the row lock): published output of this version, and of whatever references it, reads them from here, not from
@@ -338,6 +342,10 @@ export async function publishEntity(
                 } as unknown as Prisma.InputJsonValue,
                 changeSummary,
                 publishedById: ctx.userId,
+                // Every publish is still a release (snapshot / promote arrive in phase 1 Task 5): released when published, by the publisher.
+                publishedAt: releasedAt,
+                releasedAt,
+                releasedById: ctx.userId,
               },
               select: SUMMARY_SELECT,
             });
@@ -411,8 +419,8 @@ export async function getEntityVersion(
 ): Promise<Result<EntityVersion>> {
   const parsed = parseVersionLabel(label);
   if (!parsed.success) return parsed;
-  const key = storedVersionKey(parsed.data);
-  const row = key && (await ctx.prisma.entityVersion.findUnique({ where: { entityId_major_minor: { entityId, ...key } } }));
+  const { stage, ...number } = storedVersionWhere(parsed.data);
+  const row = await ctx.prisma.entityVersion.findUnique({ where: { entityId_major_minor_patch: { entityId, ...number }, stage } });
   if (!row) {
     return err({
       code: "NOT_FOUND",
@@ -451,8 +459,8 @@ export async function loadReferenceStaleness(db: Db, entityId: string): Promise<
 
   const referenced = await db.entity.findMany({
     where: { id: { in: ids }, tenantId: entity.tenantId },
-    select: { id: true, latestVersion: { select: { major: true, minor: true } } },
+    select: { id: true, latestVersion: { select: { major: true, minor: true, patch: true } } },
   });
-  const latest = new Map(referenced.flatMap((e) => (e.latestVersion ? [[e.id, formatVersionLabel(legacyVersionNumber(e.latestVersion))] as const] : [])));
+  const latest = new Map(referenced.flatMap((e) => (e.latestVersion ? [[e.id, formatVersionLabel(e.latestVersion)] as const] : [])));
   return ok(referenceStaleness({ referencedVersions: recorded }, latest));
 }

@@ -705,7 +705,7 @@ describe("event pin-integrity guards", () => {
     // A pin on an OLDER version only does not block: the entity moved on and the event keeps its pinned version.
     const gamma = await scope.publishedEntity("Gamma");
     const v2 = await prisma.entityVersion.create({
-      data: { entityId: gamma.entity.id, major: 2, minor: 0, sequence: 2, resolvedSource: "", fieldSnapshot: [], changeKind: "MAJOR", publishedById: ctx.userId },
+      data: { entityId: gamma.entity.id, major: 2, minor: 0, sequence: 2, resolvedSource: "", fieldSnapshot: [], changeKind: "MAJOR", publishedById: ctx.userId, releasedAt: new Date() },
     });
     await prisma.entity.update({ where: { id: gamma.entity.id }, data: { latestVersionId: v2.id, status: "DEPRECATED" } });
     const olderEvent = await newEvent(ctx, scope, "retire-older");

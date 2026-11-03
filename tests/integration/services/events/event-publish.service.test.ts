@@ -54,7 +54,7 @@ async function versionedEntity(name: string, labels: string[]): Promise<Versione
     const [major, minor] = label.split(".").map(Number);
     const row = await prisma.entityVersion.create({
       data: {
-        entityId: entity.id, major, minor, sequence: i + 1, changeKind: i === 0 ? "INITIAL" : minor === 0 ? "MAJOR" : "MINOR", publishedById: ctx.userId,
+        entityId: entity.id, major, minor, sequence: i + 1, changeKind: i === 0 ? "INITIAL" : minor === 0 ? "MAJOR" : "MINOR", publishedById: ctx.userId, releasedAt: new Date(),
         resolvedSource: `model ${name} {\n  id: string;\n}\n`, fieldSnapshot: [{ name: "id", fieldNumber: 1 }],
       },
     });
@@ -484,26 +484,28 @@ describe("publishEvent", () => {
     expect(unwrap(await publish(id)).label).toBe("1.0");
   }, 120_000);
 
-  it("classifies bumps: payload pin to a new entity major -> 2.0; same-major pin move -> 1.1; docs-only edit -> 1.1", async () => {
+  it("classifies bumps: payload pin to a new entity major -> 2.0.0; same-major pin move -> 1.1.0; docs-only edit -> 1.0.1 (PATCH)", async () => {
     const toNewMajor = await published(orderDocument());
     await save(toNewMajor, orderDocument({ payload: pin(order, "2.0") }));
-    expect(await preview(toNewMajor)).toMatchObject({ suggestedBump: "MAJOR", latestLabel: "1.0", candidateLabels: { MAJOR: "2.0", MINOR: "1.1" } });
-    expect(unwrap(await publish(toNewMajor))).toMatchObject({ label: "2.0", changeKind: "MAJOR" });
+    expect(await preview(toNewMajor)).toMatchObject({ suggestedBump: "MAJOR", latestLabel: "1.0.0", candidateLabels: { MAJOR: "2.0.0", MINOR: "1.1.0" } });
+    expect(unwrap(await publish(toNewMajor))).toMatchObject({ label: "2.0.0", changeKind: "MAJOR" });
 
     const sameMajor = await published(orderDocument());
     await save(sameMajor, orderDocument({ payload: pin(order, "1.1") }));
     expect((await preview(sameMajor)).suggestedBump).toBe("MINOR");
-    expect(unwrap(await publish(sameMajor))).toMatchObject({ label: "1.1", changeKind: "MINOR" });
+    expect(unwrap(await publish(sameMajor))).toMatchObject({ label: "1.1.0", changeKind: "MINOR" });
 
+    // A documentation-only edit is a PATCH (phase 1 Task 2), now storable: 1.0.0 -> 1.0.1.
     const docsOnly = await published(orderDocument());
     await save(docsOnly, orderDocument({ description: "Emitted when an order is placed" }));
     const analysis = await preview(docsOnly);
-    expect(analysis.suggestedBump).toBe("MINOR");
-    expect(analysis.reasons).toContain("Info changed");
+    expect(analysis.suggestedBump).toBe("PATCH");
+    expect(analysis.reasons).toContain("Info documentation changed");
     const summary = unwrap(await publish(docsOnly));
-    expect(summary).toMatchObject({ label: "1.1", changeKind: "MINOR", sequence: 2 });
+    expect(summary).toMatchObject({ label: "1.0.1", changeKind: "PATCH", sequence: 2 });
     const rows = await versionRows(docsOnly);
-    expect(obj(rows[1].compatReport).reasons).toEqual(["Info changed"]);
+    expect(rows[1]).toMatchObject({ major: 1, minor: 0, patch: 1, stage: "RELEASED" });
+    expect(obj(rows[1].compatReport).reasons).toEqual(["Info documentation changed"]);
   }, 240_000);
 
   it("lets the user raise the bump to MAJOR but returns BUMP_TOO_LOW when lowering", async () => {

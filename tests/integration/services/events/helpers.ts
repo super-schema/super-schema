@@ -96,7 +96,11 @@ const asJson = (value: unknown, fallback: unknown): string => JSON.stringify(val
  * generated client's create input, so the same call works unchanged once the legacy columns are gone.
  */
 export async function createEventSpecVersion(db: Db, data: Prisma.EventSpecVersionUncheckedCreateInput) {
-  if (!(await hasLegacyVersionColumns(db))) return db.eventSpecVersion.create({ data });
+  if (!(await hasLegacyVersionColumns(db))) {
+    // A RELEASED row must carry releasedAt (CHECK); default it the way the snapshot migration backfilled published rows.
+    const released = data.stage === "SNAPSHOT" ? data : { releasedAt: data.publishedAt ?? new Date(), releasedById: data.publishedById, ...data };
+    return db.eventSpecVersion.create({ data: released });
+  }
   const id = data.id ?? randomUUID();
   const changeSummary = data.changeSummary ?? null;
   const governanceRequestId = data.governanceRequestId ?? null;

@@ -17,8 +17,8 @@ async function seedPublishedEventSpecVersion(db: PGlite) {
   );
   await db.exec(
     `INSERT INTO "event_spec_versions"
-       ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","changeKind","publishedById")
-     VALUES ('sv1','s1',1,0,1,'{}','{}','[]','INITIAL','u1')`
+       ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","changeKind","publishedById","releasedAt")
+     VALUES ('sv1','s1',1,0,1,'{}','{}','[]','INITIAL','u1',CURRENT_TIMESTAMP)`
   );
 }
 
@@ -77,8 +77,8 @@ describe("event document v2 migrations on PGlite", () => {
 
       await db.exec(
         `INSERT INTO "event_spec_versions"
-           ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","changeKind","publishedById","resolvedSpec")
-         VALUES ('sv2','s1',1,1,2,'{}','{}','[]','MINOR','u1','{"documentVersion":2}')`
+           ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","changeKind","publishedById","releasedAt","resolvedSpec")
+         VALUES ('sv2','s1',1,1,2,'{}','{}','[]','MINOR','u1',CURRENT_TIMESTAMP,'{"documentVersion":2}')`
       );
       const stored = await db.query<{ resolvedSpec: unknown }>(`SELECT "resolvedSpec" FROM "event_spec_versions" WHERE "id" = 'sv2'`);
       expect(stored.rows[0].resolvedSpec).toEqual({ documentVersion: 2 });
@@ -109,7 +109,7 @@ describe("event document v2 migrations on PGlite", () => {
       await applyPgliteMigrations(db);
       await seedPublishedEventSpecVersion(db);
       await expect(db.exec(`UPDATE "event_spec_versions" SET "resolvedSpec" = '{}' WHERE "id" = 'sv1'`)).rejects.toThrow(
-        /Published versions are immutable/
+        /Released versions are immutable/
       );
     } finally {
       await db.close();

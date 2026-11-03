@@ -9,7 +9,7 @@
  */
 
 import type { EntityRef } from "@/lib/references/entity-reference";
-import { parseVersionLabel } from "./version-math";
+import { compareVersions, parseVersionLabel } from "./version-math";
 
 /** One entity a published version used: who it is, which version of it, and whether a field pinned that version. */
 export type ReferencedVersion = { ref: EntityRef; version: string; pinned: boolean };
@@ -49,12 +49,12 @@ export function referencedVersionsReport(referencedVersions: readonly Referenced
   return { referencedVersions: referencedVersions.map((r) => ({ ref: { ...r.ref }, version: r.version, pinned: r.pinned })) };
 }
 
-/** `latest` is strictly newer than `recorded` (numbers, not text: 1.10 is newer than 1.9). Unparsable labels are never newer. */
+/** `latest` is strictly newer than `recorded` (numbers, not text: 1.10 is newer than 1.9; the patch counts). Unparsable labels are never newer. */
 function isNewer(latest: string, recorded: string): boolean {
   const a = parseVersionLabel(latest);
   const b = parseVersionLabel(recorded);
   if (!a.success || !b.success) return false;
-  return a.data.major !== b.data.major ? a.data.major > b.data.major : a.data.minor > b.data.minor;
+  return compareVersions(a.data, b.data) > 0;
 }
 
 /**

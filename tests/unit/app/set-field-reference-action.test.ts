@@ -40,7 +40,18 @@ beforeEach(() => {
     entity: { tenantId: "tenant-1" },
   });
   mockPrisma.field.update.mockResolvedValue({ id: "fld-1" });
-  mockPrisma.entityVersion.findUnique.mockResolvedValue({ id: "v1", major: 1, minor: 0 });
+  // Like Prisma's findUnique with an extra `stage` filter: Customer has the released 2.1.0 and 2.1.7 rows and an open 2.2.0 snapshot.
+  mockPrisma.entityVersion.findUnique.mockImplementation(
+    async ({ where }: { where: { entityId_major_minor_patch: { entityId: string; major: number; minor: number; patch: number }; stage: string } }) => {
+      const k = where.entityId_major_minor_patch;
+      const rows = [
+        { id: "v210", entityId: "ent-2", major: 2, minor: 1, patch: 0, stage: "RELEASED" },
+        { id: "v217", entityId: "ent-2", major: 2, minor: 1, patch: 7, stage: "RELEASED" },
+        { id: "v220s", entityId: "ent-2", major: 2, minor: 2, patch: 0, stage: "SNAPSHOT" },
+      ];
+      return rows.find((r) => r.entityId === k.entityId && r.major === k.major && r.minor === k.minor && r.patch === k.patch && r.stage === where.stage) ?? null;
+    }
+  );
   mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
 });
 
@@ -66,19 +77,26 @@ describe("setFieldReferenceAction", () => {
     const r = await setFieldReferenceAction("ent-1", "fld-1", { entityId: "ent-2", pinnedVersion: "2.1" });
     expect(r.success).toBe(true);
     expect(mockPrisma.entityVersion.findUnique).toHaveBeenCalledWith({
-      where: { entityId_major_minor: { entityId: "ent-2", major: 2, minor: 1 } },
+      where: { entityId_major_minor_patch: { entityId: "ent-2", major: 2, minor: 1, patch: 0 }, stage: "RELEASED" },
     });
     expect(written().referencedEntityVersion).toBe("2.1.0");
   });
 
-  // Until the patch / stage columns land every stored version is a released x.y.0: the 2.1 row must not stand in for 2.1.7 or a snapshot.
+  it("stores a patch pin that names its own row", async () => {
+    const r = await setFieldReferenceAction("ent-1", "fld-1", { entityId: "ent-2", pinnedVersion: "2.1.7" });
+    expect(r.success).toBe(true);
+    expect(written().referencedEntityVersion).toBe("2.1.7");
+  });
+
+  // A pin names one row by its full number and stage: the 2.1.0 row must not stand in for 2.1.3 or a 2.1.0 snapshot, nor the
+  // 2.2.0 snapshot for a released 2.2.0.
   it.each([
-    ["2.1.7", "Customer has no published version 2.1.7"],
+    ["2.1.3", "Customer has no published version 2.1.3"],
     ["2.1.0_snapshot", "Customer has no published version 2.1.0_snapshot"],
-  ])("refuses pin %j, which names no stored version, without looking up the 2.1 row", async (pinnedVersion, message) => {
+    ["2.2.0", "Customer has no published version 2.2.0"],
+  ])("refuses pin %j, which names no stored version", async (pinnedVersion, message) => {
     const r = await setFieldReferenceAction("ent-1", "fld-1", { entityId: "ent-2", pinnedVersion });
     expect(r).toEqual({ success: false, error: { code: "VALIDATION_ERROR", message } });
-    expect(mockPrisma.entityVersion.findUnique).not.toHaveBeenCalled();
     expect(mockPrisma.field.update).not.toHaveBeenCalled();
   });
 

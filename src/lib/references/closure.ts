@@ -2,7 +2,7 @@ import type { PrismaClient, Prisma } from "@/generated/prisma/client";
 import { ok, type Result } from "@/types/result";
 import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-generator";
-import { formatVersionLabel, legacyVersionNumber, parseVersionLabel, storedVersionKey } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, parseVersionLabel, storedVersionWhere } from "@/lib/entity-versioning/version-math";
 import { readEntitySnapshot, withoutSchemaVersions, type EntitySnapshot } from "@/lib/entity-versioning/entity-snapshot";
 import {
   TENANT_PLACEHOLDER,
@@ -330,7 +330,7 @@ async function loadContent(
     return {
       fields: [...snapshot].sort((a, b) => a.sortOrder - b.sortOrder),
       source,
-      version: formatVersionLabel(legacyVersionNumber(v)),
+      version: formatVersionLabel(v),
       sequence: v.sequence,
       ...(entitySnapshot ? { snapshot: entitySnapshot } : {}),
     };
@@ -339,9 +339,9 @@ async function loadContent(
   if (pin) {
     const parsed = parseVersionLabel(pin);
     const missing = { success: false, error: { code: "PIN_NOT_FOUND", field, ref: e.ref, version: pin } } as const;
-    const key = parsed.success ? storedVersionKey(parsed.data) : null;
-    if (!key) return missing;
-    const loaded = await published({ entityId_major_minor: { entityId: e.id, ...key } }, "pinned");
+    if (!parsed.success) return missing;
+    const { stage, ...number } = storedVersionWhere(parsed.data);
+    const loaded = await published({ entityId_major_minor_patch: { entityId: e.id, ...number }, stage }, "pinned");
     return loaded ? ok(loaded) : missing;
   }
   if (mode === "published") {

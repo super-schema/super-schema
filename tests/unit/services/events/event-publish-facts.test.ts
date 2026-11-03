@@ -8,7 +8,7 @@ import { gatherPublishFacts } from "@/services/events/event-publish-facts";
 // `gatherPublishFacts` reads the version rows and their entities in two queries (Prisma loads the relation of a `select` in a second one),
 // so an entity deleted between the two leaves a version row whose `entity` is null. A fake `db` returns exactly that row.
 
-type VersionRow = { id: string; entityId: string; major: number; minor: number; entity: { name: string } | null };
+type VersionRow = { id: string; entityId: string; major: number; minor: number; patch: number; entity: { name: string } | null };
 
 const pin = (entityId: string, entityVersionId: string | null) => ({ entityId, entityVersionId });
 
@@ -36,7 +36,7 @@ function fakeDb(versions: VersionRow[], entities: Array<{ id: string; name: stri
 
 describe("gatherPublishFacts: a version whose entity was deleted between the two reads", () => {
   it("is a MISSING_ENTITY blocker, never a TypeError", async () => {
-    const db = fakeDb([{ id: "ver-order", entityId: "ent-order", major: 1, minor: 0, entity: null }], [{ id: "ent-order", name: "Order" }]);
+    const db = fakeDb([{ id: "ver-order", entityId: "ent-order", major: 1, minor: 0, patch: 0, entity: null }], [{ id: "ent-order", name: "Order" }]);
     const facts = await gatherPublishFacts(db, snapshotOf(documentWithPayload()));
     if (!facts.success) throw new Error(facts.error.message);
     expect(facts.data.blockers).toEqual([
@@ -48,7 +48,7 @@ describe("gatherPublishFacts: a version whose entity was deleted between the two
   });
 
   it("still resolves the same version while its entity is there", async () => {
-    const db = fakeDb([{ id: "ver-order", entityId: "ent-order", major: 1, minor: 2, entity: { name: "Order" } }], [{ id: "ent-order", name: "Order" }]);
+    const db = fakeDb([{ id: "ver-order", entityId: "ent-order", major: 1, minor: 2, patch: 0, entity: { name: "Order" } }], [{ id: "ent-order", name: "Order" }]);
     const facts = await gatherPublishFacts(db, snapshotOf(documentWithPayload()));
     if (!facts.success) throw new Error(facts.error.message);
     expect(facts.data.blockers).toEqual([]);
@@ -64,8 +64,8 @@ describe("gatherPublishFacts: a version whose entity was deleted between the two
       id: "v-1", major: 1, minor: 0, patch: 0, sequence: 1, sourceDocument: document, resolvedSpec: {}, frozenTraits: [frozen], compatReport: null,
     };
     const db = fakeDb([
-      { id: "ver-order", entityId: "ent-order", major: 1, minor: 0, entity: { name: "Order" } },
-      { id: "ver-headers", entityId: "ent-headers", major: 3, minor: 1, entity: null },
+      { id: "ver-order", entityId: "ent-order", major: 1, minor: 0, patch: 0, entity: { name: "Order" } },
+      { id: "ver-headers", entityId: "ent-headers", major: 3, minor: 1, patch: 0, entity: null },
     ], [{ id: "ent-order", name: "Order" }]);
     const facts = await gatherPublishFacts(db, snapshotOf(document, latest));
     if (!facts.success) throw new Error(facts.error.message);

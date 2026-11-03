@@ -13,7 +13,6 @@ import { isLibraryTrait, type DocExternalRef, type DocumentProblem, type EventDo
 import { referenceableItems } from "@/lib/events/external-refs";
 import { isJsonObject } from "@/lib/events/inputs";
 import type { EntityPin, FrozenTrait } from "@/lib/events/types";
-import { legacyVersionNumber } from "@/lib/entity-versioning/version-math";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import type { ArtifactRenderer, ArtifactSubject } from "./artifact-renderer";
 
@@ -52,7 +51,7 @@ export interface EventSnapshot {
 const EVENT_SELECT = {
   id: true, name: true, specType: true, document: true, tenantId: true, domainId: true, productId: true,
   product: { select: { slug: true } },
-  latestVersion: { select: { id: true, major: true, minor: true, sequence: true, sourceDocument: true, resolvedSpec: true, frozenTraits: true, compatReport: true } },
+  latestVersion: { select: { id: true, major: true, minor: true, patch: true, sequence: true, sourceDocument: true, resolvedSpec: true, frozenTraits: true, compatReport: true } },
 } satisfies Prisma.EventSpecSelect;
 
 const EXTERNAL_VERSION_SELECT = { id: true, major: true, resolvedSpec: true } satisfies Prisma.EventSpecVersionSelect;
@@ -143,7 +142,7 @@ export async function loadEventSnapshot(db: Db, eventId: string, override?: Even
     document,
     latest: row.latestVersion
       ? {
-          id: row.latestVersion.id, ...legacyVersionNumber(row.latestVersion), sequence: row.latestVersion.sequence,
+          id: row.latestVersion.id, major: row.latestVersion.major, minor: row.latestVersion.minor, patch: row.latestVersion.patch, sequence: row.latestVersion.sequence,
           sourceDocument: row.latestVersion.sourceDocument, resolvedSpec: row.latestVersion.resolvedSpec, frozenTraits: row.latestVersion.frozenTraits,
           compatReport: row.latestVersion.compatReport,
         }

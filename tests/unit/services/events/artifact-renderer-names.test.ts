@@ -8,11 +8,11 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 import { createArtifactRenderer, type EmitFiles } from "@/services/events/artifact-renderer";
 
-type V = { id: string; entityId: string; major: number; minor: number; resolvedSource: string; fieldSnapshot: unknown; entity: { name: string } };
+type V = { id: string; entityId: string; major: number; minor: number; patch: number; resolvedSource: string; fieldSnapshot: unknown; entity: { name: string } };
 
 const versions: Record<string, V> = {
   vOrder: {
-    id: "vOrder", entityId: "eOrder", major: 1, minor: 0, entity: { name: "Order" },
+    id: "vOrder", entityId: "eOrder", major: 1, minor: 0, patch: 0, entity: { name: "Order" },
     resolvedSource: "model Order {\n  id: string;\n  context: string;\n  `op`: string;\n  metadata: string;\n  `in-progress`: string;\n}\n",
     fieldSnapshot: [
       { name: "id", fieldNumber: null }, { name: "context", fieldNumber: null }, { name: "op", fieldNumber: null },
@@ -20,18 +20,18 @@ const versions: Record<string, V> = {
     ],
   },
   vTicket: {
-    id: "vTicket", entityId: "eTicket", major: 1, minor: 0, entity: { name: "Ticket" },
+    id: "vTicket", entityId: "eTicket", major: 1, minor: 0, patch: 0, entity: { name: "Ticket" },
     resolvedSource: 'enum Ticket_status {\n  "in-progress",\n  "en US",\n  done,\n}\n\nmodel Ticket {\n  id: string;\n  status: Ticket_status;\n}\n',
     fieldSnapshot: [{ name: "id", fieldNumber: null }, { name: "status", fieldNumber: null }],
   },
   vClash: {
-    id: "vClash", entityId: "eClash", major: 1, minor: 0, entity: { name: "Clash" },
+    id: "vClash", entityId: "eClash", major: 1, minor: 0, patch: 0, entity: { name: "Clash" },
     resolvedSource: 'enum Clash_kind {\n  "a-b",\n  "a b",\n}\n\nmodel Clash {\n  kind: Clash_kind;\n}\n',
     fieldSnapshot: [{ name: "kind", fieldNumber: null }],
   },
   // a regenerated draft source: the generator never declares an empty enum, it marks the field instead
   vEmpty: {
-    id: "vEmpty", entityId: "eEmpty", major: 1, minor: 0, entity: { name: "Empty" },
+    id: "vEmpty", entityId: "eEmpty", major: 1, minor: 0, patch: 0, entity: { name: "Empty" },
     resolvedSource: [
       "model Empty {",
       "  id: string;",
@@ -43,12 +43,12 @@ const versions: Record<string, V> = {
     fieldSnapshot: [{ name: "id", fieldNumber: null }, { name: "status", fieldNumber: null }],
   },
   vNumeric: {
-    id: "vNumeric", entityId: "eNumeric", major: 1, minor: 0, entity: { name: "Numeric" },
+    id: "vNumeric", entityId: "eNumeric", major: 1, minor: 0, patch: 0, entity: { name: "Numeric" },
     resolvedSource: "enum Priority {\n  Low: 1,\n  High: 2,\n}\n\nmodel Numeric {\n  priority: Priority;\n}\n",
     fieldSnapshot: [{ name: "priority", fieldNumber: null }],
   },
   vBraces: {
-    id: "vBraces", entityId: "eBraces", major: 1, minor: 0, entity: { name: "Braces" },
+    id: "vBraces", entityId: "eBraces", major: 1, minor: 0, patch: 0, entity: { name: "Braces" },
     resolvedSource: 'enum Braces_kind {\n  @doc("see {x}")\n  "a{b",\n  "\\${x}",\n  ok,\n}\n\nmodel Braces {\n  kind: Braces_kind;\n}\n',
     fieldSnapshot: [{ name: "kind", fieldNumber: null }],
   },

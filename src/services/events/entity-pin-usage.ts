@@ -1,7 +1,7 @@
 // src/services/events/entity-pin-usage.ts
 import type { PrismaClient, Prisma } from "@/generated/prisma/client";
 import { dbErrorResult } from "@/lib/db-error";
-import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { findEntityEventReferrers, withEventsInUse } from "@/services/events/event-guards";
 import { isConcurrentWriteFailure } from "@/services/events/publish-concurrency";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
@@ -65,13 +65,13 @@ async function findEntityReferrers(db: Db, entity: { id: string; tenantId: strin
   if (edges.length === 0) return [];
   const sources = await db.entityVersion.findMany({
     where: { id: { in: edges.map((e) => e.fromId) }, entity: { tenantId: entity.tenantId, id: { not: entity.id } } },
-    select: { major: true, minor: true, entity: { select: { id: true, name: true } } },
+    select: { major: true, minor: true, patch: true, entity: { select: { id: true, name: true } } },
     orderBy: [{ entity: { name: "asc" } }, { entityId: "asc" }, { sequence: "asc" }],
   });
   const byEntity = new Map<string, EntityReferrer>();
   for (const v of sources) {
     const entry = byEntity.get(v.entity.id) ?? { id: v.entity.id, name: v.entity.name, versions: [] };
-    entry.versions.push(formatVersionLabel(legacyVersionNumber(v)));
+    entry.versions.push(formatVersionLabel(v));
     byEntity.set(v.entity.id, entry);
   }
   return [...byEntity.values()];

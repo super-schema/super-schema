@@ -25,10 +25,10 @@ import { GET } from "@/app/api/v1/event-specs/[id]/route";
 // one. The mock honours the `where` it is given, so removing the route's tenant filter changes the outcome (the cross-tenant test fails).
 let specName = "checkout-service";
 const SPECS = [
-  { id: "s1", tenantId: "t1", productId: "p1", domainId: "d1", latestVersion: { major: 2, minor: 0 } },
+  { id: "s1", tenantId: "t1", productId: "p1", domainId: "d1", latestVersion: { major: 2, minor: 0, patch: 0 } },
   { id: "s-draft-only", tenantId: "t1", productId: "p1", domainId: "d1", latestVersion: null },
-  { id: "s-sibling", tenantId: "t1", productId: "p2", domainId: "d2", latestVersion: { major: 1, minor: 0 } },
-  { id: "s-foreign", tenantId: "t2", productId: "p9", domainId: "d9", latestVersion: { major: 1, minor: 0 } },
+  { id: "s-sibling", tenantId: "t1", productId: "p2", domainId: "d2", latestVersion: { major: 1, minor: 0, patch: 0 } },
+  { id: "s-foreign", tenantId: "t2", productId: "p9", domainId: "d9", latestVersion: { major: 1, minor: 0, patch: 0 } },
 ];
 /** What the service context of an authorized request carries: the tenant it acts in, whoever the caller is (the services are handed the very ctx). */
 const CTX = expect.objectContaining({ tenantId: "t1", userId: "member-1" });
@@ -249,7 +249,7 @@ describe("tenant scoping (R67: the emit service trusts the id, so the route look
   });
 
   it("treats an event row without a product like a missing one", async () => {
-    h.findFirst.mockResolvedValueOnce({ name: "orphan", productId: null, latestVersion: { major: 1, minor: 0 } });
+    h.findFirst.mockResolvedValueOnce({ name: "orphan", productId: null, latestVersion: { major: 1, minor: 0, patch: 0 } });
     expect((await call()).status).toBe(404);
     expect(emitters()).toBe(0);
   });

@@ -3,7 +3,10 @@ import { loadInheritedFields, loadReferenceClosure, withInheritedFields, type Cl
 import { qualifiedName, upgradeLegacyReference, writeFieldReference } from "@/lib/references/entity-reference";
 
 type FieldRow = { id: string; name: string; decorators: Record<string, unknown>; type?: string };
-type VersionRow = { id: string; entityId: string; major: number; minor: number; sequence: number; fieldSnapshot: unknown[]; compatReport?: unknown };
+type VersionRow = {
+  id: string; entityId: string; major: number; minor: number; patch: number; stage: "SNAPSHOT" | "RELEASED"; sequence: number; fieldSnapshot: unknown[];
+  compatReport?: unknown;
+};
 type EntityRow = {
   id: string;
   name: string;
@@ -76,11 +79,20 @@ function fakeDb(rows: EntityRow[]) {
       findUnique: async ({
         where,
       }: {
-        where: { id?: string; entityId_major_minor?: { entityId: string; major: number; minor: number } };
+        where: {
+          id?: string;
+          entityId_major_minor_patch?: { entityId: string; major: number; minor: number; patch: number };
+          stage?: "SNAPSHOT" | "RELEASED";
+        };
       }) => {
         if (where.id) return versions.find((v) => v.id === where.id) ?? null;
-        const k = where.entityId_major_minor!;
-        return versions.find((v) => v.entityId === k.entityId && v.major === k.major && v.minor === k.minor) ?? null;
+        // Like Prisma: the unique key plus the extra `stage` filter, both must match.
+        const k = where.entityId_major_minor_patch!;
+        return (
+          versions.find(
+            (v) => v.entityId === k.entityId && v.major === k.major && v.minor === k.minor && v.patch === k.patch && (where.stage === undefined || v.stage === where.stage)
+          ) ?? null
+        );
       },
     },
   } as never;
@@ -108,12 +120,15 @@ function ent(id: string, over: Partial<EntityRow> = {}, fields: TypedField[] = [
   };
 }
 
-/** A published version whose snapshot has one bare-name reference field per target. */
-const version = (entityId: string, major: number, minor: number, targets: string[]): VersionRow => ({
+/** A released x.y.0 version (or `over` it) whose snapshot has one bare-name reference field per target. */
+const version = (entityId: string, major: number, minor: number, targets: string[], over: Partial<VersionRow> = {}): VersionRow => ({
   id: `${entityId}-v${major}.${minor}`,
   entityId,
   major,
   minor,
+  patch: 0,
+  stage: "RELEASED",
+  ...over,
   sequence: major * 10 + minor,
   fieldSnapshot: targets.map((t, i) => toField({ id: `${entityId}-s${i}`, name: `s${i}`, decorators: ref(t) }, i)),
 });
@@ -303,9 +318,8 @@ describe("loadReferenceClosure", () => {
       expect(r.error).toMatchObject({ code: "PIN_NOT_FOUND", field: "b", version: "9.9" });
     });
 
-    // Until the patch / stage columns land every stored version is a released x.y.0: a patch or a snapshot pin names no row, and must
-    // not resolve to the x.y row by its major/minor.
-    it.each(["1.0.7", "1.0.0_snapshot"])("returns PIN_NOT_FOUND for pin %j instead of resolving the 1.0 row", async (pin) => {
+    // A pin names one row by its full number and stage: a patch or a snapshot pin must not resolve to the released 1.0.0 row.
+    it.each(["1.0.7", "1.0.0_snapshot"])("returns PIN_NOT_FOUND for pin %j instead of resolving the 1.0.0 row", async (pin) => {
       const db = fakeDb([
         ent("a", {}, [["b", qref("b", "_tenant/_tenant/B", pin)]]),
         ent("b", { versions: [version("b", 1, 0, [])], latest: "b-v1.0" }),
@@ -314,6 +328,27 @@ describe("loadReferenceClosure", () => {
       expect(r.success).toBe(false);
       if (r.success) return;
       expect(r.error).toMatchObject({ code: "PIN_NOT_FOUND", field: "b", version: pin });
+    });
+
+    it("resolves a patch pin to its own row, and a snapshot pin to the snapshot row only", async () => {
+      const db = fakeDb([
+        ent("a", {}, [["b", qref("b", "_tenant/_tenant/B", "1.0.7")], ["c", qref("c", "_tenant/_tenant/C", "1.1.0_snapshot")]]),
+        ent("b", { versions: [version("b", 1, 0, []), version("b", 1, 0, [], { id: "b-v1.0.7", patch: 7 })], latest: "b-v1.0.7" }),
+        ent("c", { versions: [version("c", 1, 0, []), version("c", 1, 1, [], { stage: "SNAPSHOT" })], latest: "c-v1.0" }),
+      ]);
+      const r = await loadReferenceClosure(db, "t1", "a", "draft");
+      expect(r.success).toBe(true);
+      if (!r.success) return;
+      const byName = Object.fromEntries(r.data.entities.map((e) => [e.ref.entity, e]));
+      expect(byName.B).toMatchObject({ source: "pinned", version: "1.0.7" });
+      expect(byName.C).toMatchObject({ source: "pinned", version: "1.1.0" }); // only the 1.1.0 snapshot row has that number
+
+      const released = fakeDb([
+        ent("a", {}, [["c", qref("c", "_tenant/_tenant/C", "1.1.0")]]),
+        ent("c", { versions: [version("c", 1, 1, [], { stage: "SNAPSHOT" })] }),
+      ]);
+      const refused = await loadReferenceClosure(released, "t1", "a", "draft");
+      expect(refused).toMatchObject({ success: false, error: { code: "PIN_NOT_FOUND", field: "c", version: "1.1.0" } });
     });
 
     it("published mode returns NEVER_PUBLISHED for a never-published target", async () => {

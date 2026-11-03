@@ -70,33 +70,10 @@ export function compareVersions(a: VersionNumber, b: VersionNumber): number {
 }
 
 /**
- * TEMPORARY until the `patch` column lands (phase 1 Task 3): a version row read from the database has only major/minor, so its patch
- * is 0. `patch?: undefined` turns every call into a compile error once rows carry `patch`, so no caller keeps reading 0 by accident.
+ * The stored-row filter a parsed label names: its full number on the `(owner, major, minor, patch)` unique key plus its stage, so
+ * `"2.1.0_snapshot"` never finds the released 2.1.0 row (or `"2.1.0"` an open 2.1.0 snapshot), and `"2.1.7"` finds only a 2.1.7 row.
+ * Use with `findUnique({ where: { entityId_major_minor_patch: { entityId, major, minor, patch }, stage } })`.
  */
-export function legacyVersionNumber(row: { major: number; minor: number; patch?: undefined }): VersionNumber {
-  return { major: row.major, minor: row.minor, patch: 0 };
-}
-
-/**
- * TEMPORARY until the `patch` / `stage` columns land (phase 1 Task 3): the `major_minor` unique key of the stored row a parsed label
- * names, or null when no stored row can be it. Every row today is a released `x.y.0`, so a label with a patch or a `_snapshot` stage
- * names nothing; looking it up by major/minor alone would find the wrong version.
- */
-export function storedVersionKey(v: VersionNumber & { stage: VersionStage }): { major: number; minor: number } | null {
-  return v.patch === 0 && v.stage === "RELEASED" ? { major: v.major, minor: v.minor } : null;
-}
-
-/** TEMPORARY until phase 1 Task 3 adds `PATCH` to the stored `EntityVersionChangeKind` enum: the change kinds a version row can hold. */
-export type StoredChangeKind = Exclude<ChangeKind, "PATCH">;
-
-/** Refuses a PATCH change kind the version tables cannot store yet (TEMPORARY, see `StoredChangeKind`). */
-export function storableChangeKind(kind: ChangeKind): Result<StoredChangeKind> {
-  if (kind === "PATCH") {
-    return err({
-      code: "VALIDATION_ERROR",
-      message: "PATCH versions cannot be published yet.",
-      suggestedFix: "Publish as MINOR or MAJOR.",
-    });
-  }
-  return ok(kind);
+export function storedVersionWhere(v: VersionNumber & { stage: VersionStage }): VersionNumber & { stage: VersionStage } {
+  return { major: v.major, minor: v.minor, patch: v.patch, stage: v.stage };
 }

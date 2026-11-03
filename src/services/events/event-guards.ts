@@ -11,7 +11,7 @@
 //    (fromKind EVENT_SPEC_VERSION) written at publish; an edge whose referrer no longer exists is not a referrer;
 //  - the draft documents themselves (JSONB containment) for what has no edge: an unpinned pin names an entity but no version.
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
-import { formatVersionLabel, legacyVersionNumber } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import type { DeleteGuardScope } from "@/services/events/delete-guards";
 import type { ServiceError } from "@/types/result";
 
@@ -157,13 +157,13 @@ const namesEntity = (entityId: string): Prisma.EventSpecWhereInput[] => [
  * A stale edge (the event is gone) and another tenant's events are not referrers.
  */
 export async function findEntityEventReferrers(db: Db, entity: { id: string; tenantId: string }): Promise<EventReferrerList> {
-  const versions = await db.entityVersion.findMany({ where: { entityId: entity.id }, select: { id: true, major: true, minor: true } });
+  const versions = await db.entityVersion.findMany({ where: { entityId: entity.id }, select: { id: true, major: true, minor: true, patch: true } });
   const hits: Hit[] = [];
   let truncated = false;
   if (versions.length > 0) {
     const scan = await scanEdges(db, "ENTITY_VERSION", versions.map((v) => v.id));
     truncated = scan.truncated;
-    hits.push(...(await hitsOfEdges(db, entity.tenantId, scan.edges, new Map(versions.map((v) => [v.id, formatVersionLabel(legacyVersionNumber(v))])))));
+    hits.push(...(await hitsOfEdges(db, entity.tenantId, scan.edges, new Map(versions.map((v) => [v.id, formatVersionLabel(v)])))));
   }
   const named = await db.eventSpec.findMany({
     where: { tenantId: entity.tenantId, OR: namesEntity(entity.id) },
@@ -190,8 +190,8 @@ export async function findEntityLatestVersionEventReferrers(
   if (!latestId) return referrerList([], false);
   const scan = await scanEdges(db, "ENTITY_VERSION", [latestId]);
   if (scan.edges.length === 0) return referrerList([], false);
-  const latest = await db.entityVersion.findUnique({ where: { id: latestId }, select: { major: true, minor: true } });
-  const labelOf = new Map([[latestId, latest ? formatVersionLabel(legacyVersionNumber(latest)) : latestId]]);
+  const latest = await db.entityVersion.findUnique({ where: { id: latestId }, select: { major: true, minor: true, patch: true } });
+  const labelOf = new Map([[latestId, latest ? formatVersionLabel(latest) : latestId]]);
   return collect(await hitsOfEdges(db, entity.tenantId, scan.edges, labelOf), scan.truncated);
 }
 
@@ -218,7 +218,7 @@ export async function findLibraryTraitEventReferrers(db: Db, trait: { id: string
         { frozenTraits: { array_contains: [{ id }] }, resolvedSpec: { not: Prisma.DbNull } },
       ],
     },
-    select: { major: true, minor: true, eventSpec: { select: SPEC_SELECT } },
+    select: { major: true, minor: true, patch: true, eventSpec: { select: SPEC_SELECT } },
     orderBy: [{ eventSpec: { name: "asc" } }, { eventSpec: { id: "asc" } }, { sequence: "asc" }],
     take: MAX_REFERRER_SCAN + 1,
   });
@@ -226,7 +226,7 @@ export async function findLibraryTraitEventReferrers(db: Db, trait: { id: string
   return collect(
     [
       ...drafts.slice(0, MAX_REFERRER_SCAN).map((spec) => ({ spec, draft: true, label: null })),
-      ...versions.slice(0, MAX_REFERRER_SCAN).map((v) => ({ spec: v.eventSpec, draft: false, label: formatVersionLabel(legacyVersionNumber(v)) })),
+      ...versions.slice(0, MAX_REFERRER_SCAN).map((v) => ({ spec: v.eventSpec, draft: false, label: formatVersionLabel(v) })),
     ],
     truncated
   );
@@ -237,10 +237,10 @@ export async function findLibraryTraitEventReferrers(db: Db, trait: { id: string
  * (`schema_references` toKind EVENT_SPEC_VERSION: external refs). The event's own edges to itself are not referrers.
  */
 export async function findEventVersionReferrers(db: Db, eventId: string): Promise<EventReferrerList> {
-  const event = await db.eventSpec.findUnique({ where: { id: eventId }, select: { tenantId: true, versions: { select: { id: true, major: true, minor: true } } } });
+  const event = await db.eventSpec.findUnique({ where: { id: eventId }, select: { tenantId: true, versions: { select: { id: true, major: true, minor: true, patch: true } } } });
   if (!event || event.versions.length === 0) return referrerList([], false);
   const scan = await scanEdges(db, "EVENT_SPEC_VERSION", event.versions.map((v) => v.id));
-  const hits = await hitsOfEdges(db, event.tenantId, scan.edges, new Map(event.versions.map((v) => [v.id, formatVersionLabel(legacyVersionNumber(v))])));
+  const hits = await hitsOfEdges(db, event.tenantId, scan.edges, new Map(event.versions.map((v) => [v.id, formatVersionLabel(v)])));
   return collect(hits, scan.truncated, (spec) => spec.id === eventId);
 }
 
@@ -252,14 +252,14 @@ export async function findEventVersionReferrers(db: Db, eventId: string): Promis
  */
 export async function findCrossProductEventRefs(db: Db, scope: DeleteGuardScope): Promise<EventReferrerList> {
   const inside = { tenantId: scope.tenantId, ...(scope.kind === "product" ? { productId: scope.productId } : { domainId: scope.domainId }) };
-  const versions = await db.eventSpecVersion.findMany({ where: { eventSpec: inside }, select: { id: true, major: true, minor: true } });
+  const versions = await db.eventSpecVersion.findMany({ where: { eventSpec: inside }, select: { id: true, major: true, minor: true, patch: true } });
   if (versions.length === 0) return referrerList([], false);
   const insideEvents = await db.eventSpec.findMany({ where: inside, select: { id: true } });
   const scan = await scanEdges(db, "EVENT_SPEC_VERSION", versions.map((v) => v.id), [
     { fromKind: "EVENT_SPEC", fromId: { in: insideEvents.map((e) => e.id) } },
     { fromKind: "EVENT_SPEC_VERSION", fromId: { in: versions.map((v) => v.id) } },
   ]);
-  const hits = await hitsOfEdges(db, scope.tenantId, scan.edges, new Map(versions.map((v) => [v.id, formatVersionLabel(legacyVersionNumber(v))])));
+  const hits = await hitsOfEdges(db, scope.tenantId, scan.edges, new Map(versions.map((v) => [v.id, formatVersionLabel(v)])));
   // Kept as the backstop for the query's filter (an edge from a row the scope owns can never be a referrer).
   const isInside = (spec: SpecRow) => (scope.kind === "product" ? spec.productId === scope.productId : spec.domainId === scope.domainId);
   return collect(hits, scan.truncated, isInside);

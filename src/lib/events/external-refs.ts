@@ -5,6 +5,8 @@
 // `externalItems` (event-snapshot) and `validateDocumentRefs` (event.service) read it.
 import { isJsonObject } from "./inputs";
 import type { JsonObject } from "@/lib/event-specs/types";
+import { compareVersions } from "@/lib/entity-versioning/version-math";
+import type { VersionNumber } from "@/lib/entity-versioning/types";
 
 /** A published event the picker offers: its latest version carries a resolved spec. */
 export interface ExternalEventCandidate { eventId: string; eventName: string; domainName: string; productName: string; latestVersionId: string; latestLabel: string }
@@ -24,9 +26,9 @@ export type ExternalItemKind = "channel" | "message";
 /** What the status loader needs to know about one reference of a document: which item of which published version. */
 export interface ExternalRefInput { eventVersionId: string; kind: ExternalItemKind; itemKey: string }
 
-/** True when `latest` is a later version than `current` (versions are `MAJOR.MINOR`; compared as numbers, so 1.9 < 1.10). */
-export function isNewerVersion(current: { major: number; minor: number }, latest: { major: number; minor: number }): boolean {
-  return latest.major !== current.major ? latest.major > current.major : latest.minor > current.minor;
+/** True when `latest` is a later version than `current` (`MAJOR.MINOR.PATCH`, compared as numbers, so 1.9.0 < 1.10.0 and 1.2.0 < 1.2.1). */
+export function isNewerVersion(current: VersionNumber, latest: VersionNumber): boolean {
+  return compareVersions(latest, current) > 0;
 }
 
 /**

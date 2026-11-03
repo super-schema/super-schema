@@ -27,6 +27,8 @@ model User {
   webhooks      WebhookEndpoint[] @relation("WebhookCreator")
   publishedEntityVersions EntityVersion[] @relation("EntityVersionPublisher")
   publishedEventSpecVersions EventSpecVersion[] @relation("EventSpecVersionPublisher")
+  releasedEntityVersions EntityVersion[] @relation("EntityVersionReleaser")
+  releasedEventSpecVersions EventSpecVersion[] @relation("EventSpecVersionReleaser")
   // Access control: a disabled user cannot sign in and is refused on every request (the principal loader checks it).
   disabledAt    DateTime?
   lastLoginAt   DateTime?
@@ -325,14 +327,24 @@ enum EntityVersionChangeKind {
   INITIAL
   MINOR
   MAJOR
+  PATCH
 }
 
-/// Immutable published snapshot of an entity draft (DB trigger forbids UPDATE).
+/// SNAPSHOT: the one open, editable pre-release of an object (at most one per entity / event spec, partial unique index).
+/// RELEASED: immutable (DB trigger forbids UPDATE unless the row is still a SNAPSHOT); releasedAt is set (CHECK).
+enum VersionStage {
+  SNAPSHOT
+  RELEASED
+}
+
+/// A version of an entity draft: the open SNAPSHOT is editable, a RELEASED row is immutable (DB trigger forbids its UPDATE).
 model EntityVersion {
   id                  String                  @id @default(cuid())
   entityId            String
   major               Int
   minor               Int
+  patch               Int                     @default(0)
+  stage               VersionStage            @default(RELEASED)
   /// Monotonic publish counter; Entity.version mirrors the latest one.
   sequence            Int
   /// Phase 2a: the entity's TypeSpec source. Phase 2b adds frozen Data Type copies (14.2).
@@ -341,7 +353,7 @@ model EntityVersion {
   fieldSnapshot       Json
   changeKind          EntityVersionChangeKind
   /// Per-format compatibility findings (Story 14.3, not yet written) and, under the key `referencedVersions`, the exact
-  /// version of every entity this version's reference closure used: { ref: EntityRef; version: "MAJOR.MINOR"; pinned: boolean }[]
+  /// version of every entity this version's reference closure used: { ref: EntityRef; version: "MAJOR.MINOR.PATCH"; pinned: boolean }[]
   /// (src/lib/entity-versioning/referenced-versions.ts). Versions published before that was recorded hold {}.
   compatReport        Json                    @default("{}")
   changeSummary       String?
@@ -349,13 +361,20 @@ model EntityVersion {
   publishedAt         DateTime                @default(now())
   /// Unused until MAJOR governance (14.4).
   governanceRequestId String?
+  /// Set when the row becomes RELEASED (backfilled from publishedAt / publishedById for rows that predate snapshots).
+  releasedAt          DateTime?
+  releasedById        String?
+  /// DB default only fills rows written by raw SQL / the migration; Prisma sets it on every write.
+  updatedAt           DateTime                @default(now()) @updatedAt
 
   entity      Entity  @relation("EntityVersions", fields: [entityId], references: [id], onDelete: Cascade)
   publishedBy User    @relation("EntityVersionPublisher", fields: [publishedById], references: [id])
+  /// Restrict like publishedBy: SET NULL would be an UPDATE of a released row, which the immutability trigger refuses.
+  releasedBy  User?   @relation("EntityVersionReleaser", fields: [releasedById], references: [id], onDelete: Restrict)
   latestOf    Entity? @relation("EntityLatestVersion")
   traitHeaderPins           Trait[]          @relation("TraitHeadersVersion")
 
-  @@unique([entityId, major, minor])
+  @@unique([entityId, major, minor, patch])
   @@unique([entityId, sequence])
   @@map("entity_versions")
 }
@@ -470,14 +489,17 @@ model EventSpec {
   @@map("event_specs")
 }
 
-/// Immutable published Event Spec (DB trigger forbids UPDATE). `document` is never regenerated (spec §7.2 step 1).
+/// A version of an Event Spec: the open SNAPSHOT is editable, a RELEASED row is immutable (DB trigger forbids its UPDATE).
+/// A released `document` is never regenerated (spec §7.2 step 1).
 model EventSpecVersion {
   id                  String                  @id @default(cuid())
   eventSpecId         String
   major               Int
   minor               Int
+  patch               Int                     @default(0)
+  stage               VersionStage            @default(RELEASED)
   sequence            Int
-  /// Fully resolved AsyncAPI document; info.version = MAJOR.MINOR.
+  /// Fully resolved AsyncAPI document; info.version = MAJOR.MINOR.PATCH.
   document            Json
   /// The EventSpecDocument draft as published (input to the next bump classification).
   sourceDocument      Json
@@ -494,11 +516,18 @@ model EventSpecVersion {
   publishedById       String
   publishedAt         DateTime                @default(now())
   governanceRequestId String?
+  /// Set when the row becomes RELEASED (backfilled from publishedAt / publishedById for rows that predate snapshots).
+  releasedAt          DateTime?
+  releasedById        String?
+  /// DB default only fills rows written by raw SQL / the migration; Prisma sets it on every write.
+  updatedAt           DateTime                @default(now()) @updatedAt
   eventSpec           EventSpec               @relation("EventSpecVersions", fields: [eventSpecId], references: [id], onDelete: Cascade)
   latestOf            EventSpec?              @relation("EventSpecLatestVersion")
   publishedBy         User                    @relation("EventSpecVersionPublisher", fields: [publishedById], references: [id])
+  /// Restrict like publishedBy: SET NULL would be an UPDATE of a released row, which the immutability trigger refuses.
+  releasedBy          User?                   @relation("EventSpecVersionReleaser", fields: [releasedById], references: [id], onDelete: Restrict)
 
-  @@unique([eventSpecId, major, minor])
+  @@unique([eventSpecId, major, minor, patch])
   @@unique([eventSpecId, sequence])
   @@map("event_spec_versions")
 }

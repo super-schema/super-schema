@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 type Decorators = Record<string, unknown>;
 type FieldRow = { id: string; entityId: string; name: string; type: string; decorators: Decorators; sortOrder: number };
-type VersionRow = { id: string; entityId: string; major: number; minor: number; sequence: number; fieldSnapshot: unknown[]; compatReport?: unknown };
+type VersionRow = { id: string; entityId: string; major: number; minor: number; patch: number; stage: "SNAPSHOT" | "RELEASED"; sequence: number; fieldSnapshot: unknown[]; compatReport?: unknown };
 type EntityRow = {
   id: string;
   tenantId: string;
@@ -80,7 +80,7 @@ const snapshotOf = (e: EntityRow) =>
 function publishAs(id: string, major: number, minor: number, frozen: Array<[string, string, Decorators?]> = []): VersionRow {
   const owner = entityOf(id) as EntityRow;
   const row: VersionRow = {
-    id: `${id}-v${major}.${minor}`, entityId: id, major, minor, sequence: major * 10 + minor,
+    id: `${id}-v${major}.${minor}`, entityId: id, major, minor, patch: 0, stage: "RELEASED", sequence: major * 10 + minor,
     fieldSnapshot: snapshotOf(entity(id, owner.name, frozen)),
   };
   versions().push(row);
@@ -104,13 +104,13 @@ function fakePrisma() {
       if (args.select?.metadata) return { metadata: e.metadata }; // the closure's per-member metadata read
       if (args.select?.latestVersion) {
         const latest = latestOf(e);
-        return { tenantId: e.tenantId, latestVersion: latest ? { compatReport: latest.compatReport ?? {}, major: latest.major, minor: latest.minor } : null };
+        return { tenantId: e.tenantId, latestVersion: latest ? { compatReport: latest.compatReport ?? {}, major: latest.major, minor: latest.minor, patch: latest.patch } : null };
       }
       const latest = latestOf(e);
       return {
         ...rowOf(e),
         fields: e.fields.map((f) => ({ ...f, slug: f.name, precision: null, scale: null, nullable: true, isKey: false, fieldNumber: null, description: "", classification: null, aliases: [] })),
-        latestVersion: latest ? { id: latest.id, major: latest.major, minor: latest.minor, sequence: latest.sequence, fieldSnapshot: latest.fieldSnapshot } : null,
+        latestVersion: latest ? { id: latest.id, major: latest.major, minor: latest.minor, patch: latest.patch, sequence: latest.sequence, fieldSnapshot: latest.fieldSnapshot } : null,
       };
     }),
     findMany: vi.fn(async (args: { where: { tenantId?: string; id?: { in: string[] } } }) => {
@@ -120,7 +120,7 @@ function fakePrisma() {
           .map((e) => {
             const latest = latestOf(e);
             return {
-              id: e.id, name: e.name, latestVersionId: e.latestVersionId, latestVersion: latest ? { major: latest.major, minor: latest.minor } : null,
+              id: e.id, name: e.name, latestVersionId: e.latestVersionId, latestVersion: latest ? { major: latest.major, minor: latest.minor, patch: latest.patch } : null,
               domainId: `d-${e.domain}`, productId: `p-${e.product}`, product: { domainId: `d-${e.domain}` },
             };
           });
@@ -141,24 +141,26 @@ function fakePrisma() {
     ),
   };
   const versionApi = {
-    findUnique: vi.fn(async ({ where }: { where: { id?: string; entityId_major_minor?: { entityId: string; major: number; minor: number } } }) => {
+    findUnique: vi.fn(async ({ where }: { where: { id?: string; entityId_major_minor_patch?: { entityId: string; major: number; minor: number; patch: number }; stage?: string } }) => {
       if (where.id) return versions().find((v) => v.id === where.id) ?? null;
-      const k = where.entityId_major_minor!;
-      return versions().find((v) => v.entityId === k.entityId && v.major === k.major && v.minor === k.minor) ?? null;
+      // Like Prisma: the full number on the unique key and the extra `stage` filter must both match.
+      const k = where.entityId_major_minor_patch!;
+      return versions().find((v) => v.entityId === k.entityId && v.major === k.major && v.minor === k.minor && v.patch === k.patch && v.stage === where.stage) ?? null;
     }),
-    // The edges' targets: `where: { OR: [{ entityId, major, minor }, ...] }`.
-    findMany: vi.fn(async ({ where }: { where: { OR: Array<{ entityId: string; major: number; minor: number }> } }) =>
-      versions().filter((v) => where.OR.some((k) => k.entityId === v.entityId && k.major === v.major && k.minor === v.minor))
+    // The edges' targets: `where: { OR: [{ entityId, major, minor, patch, stage }, ...] }`.
+    findMany: vi.fn(async ({ where }: { where: { OR: Array<{ entityId: string; major: number; minor: number; patch: number; stage: string }> } }) =>
+      versions()
+        .filter((v) => where.OR.some((k) => k.entityId === v.entityId && k.major === v.major && k.minor === v.minor && v.patch === k.patch && v.stage === k.stage))
     ),
     create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
       h.created.push(data);
       const row: VersionRow = {
         id: `${data.entityId}-v${data.major}.${data.minor}`, entityId: data.entityId as string, major: data.major as number, minor: data.minor as number,
-        sequence: data.sequence as number, fieldSnapshot: data.fieldSnapshot as unknown[], compatReport: data.compatReport,
+        patch: data.patch as number, stage: "RELEASED", sequence: data.sequence as number, fieldSnapshot: data.fieldSnapshot as unknown[], compatReport: data.compatReport,
       };
       versions().push(row);
       return {
-        id: row.id, entityId: row.entityId, major: row.major, minor: row.minor, sequence: row.sequence, changeKind: data.changeKind, changeSummary: null,
+        id: row.id, entityId: row.entityId, major: row.major, minor: row.minor, patch: row.patch, stage: row.stage, sequence: row.sequence, changeKind: data.changeKind, changeSummary: null,
         publishedById: "u1", publishedAt: new Date("2026-10-23T00:00:00Z"), publishedBy: { name: "U" },
       };
     }),
