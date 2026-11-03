@@ -2,8 +2,11 @@
  * What a publish records about the entities it referenced, and the staleness derived from it (multi-entity emission, Task 8).
  * Pure and client-safe: no server imports.
  *
- * Publishing X records, for every entity in X's reference closure (X itself aside), the exact MAJOR.MINOR version the closure used:
- * the version a field PINNED, otherwise the latest published version at publish time. The record lives in the version's
+ * Saving X records, for every entity in X's reference closure (X itself aside), the full label of the exact version the closure used
+ * ("2.1.0", or "2.1.0_snapshot" for an entity that had no release yet): the version a field PINNED, otherwise the latest published
+ * version at save time. Promoting X rewrites a recorded snapshot label that has since been released to its released label (a release
+ * only references releases). Versions recorded before SemVer read in the legacy MAJOR.MINOR form ("2.1"), which every reader parses as
+ * 2.1.0 (`parseVersionLabel`). The record lives in the version's
  * `compatReport` JSON under the key `referencedVersions` (see {@link referencedVersionsReport}); it needs no column. It is read back
  * by {@link readReferencedVersions}; a version published before this existed simply has none recorded.
  */
@@ -11,7 +14,7 @@
 import type { EntityRef } from "@/lib/references/entity-reference";
 import { compareVersions, parseVersionLabel } from "./version-math";
 
-/** One entity a published version used: who it is, which version of it, and whether a field pinned that version. */
+/** One entity a saved version used: who it is, which version of it (full label; legacy "M.m"), and whether a field pinned that version. */
 export type ReferencedVersion = { ref: EntityRef; version: string; pinned: boolean };
 
 /** An unpinned reference that is behind: `recorded` is what the published version used, `latest` what is published now. */

@@ -341,7 +341,7 @@ describe("loadReferenceClosure", () => {
       if (!r.success) return;
       const byName = Object.fromEntries(r.data.entities.map((e) => [e.ref.entity, e]));
       expect(byName.B).toMatchObject({ source: "pinned", version: "1.0.7" });
-      expect(byName.C).toMatchObject({ source: "pinned", version: "1.1.0" }); // only the 1.1.0 snapshot row has that number
+      expect(byName.C).toMatchObject({ source: "pinned", version: "1.1.0_snapshot" }); // the snapshot row, labelled with its stage
 
       const released = fakeDb([
         ent("a", {}, [["c", qref("c", "_tenant/_tenant/C", "1.1.0")]]),

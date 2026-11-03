@@ -23,7 +23,7 @@ export type ClosureEntity = {
   ref: EntityRef;
   /** `pinned` when a field pinned a published version, otherwise the mode's source. */
   source: "published" | "draft" | "pinned";
-  /** MAJOR.MINOR label; absent for a draft source. */
+  /** The version's full label ("2.1.0", or "2.1.0_snapshot" for a snapshot); absent for a draft source. */
   version?: string;
   fields: PrismaFieldInput[];
   entity: PrismaEntityInput;
@@ -120,10 +120,10 @@ function compareStr(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/** A pin as a comparable label: `1.0` and `01.0` are one version. Anything that does not parse is compared as written. */
+/** A pin as a comparable label: `1.0`, `01.0` and `1.0.0` are one version (`1.0.0_snapshot` another). Anything that does not parse is compared as written. */
 function normalizePin(pin: string): string {
   const parsed = parseVersionLabel(pin.trim());
-  return parsed.success ? formatVersionLabel(parsed.data) : pin.trim();
+  return parsed.success ? formatVersionLabel(parsed.data, parsed.data.stage) : pin.trim();
 }
 
 /** The pinning edges among `edges`, one per distinct version, ordered by owner (qualified name) then field name. */
@@ -330,7 +330,8 @@ async function loadContent(
     return {
       fields: [...snapshot].sort((a, b) => a.sortOrder - b.sortOrder),
       source,
-      version: formatVersionLabel(v),
+      // With its stage: an entity with no release yet resolves to its open snapshot, and what records it must say so.
+      version: formatVersionLabel(v, v.stage),
       sequence: v.sequence,
       ...(entitySnapshot ? { snapshot: entitySnapshot } : {}),
     };

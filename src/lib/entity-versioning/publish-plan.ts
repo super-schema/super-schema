@@ -101,6 +101,7 @@ export interface PublishAnalysis {
   suggestedBump: BumpKind | null;
   /** The snapshot label a save at each bump would produce (an open snapshot is never lowered); null before the first release. */
   candidateLabels: Record<BumpKind, string> | null;
+  /** The first save's label ("1.0.0_snapshot"). */
   initialLabel: string;
   reasons: string[];
   diffSummary: { added: number; removed: number; modified: number };
@@ -185,7 +186,8 @@ export function analyzePublish(state: PublishState): PublishAnalysis {
     message: `Reference "${entityName}" does not match any entity in this line; it will not be pinned.`,
   }));
 
-  const initialLabel = formatVersionLabel(INITIAL_VERSION);
+  // The first save's label, as the plan writes it: the first release comes from promoting it.
+  const initialLabel = formatVersionLabel(INITIAL_VERSION, "SNAPSHOT");
   const openSnapshotLabel = openSnapshot ? formatVersionLabel(openSnapshot, "SNAPSHOT") : null;
   if (!latestRelease) {
     return {

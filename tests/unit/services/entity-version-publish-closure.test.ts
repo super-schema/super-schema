@@ -147,6 +147,12 @@ function fakePrisma() {
       const k = where.entityId_major_minor_patch!;
       return versions().find((v) => v.entityId === k.entityId && v.major === k.major && v.minor === k.minor && v.patch === k.patch && v.stage === where.stage) ?? null;
     }),
+    // The latest release / the open snapshot of an entity: `where: { entityId, stage }`, releases ordered by number.
+    findFirst: vi.fn(async ({ where }: { where: { entityId: string; stage: string } }) =>
+      versions()
+        .filter((v) => v.entityId === where.entityId && v.stage === where.stage)
+        .sort((a, b) => b.major - a.major || b.minor - a.minor || b.patch - a.patch)[0] ?? null
+    ),
     // The edges' targets: `where: { OR: [{ entityId, major, minor, patch, stage }, ...] }`.
     findMany: vi.fn(async ({ where }: { where: { OR: Array<{ entityId: string; major: number; minor: number; patch: number; stage: string }> } }) =>
       versions()
@@ -156,7 +162,7 @@ function fakePrisma() {
       h.created.push(data);
       const row: VersionRow = {
         id: `${data.entityId}-v${data.major}.${data.minor}`, entityId: data.entityId as string, major: data.major as number, minor: data.minor as number,
-        patch: data.patch as number, stage: "RELEASED", sequence: data.sequence as number, fieldSnapshot: data.fieldSnapshot as unknown[], compatReport: data.compatReport,
+        patch: data.patch as number, stage: data.stage as VersionRow["stage"], sequence: data.sequence as number, fieldSnapshot: data.fieldSnapshot as unknown[], compatReport: data.compatReport,
       };
       versions().push(row);
       return {
@@ -582,6 +588,7 @@ describe("KD-045: a publish only draws on entities the publisher's roles cover",
   const stewardOfSales: Assignment[] = [{ role: "STEWARD", scope: { kind: "DOMAIN", tenantId: "tenant-1", domainId: "d-Sales" } }];
   /** Order (Sales) references Customer, which sits in ANOTHER domain (Finance) and is published. */
   const orderAndForeignCustomer = () => {
+    h.store.versions = []; // a fresh start each time: the previous publish's snapshot would otherwise be saved again (updated)
     h.store.entities = [
       entity("order", "Order", [["id", "string"], ["buyer", "reference", qref("cust", "Customer")]]),
       entity("cust", "Customer", [["name", "string"]], { domain: "Finance", product: "Ledger" }),

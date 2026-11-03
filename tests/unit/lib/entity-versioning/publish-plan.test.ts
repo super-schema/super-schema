@@ -42,7 +42,7 @@ describe("first publish", () => {
 
   it("offers only the initial label", () => {
     expect(analyzePublish(state())).toMatchObject({
-      isFirstPublish: true, latestLabel: null, openSnapshotLabel: null, suggestedBump: null, candidateLabels: null, initialLabel: "1.0.0", blockers: [],
+      isFirstPublish: true, latestLabel: null, openSnapshotLabel: null, suggestedBump: null, candidateLabels: null, initialLabel: "1.0.0_snapshot", blockers: [],
     });
   });
 });
@@ -277,6 +277,11 @@ describe("snapshot saves (phase 1)", () => {
       success: true,
       data: { mode: "UPDATE", snapshotId: "snap-1", label: "2.0.0_snapshot", version: { major: 2, minor: 0, patch: 0 }, changeKind: "MAJOR" },
     });
+  });
+
+  it("a raised 2.0.0_snapshot is what a MINOR or PATCH save shows too (never lowered)", () => {
+    const s = state({ latestRelease: release(1, 0, [ID]), openSnapshot: snapshot(2, 0), currentFields: [ID, EMAIL] });
+    expect(analyzePublish(s).candidateLabels).toEqual({ PATCH: "2.0.0_snapshot", MINOR: "2.0.0_snapshot", MAJOR: "2.0.0_snapshot" });
   });
 
   it("a snapshot not above the latest release is raised past it", () => {
