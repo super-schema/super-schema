@@ -30,10 +30,11 @@ describe("stableStringify", () => {
 });
 
 describe("decide", () => {
-  it("is MAJOR when any breaking reason exists (listing the minor ones too) and MINOR otherwise", () => {
+  it("is MAJOR when any breaking reason exists (listing the minor ones too), MINOR for only minor ones, PATCH for none", () => {
     expect(decide(["a"], ["b"])).toEqual({ bump: "MAJOR", reasons: ["a", "b"] });
+    expect(decide(["a"], [])).toEqual({ bump: "MAJOR", reasons: ["a"] });
     expect(decide([], ["b"])).toEqual({ bump: "MINOR", reasons: ["b"] });
-    expect(decide([], [])).toEqual({ bump: "MINOR", reasons: [] });
+    expect(decide([], [])).toEqual({ bump: "PATCH", reasons: [] });
   });
 });
 
@@ -90,8 +91,8 @@ describe("compareTraitHeaders (R78): a trait's headers pin is part of every mess
   });
 
   it("an unchanged pin says nothing; an unknown major (version row gone / unpinned) is never a MAJOR on its own", () => {
-    expect(run(pinOf("1.0"), pinOf("1.0"))).toEqual({ bump: "MINOR", reasons: [] });
-    expect(run(null, null)).toEqual({ bump: "MINOR", reasons: [] });
+    expect(run(pinOf("1.0"), pinOf("1.0"))).toEqual({ bump: "PATCH", reasons: [] });
+    expect(run(null, null)).toEqual({ bump: "PATCH", reasons: [] });
     expect(run(pinOf("1.0"), pinOf("2.0", { major: null, label: null }))).toEqual({
       bump: "MINOR",
       reasons: ["Trait CloudEvents: headers pin moved from v1.0 to (unpinned)"],

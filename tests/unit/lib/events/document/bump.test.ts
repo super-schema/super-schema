@@ -82,6 +82,7 @@ function classify(next: Mut | undefined, opts: { prev?: Mut; prevSide?: SideOver
 }
 const major = (...reasons: string[]): BumpDecision => ({ bump: "MAJOR", reasons });
 const minor = (...reasons: string[]): BumpDecision => ({ bump: "MINOR", reasons });
+const patch: BumpDecision = { bump: "PATCH", reasons: [] };
 const channelNamed = (d: EventDocument, key: string): DocChannel => d.channels.find((c) => c.key === key) as DocChannel;
 
 describe("classifyEventBump: the fixture and the empty change", () => {
@@ -89,8 +90,8 @@ describe("classifyEventBump: the fixture and the empty change", () => {
     expect(parseEventDocument(base()).success).toBe(true);
   });
 
-  it("identical documents are MINOR with no reasons", () => {
-    expect(classify(undefined)).toEqual(minor());
+  it("event with no major/minor findings suggests PATCH", () => {
+    expect(classify(undefined)).toEqual(patch);
   });
 
   it("reordering keys, key lists and trait lists is not a change", () => {
@@ -102,12 +103,12 @@ describe("classifyEventBump: the fixture and the empty change", () => {
       channelNamed(d, "orders").messageKeys.reverse();
       d.messages.find((m) => m.key === "OrderCreated")!.traitKeys.reverse();
     });
-    expect(decision).toEqual(minor());
+    expect(decision).toEqual(patch);
   });
 
   it("origin (infra sync metadata) is ignored", () => {
     const origin = { provider: "confluent", ref: "lkc-1", syncedAt: "2026-10-15T00:00:00Z" };
-    expect(classify((d) => { d.channels[0].origin = origin; d.servers[0].origin = origin; })).toEqual(minor());
+    expect(classify((d) => { d.channels[0].origin = origin; d.servers[0].origin = origin; })).toEqual(patch);
   });
 
   it("MAJOR reasons come before MINOR reasons", () => {
@@ -305,7 +306,7 @@ describe("classifyEventBump: messages", () => {
   it("a correlationId with reordered members is not a change", () => {
     const withTwo: Mut = (d) => { d.messages[0].correlationId = { location: "$message.header#/id", description: "x" }; };
     const reordered: Mut = (d) => { d.messages[0].correlationId = { description: "x", location: "$message.header#/id" }; };
-    expect(classify(reordered, { prev: withTwo })).toEqual(minor());
+    expect(classify(reordered, { prev: withTwo })).toEqual(patch);
   });
 
   it("MINOR for message documentation, examples and bindings, naming the message", () => {
@@ -351,8 +352,8 @@ describe("classifyEventBump: traits", () => {
     expect(classify(undefined, { nextSide: { libraryHeaders: { "lib-ce": libHeaders("lh2", 1, "1.1") } } })).toEqual(
       minor('Trait "CloudEvents": headers pin moved from v1.0 to v1.1')
     );
-    expect(classify(undefined, { nextSide: { libraryHeaders: {} } })).toEqual(minor());
-    expect(classify(undefined, { prevSide: { libraryHeaders: {} } })).toEqual(minor());
+    expect(classify(undefined, { nextSide: { libraryHeaders: {} } })).toEqual(patch);
+    expect(classify(undefined, { prevSide: { libraryHeaders: {} } })).toEqual(patch);
   });
 
   it("swapping the library trait behind a key compares the old and the new headers pin", () => {
@@ -469,13 +470,13 @@ describe("classifyEventBump: missing facts fail closed, unchanged pins never do"
 
   it("no change is reported for a pin that is identical on both sides, even without facts", () => {
     const unknown: Mut = (d) => { d.messages[0].payload = pin("e1", "v-unknown"); };
-    expect(classify(unknown, { prev: unknown })).toEqual(minor());
+    expect(classify(unknown, { prev: unknown })).toEqual(patch);
   });
 
   it("MAJOR when an external ref moves and a referenced major is unknown", () => {
     expect(classify((d) => { d.externalRefs[0].eventVersionId = "ev-unknown"; })).toEqual(
       major('External reference "PaymentSettled": referenced version major unavailable (treated as breaking)')
     );
-    expect(classify(undefined, { nextSide: { externalMajors: {} }, prevSide: { externalMajors: {} } })).toEqual(minor());
+    expect(classify(undefined, { nextSide: { externalMajors: {} }, prevSide: { externalMajors: {} } })).toEqual(patch);
   });
 });

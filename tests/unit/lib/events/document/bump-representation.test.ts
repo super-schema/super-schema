@@ -38,6 +38,7 @@ const side = (doc: EventDocument, representations?: Reps): EventBumpSide => ({
 const mutated = (fn: (d: EventDocument) => void): EventDocument => { const d = base(); fn(d); return d; };
 const major = (...reasons: string[]): BumpDecision => ({ bump: "MAJOR", reasons });
 const minor = (...reasons: string[]): BumpDecision => ({ bump: "MINOR", reasons });
+const patch: BumpDecision = { bump: "PATCH", reasons: [] };
 const REPS: Reps = { OrderCreated: "avro", RefundIssued: "json-schema" };
 
 describe("a changed effective representation is MAJOR", () => {
@@ -64,13 +65,13 @@ describe("a changed effective representation is MAJOR", () => {
   });
 
   it("an unchanged effective representation is not a change", () => {
-    expect(classifyEventBump(side(base(), REPS), side(base(), { ...REPS }))).toEqual(minor());
+    expect(classifyEventBump(side(base(), REPS), side(base(), { ...REPS }))).toEqual(patch);
   });
 
   it("choosing explicitly what Auto already resolved to is not a change (the effective format is the same)", () => {
     const prev = base();
     const next = mutated((d) => { d.messages[0].representation = "avro"; });
-    expect(classifyEventBump(side(prev, REPS), side(next, REPS))).toEqual(minor());
+    expect(classifyEventBump(side(prev, REPS), side(next, REPS))).toEqual(patch);
   });
 
   it("switching a message from Auto to a different explicit representation is MAJOR through the effective formats", () => {
@@ -104,12 +105,12 @@ describe("a changed effective representation is MAJOR", () => {
   });
 
   it("without supplied formats and without a representation change nothing is reported", () => {
-    expect(classifyEventBump(side(base()), side(base()))).toEqual(minor());
+    expect(classifyEventBump(side(base()), side(base()))).toEqual(patch);
   });
 
   it("a prototype member name is never read as a message's effective format", () => {
     const toString: Reps = {};
-    expect(classifyEventBump(side(base(), toString), side(base(), toString))).toEqual(minor());
+    expect(classifyEventBump(side(base(), toString), side(base(), toString))).toEqual(patch);
   });
 });
 
@@ -131,7 +132,7 @@ describe("the channel's explicit format, now optional", () => {
 
   it("explicit → Auto with the same effective formats on both sides is not a change", () => {
     const next = mutated((d) => { delete d.channels[0].format; });
-    expect(classifyEventBump(side(base(), REPS), side(next, REPS))).toEqual(minor());
+    expect(classifyEventBump(side(base(), REPS), side(next, REPS))).toEqual(patch);
   });
 
   it("explicit → Auto that changes a message's effective format is reported once, as the message's representation", () => {
@@ -148,7 +149,7 @@ describe("the channel's explicit format, now optional", () => {
   });
 
   it("two channels that both have no format are compared like any other channel", () => {
-    expect(classifyEventBump(side(base()), side(base()))).toEqual(minor());
+    expect(classifyEventBump(side(base()), side(base()))).toEqual(patch);
     const next = mutated((d) => { d.channels[1].address = "payments.refunds.v2"; });
     expect(classifyEventBump(side(base()), side(next)).bump).toBe("MAJOR");
   });
@@ -210,6 +211,6 @@ describe("AsyncAPI properties that are MINOR when they are all that changed", ()
 
   it("origin stays ignored", () => {
     const next = mutated((d) => { d.channels[0].origin = { provider: "confluent", ref: "lkc-1", syncedAt: "2026-10-15T00:00:00Z" }; });
-    expect(classifyEventBump(side(base(), REPS), side(next, REPS))).toEqual(minor());
+    expect(classifyEventBump(side(base(), REPS), side(next, REPS))).toEqual(patch);
   });
 });
