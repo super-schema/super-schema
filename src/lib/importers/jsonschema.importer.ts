@@ -55,6 +55,7 @@ import type {
   ParsedFieldConstraint,
   ImportConfidence,
   MultiEntityImportResult,
+  ParsedScalar,
   ParsedUnion,
 } from "./types";
 import { IMPORTED_ENTITY_FALLBACK_NAME } from "./types";
@@ -2090,6 +2091,42 @@ function unwrapRootArray(schema: JsonSchemaNode, sourceName?: string): { schema:
   };
 }
 
+const PRIMITIVE_ROOT_TYPES = new Set(["string", "integer", "number", "boolean"]);
+
+/** A schema that only constrains a primitive (no properties, enum, const, combinator or `$ref`): a shared scalar, not an entity. */
+function isPrimitiveScalarSchema(node: JsonSchemaNode): boolean {
+  const { base } = normalizeType(node.type);
+  if (base === undefined || !PRIMITIVE_ROOT_TYPES.has(base)) return false;
+  if (node.properties !== undefined || node.enum !== undefined || node.const !== undefined || typeof node.$ref === "string") return false;
+  return !Array.isArray(node.allOf) && !Array.isArray(node.oneOf) && !Array.isArray(node.anyOf);
+}
+
+/** The scalar a primitive-only schema defines: its type, format and constraints travel with it (and are copied onto every field that uses it). */
+function buildParsedScalar(name: string, node: JsonSchemaNode, ctx: ResolveContext, warnings: string[]): ParsedScalar {
+  const resolved = resolveSchemaType(node, ctx);
+  const { constraints, minValueExclusive, maxValueExclusive } = extractConstraints(node);
+  const applicable = constraints.filter((c) => c.type !== "minItems" && c.type !== "maxItems");
+  const kept: ParsedFieldConstraint[] = [];
+  for (const c of applicable) {
+    if (constraintAppliesTo(resolved.type, c.type as ConstraintKind)) kept.push(c);
+    else warnings.push(`Scalar \`${name}\`: constraint \`${c.type}\` was not applied to ${resolved.type} (the TypeSpec type does not accept it).`);
+  }
+  const scalar: ParsedScalar = {
+    name,
+    baseType: getTypeInfo(resolved.type)?.typespecScalar ?? resolved.type,
+    logicalType: resolved.type,
+  };
+  if (typeof node.description === "string" && node.description.trim()) scalar.description = node.description;
+  if (resolved.format) scalar.format = resolved.format;
+  if (kept.length > 0) scalar.constraints = kept;
+  if (minValueExclusive !== undefined && constraintAppliesTo(resolved.type, "minValueExclusive")) scalar.minValueExclusive = minValueExclusive;
+  if (maxValueExclusive !== undefined && constraintAppliesTo(resolved.type, "maxValueExclusive")) scalar.maxValueExclusive = maxValueExclusive;
+  if (node.deprecated === true) scalar.deprecated = true;
+  const extensions = captureExtensions(node, true);
+  if (extensions) scalar.extensions = extensions;
+  return scalar;
+}
+
 function importJsonSchemaDocument(content: string, outIndex?: Map<string, DefinitionIndexEntry>, budget?: ResolveBudget, sourceName?: string): Result<MultiEntityImportResult> {
   const { value: parsedRoot, message: rejected, tooBig } = parseStructured(content);
   if (parsedRoot === null) {
@@ -2134,6 +2171,8 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
   const rootEntityName = rootIsEntity ? deriveEntityName(schema, sourceName) : undefined;
   // A root `type: string` + `enum` is a shared enum of its own.
   const rootIsEnum = !rootIsEntity && rootBase === "string" && Array.isArray(schema.enum) && isStringEnum(schema.enum);
+  // A root that only constrains a primitive (`type: string` + pattern / format / length ...) is a shared scalar of its own.
+  const rootIsScalar = !rootIsEntity && !rootIsEnum && isPrimitiveScalarSchema(schema);
   const { definitions, taken } = indexDefinitions(schema, rootEntityName);
   const warnings: string[] = [...rootNotes];
   const unions: ParsedUnion[] = [];
@@ -2177,6 +2216,8 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
 
   const enums: ParsedEnum[] = [];
   if (rootIsEnum) enums.push(buildParsedEnum(deriveEntityName(schema, sourceName), schema, warnings));
+  const scalars: ParsedScalar[] = [];
+  if (rootIsScalar) scalars.push(buildParsedScalar(deriveEntityName(schema, sourceName), schema, ctx, warnings));
   const sharedUnions: ParsedUnion[] = [];
   for (const def of definitions.values()) {
     if (def.kind === "entity") {
@@ -2218,7 +2259,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     for (const [pointer, def] of definitions) outIndex.set(pointer, { kind: def.kind, assetName: def.assetName });
   }
 
-  if (entities.length === 0 && enums.length === 0) {
+  if (entities.length === 0 && enums.length === 0 && scalars.length === 0) {
     return err({
       code: "PARSE_ERROR",
       message: "JSON Schema has no properties to import",
@@ -2295,7 +2336,8 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     entities,
     ...(rootIsEntity && rootEntityName ? { rootEntityName } : {}),
     enums,
-    scalars: [],
+    scalars,
+    ...(scalars.length > 0 ? { rootScalarName: scalars[0].name } : {}),
     unions: [...sharedUnions, ...unions],
     warnings,
   };

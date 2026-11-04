@@ -34,9 +34,12 @@ describe("root-level enum", () => {
     expect(parse(noTitle).enums[0].name).toBe("Gender");
   });
 
-  it("still refuses a root primitive that is not an enum", () => {
+  it("imports a root primitive that is not an enum as a shared scalar", () => {
     const result = parseJsonSchemaDocument(JSON.stringify({ title: "RootString", type: "string", minLength: 3 }));
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.entities).toHaveLength(0);
+    expect(result.data.scalars.map((s) => s.name)).toEqual(["RootString"]);
   });
 
   it("is detected as JSON Schema without a $schema keyword", () => {

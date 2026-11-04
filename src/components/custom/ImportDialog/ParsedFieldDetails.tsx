@@ -346,6 +346,7 @@ export const ParsedFieldDetails = memo(function ParsedFieldDetails({ field, enti
           {field.governance?.dataClass && <Row label="Data class">{field.governance.dataClass}</Row>}
           {field.governance?.dataCategory && <Row label="Data category">{field.governance.dataCategory}</Row>}
           {field.enumName && <Row label="Enum">{field.enumName}</Row>}
+          {field.scalarName && <Row label="Scalar">{field.scalarName}</Row>}
           {field.enumValues && field.enumValues.length > 0 && (
             <Row label="Enum values">{field.enumValues.join(", ")}</Row>
           )}
