@@ -1993,7 +1993,7 @@ export function parseJsonSchemaDocument(rawContent: string, budget?: ResolveBudg
 
 /** A named `$defs` / `definitions` entry of a parsed document, as the importer classified and named it. */
 export interface DefinitionIndexEntry {
-  kind: "entity" | "enum" | "union" | "inline";
+  kind: "entity" | "enum" | "union" | "inline" | "scalar";
   assetName: string;
 }
 

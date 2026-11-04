@@ -45,7 +45,7 @@ import {
   type ResolvedRefs,
   type ResolverDeps,
 } from "./jsonschema-ref-resolver";
-import type { MultiEntityImportResult, ParsedEntity, ParsedEnum, ParsedField, ParsedUnion } from "./types";
+import type { MultiEntityImportResult, ParsedEntity, ParsedEnum, ParsedField, ParsedScalar, ParsedUnion } from "./types";
 
 export interface UrlImportDeps extends ResolverDeps {
   /** Test seam: replaces `resolveJsonSchemaRefs`. */
@@ -79,7 +79,7 @@ interface FileIndex {
 }
 
 type Target =
-  | { ok: true; kind: "entity" | "enum" | "union"; name: string }
+  | { ok: true; kind: "entity" | "enum" | "union" | "scalar"; name: string }
   | { ok: false; reason: string; resolvedUri: string; loadFailure: boolean };
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -223,6 +223,9 @@ function buildFile(
     if (first.success && first.data.doc.rootEntityName) {
       return { ok: true, built: toBuilt(first.data.doc, first.data.definitions, first.data.doc.rootEntityName, "entity") };
     }
+    if (first.success && first.data.doc.rootScalarName) {
+      return { ok: true, built: toBuilt(first.data.doc, first.data.definitions, first.data.doc.rootScalarName, "scalar") };
+    }
     const isNonObjectRoot =
       Array.isArray(rewritten.enum) || Array.isArray(rewritten.oneOf) || Array.isArray(rewritten.anyOf);
     if (isNonObjectRoot && (!first.success || !first.data.doc.rootEntityName)) {
@@ -317,6 +320,7 @@ function applyRenames(built: BuiltFile, renames: Map<string, string>): void {
     }
   }
   for (const e of built.doc.enums) e.name = name(e.name)!;
+  for (const sc of built.doc.scalars) sc.name = name(sc.name)!;
   for (const u of built.doc.unions ?? []) {
     u.name = name(u.name)!;
     u.memberTypes = u.memberTypes.map(member);
@@ -401,6 +405,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
   const entities: ParsedEntity[] = [];
   const enums: ParsedEnum[] = [];
   const unions: ParsedUnion[] = [];
+  const scalars: ParsedScalar[] = [];
   let rootEntityName: string | undefined;
 
   // One visit budget for the whole import: every document is resolved on the event loop, so the sum is what could block it.
@@ -433,6 +438,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
     for (const e of file.doc.entities) claim(e.name);
     for (const e of file.doc.enums) claim(e.name);
     for (const u of file.doc.unions ?? []) claim(u.name);
+    for (const sc of file.doc.scalars) claim(sc.name);
     applyRenames(file, renames);
     for (const e of file.doc.entities) {
       e.originalContent = d.original;
@@ -440,6 +446,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
     }
     enums.push(...file.doc.enums);
     unions.push(...(file.doc.unions ?? []));
+    scalars.push(...file.doc.scalars);
     fileWarnings.push(...file.doc.warnings);
     indexByUri.set(hrefOf(d.uri), file.index);
     if (d.isRoot && file.index.rootKind === "entity") rootEntityName = file.index.rootName;
@@ -453,6 +460,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
   for (const k of resolved.keys()) resolvedHrefs.add(hrefOf(k));
   const enumByName = new Map(enums.map((e) => [e.name, e]));
   const unionByName = new Map(unions.map((u) => [u.name, u]));
+  const scalarByName = new Map(scalars.map((sc) => [sc.name, sc]));
   const targets = new Map<string, Target>();
   const reportedTargets = new Set<string>();
 
@@ -570,6 +578,12 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
       f.referencedEntityName = t.name;
       return;
     }
+    if (t.kind === "scalar") {
+      applyScalarToField(f, scalarByName.get(t.name), t.name, isArray);
+      delete f.referencedEntityName;
+      f.confidence = "high";
+      return;
+    }
     if (t.kind === "enum") {
       const target = enumByName.get(t.name);
       if (isArray) f.arrayElementType = "enum";
@@ -601,7 +615,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
 
   breakInheritanceCycles(entities, warnings);
 
-  if (entities.length === 0 && enums.length === 0 && unions.length === 0) {
+  if (entities.length === 0 && enums.length === 0 && unions.length === 0 && scalars.length === 0) {
     return fail(
       "PARSE_ERROR",
       "JSON Schema has no properties to import",
@@ -620,7 +634,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
     entities,
     ...(rootEntityName ? { rootEntityName } : {}),
     enums,
-    scalars: [],
+    scalars,
     unions,
     warnings,
   };
@@ -628,6 +642,32 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
   const tooLarge = importResponseTooLargeMessage(result, sourceChars);
   if (tooLarge) return fail("PARSE_ERROR", tooLarge, "Reference large enums, patterns and constants from fewer fields, or import fewer documents.");
   return ok(result);
+}
+
+/**
+ * A field that `$ref`s a scalar file: the scalar's type, format and constraints are copied onto the field (so every renderer works
+ * unchanged) and `scalarName` records the link, so editing the scalar later can update every field that uses it. An array of scalars
+ * records the element type only (constraints of the scalar describe one element, which the field row cannot hold).
+ */
+export function applyScalarToField(f: ParsedField, scalar: ParsedScalar | undefined, name: string, isArray: boolean): void {
+  delete f.danglingRef;
+  f.scalarName = name;
+  const logical = scalar?.logicalType ?? scalar?.baseType ?? "string";
+  if (isArray) {
+    f.arrayElementType = logical;
+    return;
+  }
+  f.type = logical;
+  if (scalar?.format) f.format = scalar.format;
+  if (scalar?.constraints) {
+    const own = new Set((f.constraints ?? []).map((c) => c.type));
+    const merged = [...(f.constraints ?? []), ...scalar.constraints.filter((c) => !own.has(c.type))];
+    if (merged.length > 0) f.constraints = merged;
+  }
+  if (scalar?.minValueExclusive !== undefined && f.minValueExclusive === undefined) f.minValueExclusive = scalar.minValueExclusive;
+  if (scalar?.maxValueExclusive !== undefined && f.maxValueExclusive === undefined) f.maxValueExclusive = scalar.maxValueExclusive;
+  if (!f.description && scalar?.description) f.description = scalar.description;
+  if (scalar?.deprecated && !f.deprecated) f.deprecated = true;
 }
 
 function dedupe(names: string[]): string[] {
