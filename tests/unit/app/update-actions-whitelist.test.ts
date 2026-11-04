@@ -113,7 +113,8 @@ const DATA_TYPE_CASES = [
 
 describe.each(DATA_TYPE_CASES)("$label", ({ kind, model, update, legit, wrongType }) => {
   it("writes exactly the whitelisted columns of a row of the active tenant", async () => {
-    expect(await update("row-1", legit)).toEqual({ success: true });
+    // an enum / scalar edit also reports how many fields followed it (`updatedFields`)
+    expect(await update("row-1", legit)).toMatchObject({ success: true });
     expect(mockPrisma[model].update).toHaveBeenCalledTimes(1);
     expect(mockPrisma[model].update).toHaveBeenCalledWith({ where: { id: "row-1" }, data: legit });
     expect(mockRevalidate).toHaveBeenCalledWith("/schemas");

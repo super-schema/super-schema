@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Hash, Sigma, GitMerge, Plus, X, Trash2 } from "lucide-react";
+import { Hash, Sigma, GitMerge, Plus, X, Trash2, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,12 +14,25 @@ import {
   updateSharedEnumAction,
   deleteSharedEnumAction,
   createCustomScalarAction,
+  updateCustomScalarAction,
   deleteCustomScalarAction,
   createUnionTypeAction,
   updateUnionTypeAction,
   deleteUnionTypeAction,
 } from "../actions";
 import { pluralize } from "@/lib/pluralize";
+import { Textarea } from "@/components/ui/textarea";
+import { SCALAR_CONSTRAINT_KEYS, type ScalarConstraints } from "@/lib/importers/scalar-asset";
+import {
+  baseTypeOptions,
+  boundApplies,
+  CONSTRAINT_LABELS,
+  enumUpdateFrom,
+  savedMessage,
+  scalarFormFrom,
+  scalarUpdateFrom,
+  type ScalarFormValue,
+} from "./data-type-edit";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,14 +43,20 @@ export interface SharedEnumData {
   name: string;
   values: string[];
   description: string;
+  /** Per-symbol descriptions (JSON Schema `x-enum`), symbol -> text. */
+  valueDescriptions?: Record<string, string>;
 }
 
 export interface CustomScalarData {
   id: string;
   name: string;
   baseType: string;
+  /** Logical type a field using the scalar gets, when it differs from the base type's own. */
+  logicalType?: string | null;
   format: string | null;
   pattern: string | null;
+  /** Bounds besides `pattern` (min/max length and value). */
+  constraints?: ScalarConstraints;
   description: string;
 }
 
@@ -346,24 +365,10 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
               )}
 
               {customScalars.map((s) => (
-                <div key={s.id} data-testid="data-type-card" data-kind="scalar" data-name={s.name} className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/scalar">
-                  <div className="flex items-center gap-space-2">
-                    <span className="font-mono text-body-small text-foreground font-medium">{s.name}</span>
-                    <ScalarTypeBadges s={s} />
-                    <button
-                      onClick={() => deleteDialog.ask(s.name, async () => {
-                        const r = await deleteCustomScalarAction(s.id);
-                        if (r.error) toast.error(r.error); else { void invalidateDomainsTree(); toast.success(`Scalar "${s.name}" deleted`); }
-                      })}
-                      data-testid="data-type-delete"
-                      aria-label={`Delete ${s.name}`}
-                      className="ml-auto opacity-0 group-hover/scalar:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                  {s.description && <p className="text-caption text-muted-foreground mt-1">{s.description}</p>}
-                </div>
+                <ScalarCard key={s.id} s={s} onDelete={(name) => deleteDialog.ask(name, async () => {
+                  const r = await deleteCustomScalarAction(s.id);
+                  if (r.error) toast.error(r.error); else { void invalidateDomainsTree(); toast.success(`Scalar "${name}" deleted`); }
+                })} />
               ))}
             </div>
           )}
@@ -422,6 +427,11 @@ function ScalarTypeBadges({ s }: { s: CustomScalarData }) {
       <Badge variant="secondary" className="text-[10px] h-4 px-1.5 font-mono">{s.baseType}</Badge>
       {s.format && <Badge variant="outline" className="text-[10px] h-4 px-1.5 font-mono">format: {s.format}</Badge>}
       {s.pattern && <Badge variant="outline" className="text-[10px] h-4 px-1.5 font-mono">pattern: {s.pattern}</Badge>}
+      {SCALAR_CONSTRAINT_KEYS.filter((k) => s.constraints?.[k] !== undefined).map((k) => (
+        <Badge key={k} variant="outline" data-testid="scalar-constraint" data-constraint={k} className="text-[10px] h-4 px-1.5 font-mono">
+          {k}: {s.constraints![k]}
+        </Badge>
+      ))}
     </>
   );
 }
@@ -495,6 +505,29 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
   const [values, setValues] = useState(e.values);
   const [isAdding, setIsAdding] = useState(false);
   const [newValue, setNewValue] = useState("");
+  // What is shown (the last saved state) and the edit form's draft of it.
+  const [saved, setSaved] = useState({ description: e.description, valueDescriptions: e.valueDescriptions ?? {} });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(saved);
+  const [saving, setSaving] = useState(false);
+  const described = values.filter((v) => saved.valueDescriptions[v]);
+
+  function startEdit() {
+    setDraft(saved);
+    setEditing(true);
+  }
+
+  async function saveEdit() {
+    const update = enumUpdateFrom(values, draft);
+    setSaving(true);
+    const result = await updateSharedEnumAction(e.id, update);
+    setSaving(false);
+    if (result.error) { toast.error(result.error); return; }
+    setSaved({ description: update.description, valueDescriptions: update.valueDescriptions ?? {} });
+    setEditing(false);
+    void invalidateDomainsTree();
+    toast.success(savedMessage("Enum", e.name, result.updatedFields));
+  }
 
   async function addValue() {
     const trimmed = newValue.trim();
@@ -504,14 +537,14 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
     setNewValue("");
     setIsAdding(false);
     const result = await updateSharedEnumAction(e.id, { values: updated });
-    if (result.error) { toast.error(result.error); setValues(e.values); } else { void invalidateDomainsTree(); }
+    if (result.error) { toast.error(result.error); setValues(e.values); } else { void invalidateDomainsTree(); if (result.updatedFields) toast.success(savedMessage("Enum", e.name, result.updatedFields)); }
   }
 
   async function removeValue(val: string) {
     const updated = values.filter((v) => v !== val);
     setValues(updated);
     const result = await updateSharedEnumAction(e.id, { values: updated });
-    if (result.error) { toast.error(result.error); setValues(e.values); } else { void invalidateDomainsTree(); }
+    if (result.error) { toast.error(result.error); setValues(e.values); } else { void invalidateDomainsTree(); if (result.updatedFields) toast.success(savedMessage("Enum", e.name, result.updatedFields)); }
   }
 
   return (
@@ -519,19 +552,59 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
       <div className="flex items-center gap-space-2 mb-1">
         <span className="font-mono text-body-small text-foreground font-medium">{e.name}</span>
         <Badge variant="secondary" className="text-[10px] h-4 px-1">{pluralize(values.length, "value")}</Badge>
+        {described.length > 0 && <Badge variant="outline" className="text-[10px] h-4 px-1" data-testid="enum-described-count">{described.length} described</Badge>}
+        <button
+          onClick={startEdit}
+          data-testid="data-type-edit"
+          aria-label={`Edit ${e.name}`}
+          className="ml-auto opacity-0 group-hover/enum:opacity-100 focus:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
         <button
           onClick={() => onDelete(e.name)}
           data-testid="data-type-delete"
           aria-label={`Delete ${e.name}`}
-          className="ml-auto opacity-0 group-hover/enum:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+          className="opacity-0 group-hover/enum:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
-      {e.description && <p className="text-caption text-muted-foreground mb-1.5">{e.description}</p>}
+      {editing ? (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2 mb-2" data-testid="data-type-edit-form" data-kind="enum">
+          <label className="block text-caption text-muted-foreground">
+            Description
+            <Textarea value={draft.description} onChange={(ev) => setDraft({ ...draft, description: ev.target.value })} aria-label="Enum description" data-testid="data-type-edit-description" className="mt-1 min-h-14 text-caption" />
+          </label>
+          <div className="text-caption text-muted-foreground">Value descriptions</div>
+          {values.length === 0 && <p className="text-caption text-muted-foreground italic">No values yet</p>}
+          <div className="space-y-1">
+            {values.map((v) => (
+              <div key={v} className="flex items-center gap-2">
+                <span className="w-40 shrink-0 truncate font-mono text-[11px] text-foreground" title={v}>{v}</span>
+                <Input
+                  value={draft.valueDescriptions[v] ?? ""}
+                  onChange={(ev) => setDraft({ ...draft, valueDescriptions: { ...draft.valueDescriptions, [v]: ev.target.value } })}
+                  placeholder="What this value means"
+                  aria-label={`Description of ${v}`}
+                  data-testid="enum-value-description"
+                  data-member={v}
+                  className="h-7 text-caption"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-1">
+            <Button variant="ghost" size="sm" className="h-6 text-[10px]" data-testid="data-type-edit-cancel" onClick={() => setEditing(false)} disabled={saving}>Cancel</Button>
+            <Button size="sm" className="h-6 text-[10px]" data-testid="data-type-edit-save" onClick={saveEdit} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+          </div>
+        </div>
+      ) : (
+        saved.description && <p className="text-caption text-muted-foreground mb-1.5">{saved.description}</p>
+      )}
       <div className="flex flex-wrap gap-1">
         {values.map((v) => (
-          <Badge key={v} variant="outline" data-testid="data-type-member" data-member={v} className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
+          <Badge key={v} variant="outline" data-testid="data-type-member" data-member={v} title={saved.valueDescriptions[v]} className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
             {v}
             <button onClick={() => removeValue(v)} aria-label={`Remove ${v}`} className="hover:text-destructive ml-0.5"><X className="w-2.5 h-2.5" /></button>
           </Badge>
@@ -547,6 +620,133 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
           </button>
         )}
       </div>
+      {!editing && described.length > 0 && (
+        <details className="mt-1.5" data-testid="enum-value-descriptions">
+          <summary className="cursor-pointer text-caption text-muted-foreground hover:text-foreground">Value descriptions</summary>
+          <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+            {described.map((v) => (
+              <div key={v} className="contents">
+                <dt className="font-mono text-[11px] text-foreground">{v}</dt>
+                <dd className="text-caption text-muted-foreground">{saved.valueDescriptions[v]}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Editable Scalar Card: base type, format, pattern and bounds; saving updates every field that uses the scalar
+// ---------------------------------------------------------------------------
+
+function ScalarCard({ s, onDelete }: { s: CustomScalarData; onDelete: (name: string) => void }) {
+  const invalidateDomainsTree = useInvalidateDomainsTree();
+  const [shown, setShown] = useState(s);
+  const [form, setForm] = useState<ScalarFormValue | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    if (!form) return;
+    const built = scalarUpdateFrom(form, shown);
+    if (!built.ok) { setError(built.error); return; }
+    setError(null);
+    setSaving(true);
+    const result = await updateCustomScalarAction(s.id, built.update);
+    setSaving(false);
+    if (result.error) { toast.error(result.error); return; }
+    setShown({ ...shown, ...built.update, constraints: built.update.constraints ?? undefined });
+    setForm(null);
+    void invalidateDomainsTree();
+    toast.success(savedMessage("Scalar", s.name, result.updatedFields));
+  }
+
+  const field = (label: string, input: React.ReactNode) => (
+    <label className="block text-caption text-muted-foreground">
+      {label}
+      <div className="mt-0.5">{input}</div>
+    </label>
+  );
+
+  return (
+    <div data-testid="data-type-card" data-kind="scalar" data-name={s.name} className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/scalar">
+      <div className="flex items-center gap-space-2 flex-wrap">
+        <span className="font-mono text-body-small text-foreground font-medium">{s.name}</span>
+        <ScalarTypeBadges s={shown} />
+        <button
+          onClick={() => { setForm(scalarFormFrom(shown)); setError(null); }}
+          data-testid="data-type-edit"
+          aria-label={`Edit ${s.name}`}
+          className="ml-auto opacity-0 group-hover/scalar:opacity-100 focus:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => onDelete(s.name)}
+          data-testid="data-type-delete"
+          aria-label={`Delete ${s.name}`}
+          className="opacity-0 group-hover/scalar:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      {form ? (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2 mt-2" data-testid="data-type-edit-form" data-kind="scalar">
+          {field("Description", <Textarea value={form.description} onChange={(ev) => setForm({ ...form, description: ev.target.value })} aria-label="Scalar description" data-testid="data-type-edit-description" className="min-h-14 text-caption" />)}
+          <div className="grid grid-cols-2 gap-2">
+            {field("Extends", (
+              <select value={form.baseType} onChange={(ev) => setForm({ ...form, baseType: ev.target.value })} aria-label="Scalar base type" data-testid="scalar-edit-base" className="h-7 w-full rounded-lg border border-border bg-popover px-2 text-caption font-mono">
+                {baseTypeOptions(shown.baseType).map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            ))}
+            {field("Format", <Input value={form.format} onChange={(ev) => setForm({ ...form, format: ev.target.value })} placeholder="e.g. email, uuid" aria-label="Scalar format" data-testid="scalar-edit-format" className="h-7 font-mono text-caption" />)}
+          </div>
+          {field("Pattern", (
+            <Input
+              value={form.pattern}
+              onChange={(ev) => setForm({ ...form, pattern: ev.target.value })}
+              placeholder={boundApplies(form, shown, "pattern") ? "^[A-Z]{2}$" : `not available on ${form.baseType}`}
+              disabled={!boundApplies(form, shown, "pattern") && form.pattern === ""}
+              aria-label="Scalar pattern"
+              data-testid="scalar-edit-pattern"
+              className="h-7 font-mono text-caption"
+            />
+          ))}
+          <div className="grid grid-cols-2 gap-2">
+            {SCALAR_CONSTRAINT_KEYS.map((key) => {
+              const applies = boundApplies(form, shown, key);
+              return (
+                <div key={key}>
+                  {field(CONSTRAINT_LABELS[key], (
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      value={form.bounds[key]}
+                      onChange={(ev) => setForm({ ...form, bounds: { ...form.bounds, [key]: ev.target.value } })}
+                      disabled={!applies}
+                      placeholder={applies ? "none" : `not on ${form.baseType}`}
+                      aria-label={CONSTRAINT_LABELS[key]}
+                      data-testid="scalar-edit-bound"
+                      data-constraint={key}
+                      className="h-7 font-mono text-caption"
+                    />
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+          {error && <p role="alert" className="text-caption text-destructive" data-testid="data-type-edit-error">{error}</p>}
+          <p className="text-caption text-muted-foreground">Saving updates every field that uses this scalar.</p>
+          <div className="flex justify-end gap-1">
+            <Button variant="ghost" size="sm" className="h-6 text-[10px]" data-testid="data-type-edit-cancel" onClick={() => setForm(null)} disabled={saving}>Cancel</Button>
+            <Button size="sm" className="h-6 text-[10px]" data-testid="data-type-edit-save" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+          </div>
+        </div>
+      ) : (
+        shown.description && <p className="text-caption text-muted-foreground mt-1">{shown.description}</p>
+      )}
     </div>
   );
 }

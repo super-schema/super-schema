@@ -74,8 +74,7 @@ describe("DomainTypesTab refreshes the explorer tree", () => {
 
   it("after deleting an enum", async () => {
     renderTypes();
-    const card = screen.getByText("Status").parentElement!;
-    fireEvent.click(card.querySelector("button")!);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Status" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(actions.deleteSharedEnumAction).toHaveBeenCalledWith("en1"));
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));

@@ -10,6 +10,9 @@ import { readDanglingMarker } from "@/lib/field-dangling";
 import { withoutReferenceKeys, writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
 import { sameAssetName } from "@/lib/importers/asset-name-match";
 import { applyScalarToField, type ScalarFacts } from "@/lib/importers/scalar-asset";
+import { readValueDescriptions } from "@/lib/importers/enum-value-descriptions";
+
+export { readValueDescriptions };
 
 type Target = { id: string; name: string; sourceRef?: string };
 
@@ -49,13 +52,6 @@ async function placeOf(tx: Prisma.TransactionClient, productId: string): Promise
 
 type EnumTarget = { name: string; values: string[]; valueDescriptions?: Record<string, string>; sourceRef?: string | null };
 
-/** The `valueDescriptions` column as a symbol -> text map (it comes from stored JSON). */
-export function readValueDescriptions(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(value)) if (typeof v === "string" && v !== "") out[k] = v;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
 
 /** The field once it points at the shared enum `target` instead of at a file nothing answered: an enum field, or an array of enum symbols. Pure. */
 export function linkFieldToEnum(field: CreateFieldInput, target: EnumTarget): CreateFieldInput {
@@ -293,6 +289,49 @@ export async function cascadeScalarToFields(tx: Prisma.TransactionClient, args: 
     const next = applyScalarToField({ type: row.type, decorators }, args.scalar.name, args.scalar, isElement);
     if (next.type === row.type && JSON.stringify(next.decorators) === JSON.stringify(decorators)) continue;
     await tx.field.update({ where: { id: row.id }, data: { type: next.type, decorators: next.decorators as Prisma.InputJsonObject } });
+    touched.add(row.entityId);
+    updated += 1;
+  }
+  if (touched.size > 0) await tx.entity.updateMany({ where: { id: { in: [...touched] } }, data: { hasUnpublishedChanges: true } });
+  return updated;
+}
+
+/**
+ * A shared enum was edited: every field of the domain that records it (`decorators.enumName`) takes its symbols and per-symbol descriptions
+ * again, so the enum is the one place they are edited. An enum field keeps its symbols in `aliases` (verbatim) and in the `pattern` slot
+ * ("A|B", read by older rows); an array / map of the enum in `decorators.enumValues`. Entities whose fields changed are marked as having
+ * unpublished changes. Returns the number of fields updated.
+ */
+export async function cascadeEnumToFields(
+  tx: Prisma.TransactionClient,
+  args: { domainId: string; enum: { name: string; values: string[]; valueDescriptions?: Record<string, string> | null } },
+): Promise<number> {
+  const rows = await tx.field.findMany({
+    where: { entity: { domainId: args.domainId }, decorators: { path: ["enumName"], equals: args.enum.name } },
+    select: { id: true, entityId: true, type: true, aliases: true, decorators: true },
+  });
+  const descriptions = readValueDescriptions(args.enum.valueDescriptions);
+  const kept = descriptions ? Object.fromEntries(Object.entries(descriptions).filter(([symbol]) => args.enum.values.includes(symbol))) : undefined;
+  const touched = new Set<string>();
+  let updated = 0;
+  for (const row of rows) {
+    const before = (row.decorators ?? {}) as Record<string, unknown>;
+    const decorators: Record<string, unknown> = { ...before };
+    let aliases = row.aliases;
+    if (row.type === "enum") {
+      const typespec = (decorators.typespec && typeof decorators.typespec === "object" ? { ...(decorators.typespec as Record<string, unknown>) } : {}) as Record<string, unknown>;
+      const validation = (typespec.validation && typeof typespec.validation === "object" ? { ...(typespec.validation as Record<string, unknown>) } : {}) as Record<string, unknown>;
+      validation.pattern = args.enum.values.join("|");
+      typespec.validation = validation;
+      decorators.typespec = typespec;
+      aliases = [...args.enum.values];
+    } else {
+      decorators.enumValues = [...args.enum.values];
+    }
+    if (kept && Object.keys(kept).length > 0) decorators.enumValueDescriptions = kept;
+    else delete decorators.enumValueDescriptions;
+    if (JSON.stringify(decorators) === JSON.stringify(before) && JSON.stringify(aliases) === JSON.stringify(row.aliases)) continue;
+    await tx.field.update({ where: { id: row.id }, data: { decorators: decorators as Prisma.InputJsonObject, aliases } });
     touched.add(row.entityId);
     updated += 1;
   }

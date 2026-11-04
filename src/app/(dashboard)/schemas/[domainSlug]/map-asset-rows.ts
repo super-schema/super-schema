@@ -1,4 +1,6 @@
 import { assetHref } from "@/lib/navigation/asset-href";
+import { readScalarConstraints } from "@/lib/importers/scalar-asset";
+import { readValueDescriptions } from "@/lib/importers/enum-value-descriptions";
 import type {
   CustomScalarData,
   InheritedDataTypes,
@@ -18,14 +20,17 @@ interface SharedEnumRow {
   name: string;
   values: string[];
   description: string;
+  valueDescriptions?: unknown;
 }
 
 interface CustomScalarRow {
   id: string;
   name: string;
   baseType: string;
+  logicalType?: string | null;
   format: string | null;
   pattern: string | null;
+  constraints?: unknown;
   description: string;
 }
 
@@ -70,6 +75,7 @@ export function mapSharedEnumRows(rows: SharedEnumRow[]): SharedEnumData[] {
     name: e.name,
     values: e.values,
     description: e.description,
+    ...(readValueDescriptions(e.valueDescriptions) ? { valueDescriptions: readValueDescriptions(e.valueDescriptions) } : {}),
   }));
 }
 
@@ -78,8 +84,10 @@ export function mapCustomScalarRows(rows: CustomScalarRow[]): CustomScalarData[]
     id: s.id,
     name: s.name,
     baseType: s.baseType,
+    logicalType: s.logicalType ?? null,
     format: s.format,
     pattern: s.pattern,
+    constraints: readScalarConstraints(s.constraints),
     description: s.description,
   }));
 }

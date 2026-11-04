@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { cascadeScalarToFields, linkFieldToEnum, linkFields, linkImportedEntity, pickByName, relinkDanglingFields, relinkDanglingFieldsToEnum, relinkDanglingFieldsToScalar } from "@/services/imported-links";
+import { cascadeEnumToFields, cascadeScalarToFields, linkFieldToEnum, linkFields, linkImportedEntity, pickByName, relinkDanglingFields, relinkDanglingFieldsToEnum, relinkDanglingFieldsToScalar } from "@/services/imported-links";
 import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 
 const place = { domain: "CDS", product: "customer" };
@@ -235,5 +235,38 @@ describe("a dangling reference to an enum file", () => {
     expect(await relinkDanglingFieldsToEnum(db as never, { domainId: "d1", enum: ORTHOGRAPHY })).toBe(1);
     expect(update).toHaveBeenCalledTimes(1);
     expect(update.mock.calls[0][0]).toMatchObject({ where: { id: "f1" }, data: { type: "enum", decorators: { enumName: "Orthography" } } });
+  });
+});
+
+describe("cascadeEnumToFields", () => {
+  it("re-derives symbols and descriptions on every field that records the enum, and flags the entities", async () => {
+    const update = vi.fn().mockResolvedValue({});
+    const updateMany = vi.fn().mockResolvedValue({});
+    const db = {
+      field: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "f1", entityId: "e1", type: "enum", aliases: ["A"], decorators: { enumName: "E", typespec: { validation: { pattern: "A" } } } },
+          { id: "f2", entityId: "e2", type: "array", aliases: [], decorators: { enumName: "E", arrayElementType: "enum", enumValues: ["A"], enumValueDescriptions: { A: "old" } } },
+          { id: "f3", entityId: "e3", type: "enum", aliases: ["A", "B"], decorators: { enumName: "E", enumValueDescriptions: { A: "a" }, typespec: { validation: { pattern: "A|B" } } } },
+        ]),
+        update,
+      },
+      entity: { updateMany },
+    };
+    const n = await cascadeEnumToFields(db as never, { domainId: "d1", enum: { name: "E", values: ["A", "B"], valueDescriptions: { A: "a", Z: "not a symbol" } } });
+    expect(n).toBe(2); // f3 already matches
+    expect(update.mock.calls[0][0]).toMatchObject({ where: { id: "f1" }, data: { aliases: ["A", "B"], decorators: { enumValueDescriptions: { A: "a" }, typespec: { validation: { pattern: "A|B" } } } } });
+    expect(update.mock.calls[1][0]).toMatchObject({ where: { id: "f2" }, data: { decorators: { enumValues: ["A", "B"], enumValueDescriptions: { A: "a" } } } });
+    expect(updateMany).toHaveBeenCalledWith({ where: { id: { in: ["e1", "e2"] } }, data: { hasUnpublishedChanges: true } });
+  });
+
+  it("clearing every description removes them from the fields", async () => {
+    const update = vi.fn().mockResolvedValue({});
+    const db = {
+      field: { findMany: vi.fn().mockResolvedValue([{ id: "f1", entityId: "e1", type: "array", aliases: [], decorators: { enumName: "E", enumValues: ["A"], enumValueDescriptions: { A: "x" } } }]), update },
+      entity: { updateMany: vi.fn() },
+    };
+    await cascadeEnumToFields(db as never, { domainId: "d1", enum: { name: "E", values: ["A"], valueDescriptions: null } });
+    expect(update.mock.calls[0][0].data.decorators).not.toHaveProperty("enumValueDescriptions");
   });
 });

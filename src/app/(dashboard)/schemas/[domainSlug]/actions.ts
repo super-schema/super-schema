@@ -23,7 +23,7 @@ import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
 import { createImportedEntities, entityExtensionsMetadata, existingEntityNames, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
-import { cascadeScalarToFields, EXTENDS_METADATA_KEY, linkImportedEntity, readValueDescriptions, relinkDanglingFields, relinkDanglingFieldsToEnum, relinkDanglingFieldsToScalar } from "@/services/imported-links";
+import { cascadeEnumToFields, cascadeScalarToFields, EXTENDS_METADATA_KEY, linkImportedEntity, readValueDescriptions, relinkDanglingFields, relinkDanglingFieldsToEnum, relinkDanglingFieldsToScalar } from "@/services/imported-links";
 import { readScalarConstraints, SCALAR_CONSTRAINT_KEYS, type ScalarConstraints } from "@/lib/importers/scalar-asset";
 import { builtInNameConflict } from "@/lib/compiler/built-in-names";
 import { renameBuiltInPayload } from "@/lib/builtin-entity-renames";
@@ -107,7 +107,9 @@ async function readableEntity(id: string): Promise<boolean> {
 }
 
 /** What the older asset actions answer: `{ success: true }`, or a failure `{ error }` with its code where there is one. */
-type AssetOutcome = { success: true; error?: undefined; code?: undefined } | { success?: undefined; error: string; code?: string };
+type AssetOutcome =
+  | { success: true; error?: undefined; code?: undefined; /** Fields re-derived from an edited shared enum / scalar. */ updatedFields?: number }
+  | { success?: undefined; error: string; code?: string; updatedFields?: undefined };
 
 /** The wire shape of the older (non-Result) actions: `{ error }` plus the failure code where there is one. */
 const failure = (error: ServiceError) => ({ error: error.message, code: error.code });
@@ -574,15 +576,21 @@ export async function updateSharedEnumAction(
     const access = await guardSubject("asset.write", { kind: "sharedEnum", id: id.data }, { label: "Enum" });
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     const { valueDescriptions, ...rest } = picked.data as Record<string, unknown>;
-    await prisma.sharedEnum.update({
-      where: { id: id.data },
-      data: {
-        ...rest,
-        ...(valueDescriptions !== undefined ? { valueDescriptions: valueDescriptions === null ? Prisma.DbNull : (valueDescriptions as Prisma.InputJsonObject) } : {}),
-      } as Prisma.SharedEnumUpdateInput,
-    });
+    // The enum is the one place its symbols and their descriptions are edited: every field that uses it (`decorators.enumName`) follows.
+    const updatedFields = await prisma.$transaction(async (tx) => {
+      const row = await tx.sharedEnum.update({
+        where: { id: id.data },
+        data: {
+          ...rest,
+          ...(valueDescriptions !== undefined ? { valueDescriptions: valueDescriptions === null ? Prisma.DbNull : (valueDescriptions as Prisma.InputJsonObject) } : {}),
+        } as Prisma.SharedEnumUpdateInput,
+      });
+      return row.domainId
+        ? cascadeEnumToFields(tx, { domainId: row.domainId, enum: { name: row.name, values: row.values, valueDescriptions: readValueDescriptions(row.valueDescriptions) } })
+        : 0;
+    }, IMPORT_TRANSACTION_OPTIONS);
     revalidatePath("/schemas");
-    return { success: true };
+    return { success: true, updatedFields };
   } catch (e: unknown) {
     return { ...unexpectedFailure("updateSharedEnumAction", e) };
   }
@@ -667,18 +675,18 @@ export async function updateCustomScalarAction(
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
     // The scalar is the one place its type, format and bounds are edited: every field that uses it (`decorators.scalarName`) follows, in the
     // same transaction.
-    await prisma.$transaction(async (tx) => {
+    const updatedFields = await prisma.$transaction(async (tx) => {
       const { constraints, ...rest } = picked.data as Record<string, unknown>;
       const row = await tx.customScalar.update({
         where: { id: id.data },
         data: { ...rest, ...(constraints !== undefined ? { constraints: constraints === null ? Prisma.DbNull : (constraints as Prisma.InputJsonObject) } : {}) } as Prisma.CustomScalarUpdateInput,
       });
-      if (row.domainId) {
-        await cascadeScalarToFields(tx, { domainId: row.domainId, scalar: { name: row.name, baseType: row.baseType, logicalType: row.logicalType, format: row.format, pattern: row.pattern, constraints: row.constraints } });
-      }
+      return row.domainId
+        ? cascadeScalarToFields(tx, { domainId: row.domainId, scalar: { name: row.name, baseType: row.baseType, logicalType: row.logicalType, format: row.format, pattern: row.pattern, constraints: row.constraints } })
+        : 0;
     }, IMPORT_TRANSACTION_OPTIONS);
     revalidatePath("/schemas");
-    return { success: true };
+    return { success: true, updatedFields };
   } catch (e: unknown) {
     return { ...unexpectedFailure("updateCustomScalarAction", e) };
   }
