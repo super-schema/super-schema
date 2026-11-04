@@ -70,6 +70,7 @@ function toEntityInput(model: ParsedEntity & { extends?: string; tags?: string[]
     ...toModelInput(model),
     ...(model.tags && model.tags.length > 0 ? { tags: model.tags } : {}),
     ...(model.deprecated ? { deprecated: true } : {}),
+    ...(model.sourceRef ? { sourceRef: model.sourceRef } : {}),
   };
 }
 
@@ -94,6 +95,7 @@ export function buildImportAssetsPayload(
         ...(row.pattern ? { pattern: row.pattern } : {}),
         ...(row.logicalType ? { logicalType: row.logicalType } : {}),
         ...(row.constraints ? { constraints: row.constraints } : {}),
+        ...(scalar.sourceRef ? { sourceRef: scalar.sourceRef } : {}),
       };
     }),
     unionTypes: selection.selectedUnions.map((idx) => result.unions[idx]),

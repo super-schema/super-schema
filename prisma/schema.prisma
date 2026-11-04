@@ -1020,6 +1020,8 @@ model SharedEnum {
   values            String[]
   /// Per-symbol descriptions, { "<symbol>": "<text>" } (JSON Schema `x-enum`); null when the source gives none.
   valueDescriptions Json?
+  /// Name of the file it was imported from (what a `$ref` to that file says); null for an asset made by hand.
+  sourceRef         String?
   description       String   @default("")
   tenantId          String
   domainId          String?
@@ -1050,6 +1052,8 @@ model CustomScalar {
   pattern     String?
   /// Other validation constraints, same keys as a field's validation: { minLength, maxLength, minValue, maxValue, minValueExclusive, maxValueExclusive }.
   constraints Json?
+  /// Name of the file it was imported from (what a `$ref` to that file says); null for an asset made by hand.
+  sourceRef   String?
   description String   @default("")
   tenantId    String
   domainId    String?

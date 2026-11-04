@@ -66,4 +66,21 @@ describe("a $ref to a primitive-only file is a shared scalar", () => {
     expect(r.data.entities).toHaveLength(0);
     expect(r.data.scalars.map((s) => s.name)).toEqual(["CountryCode"]);
   });
+
+  it("each file's root asset remembers the file it came from, so a later $ref to the file finds it whatever its title", async () => {
+    const files = {
+      ...FILES,
+      [`${BASE}/crypto_decimals.json`]: json({ type: "integer", title: "Decimals", minimum: 0, maximum: 40 }),
+      [`${BASE}/gender.json`]: json({ type: "string", title: "Gender Type", "x-enum": [{ value: "MALE", description: "m" }] }),
+      [`${BASE}/holder.json`]: json({ type: "object", title: "Holder", properties: { d: { $ref: "crypto_decimals.json" }, g: { $ref: "gender.json" } } }),
+    };
+    const r = await importJsonSchemaFromUrl(`${BASE}/holder.json`, deps(files));
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.scalars.find((s) => s.name === "Decimals")?.sourceRef).toBe("crypto_decimals");
+    // a display title is no name: the enum is named by its file
+    expect(r.data.enums.map((e) => e.name)).toEqual(["gender"]);
+    expect(r.data.enums[0].sourceRef).toBe("gender");
+    expect(r.data.entities[0].sourceRef).toBe("holder");
+  });
 });

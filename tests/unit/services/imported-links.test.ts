@@ -102,6 +102,24 @@ describe("pickByName", () => {
   });
 });
 
+describe("linking by the file an asset came from", () => {
+  it("a dangling ref to cryptocurrency_decimals.json links to the scalar `Decimals` imported from that file", async () => {
+    const update = vi.fn().mockResolvedValue({});
+    const db = {
+      field: { findMany: vi.fn().mockResolvedValue([{ id: "f1", name: "d", type: "reference", entityId: "e1", decorators: dangling("cryptocurrency_decimals"), entity: { productId: "p" } }]), update },
+    };
+    const target = { name: "Decimals", sourceRef: "cryptocurrency_decimals", baseType: "int32", logicalType: "int32", constraints: { minValue: 0, maxValue: 40 } };
+    expect(await relinkDanglingFieldsToScalar(db as never, { domainId: "d1", scalar: target })).toBe(1);
+    expect(update.mock.calls[0][0].data.decorators).toMatchObject({ scalarName: "Decimals", typespec: { validation: { minValue: 0, maxValue: 40 } } });
+  });
+
+  it("pickByName also answers to the source file name", () => {
+    const rows = [{ name: "Decimals", sourceRef: "cryptocurrency_decimals", productId: "a" }];
+    expect(pickByName(rows, "cryptocurrency_decimals.json")).toBe(rows[0]);
+    expect(pickByName(rows, "decimals")).toBe(rows[0]);
+  });
+});
+
 describe("shared scalars", () => {
   const COUNTRY = { name: "CountryCode", baseType: "string", logicalType: "string", pattern: "^[A-Z]{2}$", constraints: { maxLength: 2 } };
 
@@ -187,7 +205,7 @@ describe("a dangling reference to an enum file", () => {
       customScalar: { findMany: vi.fn().mockResolvedValue([]) },
     };
     const result = await linkImportedEntity(db as never, { productId: "p", fields: [field("addr", dangling("Address")), field("o", dangling("Orthography"))] });
-    expect(db.sharedEnum.findMany).toHaveBeenCalledWith({ where: { domainId: "d1" }, select: { name: true, values: true, valueDescriptions: true } });
+    expect(db.sharedEnum.findMany).toHaveBeenCalledWith({ where: { domainId: "d1" }, select: { name: true, values: true, valueDescriptions: true, sourceRef: true } });
     expect(result.fields[0].decorators).toMatchObject({ referencedEntityId: "ad" });
     expect(result.fields[1].type).toBe("enum");
   });

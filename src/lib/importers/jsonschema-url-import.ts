@@ -22,7 +22,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { parseYamlBounded } from "./safe-yaml";
-import { stripNulText } from "./jsonschema.importer";
+import { pascalIdentifier, stripNulText } from "./jsonschema.importer";
 import { importResponseTooLargeMessage } from "./response-size";
 import { err, ok, type Result } from "@/types/result";
 import { setOwn } from "@/lib/compiler/governance-decorators";
@@ -264,7 +264,9 @@ function parseNonObjectRoot(rewritten: Record<string, unknown>, docUri: string, 
     if (isPlainObject(d)) for (const k of Object.keys(d)) taken.add(k);
   }
   const titled = typeof rewritten.title === "string" && rewritten.title.trim() ? rewritten.title.trim() : undefined;
-  let key = titled ?? (hasUsableId(rewritten) ? idBase(String(rewritten.$id)) : fileBaseName(docUri));
+  // a display title ("Gender Type") is no name: the file's (or `$id`'s) name is, in PascalCase when it has separators (`gender_type` -> `GenderType`)
+  const base = hasUsableId(rewritten) ? idBase(String(rewritten.$id)) : fileBaseName(docUri);
+  let key = titled !== undefined && /^[A-Za-z_][A-Za-z0-9_]*$/.test(titled) ? titled : /[_-]/.test(base) ? pascalIdentifier(base) || base : base;
   while (taken.has(key)) key = `${key}_root`;
   const node: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(rewritten)) {
@@ -441,6 +443,13 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
     for (const u of file.doc.unions ?? []) claim(u.name);
     for (const sc of file.doc.scalars) claim(sc.name);
     applyRenames(file, renames);
+    // the file's root asset remembers the file it came from: a `$ref` to the file names THAT, not the asset's (title-derived) name
+    const fileRef = fileBaseName(d.uri);
+    const rootAsset = file.index.rootName;
+    if (rootAsset !== undefined) {
+      const root = [...file.doc.entities, ...file.doc.enums, ...file.doc.scalars].find((a) => a.name === rootAsset);
+      if (root) root.sourceRef = fileRef;
+    }
     for (const e of file.doc.entities) {
       e.originalContent = d.original;
       entities.push(e);

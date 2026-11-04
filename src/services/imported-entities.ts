@@ -25,6 +25,8 @@ export interface ImportedEntityInput {
   extensions?: Record<string, unknown>;
   /** The source marks the entity deprecated (JSON Schema `deprecated: true`): stored as the entity's metadata.deprecation. */
   deprecated?: boolean;
+  /** Name of the file the entity was imported from; stored as `metadata.sourceRef` so a later `$ref` to that file links to this entity. */
+  sourceRef?: string;
   fields: CreateFieldInput[];
 }
 
@@ -156,6 +158,7 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
       ...(sourceFormat ? { sourceFormat } : {}),
       ...(extensions ? { custom: { extensions } } : {}),
       ...(entity.extends ? { [EXTENDS_METADATA_KEY]: entity.extends } : {}),
+      ...(entity.sourceRef ? { sourceRef: entity.sourceRef } : {}),
     };
     const row = await tx.entity.create({
       data: {
@@ -172,7 +175,7 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
       },
     });
 
-    await relinkDanglingFields(tx, { productId, entity: { id: row.id, name } });
+    await relinkDanglingFields(tx, { productId, entity: { id: row.id, name, sourceRef: entity.sourceRef } });
     refs.set(entity.name, { id: row.id, productId });
     // whatever else in the import still calls it by the name the file gave it (a service of the same import) finds it too
     const original = originals.get(name);

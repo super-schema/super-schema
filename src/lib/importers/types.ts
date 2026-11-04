@@ -159,6 +159,8 @@ export interface ParsedEntity {
   deprecated?: boolean;
   /** Standard schema keywords on the entity's source node that were recognized but not mapped (see `ParsedField.ignoredKeywords`) */
   ignoredKeywords?: string[];
+  /** Name of the file this entity was imported from, without extension (`country_code` for `country_code.json`): what a `$ref` to it says. */
+  sourceRef?: string;
   /** Source format identifier */
   sourceFormat: ImportFormat;
   /** Original schema content (stored for drift detection) */
@@ -192,6 +194,8 @@ export interface ParsedEnum {
   description?: string;
   /** Per-symbol descriptions (JSON Schema `x-enum`), symbol -> text; only symbols that are in `values`. */
   valueDescriptions?: Record<string, string>;
+  /** Name of the file the enum was imported from (what a `$ref` to it says). */
+  sourceRef?: string;
   /**
    * Keys of the source definition besides its symbols (JSON Schema: `x-enum-varnames`, `x-enum-descriptions`, `default`, `title`, ...), kept
    * verbatim. A shared enum row has no place for them, so the importer also puts them on every field that uses the enum, where they persist.
@@ -221,6 +225,8 @@ export interface ParsedScalar {
   deprecated?: boolean;
   /** Vendor extensions of the definition (`x-*`), kept verbatim. */
   extensions?: Record<string, unknown>;
+  /** Name of the file the scalar was imported from (what a `$ref` to it says). */
+  sourceRef?: string;
 }
 
 /** A named union defined by the imported document (persisted as a UnionType); same shape as the TypeSpec importer's. */

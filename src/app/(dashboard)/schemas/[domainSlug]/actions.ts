@@ -1135,7 +1135,7 @@ export interface BulkImportPayload {
     deprecated?: boolean;
     fields: CreateFieldInput[];
   }>;
-  sharedEnums: Array<{ name: string; values: string[]; description?: string; valueDescriptions?: Record<string, string> }>;
+  sharedEnums: Array<{ name: string; values: string[]; description?: string; valueDescriptions?: Record<string, string>; sourceRef?: string }>;
   customScalars: Array<{
     name: string;
     baseType: string;
@@ -1145,6 +1145,7 @@ export interface BulkImportPayload {
     /** Logical type a field using the scalar gets, and its other bounds (see `scalar-asset.ts`). */
     logicalType?: string;
     constraints?: ScalarConstraints;
+    sourceRef?: string;
   }>;
   unionTypes: Array<{ name: string; memberTypes: string[]; description?: string }>;
   services: ImportedServicePayload[];
@@ -1433,13 +1434,14 @@ export async function createDomainAssetsFromImportAction(
             name,
             values: sharedEnum.values,
             ...(valueDescriptions ? { valueDescriptions } : {}),
+            ...(sharedEnum.sourceRef ? { sourceRef: sharedEnum.sourceRef } : {}),
             description: sharedEnum.description ?? "",
             ...domainScope.data,
           },
         });
         result.enumsCreated++;
         // entities imported before this enum that pointed at its file by name are linked to it now
-        if (domainScope.data.domainId) await relinkDanglingFieldsToEnum(tx, { domainId: domainScope.data.domainId, enum: { name, values: sharedEnum.values, valueDescriptions } });
+        if (domainScope.data.domainId) await relinkDanglingFieldsToEnum(tx, { domainId: domainScope.data.domainId, enum: { name, values: sharedEnum.values, valueDescriptions, sourceRef: sharedEnum.sourceRef } });
       }
 
       for (const scalar of payload.customScalars) {
@@ -1454,6 +1456,7 @@ export async function createDomainAssetsFromImportAction(
             format: scalar.format ?? null,
             pattern: scalar.pattern ?? null,
             ...(Object.keys(constraints).length > 0 ? { constraints } : {}),
+            ...(scalar.sourceRef ? { sourceRef: scalar.sourceRef } : {}),
             description: scalar.description ?? "",
             ...domainScope.data,
           },
@@ -1463,7 +1466,7 @@ export async function createDomainAssetsFromImportAction(
         if (domainScope.data.domainId) {
           await relinkDanglingFieldsToScalar(tx, {
             domainId: domainScope.data.domainId,
-            scalar: { name, baseType: scalar.baseType, logicalType: scalar.logicalType, format: scalar.format, pattern: scalar.pattern, constraints },
+            scalar: { name, baseType: scalar.baseType, logicalType: scalar.logicalType, format: scalar.format, pattern: scalar.pattern, constraints, sourceRef: scalar.sourceRef },
           });
         }
       }

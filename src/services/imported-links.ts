@@ -11,7 +11,7 @@ import { withoutReferenceKeys, writeFieldReference, type EntityRef } from "@/lib
 import { sameAssetName } from "@/lib/importers/asset-name-match";
 import { applyScalarToField, type ScalarFacts } from "@/lib/importers/scalar-asset";
 
-type Target = { id: string; name: string };
+type Target = { id: string; name: string; sourceRef?: string };
 
 function decoratorsOf(field: CreateFieldInput): Record<string, unknown> | undefined {
   const value = field.decorators;
@@ -47,7 +47,7 @@ async function placeOf(tx: Prisma.TransactionClient, productId: string): Promise
   return product ? { domain: product.domain.name, product: product.name, ...(product.domainId ? { domainId: product.domainId } : {}) } : undefined;
 }
 
-type EnumTarget = { name: string; values: string[]; valueDescriptions?: Record<string, string> };
+type EnumTarget = { name: string; values: string[]; valueDescriptions?: Record<string, string>; sourceRef?: string | null };
 
 /** The `valueDescriptions` column as a symbol -> text map (it comes from stored JSON). */
 export function readValueDescriptions(value: unknown): Record<string, string> | undefined {
@@ -86,14 +86,19 @@ export function linkFieldsToEnums(fields: CreateFieldInput[], enums: ReadonlyMap
   });
 }
 
-type DomainEntity = { id: string; name: string; productId: string | null };
+type DomainEntity = { id: string; name: string; productId: string | null; sourceRef?: string };
+
+/** True when a reference spelled `name` means `asset`: by its own name, or by the file it was imported from. */
+function namesAsset(asset: { name: string; sourceRef?: string | null }, name: string): boolean {
+  return sameAssetName(asset.name, name) || (asset.sourceRef != null && sameAssetName(asset.sourceRef, name));
+}
 
 /**
  * The asset a dangling name stands for among `rows`: the one of the field's own product when there is one, else the only one in the
  * domain. Several candidates in other products are ambiguous: nothing is linked (the field stays visibly dangling).
  */
-export function pickByName<T extends { name: string; productId?: string | null }>(rows: readonly T[], name: string, ownProductId?: string): T | undefined {
-  const matches = rows.filter((row) => sameAssetName(row.name, name));
+export function pickByName<T extends { name: string; sourceRef?: string | null; productId?: string | null }>(rows: readonly T[], name: string, ownProductId?: string): T | undefined {
+  const matches = rows.filter((row) => namesAsset(row, name));
   if (matches.length === 0) return undefined;
   const own = ownProductId === undefined ? [] : matches.filter((row) => row.productId === ownProductId);
   if (own.length > 0) return own[0];
@@ -114,7 +119,11 @@ async function danglingFieldsOfDomain(tx: Prisma.TransactionClient, scope: { dom
 }
 
 async function domainEntities(tx: Prisma.TransactionClient, domainId: string): Promise<DomainEntity[]> {
-  return tx.entity.findMany({ where: { domainId, productId: { not: null } }, select: { id: true, name: true, productId: true } });
+  const rows = await tx.entity.findMany({ where: { domainId, productId: { not: null } }, select: { id: true, name: true, productId: true, metadata: true } });
+  return rows.map((row) => {
+    const ref = (row.metadata as { sourceRef?: unknown } | null)?.sourceRef;
+    return { id: row.id, name: row.name, productId: row.productId, ...(typeof ref === "string" ? { sourceRef: ref } : {}) };
+  });
 }
 
 /** `place` (domain + product NAMES) of a product, for writing a qualified reference to one of its entities. */
@@ -157,8 +166,8 @@ export async function linkImportedEntity(
   // What no entity answers to may be a shared ENUM or SCALAR of the domain (a `$ref` to an enum / primitive file).
   const rest = [...names].filter((name) => !answered.has(name));
   if (rest.length === 0) return { fields };
-  const enums = await tx.sharedEnum.findMany({ where: { domainId: place.domainId }, select: { name: true, values: true, valueDescriptions: true } });
-  const scalars = await tx.customScalar.findMany({ where: { domainId: place.domainId }, select: { name: true, baseType: true, logicalType: true, format: true, pattern: true, constraints: true } });
+  const enums = await tx.sharedEnum.findMany({ where: { domainId: place.domainId }, select: { name: true, values: true, valueDescriptions: true, sourceRef: true } });
+  const scalars = await tx.customScalar.findMany({ where: { domainId: place.domainId }, select: { name: true, baseType: true, logicalType: true, format: true, pattern: true, constraints: true, sourceRef: true } });
   const enumTargets = new Map<string, EnumTarget>();
   const scalarTargets = new Map<string, ScalarTarget>();
   for (const name of rest) {
@@ -182,11 +191,11 @@ export const EXTENDS_METADATA_KEY = "extends";
  */
 export async function relinkDanglingFields(tx: Prisma.TransactionClient, args: { productId: string; entity: Target }): Promise<number> {
   const candidates = await danglingFieldsOfDomain(tx, { productId: args.productId }, args.entity.id);
-  const named = candidates.filter((row) => matchesDangling(row, args.entity.name));
+  const named = candidates.filter((row) => matchesDangling(row, args.entity));
   if (named.length === 0) return 0;
   const place = await placeOf(tx, args.productId);
   if (!place?.domainId) return 0;
-  const sameName = (await domainEntities(tx, place.domainId)).filter((e) => sameAssetName(e.name, args.entity.name));
+  const sameName = (await domainEntities(tx, place.domainId)).filter((e) => namesAsset(e, args.entity.name) || (args.entity.sourceRef !== undefined && namesAsset(e, args.entity.sourceRef)));
   let linked = 0;
   for (const row of named) {
     const ownProduct = row.entity?.productId;
@@ -208,9 +217,9 @@ function asCreateInput(row: DanglingRow): CreateFieldInput {
   return { name: row.name, type: row.type, nullable: true, isKey: false, description: "", classification: null, precision: null, scale: null, decorators: row.decorators as Record<string, unknown> };
 }
 
-function matchesDangling(row: { decorators: unknown }, assetName: string): boolean {
+function matchesDangling(row: { decorators: unknown }, asset: { name: string; sourceRef?: string | null }): boolean {
   const name = (row.decorators as { referencedEntityName?: unknown } | null)?.referencedEntityName;
-  return typeof name === "string" && sameAssetName(name, assetName) && readDanglingMarker(row.decorators) !== undefined;
+  return typeof name === "string" && namesAsset(asset, name) && readDanglingMarker(row.decorators) !== undefined;
 }
 
 /**
@@ -220,7 +229,7 @@ function matchesDangling(row: { decorators: unknown }, assetName: string): boole
 export async function relinkDanglingFieldsToEnum(tx: Prisma.TransactionClient, args: { domainId: string; enum: EnumTarget }): Promise<number> {
   let linked = 0;
   for (const row of await danglingFieldsOfDomain(tx, { domainId: args.domainId })) {
-    if (!matchesDangling(row, args.enum.name)) continue;
+    if (!matchesDangling(row, args.enum)) continue;
     const input = asCreateInput(row);
     const next = linkFieldToEnum(input, args.enum);
     if (next === input) continue;
@@ -230,7 +239,7 @@ export async function relinkDanglingFieldsToEnum(tx: Prisma.TransactionClient, a
   return linked;
 }
 
-type ScalarTarget = ScalarFacts & { name: string };
+type ScalarTarget = ScalarFacts & { name: string; sourceRef?: string | null };
 
 /** The field once it uses the shared scalar `target` instead of a file nothing answered. Pure. */
 export function linkFieldToScalar(field: CreateFieldInput, target: ScalarTarget): CreateFieldInput {
@@ -256,7 +265,7 @@ export function linkFieldsToScalars(fields: CreateFieldInput[], scalars: Readonl
 export async function relinkDanglingFieldsToScalar(tx: Prisma.TransactionClient, args: { domainId: string; scalar: ScalarTarget }): Promise<number> {
   let linked = 0;
   for (const row of await danglingFieldsOfDomain(tx, { domainId: args.domainId })) {
-    if (!matchesDangling(row, args.scalar.name)) continue;
+    if (!matchesDangling(row, args.scalar)) continue;
     const input = asCreateInput(row);
     const next = linkFieldToScalar(input, args.scalar);
     if (next === input) continue;

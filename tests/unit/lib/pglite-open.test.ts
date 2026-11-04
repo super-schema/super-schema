@@ -32,7 +32,8 @@ describe("ensurePgliteDataDir", () => {
   });
 });
 
-describe("openPglite", () => {
+// Starting PGlite (WASM) takes several seconds when the whole suite runs in parallel: the 5 s default is too short there.
+describe("openPglite", { timeout: 60_000 }, () => {
   it("opens (and creates) a directory whose parent does not exist yet", async () => {
     const db = await openPglite(path.join(tmp(), "a", "b"));
     open.push(db);
@@ -51,7 +52,7 @@ describe("openPglite", () => {
   }, 60_000);
 });
 
-describe("resetPgliteDataDir", () => {
+describe("resetPgliteDataDir", { timeout: 60_000 }, () => {
   it("refuses a directory that opens fine unless forced, and moves it aside (not away) when forced", async () => {
     const dir = path.join(tmp(), "pg");
     const db = await openPglite(dir);
@@ -71,7 +72,7 @@ describe("resetPgliteDataDir", () => {
   });
 });
 
-describe("sharedPglite", () => {
+describe("sharedPglite", { timeout: 60_000 }, () => {
   it("returns one client per directory, however often it is asked, and a new one per other directory", () => {
     const a = path.join(tmp(), "a");
     const created: string[] = [];

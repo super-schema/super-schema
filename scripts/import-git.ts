@@ -118,7 +118,7 @@ async function persist(payloads: Array<{ url: string; payload: NonNullable<Await
           if (!(await free("enum", name, domainScope.data))) continue;
           const data = { ...onlyColumns(sharedEnum as unknown as Record<string, unknown>, Prisma.SharedEnumScalarFieldEnum), name, description: sharedEnum.description ?? "", values: sharedEnum.values, ...domainScope.data };
           await tx.sharedEnum.create({ data: data as Prisma.SharedEnumUncheckedCreateInput });
-          await links.relinkDanglingFieldsToEnum(tx, { domainId: domain.id, enum: { name, values: sharedEnum.values } });
+          await links.relinkDanglingFieldsToEnum(tx, { domainId: domain.id, enum: { name, values: sharedEnum.values, valueDescriptions: (sharedEnum as { valueDescriptions?: Record<string, string> }).valueDescriptions, sourceRef: (sharedEnum as { sourceRef?: string }).sourceRef } });
           report.imported.push(`enum ${name}`);
         }
         for (const scalar of payload.customScalars) {
