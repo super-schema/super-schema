@@ -1,0 +1,75 @@
+{
+    "type":"object",
+    "title":"Participant",
+    "description":"Participant in a payment activity, one of person or business must be provided.",
+    "allOf": [
+        {
+            "$ref": "../risk_common_components/v2/schema/account.json"
+        },
+        {
+            "properties":{
+                "person":{
+                    "description": "If the participant is person then fill this information.",
+                    "$ref":"../risk_common_components/v2/schema/person.json"
+                },
+                "business":{
+                    "description": "Is the participant is business then fill this information.",
+                    "$ref":"../risk_common_components/v2/schema/business.json"
+                },
+                "trusted_beneficiary": {
+                    "description": "Identifies if a counter-party ( person or business ) is trusted by sender and can whitelist any future transactions from the counterparty. e.g This identifier will be used by PSD2 SCA policy to exempt a transaction from being authenticated for future purchases.",
+                    "type": "boolean"
+                },
+                "funding_instruments":{
+                    "description":"Instruments to be used in an activity, for sender its the available sending instruments, for recipient it could be available instruments to recieve.",
+                    "type":"array",
+                    "items": {
+                        "description": "Funding Instrument.",
+                        "$ref": "funding_instrument.json"
+                    },
+                    "minItems": 1,
+                    "maxItems": 25
+                },
+                "inactive_funding_instruments":{
+                    "description":"Inactive instruments for this participant.",
+                    "x-visibility": {
+                        "extent": "INTERNAL"
+                    },
+                    "type":"array",
+                    "items": {
+                        "description": "Inactive Instruments.",
+                        "$ref": "funding_instrument.json"
+                    },
+                    "minItems": 1,
+                    "maxItems": 50
+                },
+                "ineligible_funding_instruments":{
+                    "description":"Ineligible instruments for this participant.",
+                    "x-visibility": {
+                        "extent": "INTERNAL"
+                    },
+                    "type":"array",
+                    "items": {
+                        "description": "Ineligible Instruments.",
+                        "$ref": "funding_instrument.json"
+                    },
+                    "minItems": 1,
+                    "maxItems": 50
+                },
+                "potential_funding_instruments":{
+                    "description":"Potential instruments for this participant.",
+                    "x-visibility": {
+                        "extent": "INTERNAL"
+                    },
+                    "type":"array",
+                    "items": {
+                        "description": "Potential Instruments.",
+                        "$ref": "funding_instrument.json"
+                    },
+                    "minItems": 1,
+                    "maxItems": 10
+                }
+            }
+        }
+    ]
+}

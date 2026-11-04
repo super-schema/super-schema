@@ -1,0 +1,64 @@
+{
+    "type": "object",
+    "description": "The information related to an authenticator.",
+    "properties": {
+        "authenticator_id":{
+            "type":"string",
+            "description":"The id of the authenticator(phone number in case of SMS authenticators and email id in case of email).",
+            "minLength" : 3,
+            "maxLength" : 30
+        },
+        "type":{
+            "type":"string",
+            "description":"The type of the authenticator to add. SOFT and HARD are deprecated types. New integrations should use SMS.",
+            "minLength" : 3,
+            "maxLength" : 30,
+            "x-enum": [
+                {
+                    "value": "SMS",
+                    "description":"Indicates that the authenticator is SMS."
+                },
+                {
+                    "value": "EMAIL",
+                    "description":"Indicates that the authenticator is Email."
+                },
+                {
+                    "value": "CARD",
+                    "description":"Indicates that the authenticator is Card."
+                },
+                {
+                    "value": "BANK",
+                    "description":"Indicates that the authenticator is Bank."
+                }
+            ]
+        },
+        "state":{
+            "type":"string",
+            "description":"Indicates the current state of the authenticator.",
+            "minLength" : 3,
+            "maxLength" : 30,
+            "x-enum": [
+                {
+                    "value": "ACTIVE",
+                    "description":"Indicates that the authenticator is Active."
+                },
+                {
+                    "value": "ABANDONDED",
+                    "description":"Indicates that the authenticaton using the authenticator is Abandonded."
+                },
+                {
+                    "value": "FAILURE",
+                    "description":"Indicates that the authenticaton using the authenticator has failed."
+                }
+            ]
+
+      }
+
+    },
+
+    "required":[
+        "authenticator_id",
+        "type",
+        "state"
+    ]
+  }

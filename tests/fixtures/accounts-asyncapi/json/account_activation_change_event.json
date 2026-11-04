@@ -1,0 +1,21 @@
+{
+  "title": "Policy Account Activation Decision Change Event",
+  "description": "It represents the Cloudevent envelope of the policy change event.",
+  "type": "object",
+  "allOf": [
+      {
+        "$ref": "../common_components/v4/schema/json/openapi-2.0/cloudevent.json"
+      },
+      {
+        "properties": {
+          "account_activation_decision_data": {
+            "description": "The policy account activation change event payload.",
+            "$ref": "account_activation_decision_data.json"
+          }
+        }
+      }
+    ],
+  "required": [
+    "account_activation_decision_data"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "title": "Policy Account Activate Change Event Data",
+  "description": "It represents the payload of the policy account activation change event.",
+  "type": "object",
+  "properties": {
+    "account_number": {
+      "description": "The account number on which policy system makes decision",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 19
+    },
+    "new_decision": {
+      "description": "This represents the new state of account activation decision from policy.",
+      "$ref": "account_activation_decision.json"
+    },
+    "old_decision": {
+      "description": "This represents the old state of account activation decision from policy. When no decision has been made before, the field won't be present.",
+      "$ref": "account_activation_decision.json"
+    }
+  },
+  "required": [
+    "account_number",
+    "new_decision"
+  ]
+}

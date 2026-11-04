@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "title": "events schema",
+  "properties": {
+
+    "login": {
+      "$ref": "json/login_event_schema.json"
+    }
+  }
+}

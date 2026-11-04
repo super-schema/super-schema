@@ -42,6 +42,8 @@ export interface ExtractedPayload {
   raw: unknown;
   /** PascalCase from the message name, title or key (+ "Headers" for headers). Always a plain identifier. */
   suggestedName: string;
+  /** The `schemaFormat` as written, when the importer does not know it but read the schema as JSON Schema because it is an ordinary JSON Schema object. */
+  assumedFormat?: string;
 }
 
 export interface MapContext {

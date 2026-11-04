@@ -1,0 +1,24 @@
+{
+    "type": "object",
+    "description": "The error code and description.",
+    "properties": {
+        "error_code":{
+            "type":"string",
+            "description":"The error code of the error.",
+            "minLength" : 1,
+            "maxLength" : 30
+        },
+        "error_description":{
+            "type":"string",
+            "description":"The error description.",
+            "minLength" : 1,
+            "maxLength" : 256
+        }
+
+    },
+
+    "required":[
+        "error_code",
+        "error_description"
+    ]
+  }
