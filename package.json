@@ -22,6 +22,7 @@
     "test:e2e:update-snapshots": "node scripts/e2e-update-snapshots.mjs",
     "test:e2e:release": "node scripts/e2e-release.mjs --tier nightly",
     "test:e2e:release:smoke": "node scripts/e2e-release.mjs --tier smoke",
+    "lockfile:registry": "node scripts/lockfile-registry.mjs",
     "db:generate": "prisma generate",
     "predev": "npm run db:generate && tsx scripts/db.ts ensure && npm run build:parser-worker",
     "prebuild": "npm run db:generate && tsx scripts/db.ts ensure && npm run build:parser-worker",
