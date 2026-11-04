@@ -120,7 +120,7 @@ describe("level-aware data type and API creates", () => {
       expect(result).toEqual({ success: true });
       expect(mockAssertNameAvailable).toHaveBeenCalledWith(mockTx, { name: "Money", ...DOMAIN_SCOPE });
       expect(mockTx.customScalar.create).toHaveBeenCalledWith({
-        data: { name: "Money", baseType: "decimal", format: null, pattern: null, description: "", ...DOMAIN_SCOPE },
+        data: { name: "Money", baseType: "decimal", logicalType: null, format: null, pattern: null, description: "", ...DOMAIN_SCOPE },
       });
     });
 

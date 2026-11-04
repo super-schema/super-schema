@@ -112,8 +112,8 @@ describe("entity naming", () => {
     expect(parse({ ...OBJ, title: "Portable Postal Address (Medium-Grained)", $id: "https://x/common/Address.v1.json" }).entities[0].name).toBe("Address");
   });
 
-  it("keeps the title when the $id gives no identifier either", () => {
-    expect(parse({ ...OBJ, title: "Some Title", $id: "https://x/some-title.json" }).entities[0].name).toBe("Some Title");
+  it("names the entity from the file the $id points at, in PascalCase, when the title is a display title", () => {
+    expect(parse({ ...OBJ, title: "Some Title", $id: "https://x/some-title.json" }).entities[0].name).toBe("SomeTitle");
   });
 
   it("names a reference to a versioned file without the version", () => {
@@ -187,7 +187,7 @@ describe("naming by the file the document came from", () => {
     expect(withName({ ...OBJ, title: "Some Title", $id: "https://x/FromId.v1.json" }, "FromFile.json").entities[0].name).toBe("FromId");
   });
 
-  it("ignores a file name that is no identifier", () => {
-    expect(withName({ ...OBJ, title: "Some Title" }, "my schema (1).json").entities[0].name).toBe("Some Title");
+  it("ignores a file name that is no identifier (the title's own words name the entity)", () => {
+    expect(withName({ ...OBJ, title: "Some Title" }, "my schema (1).json").entities[0].name).toBe("SomeTitle");
   });
 });

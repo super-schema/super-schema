@@ -125,6 +125,7 @@ function compileField(field: PrismaFieldInput): SuperSchemaField {
     aliases: field.aliases ?? [],
     decorators,
     complexType: complexType ?? undefined,
+    ...(stringRecord(rawDecorators.enumValueDescriptions) ? { enumValueDescriptions: stringRecord(rawDecorators.enumValueDescriptions) } : {}),
     danglingRef: activeDanglingRef(logicalType, rawDecorators),
     sortOrder: field.sortOrder,
   };
@@ -216,6 +217,14 @@ function collectionReferenceInfo(
   if (version) out.referencedEntityVersion = version;
   if (reference) out.reference = reference;
   return out;
+}
+
+/** A plain object of non-empty strings (stored JSON), `undefined` when it is anything else or empty. */
+function stringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value)) if (typeof v === "string" && v !== "") out[k] = v;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function extractComplexTypeInfo(

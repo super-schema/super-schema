@@ -99,6 +99,8 @@ export interface ParsedField {
   enumName?: string;
   /** Enum symbols of an `enum` field */
   enumValues?: string[];
+  /** Per-symbol descriptions of those symbols (JSON Schema `x-enum`), symbol -> text. */
+  enumValueDescriptions?: Record<string, string>;
   /** Shared custom scalar this field uses (an imported or domain `ParsedScalar` name); its type, format and constraints are copied onto the field. */
   scalarName?: string;
   /** Union this `union` field (or the element of an array of unions) uses — an imported `ParsedUnion` name */
@@ -184,6 +186,8 @@ export interface ParsedEnum {
   name: string;
   values: string[];
   description?: string;
+  /** Per-symbol descriptions (JSON Schema `x-enum`), symbol -> text; only symbols that are in `values`. */
+  valueDescriptions?: Record<string, string>;
   /**
    * Keys of the source definition besides its symbols (JSON Schema: `x-enum-varnames`, `x-enum-descriptions`, `default`, `title`, ...), kept
    * verbatim. A shared enum row has no place for them, so the importer also puts them on every field that uses the enum, where they persist.

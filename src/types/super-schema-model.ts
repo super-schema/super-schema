@@ -258,6 +258,8 @@ export interface SuperSchemaField {
   aliases: string[];
   decorators: DecoratorSet;
   complexType?: ComplexTypeInfo;
+  /** Per-symbol descriptions of an enum field (or of the enum an array / map holds), symbol -> text; written as `@doc` on the members. */
+  enumValueDescriptions?: Record<string, string>;
   /**
    * An external `$ref` that is defined nowhere (a JSON Schema import): the ORIGINAL reference string. The field is generated as
    * `unknown` (`unknown[]` when `element`) carrying the raw reference as a `$ref` / `items` extension, never as a name nothing declares.
@@ -316,6 +318,7 @@ export interface SuperSchemaSharedEnum {
   name: string;
   values: string[];
   description?: string;
+  valueDescriptions?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------

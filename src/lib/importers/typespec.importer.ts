@@ -80,7 +80,7 @@ export interface TypeSpecImportResult {
   /** Format the assets were imported from (absent = "typespec") */
   sourceFormat?: ImportFormat;
   models: TypeSpecImportModel[];
-  sharedEnums: Array<{ name: string; values: string[]; description?: string }>;
+  sharedEnums: Array<{ name: string; values: string[]; description?: string; valueDescriptions?: Record<string, string> }>;
   customScalars: Array<{
     name: string;
     baseType: string;

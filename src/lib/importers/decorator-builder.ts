@@ -100,6 +100,9 @@ export function buildDecoratorsFromParsedField(
   if (field.mapKeyType) decorators.mapKeyType = field.mapKeyType;
   if (field.mapValueType) decorators.mapValueType = field.mapValueType;
   if (field.enumName) decorators.enumName = field.enumName;
+  // Per-symbol descriptions of an enum (`x-enum`): read by compileField -> the generator, which writes them as `@doc` on each member.
+  if (field.enumValueDescriptions && Object.keys(field.enumValueDescriptions).length > 0) decorators.enumValueDescriptions = field.enumValueDescriptions;
+  if (field.scalarName) decorators.scalarName = field.scalarName;
   // Union a `union` field (or an array of unions) refers to by name (read by compiler.service → generator).
   if (field.unionName) decorators.unionName = field.unionName;
   if (field.unionMembers?.length) decorators.unionMembers = field.unionMembers;

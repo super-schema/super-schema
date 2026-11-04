@@ -23,7 +23,7 @@ import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
 import { createImportedEntities, entityExtensionsMetadata, existingEntityNames, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
-import { cascadeScalarToFields, EXTENDS_METADATA_KEY, linkImportedEntity, relinkDanglingFields, relinkDanglingFieldsToEnum, relinkDanglingFieldsToScalar } from "@/services/imported-links";
+import { cascadeScalarToFields, EXTENDS_METADATA_KEY, linkImportedEntity, readValueDescriptions, relinkDanglingFields, relinkDanglingFieldsToEnum, relinkDanglingFieldsToScalar } from "@/services/imported-links";
 import { readScalarConstraints, SCALAR_CONSTRAINT_KEYS, type ScalarConstraints } from "@/lib/importers/scalar-asset";
 import { builtInNameConflict } from "@/lib/compiler/built-in-names";
 import { renameBuiltInPayload } from "@/lib/builtin-entity-renames";
@@ -543,9 +543,15 @@ export async function deleteSharedEnumAction(enumId: string): Promise<AssetOutco
  * `name` are deliberately absent: a data type has no move or rename path through these actions (a rename would have to go
  * through the line-unique name registry), so an update that names any of them is rejected with VALIDATION_ERROR.
  */
-const ENUM_EDITABLE = { values: isStringArray, description: isString };
+const ENUM_EDITABLE = { values: isStringArray, description: isString, valueDescriptions: isStringRecordOrNull };
 const SCALAR_EDITABLE = { baseType: isString, logicalType: isStringOrNull, format: isStringOrNull, pattern: isStringOrNull, constraints: isConstraintsOrNull, description: isString };
 const UNION_EDITABLE = { memberTypes: isStringArray, description: isString };
+
+/** An enum's `valueDescriptions` edit: null (none) or an object of strings. */
+function isStringRecordOrNull(value: unknown): value is Record<string, string> | null {
+  if (value === null) return true;
+  return !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((v) => typeof v === "string");
+}
 
 /** A scalar's `constraints` edit: null (none) or an object of finite numbers under the known keys. */
 function isConstraintsOrNull(value: unknown): value is ScalarConstraints | null {
@@ -556,7 +562,7 @@ function isConstraintsOrNull(value: unknown): value is ScalarConstraints | null 
 
 export async function updateSharedEnumAction(
   enumId: string,
-  data: { values?: string[]; description?: string }
+  data: { values?: string[]; description?: string; valueDescriptions?: Record<string, string> | null }
 ): Promise<AssetOutcome> {
 
   const id = requireId(enumId, "Enum id");
@@ -567,7 +573,14 @@ export async function updateSharedEnumAction(
   try {
     const access = await guardSubject("asset.write", { kind: "sharedEnum", id: id.data }, { label: "Enum" });
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
-    await prisma.sharedEnum.update({ where: { id: id.data }, data: picked.data as Prisma.SharedEnumUpdateInput });
+    const { valueDescriptions, ...rest } = picked.data as Record<string, unknown>;
+    await prisma.sharedEnum.update({
+      where: { id: id.data },
+      data: {
+        ...rest,
+        ...(valueDescriptions !== undefined ? { valueDescriptions: valueDescriptions === null ? Prisma.DbNull : (valueDescriptions as Prisma.InputJsonObject) } : {}),
+      } as Prisma.SharedEnumUpdateInput,
+    });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
@@ -581,12 +594,12 @@ export async function updateSharedEnumAction(
 
 export async function createCustomScalarAction(
   domainId: string | null,
-  data: { name: string; baseType: string; format?: string; pattern?: string; description?: string },
+  data: { name: string; baseType: string; logicalType?: string | null; format?: string; pattern?: string; constraints?: ScalarConstraints | null; description?: string },
   target?: ScopeTarget
 ): Promise<AssetOutcome> {
   const input = readFields(
     data,
-    { name: isString, baseType: isString, format: optional(isStringOrNull), pattern: optional(isStringOrNull), description: optional(isString) },
+    { name: isString, baseType: isString, logicalType: optional(isStringOrNull), format: optional(isStringOrNull), pattern: optional(isStringOrNull), constraints: optional(isConstraintsOrNull), description: optional(isString) },
     "a scalar"
   );
   if (!input.success) return failure(input.error);
@@ -608,8 +621,10 @@ export async function createCustomScalarAction(
           data: {
             name: name.data,
             baseType: input.data.baseType as string,
+            logicalType: (input.data.logicalType as string | null | undefined) ?? null,
             format: (input.data.format as string | null | undefined) ?? null,
             pattern: (input.data.pattern as string | null | undefined) ?? null,
+            ...(input.data.constraints ? { constraints: input.data.constraints as Prisma.InputJsonObject } : {}),
             description: (input.data.description as string | undefined) ?? "",
             ...scope,
           },
@@ -1120,7 +1135,7 @@ export interface BulkImportPayload {
     deprecated?: boolean;
     fields: CreateFieldInput[];
   }>;
-  sharedEnums: Array<{ name: string; values: string[]; description?: string }>;
+  sharedEnums: Array<{ name: string; values: string[]; description?: string; valueDescriptions?: Record<string, string> }>;
   customScalars: Array<{
     name: string;
     baseType: string;
@@ -1412,17 +1427,19 @@ export async function createDomainAssetsFromImportAction(
       for (const sharedEnum of payload.sharedEnums) {
         const name = sharedEnum.name.trim();
         if (!(await isNameFree("sharedEnum", name, domainScope.data))) continue;
+        const valueDescriptions = readValueDescriptions(sharedEnum.valueDescriptions);
         await tx.sharedEnum.create({
           data: {
             name,
             values: sharedEnum.values,
+            ...(valueDescriptions ? { valueDescriptions } : {}),
             description: sharedEnum.description ?? "",
             ...domainScope.data,
           },
         });
         result.enumsCreated++;
         // entities imported before this enum that pointed at its file by name are linked to it now
-        if (domainScope.data.domainId) await relinkDanglingFieldsToEnum(tx, { domainId: domainScope.data.domainId, enum: { name, values: sharedEnum.values } });
+        if (domainScope.data.domainId) await relinkDanglingFieldsToEnum(tx, { domainId: domainScope.data.domainId, enum: { name, values: sharedEnum.values, valueDescriptions } });
       }
 
       for (const scalar of payload.customScalars) {

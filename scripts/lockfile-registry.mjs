@@ -14,6 +14,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { isEntryPoint } from "./e2e-entry.mjs";
 
 const TARBALL = /^(https?:\/\/.+?)\/((?:@[^/]+\/)?[^/@][^/]*)\/-\/([^/]+\.tgz)$/;
 
@@ -117,7 +118,7 @@ export function runCli(argv, env = {}) {
   return { code: 0, message: `${result.changed} resolved URL(s) ${drop ? "dropped" : `now on ${registry}`}${out ? ` -> ${out}` : ""}` };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isEntryPoint(import.meta.url, process.argv[1])) {
   const { code, message } = runCli(process.argv.slice(2));
   (code === 0 ? console.log : console.error)(`[lockfile-registry] ${message}`);
   process.exit(code);

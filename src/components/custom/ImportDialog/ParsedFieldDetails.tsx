@@ -350,6 +350,13 @@ export const ParsedFieldDetails = memo(function ParsedFieldDetails({ field, enti
           {field.enumValues && field.enumValues.length > 0 && (
             <Row label="Enum values">{field.enumValues.join(", ")}</Row>
           )}
+          {field.enumValueDescriptions && Object.keys(field.enumValueDescriptions).length > 0 && (
+            <Row label="Value descriptions">
+              {Object.entries(field.enumValueDescriptions)
+                .map(([symbol, text]) => `${symbol}: ${text}`)
+                .join(" · ")}
+            </Row>
+          )}
           {field.referencedEntityName && <Row label="References">{field.referencedEntityName}</Row>}
           {field.arrayElementType && <Row label="Array element type">{field.arrayElementType}</Row>}
           {field.mapKeyType && <Row label="Map key type">{field.mapKeyType}</Row>}

@@ -22,6 +22,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { parseYamlBounded } from "./safe-yaml";
+import { stripNulText } from "./jsonschema.importer";
 import { importResponseTooLargeMessage } from "./response-size";
 import { err, ok, type Result } from "@/types/result";
 import { setOwn } from "@/lib/compiler/governance-decorators";
@@ -219,7 +220,7 @@ function buildFile(
     if (typeof rewritten.title !== "string" || !rewritten.title.trim()) {
       if (!hasUsableId(rewritten)) setOwn(rewritten, "title", fileBaseName(docUri));
     }
-    const first = parseJsonSchemaDocumentIndexed(JSON.stringify(rewritten), budget);
+    const first = parseJsonSchemaDocumentIndexed(JSON.stringify(rewritten), budget, fileBaseName(docUri));
     if (first.success && first.data.doc.rootEntityName) {
       return { ok: true, built: toBuilt(first.data.doc, first.data.definitions, first.data.doc.rootEntityName, "entity") };
     }
@@ -227,7 +228,7 @@ function buildFile(
       return { ok: true, built: toBuilt(first.data.doc, first.data.definitions, first.data.doc.rootScalarName, "scalar") };
     }
     const isNonObjectRoot =
-      Array.isArray(rewritten.enum) || Array.isArray(rewritten.oneOf) || Array.isArray(rewritten.anyOf);
+      Array.isArray(rewritten.enum) || Array.isArray(rewritten["x-enum"]) || Array.isArray(rewritten.oneOf) || Array.isArray(rewritten.anyOf);
     if (isNonObjectRoot && (!first.success || !first.data.doc.rootEntityName)) {
       const synthetic = parseNonObjectRoot(rewritten, docUri, budget);
       if (synthetic) return { ok: true, built: synthetic };
@@ -376,7 +377,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
   const rootUri = entries.length > 0 ? entries[0]![0] : rootUrl;
   const rootDoc = entries.length > 0 ? entries[0]![1] : parseLoose(rootContent);
   const docs: Array<{ uri: string; doc: unknown; original: string; isRoot: boolean }> = [
-    { uri: rootUri, doc: rootDoc, original: rootContent, isRoot: true },
+    { uri: rootUri, doc: rootDoc, original: stripNulText(rootContent), isRoot: true },
   ];
   const warnings: string[] = [];
   let skipped = 0;
@@ -391,7 +392,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
     } catch {
       /* unserializable: the build step reports it */
     }
-    docs.push({ uri, doc, original, isRoot: false });
+    docs.push({ uri, doc, original: stripNulText(original), isRoot: false });
   }
   if (skipped > 0) {
     warnings.push(`Only the first ${MAX_IMPORT_DOCUMENTS} referenced documents are imported; ${skipped} more were skipped.`);
@@ -579,7 +580,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
       return;
     }
     if (t.kind === "scalar") {
-      applyScalarToField(f, scalarByName.get(t.name), t.name, isArray);
+      copyScalarOntoField(f, scalarByName.get(t.name), t.name, isArray);
       delete f.referencedEntityName;
       f.confidence = "high";
       return;
@@ -590,6 +591,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
       else f.type = "enum";
       f.enumName = t.name;
       f.enumValues = target ? [...target.values] : [];
+      if (target?.valueDescriptions) f.enumValueDescriptions = { ...target.valueDescriptions };
       delete f.referencedEntityName;
       if (f.confidence === "low" && lowFromRef) f.confidence = "high";
       return;
@@ -649,7 +651,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
  * unchanged) and `scalarName` records the link, so editing the scalar later can update every field that uses it. An array of scalars
  * records the element type only (constraints of the scalar describe one element, which the field row cannot hold).
  */
-export function applyScalarToField(f: ParsedField, scalar: ParsedScalar | undefined, name: string, isArray: boolean): void {
+export function copyScalarOntoField(f: ParsedField, scalar: ParsedScalar | undefined, name: string, isArray: boolean): void {
   delete f.danglingRef;
   f.scalarName = name;
   const logical = scalar?.logicalType ?? scalar?.baseType ?? "string";

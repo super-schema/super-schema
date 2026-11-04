@@ -543,6 +543,8 @@ function generateSharedEnumDefinition(sharedEnum: SuperSchemaSharedEnum, ctx: Ge
   lines.push(`enum ${sanitizeIdentifier(sharedEnum.name)} {`);
 
   for (const val of values) {
+    const doc = sharedEnum.valueDescriptions?.[val];
+    if (doc) lines.push(`  @doc("${escapeString(doc)}")`);
     lines.push(`  ${enumMemberName(val)},`);
   }
 
@@ -588,7 +590,9 @@ function generateInlineEnumDefinition(field: SuperSchemaField, ctx: GenContext):
   }
   lines.push(`enum ${enumName} {`);
 
+  const descriptions = field.enumValueDescriptions;
   for (const val of values) {
+    if (descriptions?.[val]) lines.push(`  @doc("${escapeString(descriptions[val])}")`);
     lines.push(`  ${enumMemberName(val)},`);
   }
 

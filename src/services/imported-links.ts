@@ -65,7 +65,7 @@ export function linkFieldToEnum(field: CreateFieldInput, target: EnumTarget): Cr
   const { danglingRef: _marker, ...rest } = withoutReferenceKeys(decorators);
   void _marker;
   if (marker.element) {
-    return { ...field, decorators: { ...rest, arrayElementType: "enum", enumValues: target.values, enumName: target.name } };
+    return { ...field, decorators: { ...rest, arrayElementType: "enum", enumValues: target.values, enumName: target.name, ...(target.valueDescriptions ? { enumValueDescriptions: target.valueDescriptions } : {}) } };
   }
   // An enum field keeps its symbols in `typespec.validation.pattern` ("A|B"), which the generator reads for it.
   const typespec = (rest.typespec && typeof rest.typespec === "object" ? rest.typespec : {}) as Record<string, unknown>;
@@ -73,7 +73,7 @@ export function linkFieldToEnum(field: CreateFieldInput, target: EnumTarget): Cr
   return {
     ...field,
     type: "enum",
-    decorators: { ...rest, enumName: target.name, typespec: { ...typespec, validation: { ...validation, pattern: target.values.join("|") } } },
+    decorators: { ...rest, enumName: target.name, ...(target.valueDescriptions ? { enumValueDescriptions: target.valueDescriptions } : {}), typespec: { ...typespec, validation: { ...validation, pattern: target.values.join("|") } } },
   };
 }
 
