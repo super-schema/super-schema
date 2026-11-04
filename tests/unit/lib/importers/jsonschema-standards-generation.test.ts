@@ -42,6 +42,26 @@ describe("standards support survives generation", () => {
     expect(await errorsOf(source)).toEqual([]);
   });
 
+  it("default, readOnly / writeOnly and a patternProperties map compile", async () => {
+    const { source } = generate({
+      type: "object", title: "Account",
+      properties: {
+        status: { type: "string", default: "OPEN" },
+        retries: { type: "integer", default: 3 },
+        active: { type: "boolean", default: true },
+        id: { type: "string", readOnly: true },
+        secret: { type: "string", writeOnly: true },
+        labels: { type: "object", patternProperties: { "^x-": { type: "string" } } },
+      },
+    });
+    expect(source).toContain('status?: string = "OPEN"');
+    expect(source).toContain("= 3");
+    expect(source).toContain("= true");
+    expect(source).toContain("@visibility(Lifecycle.Read)");
+    expect(source).toContain("@visibility(Lifecycle.Create, Lifecycle.Update)");
+    expect(await errorsOf(source)).toEqual([]);
+  });
+
   it("a NUL in a description never reaches the generated source", () => {
     const { source } = generate({ type: "object", title: "O", description: "a\u0000b", properties: { x: { type: "string", description: "c\u0000d" } } });
     expect(source).not.toContain("\u0000");

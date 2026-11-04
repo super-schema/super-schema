@@ -149,7 +149,11 @@ function importResult(doc: Doc): { text: string; error?: string } {
 }
 
 /** Whether the import result accounts for `key`: its name (as a key, a listed keyword, a warning), a warning that says where it was found, or its value. */
+/** Keywords the IR holds as a field fact of their own (so they are no longer listed as ignored or repeated as an extension), and where that shows. */
+const FIRST_CLASS: Record<string, string> = { readOnly: '"visibility"', writeOnly: '"visibility"', default: '"defaultValue"', patternProperties: '"x-pattern-properties"' };
+
 function accounted(text: string, key: string, value: unknown): boolean {
+  if (FIRST_CLASS[key] && text.includes(FIRST_CLASS[key])) return true;
   if (text.includes(`"${key}"`) || text.includes(`\`${key}\``) || text.includes(`${key} found on`)) return true;
   const probe = typeof value === "number" ? String(value).replace("-", "") : TOKEN;
   return text.includes(probe);

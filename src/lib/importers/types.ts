@@ -60,6 +60,10 @@ export interface ParsedField {
   classification?: string;
   /** Format hint (e.g. email, uri, uuid) */
   format?: string;
+  /** The value a missing property takes (JSON Schema `default`; only for string, number and boolean fields). */
+  defaultValue?: string | number | boolean;
+  /** Description of the ELEMENTS of an array field (JSON Schema `items.description`). */
+  itemDescription?: string;
   /** Whether the field is deprecated */
   deprecated?: boolean;
   /** Deprecation message */

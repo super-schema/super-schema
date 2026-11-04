@@ -40,9 +40,12 @@ describe("items of an array field", () => {
     expect(tags.constraints).toBeUndefined();
     expect(tags.description).toBeUndefined();
     expect(tags.deprecated).toBeUndefined();
-    for (const key of ["pattern", "maxLength", "description", "deprecated"]) {
+    for (const key of ["pattern", "maxLength", "deprecated"]) {
       expect(doc.warnings.some((w) => w.includes(`${key} found on items of R.tags was kept on the field as x-items-${key}`))).toBe(true);
     }
+    // the element description is a field fact of its own now: no "IR has no element-level description" warning
+    expect(tags.itemDescription).toBe("a tag");
+    expect(doc.warnings.some((w) => w.includes("description found on items of R.tags"))).toBe(false);
   });
 
   it("still types the field as an array of strings", () => {
@@ -180,7 +183,9 @@ describe("sites whose subschemas are kept whole", () => {
       },
     });
     expect(fieldOf(d, "R", "m").extensions).toEqual({ additionalProperties: { type: "string", maxLength: 3, "x-a": 1 } });
-    expect(fieldOf(d, "R", "p").extensions).toEqual({ patternProperties: { "^x": { type: "string", "x-b": 2 } } });
+    // patternProperties types the map now; the pattern and its schema are kept verbatim as x-pattern-properties
+    expect(fieldOf(d, "R", "p")).toMatchObject({ type: "map", mapValueType: "string" });
+    expect(fieldOf(d, "R", "p").extensions).toEqual({ "x-pattern-properties": { "^x": { type: "string", "x-b": 2 } } });
     expect(fieldOf(d, "R", "t").extensions).toEqual({ prefixItems: [{ type: "string", "x-c": 3 }] });
     expect(fieldOf(d, "R", "m").ignoredKeywords).toEqual(["additionalProperties"]);
   });

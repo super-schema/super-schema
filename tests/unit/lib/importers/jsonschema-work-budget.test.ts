@@ -177,7 +177,9 @@ describe("the work counter", () => {
       const ext = fields[i]!.extensions ?? {};
       expect(ext["x-owner"], `p${i} x-owner`).toBe(`team-${d}`);
       expect(ext["x-pii"], `p${i} x-pii`).toEqual({ level: d % 3, tags: ["a", "b"] });
-      expect(ext.default, `p${i} default`).toBe(`d${d}`);
+      // a direct $ref to the definition: its string default is the field's own default; through an array / oneOf it belongs to a nested node
+      if (i % 3 === 0) expect(fields[i]!.defaultValue, `p${i} default`).toBe(`d${d}`);
+      else expect(ext.default, `p${i} default`).toBe(`d${d}`);
     }
   });
 });

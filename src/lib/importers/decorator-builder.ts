@@ -32,6 +32,7 @@ export function buildDecoratorsFromParsedField(
   if (field.secret) identity.secret = true;
   if (field.isKey) identity.key = true;
   if (field.discriminator) identity.discriminator = true;
+  if (field.defaultValue !== undefined) identity.defaultValue = field.defaultValue;
   if (Object.keys(identity).length > 0) typespec.identity = identity;
 
   // --- typespec.validation ---
@@ -121,8 +122,11 @@ export function buildDecoratorsFromParsedField(
   if (Object.keys(governance).length > 0) decorators.governance = governance;
 
   // --- semantics ---
-  if (field.description) {
-    decorators.semantics = { description: field.description };
+  if (field.description || field.itemDescription) {
+    decorators.semantics = {
+      ...(field.description ? { description: field.description } : {}),
+      ...(field.itemDescription ? { itemDescription: field.itemDescription } : {}),
+    };
   }
 
   // --- evolution ---

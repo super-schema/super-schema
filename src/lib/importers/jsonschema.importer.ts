@@ -744,6 +744,9 @@ export function stripNulText(content: string): string {
   return content.replace(/\u0000/g, "").replace(/(?<!\\)((?:\\\\)*)\\u0000/gi, "$1");
 }
 
+/** A `default` longer than this is kept as an extension (budgeted), not as the field's default. */
+const MAX_DEFAULT_LENGTH = 1024;
+
 const MAX_REF_DEPTH = 16;
 /** Combinator nesting past this is not a real schema; resolve it as an unknown at low confidence. */
 export const MAX_SCHEMA_NESTING = 200;
@@ -1130,6 +1133,13 @@ function isMapSchema(node: JsonSchemaNode): boolean {
   return isSchemaObject(node.additionalProperties) && !(isSchemaObject(node.properties) && Object.keys(node.properties).length > 0);
 }
 
+/** The value schemas of `patternProperties` (pattern -> schema) of an object that declares no properties and no `additionalProperties` schema. */
+function patternMapEntries(node: JsonSchemaNode): Array<[string, JsonSchemaNode]> {
+  const raw = node.patternProperties;
+  if (!isSchemaObject(raw) || isMapSchema(node) || (isSchemaObject(node.properties) && Object.keys(node.properties).length > 0)) return [];
+  return Object.entries(raw).filter((e): e is [string, JsonSchemaNode] => isSchemaObject(e[1]));
+}
+
 function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedType {
   charge(ctx.run);
   if (typeof node.$ref === "string") {
@@ -1252,6 +1262,10 @@ function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedT
     case "object":
       // `additionalProperties: <schema>` and no declared properties: a dictionary string -> value (buildFields reads the value type).
       if (isMapSchema(node)) return { type: "map", confidence: "medium", nullable: nullableFromType, originalType: "object/additionalProperties" };
+      // `patternProperties` and no declared properties: a dictionary keyed by the pattern(s); the first value schema types it.
+      if (patternMapEntries(node).length > 0) {
+        return { type: "map", confidence: patternMapEntries(node).length === 1 ? "medium" : "low", nullable: nullableFromType, originalType: "object/patternProperties" };
+      }
       return { type: "object", confidence: "low", nullable: nullableFromType, originalType: "object" };
     case "null":
       return { type: "string", confidence: "low", nullable: true, originalType: "null" };
@@ -1956,7 +1970,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
         if (key === "format" && formatIsInterpreted(value)) continue;
         if (ELEMENT_KEYS.has(key) || key === "format") {
           const kept = `x-${siteKey(site)}-${key}`;
-          if (keep(kept, value) === "kept" && key !== "title") {
+          if (keep(kept, value) === "kept" && key !== "title" && kept !== "x-items-description") {
             note(`${key} found on ${site} of ${owner} was kept on the field as ${kept} (the IR has no element-level ${key})`);
           }
           continue;
@@ -1997,6 +2011,68 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     const ignoredKeywords = ignoredKeywordsOf([...annotationSources], true, nested);
     if (ignoredKeywords) field.ignoredKeywords = ignoredKeywords;
 
+    const patternEntries = resolved.type === "map" ? sources.map(patternMapEntries).find((e) => e.length > 0) : undefined;
+    // Standard keywords the IR can hold are read here, so they are neither listed as ignored nor repeated as an extension.
+    const consumed = new Set<string>();
+    const fieldLabel = `${ownerName}.${name}`;
+    const warn = (message: string) => baseCtx.warnings.push(message);
+    // default: only where TypeSpec writes `= value` for the field's type (string / number / boolean), never for an enum or a structure
+    const defaultSource = annotationSources.find((s) => s.default !== undefined);
+    if (defaultSource) {
+      const value = defaultSource.default;
+      const category = getTypeInfo(resolved.type)?.category;
+      // A large default stays an extension: the extension budget bounds how often it is repeated (a first-class copy on every field would not be).
+      const fits =
+        (typeof value === "string" && value.length <= MAX_DEFAULT_LENGTH && category === "String" && resolved.type !== "enum") ||
+        (typeof value === "number" && Number.isFinite(value) && category === "Number") ||
+        (typeof value === "boolean" && category === "Boolean");
+      if (fits) {
+        field.defaultValue = value as string | number | boolean;
+        consumed.add("default");
+      } else if (!(typeof value === "string" && value.length > MAX_DEFAULT_LENGTH)) {
+        warn(`Field \`${fieldLabel}\`: \`default\` (${JSON.stringify(value)?.slice(0, 40)}) was not applied to a ${resolved.type} field (only string, number and boolean defaults are written); it is kept as written.`);
+      }
+    }
+    // readOnly / writeOnly: the lifecycle phases the property takes part in
+    const readOnly = annotationSources.some((s) => s.readOnly === true);
+    const writeOnly = annotationSources.some((s) => s.writeOnly === true);
+    if (readOnly || writeOnly || annotationSources.some((s) => s.readOnly === false || s.writeOnly === false)) {
+      if (readOnly) {
+        field.visibility = ["Read"];
+        if (writeOnly) warn(`Field \`${fieldLabel}\`: readOnly and writeOnly are both true; it was imported as read-only.`);
+      } else if (writeOnly) {
+        field.visibility = ["Create", "Update"];
+      }
+      consumed.add("readOnly");
+      consumed.add("writeOnly");
+    }
+    // patternProperties: the pattern(s) are kept verbatim next to the map they type
+    if (resolved.type === "map" && patternEntries) {
+      const all = sources.find((s) => patternMapEntries(s).length > 0)?.patternProperties as Record<string, unknown>;
+      setOwn((extensions ??= {}), "x-pattern-properties", all);
+      field.extensions = extensions;
+      consumed.add("patternProperties");
+      if (patternEntries.length > 1) {
+        warn(`Field \`${fieldLabel}\`: patternProperties has ${patternEntries.length} patterns; the map is typed by the first (\`${patternEntries[0][0]}\`), all are kept as x-pattern-properties.`);
+      }
+    }
+    // A keyword hoisted from a nested node (`items`, a union member) describes THAT node, not the field: it stays listed and preserved.
+    for (const key of [...consumed]) if (nested.some((n) => Object.prototype.hasOwnProperty.call(n, key))) consumed.delete(key);
+    if (consumed.size > 0) {
+      if (field.ignoredKeywords) {
+        const left = field.ignoredKeywords.filter((k) => !consumed.has(k));
+        if (left.length > 0) field.ignoredKeywords = left;
+        else delete field.ignoredKeywords;
+      }
+      if (field.extensions) {
+        for (const key of consumed) delete field.extensions[key];
+        if (Object.keys(field.extensions).length === 0) delete field.extensions;
+      }
+    }
+    // element description: first-class on the field, and still written as x-items-description (the schema emitters' round trip)
+    const itemDescription = field.extensions?.["x-items-description"];
+    if (typeof itemDescription === "string" && itemDescription.trim() !== "") field.itemDescription = itemDescription;
+
     const classified = readClassification(sources, extensions, classificationConfig);
     if (classified.classification) field.classification = classified.classification;
     if (classified.governance) field.governance = classified.governance;
@@ -2033,7 +2109,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     }
 
     // Map value type (+ reference / enum target of the value). The value schema IS the type now, so it is no longer an ignored keyword.
-    const valueSchema = resolved.type === "map" ? sources.find((s) => isMapSchema(s))?.additionalProperties : undefined;
+    const valueSchema = resolved.type === "map" ? (sources.find((s) => isMapSchema(s))?.additionalProperties ?? patternEntries?.[0]?.[1]) : undefined;
     if (isSchemaObject(valueSchema)) {
       const value = resolveSchemaType(valueSchema, ctx);
       field.mapKeyType = "string";
