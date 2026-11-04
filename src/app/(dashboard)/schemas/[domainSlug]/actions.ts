@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/db";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
@@ -23,7 +23,8 @@ import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
 import { createImportedEntities, entityExtensionsMetadata, existingEntityNames, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
-import { EXTENDS_METADATA_KEY, linkImportedEntity, relinkDanglingFields, relinkDanglingFieldsToEnum } from "@/services/imported-links";
+import { cascadeScalarToFields, EXTENDS_METADATA_KEY, linkImportedEntity, relinkDanglingFields, relinkDanglingFieldsToEnum, relinkDanglingFieldsToScalar } from "@/services/imported-links";
+import { readScalarConstraints, SCALAR_CONSTRAINT_KEYS, type ScalarConstraints } from "@/lib/importers/scalar-asset";
 import { builtInNameConflict } from "@/lib/compiler/built-in-names";
 import { renameBuiltInPayload } from "@/lib/builtin-entity-renames";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
@@ -543,8 +544,15 @@ export async function deleteSharedEnumAction(enumId: string): Promise<AssetOutco
  * through the line-unique name registry), so an update that names any of them is rejected with VALIDATION_ERROR.
  */
 const ENUM_EDITABLE = { values: isStringArray, description: isString };
-const SCALAR_EDITABLE = { baseType: isString, format: isStringOrNull, pattern: isStringOrNull, description: isString };
+const SCALAR_EDITABLE = { baseType: isString, logicalType: isStringOrNull, format: isStringOrNull, pattern: isStringOrNull, constraints: isConstraintsOrNull, description: isString };
 const UNION_EDITABLE = { memberTypes: isStringArray, description: isString };
+
+/** A scalar's `constraints` edit: null (none) or an object of finite numbers under the known keys. */
+function isConstraintsOrNull(value: unknown): value is ScalarConstraints | null {
+  if (value === null) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.entries(value).every(([k, v]) => (SCALAR_CONSTRAINT_KEYS as readonly string[]).includes(k) && typeof v === "number" && Number.isFinite(v));
+}
 
 export async function updateSharedEnumAction(
   enumId: string,
@@ -631,7 +639,7 @@ export async function deleteCustomScalarAction(scalarId: string): Promise<AssetO
 
 export async function updateCustomScalarAction(
   scalarId: string,
-  data: { baseType?: string; format?: string | null; pattern?: string | null; description?: string }
+  data: { baseType?: string; logicalType?: string | null; format?: string | null; pattern?: string | null; constraints?: ScalarConstraints | null; description?: string }
 ): Promise<AssetOutcome> {
 
   const id = requireId(scalarId, "Scalar id");
@@ -642,7 +650,18 @@ export async function updateCustomScalarAction(
   try {
     const access = await guardSubject("asset.write", { kind: "customScalar", id: id.data }, { label: "Scalar" });
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
-    await prisma.customScalar.update({ where: { id: id.data }, data: picked.data as Prisma.CustomScalarUpdateInput });
+    // The scalar is the one place its type, format and bounds are edited: every field that uses it (`decorators.scalarName`) follows, in the
+    // same transaction.
+    await prisma.$transaction(async (tx) => {
+      const { constraints, ...rest } = picked.data as Record<string, unknown>;
+      const row = await tx.customScalar.update({
+        where: { id: id.data },
+        data: { ...rest, ...(constraints !== undefined ? { constraints: constraints === null ? Prisma.DbNull : (constraints as Prisma.InputJsonObject) } : {}) } as Prisma.CustomScalarUpdateInput,
+      });
+      if (row.domainId) {
+        await cascadeScalarToFields(tx, { domainId: row.domainId, scalar: { name: row.name, baseType: row.baseType, logicalType: row.logicalType, format: row.format, pattern: row.pattern, constraints: row.constraints } });
+      }
+    }, IMPORT_TRANSACTION_OPTIONS);
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
@@ -1108,6 +1127,9 @@ export interface BulkImportPayload {
     format?: string;
     pattern?: string;
     description?: string;
+    /** Logical type a field using the scalar gets, and its other bounds (see `scalar-asset.ts`). */
+    logicalType?: string;
+    constraints?: ScalarConstraints;
   }>;
   unionTypes: Array<{ name: string; memberTypes: string[]; description?: string }>;
   services: ImportedServicePayload[];
@@ -1406,17 +1428,27 @@ export async function createDomainAssetsFromImportAction(
       for (const scalar of payload.customScalars) {
         const name = scalar.name.trim();
         if (!(await isNameFree("customScalar", name, domainScope.data))) continue;
+        const constraints = readScalarConstraints(scalar.constraints);
         await tx.customScalar.create({
           data: {
             name,
             baseType: scalar.baseType,
+            logicalType: scalar.logicalType ?? null,
             format: scalar.format ?? null,
             pattern: scalar.pattern ?? null,
+            ...(Object.keys(constraints).length > 0 ? { constraints } : {}),
             description: scalar.description ?? "",
             ...domainScope.data,
           },
         });
         result.scalarsCreated++;
+        // entities imported before this scalar that pointed at its file by name now use it
+        if (domainScope.data.domainId) {
+          await relinkDanglingFieldsToScalar(tx, {
+            domainId: domainScope.data.domainId,
+            scalar: { name, baseType: scalar.baseType, logicalType: scalar.logicalType, format: scalar.format, pattern: scalar.pattern, constraints },
+          });
+        }
       }
 
       for (const unionType of named.unionTypes) {

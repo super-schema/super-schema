@@ -12,6 +12,7 @@ import type {
 } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { buildDecoratorsFromParsedField } from "./decorator-builder";
 import { sanitizeImportedText } from "./text-safety";
+import { scalarRowFromParsed } from "./scalar-asset";
 import type { ParsedEntity, ParsedField } from "./types";
 import type { TypeSpecImportResult } from "./typespec.importer";
 
@@ -82,7 +83,19 @@ export function buildImportAssetsPayload(
     models: selection.selectedModels.map((idx) => toModelInput(result.models[idx])),
     entities: selection.selectedEntities.map((idx) => toEntityInput(result.models[idx])),
     sharedEnums: selection.selectedEnums.map((idx) => result.sharedEnums[idx]),
-    customScalars: selection.selectedScalars.map((idx) => result.customScalars[idx]),
+    customScalars: selection.selectedScalars.map((idx) => {
+      const scalar = result.customScalars[idx];
+      const row = scalarRowFromParsed(scalar);
+      return {
+        name: row.name,
+        baseType: row.baseType,
+        description: row.description || undefined,
+        ...(row.format ? { format: row.format } : {}),
+        ...(row.pattern ? { pattern: row.pattern } : {}),
+        ...(row.logicalType ? { logicalType: row.logicalType } : {}),
+        ...(row.constraints ? { constraints: row.constraints } : {}),
+      };
+    }),
     unionTypes: selection.selectedUnions.map((idx) => result.unions[idx]),
     services: selection.selectedServices.map((idx) => result.services[idx]),
     decoratorDefinitions: selection.selectedDecorators.map((idx) => result.decoratorDefinitions[idx]),

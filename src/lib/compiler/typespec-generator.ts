@@ -650,6 +650,21 @@ function generateScalarDefinition(scalar: SuperSchemaCustomScalar): string[] {
     lines.push(`@doc("${escapeString(scalar.description)}")`);
   }
 
+  if (scalar.format) lines.push(`@format("${escapeString(scalar.format)}")`);
+  if (scalar.pattern) lines.push(`@pattern("${escapeString(scalar.pattern)}")`);
+  const c = scalar.constraints;
+  if (c) {
+    const numeric = (key: "minLength" | "maxLength" | "minValue" | "maxValue" | "minValueExclusive" | "maxValueExclusive") => {
+      const value = c[key];
+      if (typeof value === "number" && Number.isFinite(value)) lines.push(`@${key}(${value})`);
+    };
+    numeric("minLength");
+    numeric("maxLength");
+    numeric("minValue");
+    numeric("maxValue");
+    numeric("minValueExclusive");
+    numeric("maxValueExclusive");
+  }
   lines.push(`scalar ${sanitizeIdentifier(scalar.name)} extends ${scalar.baseType};`);
   return lines;
 }

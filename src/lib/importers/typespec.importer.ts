@@ -87,6 +87,11 @@ export interface TypeSpecImportResult {
     format?: string;
     pattern?: string;
     description?: string;
+    /** From a JSON Schema import: the logical type fields get, and the constraints besides `pattern` (see `ParsedScalar`). */
+    logicalType?: string;
+    constraints?: Array<{ type: string; value: number | string }>;
+    minValueExclusive?: number;
+    maxValueExclusive?: number;
   }>;
   unions: Array<{ name: string; memberTypes: string[]; description?: string }>;
   aliases: Array<{ name: string; type: string }>;

@@ -328,6 +328,15 @@ export interface SuperSchemaCustomScalar {
   format?: string;
   pattern?: string;
   description?: string;
+  /** Other validators, written as the matching TypeSpec decorators on the scalar. */
+  constraints?: {
+    minLength?: number;
+    maxLength?: number;
+    minValue?: number;
+    maxValue?: number;
+    minValueExclusive?: number;
+    maxValueExclusive?: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
