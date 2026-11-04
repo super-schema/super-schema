@@ -7,7 +7,10 @@ const nextConfig: NextConfig = {
   // in-process compile reported errors under `next dev` (the entity publish regeneration check rejected every
   // entity whose stored source was missing or stale; verified live in Playwright). A server-external package is a
   // plain Node import, which is what the compiler needs.
-  serverExternalPackages: ["@typespec/compiler"],
+  // `@electric-sql/pglite` locates its WASM / data files with `new URL("./pglite.wasm", import.meta.url)`. Bundled by Turbopack, that URL
+  // is not the Node `URL` class `fs` accepts ("The "path" argument must be of type string or an instance of Buffer or URL. Received an
+  // instance of URL"), so the module graphs that bundled it could not open the database. A server-external package loads from node_modules.
+  serverExternalPackages: ["@typespec/compiler", "@electric-sql/pglite"],
   // D14: the AsyncAPI preview iframe reads these files at runtime (standalone output must ship them).
   // The key is a glob over the route path. Verified with a standalone build: under Turbopack the literal
   // dynamic-segment key "/api/asyncapi-preview/[asset]" matches nothing, so neither file ships.
