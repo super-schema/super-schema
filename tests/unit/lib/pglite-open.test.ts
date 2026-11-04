@@ -77,7 +77,7 @@ describe("sharedPglite", () => {
     const created: string[] = [];
     const make = (dir: string) => () => {
       created.push(dir);
-      return { dir } as unknown as PGlite;
+      return { dir, close: async () => undefined } as unknown as PGlite;
     };
     const first = sharedPglite(a, make(a));
     expect(sharedPglite(a, make(a))).toBe(first);
