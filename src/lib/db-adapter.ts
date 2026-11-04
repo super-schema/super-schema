@@ -5,22 +5,21 @@
 // Uses relative imports only (no "@/" alias) so it also resolves under tsx.
 
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PGlite } from "@electric-sql/pglite";
+import type { PGlite } from "@electric-sql/pglite";
 import { PrismaPGlite } from "./pglite-adapter";
 
 import { getDbProvider, getPgliteDataDir } from "./db-provider";
-
-let pgliteClient: PGlite | undefined;
+import { closeOnSignals, sharedPglite } from "./pglite-open";
 
 /**
- * Process-wide singleton PGlite instance. PGlite holds an exclusive lock on its
- * data directory, so only one instance per process may open it.
+ * Process-wide singleton PGlite instance per data directory (kept on globalThis, so the separate module graphs Next builds for routes,
+ * actions and the proxy share it: a second instance on the same directory aborts). The directory is created with its parents, and the
+ * client is closed when the process is stopped. See pglite-open.ts.
  */
 export function getPgliteClient(): PGlite {
-  if (!pgliteClient) {
-    pgliteClient = new PGlite(getPgliteDataDir());
-  }
-  return pgliteClient;
+  const client = sharedPglite(getPgliteDataDir());
+  closeOnSignals(client);
+  return client;
 }
 
 /**

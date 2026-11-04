@@ -16,6 +16,7 @@ import "dotenv/config";
 
 import { getDbProvider, getPgliteDataDir } from "../src/lib/db-provider";
 import { applyPgliteMigrations } from "../src/lib/pglite-migrate";
+import { openPglite } from "../src/lib/pglite-open";
 
 const mode = process.argv[2] === "deploy" ? "deploy" : "ensure";
 
@@ -23,8 +24,8 @@ const mode = process.argv[2] === "deploy" ? "deploy" : "ensure";
 const CONNECT_TIMEOUT_MS = 5_000;
 
 async function runPglite(): Promise<void> {
-  const { PGlite } = await import("@electric-sql/pglite");
-  const db = new PGlite(getPgliteDataDir());
+  // Creates ./data (PGlite's own mkdir is not recursive); an unopenable directory fails with `npm run db:reset` named.
+  const db = await openPglite(getPgliteDataDir());
   const applied = await applyPgliteMigrations(db);
   await db.close();
   console.log(
@@ -65,8 +66,8 @@ async function installBundledTraits(): Promise<void> {
     let close: () => Promise<void> = async () => undefined;
     let adapter: ConstructorParameters<typeof PrismaClient>[0]["adapter"];
     if (getDbProvider() === "pglite") {
-      const [{ PGlite }, { PrismaPGlite }] = await Promise.all([import("@electric-sql/pglite"), import("../src/lib/pglite-adapter")]);
-      const pglite = new PGlite(getPgliteDataDir());
+      const [{ openPglite: open }, { PrismaPGlite }] = await Promise.all([import("../src/lib/pglite-open"), import("../src/lib/pglite-adapter")]);
+      const pglite = await open(getPgliteDataDir());
       close = () => pglite.close();
       adapter = new PrismaPGlite(pglite);
     } else {
