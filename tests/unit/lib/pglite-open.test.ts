@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
-import { PgliteOpenError, ensurePgliteDataDir, openPglite, resetPgliteDataDir, sharedPglite } from "../../../src/lib/pglite-open";
+import { PgliteOpenError, closeSharedPglite, ensurePgliteDataDir, openPglite, resetPgliteDataDir, sharedPglite } from "../../../src/lib/pglite-open";
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "pglite-open-"));
 const open: PGlite[] = [];
@@ -84,5 +84,18 @@ describe("sharedPglite", () => {
     const b = path.join(tmp(), "b");
     expect(sharedPglite(b, make(b))).not.toBe(first);
     expect(created).toEqual([a, b]);
+  });
+});
+
+describe("closeSharedPglite", () => {
+  it("closes every shared client once and forgets them, so a script can exit", async () => {
+    const dir = path.join(tmp(), "c");
+    let closed = 0;
+    const fake = { close: async () => { closed += 1; } } as unknown as PGlite;
+    const client = sharedPglite(dir, () => fake);
+    await closeSharedPglite();
+    await closeSharedPglite();
+    expect(closed).toBe(1);
+    expect(sharedPglite(dir, () => ({ again: true }) as unknown as PGlite)).not.toBe(client);
   });
 });

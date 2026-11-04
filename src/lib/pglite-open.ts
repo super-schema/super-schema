@@ -90,6 +90,16 @@ export function sharedPglite(dir: string, create: () => PGlite = () => (ensurePg
   return client;
 }
 
+/** Closes every shared client of this process (a script's last step: an open PGlite keeps the process alive after the work is done). */
+export async function closeSharedPglite(): Promise<void> {
+  const holder = globalThis as unknown as Record<symbol, Registry | undefined>;
+  const registry = holder[SHARED];
+  if (!registry) return;
+  const clients = [...registry.values()];
+  registry.clear();
+  await Promise.all(clients.map((client) => client.close().catch(() => undefined)));
+}
+
 const SIGNALS = Symbol.for("super-schema.pglite.signals");
 
 /**
