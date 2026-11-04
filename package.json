@@ -29,6 +29,7 @@
     "build:parser-worker": "node scripts/build-parser-worker.mjs",
     "db:deploy": "tsx scripts/db.ts deploy",
     "db:reset": "tsx scripts/db-reset.ts",
+    "import:git": "esbuild scripts/import-git.ts --bundle --platform=node --format=esm --packages=external --alias:server-only=./scripts/stubs/server-only.cjs --outfile=node_modules/.cache/import-git.mjs --log-level=warning && node node_modules/.cache/import-git.mjs",
     "db:name-conflicts": "tsx scripts/report-name-conflicts.ts",
     "db:flag-stale-sources": "tsx scripts/flag-stale-typespec-sources.ts",
     "db:migrate-typespec-source": "esbuild scripts/migrate-typespec-source.ts --bundle --platform=node --format=esm --packages=external --alias:server-only=./scripts/stubs/server-only.cjs --outfile=node_modules/.cache/migrate-typespec-source.mjs --log-level=warning && node node_modules/.cache/migrate-typespec-source.mjs",
