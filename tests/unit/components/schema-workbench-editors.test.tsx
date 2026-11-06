@@ -157,14 +157,14 @@ describe("Detail Panel", () => {
     const backdrop = screen.getByTestId("detail-panel-backdrop");
     expect(backdrop.getAttribute("data-highlight")).toBe("code");
     expect(backdrop.querySelectorAll('[data-changed="true"]')).toHaveLength(1);
-    expect(backdrop.querySelector(".text-blue-400")).not.toBeNull(); // a keyword is coloured
+    expect(backdrop.querySelector(".syntax-keyword")).not.toBeNull(); // a keyword is coloured
     expect(screen.getByTestId("detail-panel-changes").textContent).toMatch(/1 changed/);
   });
 
   it("colours SQL DDL", () => {
     render(<DetailPanel value={DDL} onChange={vi.fn()} format="bigquery-ddl" />);
     expect(screen.getByTestId("detail-panel-textarea").getAttribute("aria-label")).toBe("Detail Panel schema text");
-    expect(document.querySelector(".text-blue-400")).not.toBeNull();
+    expect(document.querySelector(".syntax-keyword")).not.toBeNull();
   });
 
   it("skips the diff gracefully for a huge text, and stays editable", () => {

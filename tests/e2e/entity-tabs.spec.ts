@@ -29,7 +29,7 @@ import {
   successToast,
   versionState,
 } from "./helpers/entity-page";
-import { generateTarget, openEditor, openSchemasTab, readPreview, readTypeSpecSource, saveTypeSpecSource, errorToast } from "./helpers/lifecycle";
+import { generateTarget, openEditor, openSchemasTab, readPreview, readTypeSpecSource, renameField, errorToast } from "./helpers/lifecycle";
 
 const ID = {
   tab: (name: "editor" | "versions" | "governance" | "alerts" | "api" | "deployments" | "typespec" | "schemas") => `tab-${name}`,
@@ -334,6 +334,104 @@ test.describe("API, Deployments and TypeSpec", () => {
     await expect(main.locator('[data-testid="api-operation"][data-name="getInvoice"]')).toBeVisible();
   });
 
+  test("API editor: Generate CRUD (idempotent), typed body / responses / tags autosave, path parameters follow the path, order survives a reload", { tag: ["@regression"] }, async ({
+    authedPage: page,
+    workspace,
+  }) => {
+    const [invoice] = workspace.entities;
+    const main = centerPanel(page);
+    const renderWarnings: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() === "error" && /Cannot update a component .* while rendering a different component/.test(msg.text())) renderWarnings.push(msg.text());
+    });
+    await openEntityPage(page, invoice.url, invoice.name);
+    await main.getByTestId(ID.tab("api")).click();
+    const api = main.getByTestId(ID.apiTab);
+    const op = (name: string) => api.locator(`[data-testid="api-operation"][data-name="${name}"]`);
+    const status = api.getByTestId("api-save-status");
+
+    // Generate CRUD: five operations; a second run adds nothing.
+    await api.getByTestId("api-generate-crud").click();
+    await expect(api.getByTestId(ID.apiOperation)).toHaveCount(5);
+    for (const name of ["listInvoices", "getInvoice", "createInvoice", "updateInvoice", "deleteInvoice"]) await expect(op(name)).toBeVisible();
+    await expect(op("createInvoice")).toContainText("body");
+    await api.getByTestId("api-generate-crud").click();
+    await expect(page.locator("[data-sonner-toast]").filter({ hasText: "All CRUD operations already exist" })).toBeVisible();
+    await expect(api.getByTestId(ID.apiOperation)).toHaveCount(5);
+
+    // Edit getInvoice: move it to its own path and rename the placeholder (the path parameter follows), add a tag, mark it deprecated,
+    // change a response. (Not `/invoices/{invoiceId}`: OpenAPI reads it as the same path as updateInvoice's `/invoices/{id}`, which
+    // the server refuses, so the save would fail.)
+    // The row is held by its id: `data-name` follows the name, which is edited below.
+    const getId = await op("getInvoice").getAttribute("data-operation-id");
+    const getRow = api.locator(`[data-testid="api-operation"][data-operation-id="${getId}"]`);
+    await getRow.getByRole("button").first().click();
+    const editor = getRow.getByTestId("api-operation-editor");
+    await editor.getByTestId("api-edit-path").fill("/invoices/{invoiceId}/details");
+    await expect(editor.locator('[data-testid="api-param"][data-location="path"]')).toHaveCount(1);
+    await expect(editor.locator('[data-testid="api-param"][data-name="invoiceId"]')).toBeVisible();
+    await editor.getByLabel("Add tag").fill("billing");
+    await editor.getByLabel("Add tag").press("Enter");
+    await editor.getByTestId("api-edit-deprecated").check();
+    await editor.getByTestId("api-response").first().getByLabel("Response type: array").check();
+    await expect(status).toHaveAttribute("data-state", "saved");
+
+    // An invalid name is shown inline and not saved.
+    await editor.getByTestId("api-edit-name").fill("get invoice");
+    await expect(editor.getByTestId("api-field-error").first()).toContainText("identifier");
+    await expect(status).toHaveAttribute("data-state", "invalid");
+    await editor.getByTestId("api-edit-name").fill("getInvoice");
+    await expect(status).toHaveAttribute("data-state", "saved");
+
+    // Move deleteInvoice to the top.
+    for (let i = 0; i < 4; i++) await afterServerAction(page, () => api.getByRole("button", { name: "Move deleteInvoice up" }).click());
+    await expect(api.getByTestId(ID.apiOperation).first()).toHaveAttribute("data-name", "deleteInvoice");
+
+    await openEntityPage(page, invoice.url, invoice.name);
+    await main.getByTestId(ID.tab("api")).click();
+    await expect(api.getByTestId(ID.apiOperation)).toHaveCount(5);
+    await expect(api.getByTestId(ID.apiOperation).first()).toHaveAttribute("data-name", "deleteInvoice");
+    await expect(op("getInvoice")).toContainText("/invoices/{invoiceId}/details");
+    await expect(op("getInvoice")).toContainText("deprecated");
+    await expect(op("getInvoice")).toContainText("billing");
+    await op("getInvoice").getByRole("button").first().click();
+    await expect(op("getInvoice").getByTestId("api-response").first().getByLabel("Response type: array")).toBeChecked();
+    expect(renderWarnings).toEqual([]);
+  });
+
+  test("API editor: duplicate an operation, and rename the service", { tag: ["@regression"] }, async ({
+    authedPage: page,
+    workspace,
+  }) => {
+    const [invoice] = workspace.entities;
+    const main = centerPanel(page);
+    await openEntityPage(page, invoice.url, invoice.name);
+    await main.getByTestId(ID.tab("api")).click();
+    const api = main.getByTestId(ID.apiTab);
+    await api.getByTestId(ID.apiAdd).click();
+    await api.getByTestId(ID.apiName).fill("listInvoices");
+    await api.getByTestId(ID.apiCreate).click();
+    const list = api.locator('[data-testid="api-operation"][data-name="listInvoices"]');
+    await expect(list).toBeVisible();
+
+    // A new operation opens expanded (its editor is shown): no click on its row, which would collapse it.
+    await expect(list.getByTestId("api-operation-editor")).toBeVisible();
+    await list.getByTestId("api-op-duplicate").click();
+    const copy = api.locator('[data-testid="api-operation"][data-name="listInvoicesCopy"]');
+    await expect(copy).toContainText("/invoices/copy");
+
+    await api.getByTestId("api-service-settings-toggle").click();
+    await api.getByTestId("api-service-base-path").fill("/v1");
+    await afterServerAction(page, () => api.getByTestId("api-service-save").click());
+    await expect(api.getByTestId("api-service-settings")).toHaveCount(0);
+    await expect(api).toContainText("/v1");
+
+    await openEntityPage(page, invoice.url, invoice.name);
+    await main.getByTestId(ID.tab("api")).click();
+    await expect(api.getByTestId(ID.apiOperation)).toHaveCount(2);
+    await expect(api).toContainText("/v1");
+  });
+
   test("Deployments: an empty state, then a generated target to mark as deployed in an environment and to check for drift", { tag: ["@regression"] }, async ({
     authedPage: page,
     workspace,
@@ -389,46 +487,21 @@ test.describe("API, Deployments and TypeSpec", () => {
     await expect(main.locator('[data-testid="deployment-environment"][data-environment="staging"]')).toBeVisible();
   });
 
-  test("TypeSpec: an edit of the source is compiled and applied (the fields follow); source that does not compile is refused and nothing is saved", { tag: ["@regression"] }, async ({
-    authedPage: page,
-    workspace,
-  }) => {
-    test.setTimeout(180_000);
+  test("Source is read-only, can be exported, and reflects SuperSchema edits", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
     const [invoice] = workspace.entities;
     await openEntityPage(page, invoice.url, invoice.name);
-
     const source = await readTypeSpecSource(page);
     expect(source).toContain(`model ${invoice.name}`);
-    // Save is disabled until the text changes.
-    await expect(page.getByTestId(ID.typespecSave)).toBeDisabled();
-
-    // A new field in the source is a new field of the entity.
-    const edited = source.replace(/(\bid\??:\s*string;)/, "$1\n  amount: int32;");
-    expect(edited).not.toBe(source);
-    const saved = await saveTypeSpecSource(page, edited);
-    expect(saved.ok, saved.message).toBe(true);
-    expect(saved.message).toMatch(/1 added/);
-    // The right panel's preview of the entity follows the saved source.
-    await expect(page.getByTestId(ID.typespecPreview)).toContainText("amount");
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export source", exact: true }).click();
+    expect((await downloadPromise).suggestedFilename()).toBe(`${invoice.name}.tsp`);
 
     await openEditor(page);
-    await expect(centerPanel(page).locator('span[title="amount"]')).toBeVisible();
-    await expect(centerPanel(page).getByRole("heading", { name: "Fields (2)" })).toBeVisible();
-
-    // Source that does not compile: the error and its diagnostics are shown, and the entity is unchanged.
-    await readTypeSpecSource(page);
-    const broken = `${await page.getByTestId(ID.typespecTextarea).inputValue()}\nmodel Broken {\n  oops: ;\n`;
-    const refused = await saveTypeSpecSource(page, broken);
-    expect(refused.ok).toBe(false);
-    expect(refused.message.length).toBeGreaterThan(0);
-    await expect(page.getByTestId(ID.typespecDiagnostics)).toBeVisible();
-    await expect(page.getByTestId(ID.typespecDiagnostics)).toContainText(/\[[\w/-]+\]/);
-
+    await renameField(page, "id", "invoiceId");
+    const updated = await readTypeSpecSource(page);
+    expect(updated).toContain("invoiceId");
     await openEntityPage(page, invoice.url, invoice.name);
-    await expect(centerPanel(page).getByRole("heading", { name: "Fields (2)" })).toBeVisible();
-    const afterReload = await readTypeSpecSource(page);
-    expect(afterReload).not.toContain("Broken");
-    expect(afterReload).toContain("amount");
+    expect(await readTypeSpecSource(page)).toContain("invoiceId");
   });
 });
 
@@ -782,7 +855,7 @@ test.describe("an Enterprise entity", () => {
       const main = centerPanel(page);
       await expect(main.getByTestId(ID.tab("schemas"))).toBeVisible();
       await expect(main.getByTestId(ID.tab("deployments"))).toBeVisible();
-      await expect(main.getByTestId(ID.tab("typespec"))).toBeVisible();
+    await expect(main.getByRole("button", { name: "View source", exact: true })).toBeVisible();
       await expect(main.getByTestId(ID.tab("api"))).toHaveCount(0);
     } finally {
       await deleteNavFixtures(fx);

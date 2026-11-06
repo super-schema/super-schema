@@ -13,7 +13,7 @@ import { loadPublishClosure } from "@/lib/entity-versioning/publish-closure";
 // used, and the staleness derived from that record. The service wiring is in tests/unit/services/entity-version-publish-closure.
 
 type FieldRow = { id: string; name: string; decorators: Record<string, unknown> };
-type VersionRow = { id: string; entityId: string; major: number; minor: number; sequence: number; fieldSnapshot: unknown[] };
+type VersionRow = { id: string; entityId: string; major: number; minor: number; patch: number; stage: "SNAPSHOT" | "RELEASED"; sequence: number; fieldSnapshot: unknown[] };
 type EntityRow = {
   id: string;
   name: string;
@@ -50,10 +50,11 @@ function fakeDb(rows: EntityRow[]) {
       findMany: async ({ where }: { where: { entityId: string } }) => (rows.find((r) => r.id === where.entityId)?.fields ?? []).map(toField),
     },
     entityVersion: {
-      findUnique: async ({ where }: { where: { id?: string; entityId_major_minor?: { entityId: string; major: number; minor: number } } }) => {
+      findUnique: async ({ where }: { where: { id?: string; entityId_major_minor_patch?: { entityId: string; major: number; minor: number; patch: number }; stage?: string } }) => {
         if (where.id) return versions.find((v) => v.id === where.id) ?? null;
-        const k = where.entityId_major_minor!;
-        return versions.find((v) => v.entityId === k.entityId && v.major === k.major && v.minor === k.minor) ?? null;
+        // Like Prisma: the full number on the unique key and the extra `stage` filter must both match.
+        const k = where.entityId_major_minor_patch!;
+        return versions.find((v) => v.entityId === k.entityId && v.major === k.major && v.minor === k.minor && v.patch === k.patch && v.stage === where.stage) ?? null;
       },
     },
   } as never;
@@ -85,6 +86,8 @@ const version = (entityId: string, major: number, minor: number, targets: string
   entityId,
   major,
   minor,
+  patch: 0,
+  stage: "RELEASED",
   sequence: major * 10 + minor,
   fieldSnapshot: targets.map((t, i) => toField({ id: `${entityId}-s${i}`, name: `s${i}`, decorators: qref(t, `sales/orders/${t.toUpperCase()}`) }, i)),
 });
@@ -104,9 +107,9 @@ describe("loadPublishClosure", () => {
     expect(res.success).toBe(true);
     if (!res.success) return;
     expect(res.data.referencedVersions).toEqual([
-      { ref: { entityId: "b", domain: "sales", product: "orders", entity: "B" }, version: "2.0", pinned: false },
-      { ref: { entityId: "c", domain: "sales", product: "orders", entity: "C" }, version: "1.0", pinned: true },
-      { ref: { entityId: "d", domain: "sales", product: "orders", entity: "D" }, version: "1.3", pinned: false },
+      { ref: { entityId: "b", domain: "sales", product: "orders", entity: "B" }, version: "2.0.0", pinned: false },
+      { ref: { entityId: "c", domain: "sales", product: "orders", entity: "C" }, version: "1.0.0", pinned: true },
+      { ref: { entityId: "d", domain: "sales", product: "orders", entity: "D" }, version: "1.3.0", pinned: false },
     ]);
   });
 
@@ -120,7 +123,7 @@ describe("loadPublishClosure", () => {
     expect(res.success).toBe(true);
     if (!res.success) return;
     expect(res.data.referencedVersions).toEqual([
-      { ref: { entityId: "b", domain: "sales", product: "orders", entity: "B" }, version: "1.0", pinned: true },
+      { ref: { entityId: "b", domain: "sales", product: "orders", entity: "B" }, version: "1.0.0", pinned: true },
     ]);
     expect(res.data.closure.notes[0]).toContain("is unpinned but A.b_pinned pins B 1.0");
   });
@@ -350,6 +353,14 @@ describe("referenceStaleness", () => {
   it("compares versions as numbers, not text (1.10 is newer than 1.9)", () => {
     const stale = referenceStaleness({ referencedVersions: [rec("b", "1.9", false), rec("c", "2.0", false)] }, new Map([["b", "1.10"], ["c", "1.99"]]));
     expect(stale.map((s) => s.ref.entityId)).toEqual(["b"]);
+  });
+
+  it("compares the patch too: 1.0.1 is newer than 1.0.0 (and than a legacy 1.0), 1.0.0 is not newer than 1.0", () => {
+    const stale = referenceStaleness(
+      { referencedVersions: [rec("b", "1.0.0", false), rec("c", "1.0", false), rec("d", "1.0", false)] },
+      new Map([["b", "1.0.1"], ["c", "1.0.2"], ["d", "1.0.0"]])
+    );
+    expect(stale.map((s) => [s.ref.entityId, s.recorded, s.latest])).toEqual([["b", "1.0.0", "1.0.1"], ["c", "1.0", "1.0.2"]]);
   });
 
   it("is quiet when the latest is the recorded version, or unknown (deleted, never published)", () => {

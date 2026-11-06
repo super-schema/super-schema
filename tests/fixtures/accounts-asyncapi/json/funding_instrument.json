@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "title": "Funding instrument",
+  "description": "Funding instrument for a payment.",
+  "allOf": [
+    {
+      "$ref": "../risk_common_components/v2/schema/financial_instrument.json"
+
+    },
+    {
+      "properties": {
+        "payment_modes": {
+          "description": "Payment modes supported by the financial instrument.",
+          "type": "array",
+          "items": {
+            "description": "Mode for payment.",
+            "$ref": "../risk_common_components/v2/schema/enum/payment_mode.json"
+          },
+          "minItems": 1,
+          "maxItems": 10
+        },
+        "backup": {
+          "description": "Can this instrument serve as a backup funding.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  ]
+}

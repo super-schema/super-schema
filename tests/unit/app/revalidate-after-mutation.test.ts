@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   updateUser: vi.fn(),
   updateEmitterConfig: vi.fn(),
   createDomainAdmin: vi.fn(),
+  updateDomainAdmin: vi.fn(),
   approveRequest: vi.fn(),
   rejectRequest: vi.fn(),
   createGlobalOverride: vi.fn(),
@@ -61,6 +62,7 @@ vi.mock("@/services/emitter-config.service", () => ({
 vi.mock("@/services/domain-admin.service", () => ({
   getDomainsAdmin: vi.fn(),
   createDomainAdmin: mocks.createDomainAdmin,
+  updateDomainAdmin: mocks.updateDomainAdmin,
 }));
 vi.mock("@/services/governance.service", () => ({
   getAllRequests: vi.fn(),
@@ -76,6 +78,7 @@ vi.mock("@/services/type-mapping.service", () => ({
 import {
   assignRoleAction,
   createDomainAdminAction,
+  updateDomainPolicyAction,
   removeRoleAction,
   updateEmitterConfigAction,
   updateUserNameAction,
@@ -111,6 +114,7 @@ const ACTIONS: Array<{
   { name: "assignRoleAction", service: "assignRole", call: () => assignRoleAction({} as never), paths: [["/schemas", "layout"]] },
   { name: "removeRoleAction", service: "removeRole", call: () => removeRoleAction("role-1"), paths: [["/schemas", "layout"]] },
   { name: "createDomainAdminAction", service: "createDomainAdmin", call: () => createDomainAdminAction({} as never), paths: [["/schemas", "layout"]] },
+  { name: "updateDomainPolicyAction", service: "updateDomainAdmin", call: () => updateDomainPolicyAction("domain-1", { fieldCompleteness: { string: { minLength: "required" } } }), paths: [["/schemas", "layout"], ["/admin/domains", "page"]] },
   { name: "updateEmitterConfigAction", service: "updateEmitterConfig", call: () => updateEmitterConfigAction({} as never), paths: [["/schemas", "layout"]] },
   { name: "updateUserNameAction", service: "updateUser", call: () => updateUserNameAction("u1", "New Name"), paths: [["/schemas", "layout"]] },
   {

@@ -1,0 +1,15 @@
+{
+    "type": "object",
+    "description": "Additional data about the funding instrument being added.",
+    "properties": {
+        "context_items": {
+            "type": "array",
+            "description": "Key/Value pairs containing additional information about the funding instrument.",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+                "$ref": "./context_item.json"
+            }
+        }
+    }
+}

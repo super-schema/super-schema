@@ -33,6 +33,8 @@ import {
 import { omittedWarningsMessage } from "@/lib/events/import/bound";
 import { normalizeCatalogName } from "@/lib/events/inputs";
 import type { EntityPin } from "@/lib/events/types";
+import { upgradeAsyncApiSource } from "@/services/events/asyncapi-upgrade";
+import { MAX_EXTERNAL_FILES } from "@/lib/events/import/external-refs";
 import { ensureBundledTraits } from "@/services/events/bundled-traits.service";
 import { createEvent, deleteEvent, updateEventDocument } from "@/services/events/event.service";
 import {
@@ -45,7 +47,11 @@ import { GENERIC_ACTION_ERROR, isOpaqueErrorCode } from "@/types/action-result";
 import { err, ok, type Result, type ServiceError } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
-export interface AsyncApiImportInput { content: string; fileName?: string; eventName?: string }
+/**
+ * `files`: sibling documents the main one `$ref`s, keyed by path relative to the main document's folder (`json/headers.json`). Optional: a 2.x
+ * document with references and no `files` still imports (each unreachable reference becomes a warning and an empty schema).
+ */
+export interface AsyncApiImportInput { content: string; fileName?: string; eventName?: string; files?: Record<string, string> }
 
 /** Longest document title the preview carries: the title is document-controlled text (up to about 1 MB), and the review only shows a heading. */
 const MAX_PREVIEW_TITLE = 200;
@@ -94,9 +100,9 @@ function runnerFailure(error: ServiceError, step: "read" | "validate"): Result<n
 }
 
 /** The input arrives from the browser untyped: anything but `{ content: string, fileName?: string, eventName?: string }` is refused before a query or a parser runs. */
-function readInput(input: unknown): Result<{ content: string; fileName?: string; eventName?: string }> {
+function readInput(input: unknown): Result<{ content: string; fileName?: string; eventName?: string; files?: Record<string, string> }> {
   if (typeof input !== "object" || input === null || Array.isArray(input)) return invalid("Import input must be an object");
-  const { content, fileName, eventName } = input as Record<string, unknown>;
+  const { content, fileName, eventName, files } = input as Record<string, unknown>;
   if (typeof content !== "string") return invalid("The AsyncAPI document must be text");
   if (fileName !== undefined && fileName !== null && typeof fileName !== "string") return invalid("The file name must be a string");
   if (eventName !== undefined && eventName !== null && typeof eventName !== "string") return invalid("The event name must be a string");
@@ -106,9 +112,20 @@ function readInput(input: unknown): Result<{ content: string; fileName?: string;
     if (!normalized.success) return normalized;
     name = normalized.data;
   }
+  let siblings: Record<string, string> | undefined;
+  if (files !== undefined && files !== null) {
+    if (typeof files !== "object" || Array.isArray(files)) return invalid("The referenced files must be an object of path to text");
+    const entries = Object.entries(files as Record<string, unknown>);
+    if (entries.length > MAX_EXTERNAL_FILES) return invalid(`Too many referenced files (the limit is ${MAX_EXTERNAL_FILES})`);
+    siblings = Object.create(null) as Record<string, string>;
+    for (const [path, text] of entries) {
+      if (typeof text !== "string") return invalid("Each referenced file must be text");
+      siblings[path] = text;
+    }
+  }
   // only the last path segment, without control characters: it is shown in a description
   const file = typeof fileName === "string" ? (fileName.split(/[\\/]/).pop() ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 120) : "";
-  return ok({ content, fileName: file === "" ? undefined : file, eventName: name });
+  return ok({ content, fileName: file === "" ? undefined : file, eventName: name, ...(siblings ? { files: siblings } : {}) });
 }
 
 /**
@@ -213,14 +230,22 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
   if (!id.success) return id;
   const read = readInput(input);
   if (!read.success) return read;
-  const { content, fileName, eventName } = read.data;
+  const { content: originalContent, fileName, eventName, files } = read.data;
 
   // 1. The product (an unknown one is NOT_FOUND before the file is looked at), the size, the file.
   const resolved = await resolveScope(ctx.prisma, { level: "PRODUCT", productId: id.data });
   if (!resolved.success) return resolved;
   const scope = resolved.data;
-  const sized = checkImportSize(content, "AsyncAPI document");
+  const sized = checkImportSize(originalContent, "AsyncAPI document");
   if (!sized.success) return sized;
+  // 1a. AsyncAPI 2.x is converted to 3.0 and sibling files are folded in (`asyncapi-upgrade.ts`); a 3.x document with no files passes through.
+  const upgraded = upgradeAsyncApiSource(originalContent, files);
+  if (!upgraded.success) return upgraded;
+  const content = upgraded.data.text;
+  if (content !== originalContent) {
+    const resized = checkImportSize(content, "AsyncAPI document");
+    if (!resized.success) return resized;
+  }
   // 1b. Read the file (in the parser runner's child process, 4 s at most: it is linear and refuses what is hostile, too deep or repeated, but a
   // flood of syntax errors still costs 5 - 9 s at 1 MiB, see KNOWN LIMITATION in `import-limits.ts`), then bound what everything slow is given: the entries of
   // one object (the AsyncAPI parser's cost grows with their square) and of one list (the mapper de-duplicates quadratically), and the size
@@ -240,6 +265,10 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
   // many entities and fields that is.
   const extracted = extractPayloads(raw);
   if (!extracted.success) return err(safeImportError(extracted.error));
+  const assumedWarnings = extracted.data.flatMap((p): ImportWarning[] => p.assumedFormat === undefined ? [] : [{
+    pointer: boundText(p.sourcePointer, 200), code: "SANITIZED_VALUE",
+    message: `The ${p.role} of "${boundText(p.messageKey, 80)}" is written as ${boundText(p.assumedFormat, 100)}, which is not a schema format events know; it is an ordinary JSON Schema object, so it was imported as JSON Schema.`,
+  }]);
   const payloadLimits = checkPayloadLimits(extracted.data);
   if (!payloadLimits.success) return payloadLimits;
   const planned = planPayloadEntities(extracted.data, fileName);
@@ -276,7 +305,7 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
     eventName: finalEventName.data, title: boundText(document.info.title, MAX_PREVIEW_TITLE), counts: countsOf(document),
     entities: named.data.payloads.flatMap((payload) => payload.entities.map(({ requestedName, name, renamed, fields, format }) => ({ requestedName, name, renamed, fields, format }))),
     builtInTraits: usedBuiltIns,
-    warnings: [...validated.data, ...mapped.data.warnings, ...planned.warnings, ...named.data.warnings, ...eventWarnings],
+    warnings: [...upgraded.data.warnings, ...assumedWarnings, ...validated.data, ...mapped.data.warnings, ...planned.warnings, ...named.data.warnings, ...eventWarnings],
   };
   return ok({ scope, raw, payloads: named.data.payloads, builtInTraitIds: builtIns.data.ids, preview });
 }

@@ -52,7 +52,7 @@ import {
   type IsolatedWorkspaceRows,
   type SiblingDomainRows,
 } from "./helpers/db";
-import { afterServerAction, fieldRow, openEntityPage, openPublishDialog, publishViaDialog, versionState } from "./helpers/entity-page";
+import { afterServerAction, fieldRow, openEntityPage, publishViaDialog, versionState } from "./helpers/entity-page";
 import { captureAction, replayAction } from "./helpers/admin-users";
 import { centerPanel, leftSidebar } from "./helpers/event-builder";
 import { test, expect, unique } from "./helpers/fixtures";
@@ -186,10 +186,9 @@ test.describe("a role over the whole tenant", () => {
           expect(replayed.text).toContain(FORBIDDEN_TEXT);
           expect(await fieldNamesOf(w.a.entity.id)).toEqual(["id"]);
 
-          // PUBLISH: the dialog opens (they may read the preview), the confirmation is refused in the dialog itself, nothing is published.
-          const dialog = await openPublishDialog(page);
-          await dialog.getByTestId("confirm-publish").click();
-          await expect(dialog.getByTestId("publish-error")).toHaveText(FORBIDDEN_TEXT);
+          // PUBLISH: the reader cannot invoke it; the server action also enforces this permission.
+          await expect(centerPanel(page).getByTestId("publish-entity-button")).toBeDisabled();
+          await expect(centerPanel(page).getByTestId("publish-status")).toContainText("do not have permission");
           expect(await publishedVersionsOf(w.a.entity.id)).toBe(0);
 
           // CREATE: a domain is refused on the grid, and the new-entity page of the product is not found (it needs the right to write there).
@@ -251,10 +250,9 @@ test.describe("a role over the whole tenant", () => {
             expect(audit.count).toBeGreaterThan(0);
             expect(audit.tenantIds).toEqual([w.a.tenantId]);
 
-            // PUBLISH is the Steward's: refused in the dialog, nothing is published.
-            const dialog = await openPublishDialog(page);
-            await dialog.getByTestId("confirm-publish").click();
-            await expect(dialog.getByTestId("publish-error")).toHaveText(FORBIDDEN_TEXT);
+            // PUBLISH is the Steward's: unavailable to the author, nothing is published.
+            await expect(centerPanel(page).getByTestId("publish-entity-button")).toBeDisabled();
+            await expect(centerPanel(page).getByTestId("publish-status")).toContainText("do not have permission");
             expect(await publishedVersionsOf(w.a.entity.id)).toBe(0);
 
             // APPROVE is the Steward's: the request is listed (they may read it), the decision is refused, the request stays pending.

@@ -103,7 +103,7 @@ export const GET = withApiAuth<{ id: string }>("event.read", async (request, api
     const tenantId = api.tenantId as string; // content action: `withApiAuth` always resolves it
     const owned = await ctx.prisma.eventSpec.findFirst({
       where: { id, tenantId },
-      select: { name: true, productId: true, domainId: true, product: { select: { domainId: true } }, latestVersion: { select: { major: true, minor: true } } },
+      select: { name: true, productId: true, domainId: true, product: { select: { domainId: true } }, latestVersion: { select: { major: true, minor: true, patch: true } } },
     });
     if (!owned || !owned.productId) return specNotFound();
     if (!ctxCan(ctx, "event.read", { tenantId, domainId: owned.domainId ?? owned.product?.domainId ?? null, productId: owned.productId })) return specNotFound();

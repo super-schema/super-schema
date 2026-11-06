@@ -1,6 +1,6 @@
 // src/lib/events/types.ts
 /** Events value types shared by services, actions and client components (spec §6.1). Client-safe. */
-import type { ChangeKind } from "@/lib/entity-versioning/types";
+import type { ChangeKind, VersionStage } from "@/lib/entity-versioning/types";
 import type { JsonObject, JsonSchemaDialect, PayloadFormat, ResolvedTrait, TraitKind } from "@/lib/event-specs/types";
 
 export type { JsonObject, JsonSchemaDialect, PayloadFormat, TraitKind };
@@ -33,14 +33,19 @@ export interface EventVersionSummary {
   id: string;
   major: number;
   minor: number;
-  /** "2.1" */
+  patch: number;
+  /** SNAPSHOT: the event's one open, mutable snapshot; RELEASED: immutable. */
+  stage: VersionStage;
+  /** "2.1.0", or "2.2.0_snapshot" for the open snapshot (the emitted `info.version`). */
   label: string;
   sequence: number;
   changeKind: ChangeKind;
   changeSummary: string | null;
   publishedByName: string | null;
-  /** ISO-8601 */
+  /** ISO-8601: when the content was last saved. */
   publishedAt: string;
+  /** ISO-8601: when it was promoted; null while a snapshot. */
+  releasedAt: string | null;
 }
 
 interface LevelColumns {

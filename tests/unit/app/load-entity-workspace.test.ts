@@ -200,28 +200,28 @@ describe("loadEntityWorkspace", () => {
   });
 
   it("maps the draft + publish state for the header", async () => {
-    mockEntityFindFirst.mockResolvedValueOnce(entityRow({ hasUnpublishedChanges: true, latestVersion: { major: 2, minor: 1 } }));
+    mockEntityFindFirst.mockResolvedValueOnce(entityRow({ hasUnpublishedChanges: true, latestVersion: { major: 2, minor: 1, patch: 0 } }));
 
     const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
 
-    expect(data?.props.entity).toMatchObject({ latestVersionLabel: "2.1", hasUnpublishedChanges: true });
+    expect(data?.props.entity).toMatchObject({ latestVersionLabel: "2.1.0", hasUnpublishedChanges: true });
   });
 
   describe("stale references (Task 8)", () => {
     const customerRef = { entityId: "cust", domain: "Payments", product: "Checkout", entity: "Customer" };
 
     it("carries the references of the latest published version that have fallen behind, for the alerts", async () => {
-      mockEntityFindFirst.mockResolvedValueOnce(entityRow({ latestVersion: { major: 1, minor: 0 } }));
+      mockEntityFindFirst.mockResolvedValueOnce(entityRow({ latestVersion: { major: 1, minor: 0, patch: 0 } }));
       mockEntityFindUnique.mockResolvedValueOnce({
         tenantId: "tenant-1",
-        latestVersion: { compatReport: { referencedVersions: [{ ref: customerRef, version: "1.0", pinned: false }] } },
+        latestVersion: { compatReport: { referencedVersions: [{ ref: customerRef, version: "1.0.0", pinned: false }] } },
       });
-      mockEntityFindMany.mockResolvedValueOnce([{ id: "cust", latestVersion: { major: 1, minor: 2 } }]);
+      mockEntityFindMany.mockResolvedValueOnce([{ id: "cust", latestVersion: { major: 1, minor: 2, patch: 0 } }]);
 
       const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
 
       expect(mockEntityFindUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "ent-1" } }));
-      expect(data?.props.referenceStaleness).toEqual([{ ref: customerRef, recorded: "1.0", latest: "1.2" }]);
+      expect(data?.props.referenceStaleness).toEqual([{ ref: customerRef, recorded: "1.0.0", latest: "1.2.0" }]);
     });
 
     it("is empty when nothing is stale", async () => {

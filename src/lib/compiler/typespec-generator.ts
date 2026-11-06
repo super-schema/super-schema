@@ -46,6 +46,7 @@ import {
   unescapeTypeSpecText,
 } from "./typespec-identifiers";
 import { constructorLiteral, isClearedValue, literalFor, scalarLiteralTarget, type LiteralTarget } from "./typed-value-literal";
+import { apiOperationsTypeSpec } from "@/lib/api-operations/to-typespec";
 
 // The identifier rules live in typespec-identifiers.ts (shared with the protobuf / Avro projections and the emitter
 // service); re-exported here so the generator stays the one import for generated-source spelling.
@@ -81,6 +82,12 @@ export interface GenerateTypeSpecOptions {
    * Absent: the stand-alone path, untouched.
    */
   closureMember?: ClosureMemberOptions;
+  /**
+   * Write the entity's API operations (`model.apiOperations`) as an `@typespec/http` interface (see `api-operations/to-typespec.ts`).
+   * Only the OpenAPI 3 source asks for it (`emitter.service.ts#buildSourceForTarget`, the closure's OpenAPI plan): the other targets
+   * have no use for HTTP operations, and the canonical source does not import `@typespec/http`. Default false.
+   */
+  httpOperations?: boolean;
 }
 
 export interface ClosureMemberOptions {
@@ -95,6 +102,11 @@ export interface ClosureMemberOptions {
   enterpriseShadowed?: boolean;
   /** The fully qualified model this one extends (`SuperSchemaClosure.D.P.Base.Base`); absent: it extends nothing. */
   baseType?: string;
+  /**
+   * With `httpOperations`: the TypeSpec type of an entity / data-type name an API operation uses, qualified for the closure
+   * (`SuperSchemaClosure.D.P.Order.Order`); null when nothing in the closure declares it (written `unknown`, and reported).
+   */
+  namedType?(name: string): string | null;
 }
 
 /**
@@ -105,7 +117,7 @@ export interface ClosureMemberOptions {
  */
 export interface GeneratorDiagnostic {
   severity: "error" | "warning";
-  code: "ENUM_NO_VALUES" | "ENUM_DUPLICATE_VALUE" | "DEFAULT_NOT_EMITTED" | "EXAMPLE_NOT_EMITTED";
+  code: "ENUM_NO_VALUES" | "ENUM_DUPLICATE_VALUE" | "DEFAULT_NOT_EMITTED" | "EXAMPLE_NOT_EMITTED" | "API_OPERATION";
   fieldName?: string;
   message: string;
 }
@@ -221,7 +233,53 @@ export function generateTypeSpecWithDiagnostics(
     }
   }
 
+  // Emit the entity's API operations (OpenAPI 3 source only)
+  if (options.httpOperations && model.apiOperations && model.apiOperations.length > 0) {
+    const written = apiOperationsTypeSpec(model.apiOperations, {
+      interfaceName: operationsInterfaceName(model, modelName),
+      resolveNamedType: member?.namedType ?? standaloneNamedType(model, modelName),
+    });
+    ctx.diagnostics.push(...written.warnings.map((message): GeneratorDiagnostic => ({ severity: "warning", code: "API_OPERATION", message })));
+    if (written.lines.length > 0) {
+      lines.push("", ...written.lines);
+      // `@TypeSpec.OpenAPI.operationId` (written fully qualified) needs the library; imports go first.
+      if (!lines.includes(OPENAPI_LIBRARY_IMPORT)) lines.unshift(OPENAPI_LIBRARY_IMPORT);
+    }
+  }
+
   return { source: lines.join("\n") + "\n", diagnostics: ctx.diagnostics };
+}
+
+const OPENAPI_LIBRARY_IMPORT = 'import "@typespec/openapi";';
+
+/** The (sanitized) names of the shared types the model declares: enums, scalars, unions, aliases (interfaces are not types). */
+function declaredTypeNames(model: SuperSchemaModel): Set<string> {
+  const names = new Set<string>();
+  for (const group of [model.sharedEnums, model.customScalars, model.unionTypes, model.aliases]) {
+    for (const d of group ?? []) names.add(sanitizeIdentifier(d.name));
+  }
+  return names;
+}
+
+/** `<Model>Operations`, made unique against every name the model declares. */
+function operationsInterfaceName(model: SuperSchemaModel, modelName: string): string {
+  const taken = new Set([modelName, ...declaredTypeNames(model), ...(model.interfaces ?? []).map((i) => sanitizeIdentifier(i.name))]);
+  let name = `${modelName}Operations`;
+  for (let n = 2; taken.has(name); n++) name = `${modelName}Operations${n}`;
+  return name;
+}
+
+/**
+ * Stand-alone: an operation type names this entity (its model) or a shared type it declares, written bare (they sit in the same
+ * namespace); anything else is not in the document.
+ */
+function standaloneNamedType(model: SuperSchemaModel, modelName: string): (name: string) => string | null {
+  const declared = declaredTypeNames(model);
+  return (name) => {
+    const id = sanitizeIdentifier(name.trim());
+    if (name.trim() === model.entity.name || id === modelName) return modelName;
+    return declared.has(id) ? id : null;
+  };
 }
 
 /**
@@ -565,6 +623,8 @@ function generateSharedEnumDefinition(sharedEnum: SuperSchemaSharedEnum, ctx: Ge
   lines.push(`enum ${sanitizeIdentifier(sharedEnum.name)} {`);
 
   for (const val of values) {
+    const doc = sharedEnum.valueDescriptions?.[val];
+    if (doc) lines.push(`  @doc("${escapeString(doc)}")`);
     lines.push(`  ${enumMemberName(val)},`);
   }
 
@@ -610,7 +670,9 @@ function generateInlineEnumDefinition(field: SuperSchemaField, ctx: GenContext):
   }
   lines.push(`enum ${enumName} {`);
 
+  const descriptions = field.enumValueDescriptions;
   for (const val of values) {
+    if (descriptions?.[val]) lines.push(`  @doc("${escapeString(descriptions[val])}")`);
     lines.push(`  ${enumMemberName(val)},`);
   }
 
@@ -672,6 +734,21 @@ function generateScalarDefinition(scalar: SuperSchemaCustomScalar): string[] {
     lines.push(`@doc("${escapeString(scalar.description)}")`);
   }
 
+  if (scalar.format) lines.push(`@format("${escapeString(scalar.format)}")`);
+  if (scalar.pattern) lines.push(`@pattern("${escapeString(scalar.pattern)}")`);
+  const c = scalar.constraints;
+  if (c) {
+    const numeric = (key: "minLength" | "maxLength" | "minValue" | "maxValue" | "minValueExclusive" | "maxValueExclusive") => {
+      const value = c[key];
+      if (typeof value === "number" && Number.isFinite(value)) lines.push(`@${key}(${value})`);
+    };
+    numeric("minLength");
+    numeric("maxLength");
+    numeric("minValue");
+    numeric("maxValue");
+    numeric("minValueExclusive");
+    numeric("maxValueExclusive");
+  }
   lines.push(`scalar ${sanitizeIdentifier(scalar.name)} extends ${scalar.baseType};`);
   return lines;
 }

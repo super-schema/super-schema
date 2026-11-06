@@ -1,14 +1,18 @@
 /** Entity versioning value types (spec §5). Client-safe: no server imports. */
 
-export type BumpKind = "MAJOR" | "MINOR";
+export type BumpKind = "MAJOR" | "MINOR" | "PATCH";
 export type ChangeKind = BumpKind | "INITIAL";
+
+/** SNAPSHOT is mutable (`x.y.z_snapshot`); RELEASED is frozen (`x.y.z`). */
+export type VersionStage = "SNAPSHOT" | "RELEASED";
 
 export interface VersionNumber {
   major: number;
   minor: number;
+  patch: number;
 }
 
-/** What the user chooses in the publish dialog. `bump` is ignored on a first publish (always 1.0). */
+/** What the user chooses in the publish dialog. `bump` is ignored on a first publish (always 1.0.0). */
 export interface PublishInput {
   bump?: BumpKind;
   changeSummary?: string;
@@ -23,7 +27,9 @@ export interface EntityVersionSummary {
   entityId: string;
   major: number;
   minor: number;
-  /** "2.1" */
+  patch: number;
+  stage: VersionStage;
+  /** "2.1.0" or "2.1.0_snapshot" */
   label: string;
   sequence: number;
   changeKind: ChangeKind;
@@ -32,8 +38,10 @@ export interface EntityVersionSummary {
   publishedByName: string | null;
   /** ISO-8601 */
   publishedAt: string;
+  /** ISO-8601; null while a snapshot */
+  releasedAt: string | null;
 }
 
 export function isBumpKind(value: unknown): value is BumpKind {
-  return value === "MAJOR" || value === "MINOR";
+  return value === "MAJOR" || value === "MINOR" || value === "PATCH";
 }

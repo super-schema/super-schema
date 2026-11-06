@@ -59,9 +59,12 @@ import {
   deleteSharedEnumAction,
   deleteUnionTypeAction,
   getOrCreateEntityServiceAction,
+  reorderOperationsAction,
   replaceOperationDetailsAction,
+  updateServiceAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
+import { Prisma } from "@/generated/prisma/client";
 
 const T = "tenant-1";
 const OTHER = "tenant-2";
@@ -164,6 +167,12 @@ const CASES: GuardedCase[] = [
     lookup: () => mk(mockPrisma.serviceDefinition.findUnique), row: (t) => ({ tenantId: t }),
     writes: () => [mk(mockPrisma.serviceDefinition.delete)], mainWrite: () => mk(mockPrisma.serviceDefinition.delete),
     badCall: () => deleteServiceAction(asAny(null)),
+  },
+  {
+    label: "updateServiceAction (base path)", kind: "API service", call: () => updateServiceAction("svc-1", { basePath: "/v1" }),
+    lookup: () => mk(mockPrisma.serviceDefinition.findUnique), row: (t) => ({ tenantId: t }),
+    writes: () => [mk(mockPrisma.serviceDefinition.update)], mainWrite: () => mk(mockPrisma.serviceDefinition.update),
+    badCall: () => updateServiceAction(asAny(42), { basePath: "/v1" }),
   },
   {
     label: "deleteOperationAction", kind: "Operation", call: () => deleteOperationAction("op-1"),
@@ -306,11 +315,11 @@ describe("replaceOperationDetailsAction input validation", () => {
 
   it("saves the trimmed name, defaults the optional columns and writes the complete lists in ONE batch (delete params, delete responses, update)", async () => {
     const result = await replace({
-      name: "  getOrder  ", httpMethod: "GET", httpPath: "/o",
-      parameters: [{ name: "id", type: "string", location: "path", required: true, extra: "ignored" }],
+      name: "  getOrder  ", httpMethod: "get", httpPath: "/o/{id}",
+      parameters: [{ name: "id", type: "string", location: "path", required: false, extra: "ignored" }],
       responses: [{ statusCode: 200, type: undefined, description: undefined }, { statusCode: 404, type: null }],
     });
-    expect(result).toEqual({ success: true });
+    expect(result).toMatchObject({ success: true, operation: { name: "getOrder", httpMethod: "GET", requestBody: null } });
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
     expect(mockPrisma.$transaction.mock.calls[0][0]).toHaveLength(3);
     expect(mockPrisma.operationParameter.deleteMany).toHaveBeenCalledWith({ where: { operationId: "op-1" } });
@@ -318,11 +327,80 @@ describe("replaceOperationDetailsAction input validation", () => {
     expect(mockPrisma.operation.update).toHaveBeenCalledWith({
       where: { id: "op-1" },
       data: {
-        name: "getOrder", httpMethod: "GET", httpPath: "/o", description: "",
-        parameters: { create: [{ name: "id", type: "string", location: "path", required: true, description: "" }] },
-        responses: { create: [{ statusCode: 200, type: null, description: "" }, { statusCode: 404, type: null, description: "" }] },
+        name: "getOrder", operationId: null, summary: "", description: "", httpMethod: "GET", httpPath: "/o/{id}",
+        tags: [], deprecated: false, requestBody: Prisma.DbNull,
+        // a path parameter is always required (OpenAPI)
+        parameters: { create: [{ name: "id", type: "string", isArray: false, location: "path", required: true, description: "", sortOrder: 0 }] },
+        responses: {
+          create: [
+            { statusCode: 200, type: null, isArray: false, contentType: "application/json", description: "", sortOrder: 0 },
+            { statusCode: 404, type: null, isArray: false, contentType: "application/json", description: "", sortOrder: 1 },
+          ],
+        },
       },
     });
+  });
+
+  it("stores a legacy `body` parameter as the request body, not as a parameter", async () => {
+    const result = await replace({
+      ...OP_DETAILS, httpMethod: "POST",
+      parameters: [...OP_DETAILS.parameters, { name: "body", type: "Order", location: "body", required: true, description: "the order" }],
+    });
+    expect(result).toMatchObject({ success: true });
+    const data = mk(mockPrisma.operation.update).mock.calls[0][0].data;
+    expect(data.requestBody).toEqual({ type: "Order", isArray: false, contentType: "application/json", required: true, description: "the order" });
+    expect(data.parameters.create.map((p: { location: string }) => p.location)).toEqual(["path"]);
+  });
+
+  it("keeps the stored contract columns a payload leaves out (an editor that does not know them yet resets nothing)", async () => {
+    mk(mockPrisma.operation.findMany).mockResolvedValue([
+      {
+        id: "op-1", serviceId: "svc-1", name: "getOrder", operationId: "fetchOrder", summary: "Fetch", description: "", httpMethod: "GET",
+        httpPath: "/orders/{id}", tags: ["orders"], deprecated: true, requestBody: null, parameters: [], responses: [],
+      },
+    ]);
+    expect(await replace({ ...OP_DETAILS, summary: "Changed" })).toMatchObject({ success: true });
+    const data = mk(mockPrisma.operation.update).mock.calls[0][0].data;
+    expect(data).toMatchObject({ operationId: "fetchOrder", summary: "Changed", tags: ["orders"], deprecated: true });
+  });
+
+  it.each([
+    ["a path parameter missing from the path", { ...OP_DETAILS, httpPath: "/orders" }, /does not appear in the path/],
+    ["a {placeholder} without a path parameter", { ...OP_DETAILS, httpPath: "/orders/{id}/{line}" }, /\{line\} in the path has no path parameter/],
+    ["an operation name that is not an identifier", { ...OP_DETAILS, name: "get order" }, /name .*identifier/],
+    ["a duplicate status code", { ...OP_DETAILS, responses: [{ statusCode: 200 }, { statusCode: 200 }] }, /duplicate status code 200/],
+    ["a status code out of range", { ...OP_DETAILS, responses: [{ statusCode: 99 }] }, /statusCode must be at least 100/],
+    ["an unknown method", { ...OP_DETAILS, httpMethod: "FETCH" }, /httpMethod must be one of/],
+    ["a path not starting with /", { ...OP_DETAILS, httpPath: "orders/{id}" }, /httpPath must start with "\/"/],
+  ])("rejects %s with VALIDATION_ERROR and the issue, before any query", async (_label, data, message) => {
+    const result = (await replace(data)) as { code: string; error: string; issues: unknown[] };
+    expect(result.code).toBe("VALIDATION_ERROR");
+    expect(result.error).toMatch(message);
+    expect(result.issues.length).toBeGreaterThan(0);
+    expect(result.error).not.toMatch(LEAKS);
+    expect(mockPrisma.operation.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("saves an OPTIONS operation and returns the save-time warning (it is not generated); a clean save carries no `warnings`", async () => {
+    const result = (await replace({ ...OP_DETAILS, httpMethod: "OPTIONS" })) as { success: boolean; warnings?: string[] };
+    expect(result).toMatchObject({ success: true, operation: { httpMethod: "OPTIONS" } });
+    expect(result.warnings).toEqual([expect.stringMatching(/OPTIONS operations are stored but left out of the generated OpenAPI document/)]);
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mk(mockPrisma.operation.update).mock.calls[0][0].data).toMatchObject({ httpMethod: "OPTIONS" });
+
+    const clean = await replace(OP_DETAILS);
+    expect(clean).toMatchObject({ success: true });
+    expect(clean).not.toHaveProperty("warnings");
+  });
+
+  it("rejects a method + path another operation of the same API already defines (nothing written)", async () => {
+    mk(mockPrisma.operation.findMany).mockResolvedValue([
+      { id: "op-2", serviceId: "svc-1", name: "readOrder", description: "", httpMethod: "GET", httpPath: "/orders/{orderId}", parameters: [{ name: "orderId", type: "string", location: "path", required: true, description: "" }], responses: [] },
+    ]);
+    const result = (await replace(OP_DETAILS)) as { code: string; error: string };
+    expect(result).toMatchObject({ code: "VALIDATION_ERROR", error: expect.stringMatching(/GET \/orders\/\{id\} is already defined by "readOrder"/) });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
 });
 
@@ -331,13 +409,48 @@ describe("createOperationAction input validation", () => {
   beforeEach(() => mk(mockPrisma.serviceDefinition.findUnique).mockResolvedValue({ tenantId: T }));
 
   it("creates with a trimmed name; `parameters` / `responses` are optional here (the domain API tab sends none)", async () => {
-    expect(await create({ name: "  listOrders ", httpMethod: "GET", httpPath: "/" })).toEqual({ success: true, operationId: "op-new" });
+    expect(await create({ name: "  listOrders ", httpMethod: "GET", httpPath: "/" })).toMatchObject({ success: true, operationId: "op-new" });
     expect(mockPrisma.operation.create).toHaveBeenCalledWith({
       data: {
-        serviceId: "svc-1", name: "listOrders", httpMethod: "GET", httpPath: "/", description: "",
+        serviceId: "svc-1", name: "listOrders", operationId: null, summary: "", description: "", httpMethod: "GET", httpPath: "/",
+        tags: [], deprecated: false, requestBody: Prisma.DbNull,
         parameters: { create: [] }, responses: { create: [] },
       },
     });
+  });
+
+  it("stores the contract columns (operationId, summary, tags, deprecated, request body, typed responses)", async () => {
+    const result = await create({
+      name: "createOrder", operationId: "postOrder", summary: "Create", httpMethod: "POST", httpPath: "/orders", tags: [" orders ", "orders"], deprecated: true,
+      requestBody: { type: "Order" },
+      responses: [{ statusCode: 201, type: "Order", isArray: true, contentType: "application/json", description: "created" }],
+    });
+    expect(result).toMatchObject({ success: true, operation: { tags: ["orders"], requestBody: { type: "Order", required: true } } });
+    expect(mk(mockPrisma.operation.create).mock.calls[0][0].data).toMatchObject({
+      operationId: "postOrder", summary: "Create", tags: ["orders"], deprecated: true,
+      requestBody: { type: "Order", isArray: false, contentType: "application/json", required: true, description: "" },
+      responses: { create: [{ statusCode: 201, type: "Order", isArray: true, contentType: "application/json", description: "created", sortOrder: 0 }] },
+    });
+  });
+
+  it("creates an OPTIONS operation and returns the save-time warning; a clean create carries no `warnings`", async () => {
+    const result = (await create({ name: "optionsOrders", httpMethod: "OPTIONS", httpPath: "/orders" })) as { success: boolean; warnings?: string[] };
+    expect(result).toMatchObject({ success: true, operationId: "op-new", operation: { httpMethod: "OPTIONS" } });
+    expect(result.warnings).toEqual([expect.stringMatching(/OPTIONS operations are stored but left out/)]);
+    expect(mockPrisma.operation.create).toHaveBeenCalledTimes(1);
+    const clean = await create({ name: "listOrders", httpMethod: "GET", httpPath: "/orders" });
+    expect(clean).toMatchObject({ success: true });
+    expect(clean).not.toHaveProperty("warnings");
+  });
+
+  it("checks the new operation against the API's other operations (duplicate operationId)", async () => {
+    mk(mockPrisma.operation.findMany).mockResolvedValue([
+      { id: "op-2", serviceId: "svc-1", name: "listOrders", description: "", httpMethod: "GET", httpPath: "/orders", parameters: [], responses: [] },
+    ]);
+    const result = await create({ name: "listOrders", httpMethod: "POST", httpPath: "/orders" });
+    expect(result).toMatchObject({ code: "VALIDATION_ERROR", error: expect.stringMatching(/operationId "listOrders" is already used/) });
+    expect(mockPrisma.operation.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { serviceId: "svc-1" } }));
+    expect(mockPrisma.operation.create).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -692,5 +805,59 @@ describe("createDomainAssetsFromImportAction error hygiene", () => {
     const redirect = Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;replace;/schemas;307;" });
     mockPrisma.$executeRaw.mockRejectedValue(redirect);
     await expect(run(payload())).rejects.toBe(redirect);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// updateServiceAction / reorderOperationsAction: inputs and behaviour
+// ---------------------------------------------------------------------------
+
+describe("updateServiceAction", () => {
+  it("rejects a blank name, a bad base path and unknown columns before any query", async () => {
+    expect(await updateServiceAction("svc-1", { name: "  " })).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await updateServiceAction("svc-1", { basePath: "v1" })).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await updateServiceAction("svc-1", { basePath: "/v1?x" })).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await updateServiceAction("svc-1", asAny({ tenantId: "t" }))).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(mockPrisma.serviceDefinition.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("normalizes the base path and renames through the name registry", async () => {
+    mockPrisma.serviceDefinition.findUnique.mockResolvedValue({ id: "svc-1", name: "Old", basePath: "/", tenantId: T, domainId: "d-own", productId: "p-own" });
+    mockPrisma.serviceDefinition.update.mockImplementation(async ({ data }: { data: Record<string, string> }) => ({ id: "svc-1", name: data.name ?? "Old", basePath: data.basePath ?? "/" }));
+    const result = await updateServiceAction("svc-1", { name: " Billing ", basePath: " /v1/ " });
+    expect(result).toEqual({ success: true, service: { id: "svc-1", name: "Billing", basePath: "/v1" } });
+    expect(mockPrisma.serviceDefinition.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "svc-1" }, data: { name: "Billing", basePath: "/v1" } }));
+    // the rename ran under the tenant name lock (a transaction)
+    expect(mockPrisma.$transaction).toHaveBeenCalled();
+  });
+});
+
+describe("reorderOperationsAction", () => {
+  const rows = [
+    { id: "op-a", createdAt: new Date("2026-01-01T00:00:00.000Z") },
+    { id: "op-b", createdAt: new Date("2026-01-02T00:00:00.000Z") },
+  ];
+
+  it("writes createdAt in the given order from the earliest timestamp", async () => {
+    mockPrisma.serviceDefinition.findUnique.mockResolvedValue({ tenantId: T });
+    mockPrisma.operation.findMany.mockResolvedValue(rows);
+    expect(await reorderOperationsAction("svc-1", ["op-b", "op-a"])).toEqual({ success: true });
+    expect(mockPrisma.operation.update).toHaveBeenNthCalledWith(1, { where: { id: "op-b" }, data: { createdAt: new Date("2026-01-01T00:00:00.000Z") } });
+    expect(mockPrisma.operation.update).toHaveBeenNthCalledWith(2, { where: { id: "op-a" }, data: { createdAt: new Date("2026-01-01T00:00:00.001Z") } });
+    expect(mockRevalidate).toHaveBeenCalledWith("/schemas");
+  });
+
+  it("rejects a stale or foreign id list without writing", async () => {
+    mockPrisma.serviceDefinition.findUnique.mockResolvedValue({ tenantId: T });
+    mockPrisma.operation.findMany.mockResolvedValue(rows);
+    expect(await reorderOperationsAction("svc-1", ["op-b", "op-x"])).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await reorderOperationsAction("svc-1", ["op-b", "op-b"])).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(mockPrisma.operation.update).not.toHaveBeenCalled();
+  });
+
+  it("answers NOT_FOUND for another tenant's service", async () => {
+    mockPrisma.serviceDefinition.findUnique.mockResolvedValue({ tenantId: OTHER });
+    expect(await reorderOperationsAction("svc-1", ["op-a"])).toEqual({ error: "API service not found", code: "NOT_FOUND" });
+    expect(mockPrisma.operation.findMany).not.toHaveBeenCalled();
   });
 });

@@ -102,15 +102,14 @@ test.describe("Entity workspace UX", () => {
     });
   }
 
-  test("dirty Publish and right-panel Preview require an explicit decision", { tag: ["@regression"] }, async ({ authedPage: page, workspace }, testInfo) => {
+  test("dirty edits disable Publish and right-panel Preview requires an explicit decision", { tag: ["@regression"] }, async ({ authedPage: page, workspace }, testInfo) => {
     await addAndSelectField(page, workspace.entities[0].url);
     await editDescription(page, "Keep this local description");
     await page.screenshot({ path: testInfo.outputPath("workspace-1280.png"), fullPage: true });
-    await page.getByRole("button", { name: "Publish", exact: true }).first().click();
+    await expect(page.getByTestId("publish-entity-button")).toBeDisabled();
+    await expect(page.getByTestId("publish-status")).toContainText("Save or discard your field edits");
     const guard = page.getByTestId("unsaved-changes-dialog");
-    await expect(guard).toBeVisible();
     await expect(page.getByTestId("publish-dialog")).toBeHidden();
-    await guard.getByRole("button", { name: "Stay", exact: true }).click();
     await expect(guard).toBeHidden();
     await expect(page.getByTestId("field-edit-panel").getByText("Keep this local description", { exact: true })).toBeVisible();
 
@@ -131,8 +130,9 @@ test.describe("Entity workspace UX", () => {
     await page.setViewportSize({ width: 900, height: 900 });
     await page.goto(workspace.entities[0].url);
     const tabs = page.getByRole("tablist", { name: "Entity workspace views" });
-    await tabs.getByRole("tab", { name: "Editor", exact: true }).focus();
-    for (const name of ["TypeSpec source", "Schemas", "API", "Deployments", "Governance", "Alerts", "Versions", "Editor"]) {
+    await tabs.getByRole("tab", { name: "SuperSchema", exact: true }).focus();
+    await expect(tabs.getByRole("tab", { name: "Source", exact: true })).toHaveCount(0);
+    for (const name of ["Schemas", "API", "Deployments", "Governance", "Alerts", "Versions", "SuperSchema"]) {
       await page.keyboard.press("ArrowRight");
       const tab = tabs.getByRole("tab", { name: name === "Alerts" ? /^Alerts(?: \(\d+\))?$/ : name, exact: true });
       await expect(tab).toBeFocused();
@@ -141,6 +141,13 @@ test.describe("Entity workspace UX", () => {
       await expect(tab).toHaveAttribute("aria-selected", "true");
       await expect(tab).toBeInViewport();
     }
+    const source = centerPanel(page).getByRole("button", { name: "View source", exact: true });
+    await source.focus();
+    await source.press("Enter");
+    await expect(tabs.getByRole("tab", { name: "SuperSchema", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(centerPanel(page).getByRole("textbox", { name: "Entity source" })).toHaveAttribute("readonly");
+    await expect(centerPanel(page).getByTestId("typespec-save")).toHaveCount(0);
+    await centerPanel(page).getByRole("button", { name: "Back to fields", exact: true }).click();
     await expect(page.getByTestId("publish-entity-button")).toBeInViewport();
     await expect(page.getByTitle("Delete entity", { exact: true })).toBeInViewport();
     await centerPanel(page).getByLabel("Row 1", { exact: true }).click();

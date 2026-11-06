@@ -1,4 +1,6 @@
 import { assetHref } from "@/lib/navigation/asset-href";
+import { readScalarConstraints } from "@/lib/importers/scalar-asset";
+import { readValueDescriptions } from "@/lib/importers/enum-value-descriptions";
 import type {
   CustomScalarData,
   InheritedDataTypes,
@@ -6,6 +8,7 @@ import type {
   UnionTypeData,
 } from "./components/DomainTypesTab";
 import type { InheritedServices, ServiceData } from "./components/DomainApisTab";
+import { operationRecordFromRow, type OperationRow } from "@/lib/api-operations/records";
 
 /**
  * Row -> UI-shape mapping shared by the domain page and the product page.
@@ -18,14 +21,17 @@ interface SharedEnumRow {
   name: string;
   values: string[];
   description: string;
+  valueDescriptions?: unknown;
 }
 
 interface CustomScalarRow {
   id: string;
   name: string;
   baseType: string;
+  logicalType?: string | null;
   format: string | null;
   pattern: string | null;
+  constraints?: unknown;
   description: string;
 }
 
@@ -43,25 +49,8 @@ interface ServiceRow {
   basePath: string;
   scope: ServiceData["scope"];
   entity: { id: string; name: string; slug: string } | null;
-  operations: {
-    id: string;
-    name: string;
-    httpMethod: string;
-    httpPath: string;
-    description: string;
-    parameters: {
-      name: string;
-      type: string;
-      location: string;
-      required: boolean;
-      description: string;
-    }[];
-    responses: {
-      statusCode: number;
-      type: string | null;
-      description: string;
-    }[];
-  }[];
+  /** Operation rows with their parameters / responses (`OPERATION_DETAILS_INCLUDE`), read through `operationRecordFromRow`. */
+  operations: Omit<OperationRow, "serviceId">[];
 }
 
 export function mapSharedEnumRows(rows: SharedEnumRow[]): SharedEnumData[] {
@@ -70,6 +59,7 @@ export function mapSharedEnumRows(rows: SharedEnumRow[]): SharedEnumData[] {
     name: e.name,
     values: e.values,
     description: e.description,
+    ...(readValueDescriptions(e.valueDescriptions) ? { valueDescriptions: readValueDescriptions(e.valueDescriptions) } : {}),
   }));
 }
 
@@ -78,8 +68,10 @@ export function mapCustomScalarRows(rows: CustomScalarRow[]): CustomScalarData[]
     id: s.id,
     name: s.name,
     baseType: s.baseType,
+    logicalType: s.logicalType ?? null,
     format: s.format,
     pattern: s.pattern,
+    constraints: readScalarConstraints(s.constraints),
     description: s.description,
   }));
 }
@@ -103,25 +95,8 @@ export function mapServiceRows(rows: ServiceRow[]): ServiceData[] {
     entity: s.entity
       ? { id: s.entity.id, name: s.entity.name, slug: s.entity.slug }
       : null,
-    operations: s.operations.map((op) => ({
-      id: op.id,
-      name: op.name,
-      httpMethod: op.httpMethod,
-      httpPath: op.httpPath,
-      description: op.description,
-      parameters: op.parameters.map((pr) => ({
-        name: pr.name,
-        type: pr.type,
-        location: pr.location,
-        required: pr.required,
-        description: pr.description,
-      })),
-      responses: op.responses.map((r) => ({
-        statusCode: r.statusCode,
-        type: r.type,
-        description: r.description,
-      })),
-    })),
+    // The contract shape (records.ts): legacy body parameters read as the request body, new columns defaulted.
+    operations: s.operations.map((op) => operationRecordFromRow({ ...op, serviceId: s.id })),
   }));
 }
 

@@ -279,3 +279,17 @@ not available in this environment's npm registry; its runtime dependencies
 To switch to the published package later: `npm install pglite-prisma-adapter`, then
 change the import in `src/lib/db-adapter.ts` from `./pglite-adapter` to
 `pglite-prisma-adapter`, and delete the vendored folder.
+
+## Recovering an unopenable PGlite database
+
+PGlite keeps the database in `./data/pglite` (or `PGLITE_DATA_DIR`) and only one process may use it at a time. A process killed while
+it was writing (for example `kill -9` of the dev server) can leave the directory half-written; every start then fails with
+`The PGlite database at "..." could not be opened (Aborted() ...)`.
+
+1. Stop every process that uses it (dev server, scripts).
+2. `npm run db:reset` moves the directory aside to `<dir>.corrupt-<time>` (never deletes it, and refuses when the directory opens fine
+   unless you pass `-- --force`) and builds a fresh, migrated one.
+3. `npm run db:seed` for the demo data and the admin login.
+
+`./data` is created automatically (with parents), so a fresh checkout needs no manual `mkdir`. The dev server closes PGlite on
+Ctrl-C / SIGTERM; prefer that to `kill -9`.

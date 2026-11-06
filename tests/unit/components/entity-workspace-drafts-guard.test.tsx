@@ -142,7 +142,7 @@ describe("entity workspace: unsaved TypeSpec source is guarded like the field ed
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText(/This entity has unsaved edits/)).toBeInTheDocument();
-    expect(tab("typespec")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("TypeSpec source view")).toBeInTheDocument();
     expect(mocks.typeSpecSave).not.toHaveBeenCalled();
 
     fireEvent.click(dialog().getByRole("button", { name: saveAndContinue }));
@@ -174,7 +174,7 @@ describe("entity workspace: unsaved TypeSpec source is guarded like the field ed
     fireEvent.click(dialog().getByRole("button", { name: /^Stay$/i }));
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(tab("typespec")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("TypeSpec source view")).toBeInTheDocument();
     expect(mocks.typeSpecSave).not.toHaveBeenCalled();
     expect(mocks.typeSpecDiscard).not.toHaveBeenCalled();
   });
@@ -191,7 +191,7 @@ describe("entity workspace: unsaved TypeSpec source is guarded like the field ed
     await waitFor(() => expect(mocks.typeSpecSave).toHaveBeenCalledTimes(1));
     expect(await screen.findByTestId("unsaved-changes-error")).toHaveTextContent(/The TypeSpec source could not be saved/);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(tab("typespec")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("TypeSpec source view")).toBeInTheDocument();
     expect(mocks.typeSpecDiscard).not.toHaveBeenCalled();
   });
 

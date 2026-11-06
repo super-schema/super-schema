@@ -210,7 +210,7 @@ export function JsonEditor({
           spellCheck={false} wrap={readOnly ? "off" : undefined} aria-label={ariaLabel}
           aria-required={required || undefined} aria-invalid={invalid || undefined} aria-describedby={describedBy}
           onChange={(e) => onChange?.(e.target.value)}
-          className={cn("font-mono text-caption", fill ? "field-sizing-fixed h-full resize-none" : "min-h-[7.5rem]", readOnly && "whitespace-pre")}
+          className={cn("schema-code font-mono text-[13px] placeholder:text-[var(--code-comment)]", fill ? "field-sizing-fixed h-full resize-none" : "min-h-[7.5rem]", readOnly && "whitespace-pre")}
         />
       )}
       <div ref={hostRef} data-testid={ready ? id : undefined} className={ready ? "h-full" : "hidden"} />

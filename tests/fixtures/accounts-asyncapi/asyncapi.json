@@ -1,0 +1,99 @@
+{
+    "asyncapi": "2.0.0",
+    "info": {
+        "title": "Life cycle Events which risk is interested in",
+        "description": "Lifecycle Events which risk is interested in.",
+        "version": "1.0"
+    },
+    "servers": {
+        "production": {
+            "url": "jdbc:occ:${payment_activity_occ_host}",
+            "description": "OCC to connect to the Activities database which serves as the message broker.",
+            "protocol": "AMQ",
+            "protocolVersion": "1.0.0"
+        }
+    },
+    "channels": {
+        "com.paypal.identity.subject-logged-in.v1": {
+            "description": "An event that represents an login activity changes.",
+            "publish": {
+                "summary": "An event that represents an login activity changes..",
+                "operationId": "login_activity_event.post",
+                "x-visibility": {
+                    "extent": "LIMITED-RELEASE"
+                },
+                "x-slo": {
+                    "response_time_95th_percentile": 200,
+                    "error_rate": 0.001
+                },
+                "message": {
+                    "description": "An event that represents an activity performed as part of login. For a single payment, there could be multiple activities and for each activity, there is a single event expected to be publised.",
+                    "schemaFormat": "application/cloudevents+json; version=1.0; charset=utf-8",
+                    "headers": {
+                        "$ref": "json/headers.json"
+                    },
+                    "payload": {
+                        "$ref": "json/login_activity_event.json"
+                    },
+                    "bindings": {}
+                },
+                "bindings": {}
+            }
+        },
+        "com.paypal.identity.account-activation_event.v1": {
+            "description": "This event is published for notifying the clients about any change in status of account activation decision from policy system.",
+            "publish": {
+                "summary": "The event will be triggered for change in account activation decision.",
+                "operationId": "account-activation_event.post",
+                "x-visibility": {
+                    "extent": "INTERNAL"
+                },
+                "x-slo": {
+                    "response_time_95th_percentile": 200,
+                    "error_rate": 0.001
+                },
+                "message": {
+                    "description": "The policy account activation decision change event.",
+                    "schemaFormat": "application/schema+json;version=draft-07",
+                    "payload" : {
+                        "$ref": "json/account_activation_change_event.json"
+                    },
+                    "bindings": {}
+                },
+                "bindings": {
+                }
+            }
+        },
+        "amq_account_closed": {
+            "description": "This event is published to notify the account had been closed.",
+            "publish": {
+                "summary": "The event will be triggered when accout get closed successfully.",
+                "operationId": "account_closed_event.post",
+                "x-visibility": {
+                    "extent": "INTERNAL"
+                },
+                "x-slo": {
+                    "response_time_95th_percentile": 200,
+                    "error_rate": 0.001
+                },
+                "message": {
+                    "description": "Message for account closed events.",
+                    "schemaFormat": "application/vnd.paypal.asynapi+oml;version=1.0.0",
+                    "payload" : {
+                        "$ref": "json/account_closed_event.json"
+                    }
+                },
+                "bindings": {
+                    "x-amq": {
+                        "binding-version": "3.0"
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+
+

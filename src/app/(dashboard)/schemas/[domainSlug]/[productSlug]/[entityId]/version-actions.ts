@@ -33,7 +33,7 @@ export async function publishEntityAction(
 ): Promise<{ success: true; version: EntityVersionSummary } | { error: string; code?: string; needsReference?: PublishNeedsReference }> {
   const raw: Partial<PublishInput> = typeof input === "object" && input !== null ? input : {};
   if (raw.bump !== undefined && !isBumpKind(raw.bump)) {
-    return { error: "bump must be MAJOR or MINOR", code: "VALIDATION_ERROR" };
+    return { error: "bump must be MAJOR, MINOR or PATCH", code: "VALIDATION_ERROR" };
   }
   if (
     raw.changeSummary !== undefined &&

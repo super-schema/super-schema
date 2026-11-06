@@ -1,0 +1,305 @@
+{
+    "type": "object",
+    "description": "Individual application context item (key/value pairs).",
+    "properties": {
+        "key": {
+            "type": "string",
+            "description": "Key for this key/value pair.",
+            "minLength" : 3,
+            "maxLength" : 128,
+            "x-enum": [
+                {
+                    "value": "VAULT_ID",
+                    "description": "ID returned by Braintree upon Vaulting this card."
+                },
+                {
+                    "value": "UPDATE_TIME",
+                    "description": "Time this financial instrument was last updated."
+                },
+                {
+                    "value": "ELIGIBLE_FOR_INSTANT_TRANSFER",
+                    "description": "Indicates if this card is eligible for instant transfers (OCT)."
+                },
+                {
+                    "value": "DURBIN_REGULATED",
+                    "description": "Indicates that this card falls under the Durbin amendment of the US law, limiting processing fees for debit cards."
+                },
+                {
+                    "value": "BLOCKED",
+                    "description": "Indicates that this card has been blocked from use."
+                },
+                {
+                    "value": "ELIGIBLE_FOR_CREDIT",
+                    "description": "Indicates if this FI (typically a bank) is eligible to have funds debited from it."
+                },
+                {
+                    "value": "ELIGIBLE_FOR_DEBIT",
+                    "description": "Indicates if this FI (typically a bank) is eligible to have funds credited to it."
+                },
+                {
+                    "value": "LAST_WITHDRAWAL_TIME",
+                    "description": "The time of the last withdrawal from this FI."
+                },
+                {
+                    "value": "LAST_DEPOSIT_TIME",
+                    "description": "The time of the last deposit to this FI."
+                },
+                {
+                    "value": "ALLOWED_ADD_MULTIPLE",
+                    "description": "Indicates if this FI is eligible to be added by multiple users."
+                },
+                {
+                    "value": "BANK_BALANCE_AMOUNT_CENTS",
+                    "description": "Balance of this FI, in USD cents."
+                },
+                {
+                    "value": "BANK_BALANCE_TIME",
+                    "description": "The time that this bank balance was checked via an online source (i.e. Plaid)."
+                },
+                {
+                    "value": "RELEASED_BY_ADMIN",
+                    "description": "Indicates if this card has been released by an agent for further use."
+                },
+                {
+                    "value": "SOCIAL_SCORE",
+                    "description": "Social score for the current party."
+                },
+                {
+                    "value": "CLIENT_FINGERPRINT",
+                    "description": "Client fingerprint for the current party."
+                },
+                {
+                    "value": "VOIP_ATTEMPT",
+                    "description": "Indicates if this is an attempt to add a voip number."
+                },
+                {
+                    "value": "CHANGE_PASSWORD",
+                    "description": "Indicates if the user changed his password."
+                },
+                {
+                    "value": "VERIFICATION_EMAIL",
+                    "description": "The new email that needs to be verified."
+                },
+                {
+                    "value": "VERIFICATION_PHONE_NUMBER",
+                    "description": "The new phone number that needs to be verified."
+                },
+                {
+                    "value": "FACEBOOK_CONNECT",
+                    "description": "Indicates if Facebook Connect is enabled/disabled."
+                },
+                {
+                    "value": "ADDING_FRIENDS_PHONE_CONTACTS",
+                    "description": "Indicates if adding_friends_phone_contacts is enabled/disabled."
+                },
+                {
+                    "value": "ADDING_FRIENDS_FACEBOOK_CONTACTS",
+                    "description": "Indicates if adding_friends_phone_contacts is enabled/disabled."
+                },
+                {
+                    "value": "OLD_PRIVACY_SETTING",
+                    "description": "Indicates the old value of privacy setting - Private, Friends or Public."
+                },
+                {
+                    "value": "NEW_PRIVACY_SETTING",
+                    "description": "Indicates the new value of privacy setting - Private, Friends or Public."
+                },
+                {
+                    "value": "PUSH_NOTIFICATION_BANK_TRANSFER",
+                    "description": "Indicates if push notifications for bank transfer is enabled/disabled."
+                },
+                {
+                    "value": "PUSH_NOTIFICATION_PAYMENT_RECEIVED",
+                    "description": "Indicates if push notifications for payment received is enabled/disabled."
+                },
+                {
+                    "value": "PUSH_NOTIFICATION_PAYMENT_SENT",
+                    "description": "Indicates if push notifications for payment sent is enabled/disabled."
+                },
+                {
+                    "value": "PUSH_NOTIFICATION_CHARGE_REQUEST_RECEIVED",
+                    "description": "Indicates if push notifications for charge request received is enabled/disabled."
+                },
+                {
+                    "value": "PUSH_NOTIFICATION_FRIEND_PAYMENTS",
+                    "description": "Indicates if push notifications for friend payments is enabled/disabled."
+                },
+                {
+                    "value": "PUSH_NOTIFICATION_PURCHASES",
+                    "description": "Indicates if push notifications for purchases is enabled/disabled."
+                },
+                {
+                    "value": "PUSH_NOTIFICATION_LIKES",
+                    "description": "Indicates if push notifications for likes is enabled/disabled."
+                },
+                {
+                    "value": "PUSH_NOTIFICATION_COMMENTS",
+                    "description": "Indicates if push notifications for comments is enabled/disabled."
+                },
+                {
+                    "value": "PUSH_NOTIFICATION_MENTIONS",
+                    "description": "Indicates if push notifications for mentions is enabled/disabled."
+                },
+                {
+                    "value": "PUSH_NOTIFICATION_FRIEND_REQUESTS",
+                    "description": "Indicates if push notifications for friend requests is enabled/disabled."
+                },
+                {
+                    "value": "PUSH_NOTIFICATION_FRIEND_JOINED",
+                    "description": "Indicates if push notifications for friend joined is enabled/disabled."
+                },
+                {
+                    "value": "TEXT_NOTIFICATION_PAYMENT_RECEIVED",
+                    "description": "Indicates if text notifications for payment received is enabled/disabled."
+                },
+                {
+                    "value": "TEXT_NOTIFICATION_PAYMENT_SENT",
+                    "description": "Indicates if text notifications for payment sent is enabled/disabled."
+                },
+                {
+                    "value": "TEXT_NOTIFICATION_CHARGE_REQUEST_RECEIVED",
+                    "description": "Indicates if text notifications for charge request received is enabled/disabled."
+                },
+                {
+                    "value": "TEXT_NOTIFICATION_COMMENTS",
+                    "description": "Indicates if text notifications for comments is enabled/disabled."
+                },
+                {
+                    "value": "TEXT_NOTIFICATION_FRIEND_REQUESTS",
+                    "description": "Indicates if text notifications for friend requests is enabled/disabled."
+                },
+                {
+                    "value": "TEXT_NOTIFICATION_FRIEND_JOINED",
+                    "description": "Indicates if text notifications for friend joined is enabled/disabled."
+                },
+                {
+                    "value": "EMAIL_NOTIFICATION_LOGIN_ATTEMPTED",
+                    "description": "Indicates if email notifications for login attempted is enabled/disabled."
+                },
+                {
+                    "value": "EMAIL_NOTIFICATION_ADD_REMEMBERED_DEVICE",
+                    "description": "Indicates if email notifications for add remembered device is enabled/disabled."
+                },
+                {
+                    "value": "EMAIL_NOTIFICATION_PAYMENT_RECEIVED",
+                    "description": "Indicates if email notifications for payment received is enabled/disabled."
+                },
+                {
+                    "value": "EMAIL_NOTIFICATION_CHARGE_REQUEST_RECEIVED",
+                    "description": "Indicates if email notifications for payment received is enabled/disabled."
+                },
+                {
+                    "value": "EMAIL_NOTIFICATION_CHARGE_REQUEST_REJECTED",
+                    "description": "Indicates if email notifications for charge request rejected is enabled/disabled."
+                },
+                {
+                    "value": "EMAIL_NOTIFICATION_CHARGE_REQUEST_CANCELLED",
+                    "description": "Indicates if email notifications for charge request cancelled is enabled/disabled."
+                },
+                {
+                    "value": "EMAIL_NOTIFICATION_LIKES",
+                    "description": "Indicates if email notifications for likes is enabled/disabled."
+                },
+                {
+                    "value": "EMAIL_NOTIFICATION_COMMENTS",
+                    "description": "Indicates if email notifications for comments is enabled/disabled."
+                },
+                {
+                    "value": "EMAIL_NOTIFICATION_FRIEND_REQUESTS",
+                    "description": "Indicates if email notifications for friend requests is enabled/disabled."
+                },
+                {
+                    "value": "EMAIL_NOTIFICATION_INVITE_REMINDERS",
+                    "description": "Indicates if email notifications for invite reminders is enabled/disabled."
+                },
+                {
+                    "value": "TOUCH_PIN_OLD_VALUE",
+                    "description": "Indicates the old value of touch or pin - touch/pin/false (disabled)."
+                },
+                {
+                    "value": "LAST_VALIDATED_TIME",
+                    "description": "Indicates the time this user was last validated."
+                },
+                {
+                    "value": "BALANCE",
+                    "description": "Indicates the user's balance during login."
+                },
+                {
+                    "value": "CLIENT_ID",
+                    "description": "Indicates the client id of the user."
+                },
+                {
+                    "value": "MERCHANT_ID",
+                    "description": "Indicates the merchant id of the merchant during checkout."
+                },
+                {
+                    "value": "NEW_DEVICE",
+                    "description": "Indicates if the device used for login is a new device."
+                },
+                {
+                    "value": "REMEMBERED_DEVICE",
+                    "description": "Indicates if the device used for login is a remembered device."
+                },
+                {
+                    "value": "SCA_TRANSACTION_AMOUNT",
+           		     "description": "Transaction amount in user's local currency'."
+           		},
+           		{
+                    "value": "SCA_CURRENCY_CODE",
+           		    "description": "Currency code of the customer in his legal country."
+           		},
+           		{
+                    "value": "INTEGRATION_TYPE",
+           		    "description": "Transaction integration type eg.PARTNER,ONLINE etc."
+           		},
+           		{
+                    "value": "TRANSACTION_TYPE",
+           		    "description": "This represents the type of transaction."
+           		},
+                {
+                    "value": "TOKENIZATION_PRODUCT_NAME",
+           		    "description": "Name of the tokenization product eg. BUSINESS_DEBIT_MASTERCARD_EMV_GB,BUSINESS_DEBIT_MASTERCARD_EMV_GB_ADDITIONAL etc.."
+           		},
+           		{
+                    "value": "MERCHANT_COUNTRY_CODE",
+           		    "description": "Merchant country code."
+           		},
+           		{
+                    "value": "ACQUIRING_INSTITUTION_COUNTRY_CODE",
+           		    "description": "Acquiring institute contry code."
+           		},
+           		{
+                    "value": "REMOTE_INDICATOR",
+           		    "description": "Tokenization transaction was done in store or remotely eg.OFFLINE, REMOTE."
+           		},
+           		{
+                    "value": "BUSINESS_APPLICATION",
+           		    "description": "Tokenization flow - type of business application eg. Ecommerce,Retail,Others."
+           		},
+           		{
+                    "value": "DIRECTORY_SERVER_TRANSACTION_CODE",
+           		    "description": "Tokenization flow counter operation condition eg. SCA_COMPLETE. It indicates to apply counter operation when SCA is complete."
+           		},
+           		{
+                    "value": "CHECKPOINT_NAME",
+           		    "description": "Tokenization checkpoint name eg.FUNDING_POS."
+           		},
+           		{
+                    "value": "SCA_COUNTER_OPERATION",
+           		    "description": "Tokenization flow counter operation type eg.INCREMENT, RESET, NO_OP."
+           		},
+           		{
+                    "value": "SCA_COUNTER_OPERATION_CONDITION",
+           		    "description": "Tokenization flow counter operation condition eg. SCA_COMPLETE. It indicates to apply counter operation when SCA is complete."
+           		}
+
+            ]
+        },
+        "value": {
+            "type": "string",
+            "minLength" : 1,
+            "maxLength" : 128,
+            "description": "Value for this key/value pair."
+        }
+    }
+}

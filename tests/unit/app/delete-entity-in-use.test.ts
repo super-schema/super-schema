@@ -74,12 +74,12 @@ describe("deleteEntityAction — pinned entities", () => {
   it("blocks BEFORE deleting when another entity's published version references one of its versions", async () => {
     mockPrisma.entityVersion.findMany
       .mockResolvedValueOnce([{ id: "ev-order-1" }]) // the entity's own versions
-      .mockResolvedValueOnce([{ major: 1, minor: 0, entity: { id: "ent-cart", name: "Cart" } }]); // the referencing source
+      .mockResolvedValueOnce([{ major: 1, minor: 0, patch: 0, entity: { id: "ent-cart", name: "Cart" } }]); // the referencing source
     mockPrisma.schemaReference.findMany.mockResolvedValueOnce([{ fromId: "ev-cart-1" }]);
 
     const result = (await deleteEntityAction("ent-1")) as { error: string };
 
-    expect(result.error).toContain('Entity "Order" cannot be deleted: it is referenced by published versions of Entity "Cart" (v1.0).');
+    expect(result.error).toContain('Entity "Order" cannot be deleted: it is referenced by published versions of Entity "Cart" (v1.0.0).');
     expect(result.error).toContain("Published versions cannot be changed");
     expect(mockPrisma.entity.delete).not.toHaveBeenCalled();
     expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();

@@ -3,6 +3,7 @@
 // what blocks it without needing an emission, what the bump classifier compares, which entities the write must lock. Reads only.
 // `publishEvent` gathers them twice — once to plan, once more under the locks — and refuses to write when the two differ.
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
+import { savedSince, savedStamps } from "@/lib/entity-versioning/snapshot-drift";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { stableStringify, type BumpTraitHeadersPin } from "@/lib/events/bump-rules";
 import { toFrozenTrait } from "@/lib/events/catalog-mapping";
@@ -16,24 +17,39 @@ import type { EventPublishBlocker, LatestVersion } from "@/lib/events/publish-pl
 import type { FrozenTrait } from "@/lib/events/types";
 import type { PayloadFormat } from "@/lib/event-specs/types";
 import { ok, err, type Result } from "@/types/result";
-import { TRAIT_SELECT, type EventSnapshot } from "./event-snapshot";
+import { TRAIT_SELECT, type EventSnapshot, type StoredEventVersion } from "./event-snapshot";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
 export interface PublishFacts {
-  latest: LatestVersion | null;
+  /** The highest RELEASED version: what new snapshot numbers count from and the bump side `previous` is read from. */
+  latestRelease: LatestVersion | null;
+  /** The open snapshot, if any: what a save updates in place and what `hasChanges` compares with. */
+  openSnapshot: LatestVersion | null;
   /**
-   * The document differs from the latest version's source, a library trait that version froze has drifted (edited or gone), or a
-   * message's effective representation differs from the one stored with that version (an entity's recorded source format moved: the
-   * draft is untouched but the emitted document is not the same).
+   * Compared with the open snapshot (with none open, the latest release): the document differs from its source, a library trait it
+   * froze has drifted (edited or gone), a message's effective representation differs from the one stored with it (an entity's
+   * recorded source format moved: the draft is untouched but the emitted document is not the same), or a version the draft pins or
+   * references was saved again after it was (a snapshot updated in place: what it rendered is not what the pin now holds).
    */
   hasChanges: boolean;
+  /**
+   * The part of `hasChanges` that is the draft's own (document, library traits, representations), without the re-saved pins: what a
+   * promote calls an unsaved draft. A re-saved pin alone is reported by the promote as a snapshot reference, naming what moved.
+   */
+  draftChanged: boolean;
   previous: EventBumpSide | null;
   current: EventBumpSide;
   /** Every blocker that does not need an emission: unpinned pins, missing entity versions. */
   blockers: EventPublishBlocker[];
   /** False when a pin has no facts or is unpinned: the bump cannot be classified yet (planner input `bump: null`). */
   classifiable: boolean;
+  /**
+   * When the content of every version the draft pins or references was last saved (`savedStamps`: payload / key / headers pins,
+   * library traits' headers pins, external event refs). A snapshot saved again in place keeps its label and number, so this is what
+   * tells the locked re-check that the unlocked render is stale (CONFLICT, retryable) instead of storing it as current.
+   */
+  pinStamps: Record<string, number>;
   /** Entity ids to lock FOR SHARE, sorted and unique: every pinned entity of the document and of its library traits' header pins. */
   lockEntityIds: string[];
 }
@@ -42,7 +58,7 @@ const isNullableString = (value: unknown): value is string | null => value === n
 const unique = (ids: Array<string | null | undefined>): string[] => [...new Set(ids.filter((id): id is string => typeof id === "string"))];
 
 /** The stored `frozenTraits` column as traits, or null when it is anything but an array of well-formed ones (never cast blindly). */
-function parseFrozenTraits(value: unknown): FrozenTrait[] | null {
+export function parseFrozenTraits(value: unknown): FrozenTrait[] | null {
   if (!Array.isArray(value)) return null;
   const traits: FrozenTrait[] = [];
   for (const item of value) {
@@ -72,25 +88,48 @@ function parseStoredRepresentations(compatReport: unknown): Record<string, Paylo
   return Object.fromEntries(entries) as Record<string, PayloadFormat>;
 }
 
-export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promise<Result<PublishFacts>> {
-  const { document, latest, event } = snapshot;
+interface ParsedStored {
+  document: EventDocument;
+  traits: FrozenTrait[];
+  representations: Record<string, PayloadFormat> | null;
+}
 
-  // ── the previous side: parsed from what was stored, or DATA_CORRUPT — never guessed ──
-  let previousDocument: EventDocument | null = null;
-  let previousStored: Record<string, PayloadFormat> | null = null;
-  let frozen: FrozenTrait[] = [];
-  if (latest) {
-    const named = `version ${formatVersionLabel(latest)} of event "${event.id}"`;
-    const parsed = parseEventDocument(latest.sourceDocument);
-    if (!parsed.success) {
-      return err({ code: "DATA_CORRUPT", message: `The stored source document of ${named} is not a valid event document (v2)`, details: parsed.error.details });
-    }
-    const traits = parseFrozenTraits(latest.frozenTraits);
-    if (!traits) return err({ code: "DATA_CORRUPT", message: `The frozen library traits of ${named} are not valid` });
-    previousDocument = parsed.data;
-    previousStored = parseStoredRepresentations(latest.compatReport);
-    frozen = traits;
+/** A stored version's source document, frozen traits and representations, or DATA_CORRUPT — never guessed. */
+function parseStored(version: StoredEventVersion, stage: "RELEASED" | "SNAPSHOT", eventId: string): Result<ParsedStored> {
+  const named = `version ${formatVersionLabel(version, stage)} of event "${eventId}"`;
+  const parsed = parseEventDocument(version.sourceDocument);
+  if (!parsed.success) {
+    return err({ code: "DATA_CORRUPT", message: `The stored source document of ${named} is not a valid event document (v2)`, details: parsed.error.details });
   }
+  const traits = parseFrozenTraits(version.frozenTraits);
+  if (!traits) return err({ code: "DATA_CORRUPT", message: `The frozen library traits of ${named} are not valid` });
+  return ok({ document: parsed.data, traits, representations: parseStoredRepresentations(version.compatReport) });
+}
+
+const numberOf = (v: StoredEventVersion | null): LatestVersion | null =>
+  v ? { id: v.id, major: v.major, minor: v.minor, patch: v.patch, sequence: v.sequence } : null;
+
+export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promise<Result<PublishFacts>> {
+  const { document, latestRelease, openSnapshot, event } = snapshot;
+
+  // ── the previous side (the latest release, what the bump is classified against) and the base the draft is compared with (the open
+  // snapshot, else that release): parsed from what was stored, or DATA_CORRUPT — never guessed ──
+  let release: ParsedStored | null = null;
+  if (latestRelease) {
+    const parsed = parseStored(latestRelease, "RELEASED", event.id);
+    if (!parsed.success) return parsed;
+    release = parsed.data;
+  }
+  let base: ParsedStored | null = release;
+  if (openSnapshot) {
+    const parsed = parseStored(openSnapshot, "SNAPSHOT", event.id);
+    if (!parsed.success) return parsed;
+    base = parsed.data;
+  }
+  const baseVersion = openSnapshot ?? latestRelease;
+  const previousDocument = release?.document ?? null;
+  const previousStored = release?.representations ?? null;
+  const frozen = release?.traits ?? [];
 
   const currentSites = collectPinSites(document);
   const previousSites = previousDocument ? collectPinSites(previousDocument) : [];
@@ -101,6 +140,9 @@ export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promi
     ...[...currentLibrary.values()].map((t) => t.headersEntityVersionId), ...frozen.map((t) => t.headersEntityVersionId),
   ]);
   const previousExternalIds = previousDocument ? collectDocumentRefs(previousDocument).externalVersionIds : [];
+  const currentExternalIds = collectDocumentRefs(document).externalVersionIds;
+  const externalIds = unique([...previousExternalIds, ...currentExternalIds]);
+  const baseFrozen = base?.traits ?? [];
   const { tenantId } = event;
 
   // Every read is tenant-filtered like the snapshot's: another tenant's entity or version reads exactly like a missing one.
@@ -108,13 +150,15 @@ export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promi
     versionIds.length > 0
       ? db.entityVersion.findMany({
           where: { id: { in: versionIds }, entity: { tenantId } },
-          select: { id: true, entityId: true, major: true, minor: true, entity: { select: { name: true } } },
+          select: { id: true, entityId: true, major: true, minor: true, patch: true, stage: true, publishedAt: true, entity: { select: { name: true } } },
         })
       : [],
     lockEntityIds.length > 0 ? db.entity.findMany({ where: { id: { in: lockEntityIds }, tenantId }, select: { id: true, name: true } }) : [],
-    frozen.length > 0 ? db.trait.findMany({ where: { id: { in: frozen.map((t) => t.id) }, tenantId }, select: TRAIT_SELECT }) : [],
-    previousExternalIds.length > 0
-      ? db.eventSpecVersion.findMany({ where: { id: { in: previousExternalIds }, eventSpec: { tenantId } }, select: { id: true, major: true } })
+    frozen.length + baseFrozen.length > 0
+      ? db.trait.findMany({ where: { id: { in: unique([...frozen, ...baseFrozen].map((t) => t.id)) }, tenantId }, select: TRAIT_SELECT })
+      : [],
+    externalIds.length > 0
+      ? db.eventSpecVersion.findMany({ where: { id: { in: externalIds }, eventSpec: { tenantId } }, select: { id: true, major: true, publishedAt: true } })
       : [],
   ]);
   const versionById = new Map(versionRows.map((r) => [r.id, r]));
@@ -135,7 +179,9 @@ export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promi
     Object.fromEntries(
       sites.flatMap(({ pin }): Array<[string, EventBumpPinFact]> => {
         const row = versionOf(pin.entityId, pin.entityVersionId);
-        return row && pin.entityVersionId ? [[pin.entityVersionId, { entityId: row.entityId, entityName: row.entity.name, label: formatVersionLabel(row), major: row.major }]] : [];
+        return row && pin.entityVersionId
+          ? [[pin.entityVersionId, { entityId: row.entityId, entityName: row.entity.name, label: formatVersionLabel(row, row.stage), major: row.major }]]
+          : [];
       })
     );
   /** What a library trait's headers pin identifies. A version that no longer resolves leaves major / label unknown, never MAJOR. */
@@ -145,7 +191,7 @@ export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promi
     const name = row?.entity.name ?? entityName.get(trait.headersEntityId);
     return {
       entityId: trait.headersEntityId, ...(name !== undefined && { entityName: name }), entityVersionId: trait.headersEntityVersionId,
-      major: row?.major ?? null, label: row ? formatVersionLabel(row) : null,
+      major: row?.major ?? null, label: row ? formatVersionLabel(row, row.stage) : null,
     };
   };
 
@@ -189,28 +235,50 @@ export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promi
   const previous = previousDocument
     ? sideOf(
         previousDocument, previousSites, frozen.map((t): [string, FrozenTrait] => [t.id, t]),
-        Object.fromEntries(externalRows.map((r) => [r.id, r.major])), previousStored ?? undefined
+        Object.fromEntries(externalRows.filter((r) => previousExternalIds.includes(r.id)).map((r) => [r.id, r.major])), previousStored ?? undefined
       )
     : null;
 
-  // ── has anything changed? the document, a library trait that the latest version froze (spec §5: a library edit is a change), or
-  // the representation a message is emitted in: an entity's recorded source format, which an Auto message follows, can change without
-  // a byte of the draft document changing. A version without stored representations (published before they were) has nothing to
-  // compare, so it is never a change on that account — exactly as before they were stored. ──
-  const drifted = frozen.some((t) => {
+  // ── has anything changed since the base (the open snapshot, else the latest release)? the document, a library trait that the base
+  // froze (spec §5: a library edit is a change), the representation a message is emitted in (an entity's recorded source format, which
+  // an Auto message follows, can change without a byte of the draft document changing; a version without stored representations has
+  // nothing to compare, so it is never a change on that account), or a version the draft pins (a payload / key / headers pin, a
+  // library trait's headers pin) or references (an external ref) that was saved again after the base was: a snapshot updated in
+  // place no longer holds what the base rendered from it. ──
+  const drifted = baseFrozen.some((t) => {
     const live = liveTraits.get(t.id);
     return !live || fingerprint(live) !== fingerprint(t);
   });
-  const representationsChanged = previousStored !== null && stableStringify(previousStored) !== stableStringify(currentRepresentations);
-  const hasChanges = previousDocument === null || stableStringify(document) !== stableStringify(previousDocument) || drifted || representationsChanged;
+  const baseStored = base?.representations ?? null;
+  const representationsChanged = baseStored !== null && stableStringify(baseStored) !== stableStringify(currentRepresentations);
+  const savedAfterBase = (row: { publishedAt: Date } | undefined) => savedSince(row, baseVersion);
+  const currentPinIds = unique([...currentSites.map((s) => s.pin.entityVersionId), ...[...currentLibrary.values()].map((t) => t.headersEntityVersionId)]);
+  const externalById = new Map(externalRows.map((r) => [r.id, r]));
+  const pinsResaved =
+    currentPinIds.some((id) => savedAfterBase(versionById.get(id))) || currentExternalIds.some((id) => savedAfterBase(externalById.get(id)));
+  const draftChanged = base === null || stableStringify(document) !== stableStringify(base.document) || drifted || representationsChanged;
+  const hasChanges = draftChanged || pinsResaved;
+  const pinStamps = savedStamps([
+    ...currentPinIds.flatMap((id) => {
+      const row = versionById.get(id);
+      return row ? [{ id, publishedAt: row.publishedAt }] : [];
+    }),
+    ...currentExternalIds.flatMap((id) => {
+      const row = externalById.get(id);
+      return row ? [{ id, publishedAt: row.publishedAt }] : [];
+    }),
+  ]);
 
   return ok({
-    latest: latest ? { major: latest.major, minor: latest.minor, sequence: latest.sequence } : null,
+    latestRelease: numberOf(latestRelease),
+    openSnapshot: numberOf(openSnapshot),
     hasChanges,
+    draftChanged,
     previous,
     current,
     blockers,
     classifiable: blockers.length === 0,
+    pinStamps,
     lockEntityIds,
   });
 }

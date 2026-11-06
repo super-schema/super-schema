@@ -5,17 +5,17 @@ import { Semaphore } from "@/lib/concurrency/semaphore";
 
 const TENANT = "tenant-acme";
 
-type V = { id: string; entityId: string; major: number; minor: number; resolvedSource: string; fieldSnapshot: unknown; entity: { name: string } };
+type V = { id: string; entityId: string; major: number; minor: number; patch: number; resolvedSource: string; fieldSnapshot: unknown; entity: { name: string } };
 const versions: Record<string, V> = {
   vOrder: {
-    id: "vOrder", entityId: "eOrder", major: 2, minor: 1, entity: { name: "Order" },
+    id: "vOrder", entityId: "eOrder", major: 2, minor: 1, patch: 0, entity: { name: "Order" },
     resolvedSource: "namespace Custom;\nmodel Order {\n  id: string;\n  address: Address;\n}\n",
     fieldSnapshot: [{ name: "id", fieldNumber: 1 }, { name: "address", fieldNumber: 2 }],
   },
-  vAddress: { id: "vAddress", entityId: "eAddress", major: 1, minor: 0, entity: { name: "Address" }, resolvedSource: "model Address {\n  street: string;\n}\n", fieldSnapshot: [{ name: "street", fieldNumber: null }] },
-  vAddress2: { id: "vAddress2", entityId: "eAddress", major: 2, minor: 0, entity: { name: "Address" }, resolvedSource: "model Address {\n  line1: string;\n}\n", fieldSnapshot: [] },
-  vCustomer: { id: "vCustomer", entityId: "eCustomer", major: 1, minor: 0, entity: { name: "Customer" }, resolvedSource: "model Customer {\n  home: Address;\n}\n", fieldSnapshot: [] },
-  vBroken: { id: "vBroken", entityId: "eBroken", major: 1, minor: 0, entity: { name: "Broken" }, resolvedSource: "model Broken {\n  id: string;\n}\n", fieldSnapshot: [] },
+  vAddress: { id: "vAddress", entityId: "eAddress", major: 1, minor: 0, patch: 0, entity: { name: "Address" }, resolvedSource: "model Address {\n  street: string;\n}\n", fieldSnapshot: [{ name: "street", fieldNumber: null }] },
+  vAddress2: { id: "vAddress2", entityId: "eAddress", major: 2, minor: 0, patch: 0, entity: { name: "Address" }, resolvedSource: "model Address {\n  line1: string;\n}\n", fieldSnapshot: [] },
+  vCustomer: { id: "vCustomer", entityId: "eCustomer", major: 1, minor: 0, patch: 0, entity: { name: "Customer" }, resolvedSource: "model Customer {\n  home: Address;\n}\n", fieldSnapshot: [] },
+  vBroken: { id: "vBroken", entityId: "eBroken", major: 1, minor: 0, patch: 0, entity: { name: "Broken" }, resolvedSource: "model Broken {\n  id: string;\n}\n", fieldSnapshot: [] },
 };
 const fieldPins: Record<string, string[]> = { vOrder: ["vAddress"], vCustomer: ["vAddress2"], vMixed: [] };
 
@@ -72,7 +72,7 @@ describe("artifact renderer", () => {
     const failing = vi.fn<EmitFiles>(async () => ({ success: false, error: { code: "EMITTER_FAILED", message: "boom" } }));
     const r2 = createArtifactRenderer({ db: fakeDb() as never, emitFiles: failing });
     const first = await r2.render({ kind: "version", entityVersionId: "vBroken", tenantId: TENANT }, "avro");
-    expect(!first.success && first.error).toEqual({ code: "ARTIFACT_RENDER_FAILED", message: "Broken@1.0 → avro: boom", details: { cause: "EMITTER_FAILED" } });
+    expect(!first.success && first.error).toEqual({ code: "ARTIFACT_RENDER_FAILED", message: "Broken@1.0.0 → avro: boom", details: { cause: "EMITTER_FAILED" } });
     await r2.render({ kind: "version", entityVersionId: "vBroken", tenantId: TENANT }, "avro");
     expect(failing).toHaveBeenCalledTimes(2);
   });
@@ -119,7 +119,7 @@ describe("artifact renderer", () => {
 
 describe("artifact renderer — legacy @tag lines and draft subjects", () => {
   const legacy: V = {
-    id: "vLegacy", entityId: "eLegacy", major: 1, minor: 0, entity: { name: "Legacy" }, fieldSnapshot: [],
+    id: "vLegacy", entityId: "eLegacy", major: 1, minor: 0, patch: 0, entity: { name: "Legacy" }, fieldSnapshot: [],
     resolvedSource: '@tag("sales")\nmodel Legacy {\n  id: string;\n  @tag("classification:PII")\n  ssn: string;\n  @doc("mentions @tag(x) inline")\n  note: string;\n}\n',
   };
   const avroFiles = [{ relativePath: "Legacy.avsc.json", content: '{"type":"record","name":"Legacy"}' }];
@@ -147,7 +147,7 @@ describe("artifact renderer — legacy @tag lines and draft subjects", () => {
 
   it("compiles frozen Story 16.6 sources without the governance overlay (decorators and library imports), in every format", async () => {
     const governed: V = {
-      id: "vGoverned", entityId: "eGoverned", major: 1, minor: 0, entity: { name: "Governed" },
+      id: "vGoverned", entityId: "eGoverned", major: 1, minor: 0, patch: 0, entity: { name: "Governed" },
       fieldSnapshot: [{ name: "id", fieldNumber: 1 }, { name: "email", fieldNumber: 2 }],
       resolvedSource: [
         'import "@superschema/typespec-enterprise";',
@@ -380,7 +380,7 @@ describe("artifact renderer — failures never throw and are never cached", () =
     const emitFiles = vi.fn<EmitFiles>();
     const r = await createArtifactRenderer({ db: conflicting as never, emitFiles }).render(order, "avro");
     expect(!r.success && r.error.code).toBe("ARTIFACT_RENDER_FAILED");
-    expect(!r.success && r.error.message).toContain("Order@2.1 → avro:");
+    expect(!r.success && r.error.message).toContain("Order@2.1.0 → avro:");
     expect(!r.success && r.error.details).toMatchObject({ cause: "TYPESPEC_DECLARATION_CONFLICT", name: "Status" });
     expect(emitFiles).not.toHaveBeenCalled();
   });
@@ -564,7 +564,7 @@ describe("artifact renderer — protobuf imports", () => {
   const render = async (proto: string) => {
     const emitFiles = vi.fn<EmitFiles>(async () => ({ success: true, data: [{ relativePath: "main.proto", content: proto }] }));
     const frozen = { ...fakeDb(), entityVersion: { findUnique: vi.fn(async () => ({
-      id: "vExt", entityId: "eExt", major: 1, minor: 0, entity: { name: "Ext" }, fieldSnapshot: [{ name: "other", fieldNumber: 1 }],
+      id: "vExt", entityId: "eExt", major: 1, minor: 0, patch: 0, entity: { name: "Ext" }, fieldSnapshot: [{ name: "other", fieldNumber: 1 }],
       resolvedSource: 'model Ext {\n  other: TypeSpec.Protobuf.Extern<"vendor/other.proto", "vendor.Other">;\n}\n',
     })) } };
     const r = await createArtifactRenderer({ db: frozen as never, emitFiles }).render({ kind: "version", entityVersionId: "vExt", tenantId: TENANT }, "protobuf");

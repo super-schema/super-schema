@@ -26,10 +26,10 @@ import { GET } from "@/app/api/v1/event-specs/[id]/route";
 // one. The mock honours the `where` it is given, so removing the route's tenant filter changes the outcome (the cross-tenant test fails).
 let specName = "checkout-service";
 const SPECS = [
-  { id: "s1", tenantId: "t1", productId: "p1", domainId: "d1", latestVersion: { major: 2, minor: 0 } },
+  { id: "s1", tenantId: "t1", productId: "p1", domainId: "d1", latestVersion: { major: 2, minor: 0, patch: 0 } },
   { id: "s-draft-only", tenantId: "t1", productId: "p1", domainId: "d1", latestVersion: null },
-  { id: "s-sibling", tenantId: "t1", productId: "p2", domainId: "d2", latestVersion: { major: 1, minor: 0 } },
-  { id: "s-foreign", tenantId: "t2", productId: "p9", domainId: "d9", latestVersion: { major: 1, minor: 0 } },
+  { id: "s-sibling", tenantId: "t1", productId: "p2", domainId: "d2", latestVersion: { major: 1, minor: 0, patch: 0 } },
+  { id: "s-foreign", tenantId: "t2", productId: "p9", domainId: "d9", latestVersion: { major: 1, minor: 0, patch: 0 } },
 ];
 /** What the service context of an authorized request carries: the tenant it acts in, whoever the caller is (the services are handed the very ctx). */
 const CTX = expect.objectContaining({ tenantId: "t1", userId: "member-1" });
@@ -67,12 +67,12 @@ describe("GET /api/v1/event-specs/:id", () => {
     const res = await call();
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/yaml; charset=utf-8");
-    expect(res.headers.get("content-disposition")).toBe('inline; filename="checkout-service-2.0.asyncapi.yaml"');
-    expect(res.headers.get("x-event-spec-version")).toBe("2.0");
+    expect(res.headers.get("content-disposition")).toBe('inline; filename="checkout-service-2.0.0.asyncapi.yaml"');
+    expect(res.headers.get("x-event-spec-version")).toBe("2.0.0");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await res.text()).toBe("asyncapi: 3.0.0\n");
     // the stored version is read for the event's own product, never re-rendered as a draft
-    expect(h.emitEventStoredVersion).toHaveBeenCalledWith("s1", "p1", "2.0", CTX);
+    expect(h.emitEventStoredVersion).toHaveBeenCalledWith("s1", "p1", "2.0.0", CTX);
     expect(h.emitEventDraft).not.toHaveBeenCalled();
   });
 
@@ -233,7 +233,7 @@ describe("tenant scoping (R67: the emit service trusts the id, so the route look
     h.authenticateRequest.mockResolvedValue(session(principalOf([assign.tenant("VIEWER", "t1"), assign.tenant("VIEWER", "t2")])));
     h.getActiveTenantId.mockResolvedValue("t2");
     expect((await call("", "s-foreign")).status).toBe(200);
-    expect(h.emitEventStoredVersion).toHaveBeenCalledWith("s-foreign", "p9", "1.0", expect.objectContaining({ tenantId: "t2" }));
+    expect(h.emitEventStoredVersion).toHaveBeenCalledWith("s-foreign", "p9", "1.0.0", expect.objectContaining({ tenantId: "t2" }));
     expect((await call("", "s1")).status).toBe(404);
   });
 
@@ -277,7 +277,7 @@ describe("tenant scoping (R67: the emit service trusts the id, so the route look
   });
 
   it("treats an event row without a product like a missing one", async () => {
-    h.findFirst.mockResolvedValueOnce({ name: "orphan", productId: null, latestVersion: { major: 1, minor: 0 } });
+    h.findFirst.mockResolvedValueOnce({ name: "orphan", productId: null, latestVersion: { major: 1, minor: 0, patch: 0 } });
     expect((await call()).status).toBe(404);
     expect(emitters()).toBe(0);
   });
@@ -355,17 +355,17 @@ describe("Content-Disposition filename", () => {
   };
 
   it("sanitises odd characters in the event name (quotes, separators, whitespace, unicode, control characters)", async () => {
-    expect(await disposition('Orders "v2"; rm -rf /')).toBe('inline; filename="Orders-v2-rm-rf-2.0.asyncapi.yaml"');
-    expect(await disposition("../../etc/passwd")).toBe('inline; filename="etc-passwd-2.0.asyncapi.yaml"');
-    expect(await disposition("Checkout Service (EU)", "json")).toBe('inline; filename="Checkout-Service-EU-2.0.asyncapi.json"');
-    expect(await disposition("Zażółć gęślą\r\nX-Evil: 1")).toBe('inline; filename="Za-g-l-X-Evil-1-2.0.asyncapi.yaml"');
+    expect(await disposition('Orders "v2"; rm -rf /')).toBe('inline; filename="Orders-v2-rm-rf-2.0.0.asyncapi.yaml"');
+    expect(await disposition("../../etc/passwd")).toBe('inline; filename="etc-passwd-2.0.0.asyncapi.yaml"');
+    expect(await disposition("Checkout Service (EU)", "json")).toBe('inline; filename="Checkout-Service-EU-2.0.0.asyncapi.json"');
+    expect(await disposition("Zażółć gęślą\r\nX-Evil: 1")).toBe('inline; filename="Za-g-l-X-Evil-1-2.0.0.asyncapi.yaml"');
   });
 
   it("falls back to a fixed stem when nothing usable remains and bounds the length", async () => {
-    expect(await disposition("日本語")).toBe('inline; filename="event-spec-2.0.asyncapi.yaml"');
-    expect(await disposition("")).toBe('inline; filename="event-spec-2.0.asyncapi.yaml"');
-    expect(await disposition("...")).toBe('inline; filename="event-spec-2.0.asyncapi.yaml"');
+    expect(await disposition("日本語")).toBe('inline; filename="event-spec-2.0.0.asyncapi.yaml"');
+    expect(await disposition("")).toBe('inline; filename="event-spec-2.0.0.asyncapi.yaml"');
+    expect(await disposition("...")).toBe('inline; filename="event-spec-2.0.0.asyncapi.yaml"');
     const long = await disposition("a".repeat(500));
-    expect(long).toBe(`inline; filename="${"a".repeat(100)}-2.0.asyncapi.yaml"`);
+    expect(long).toBe(`inline; filename="${"a".repeat(100)}-2.0.0.asyncapi.yaml"`);
   });
 });

@@ -37,7 +37,7 @@ export async function createForeignTenantFixture(prisma: PrismaClient, ctx: Serv
     const version = await prisma.entityVersion.create({
       data: {
         entityId: entity.id, major: 1, minor: 0, sequence: 1, resolvedSource: entity.typespecSource ?? "", fieldSnapshot: [],
-        changeKind: "INITIAL", publishedById: ctx.userId,
+        changeKind: "INITIAL", publishedById: ctx.userId, releasedAt: new Date(),
       },
     });
     await prisma.entity.update({ where: { id: entity.id }, data: { latestVersionId: version.id } });

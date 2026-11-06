@@ -34,9 +34,12 @@ describe("root-level enum", () => {
     expect(parse(noTitle).enums[0].name).toBe("Gender");
   });
 
-  it("still refuses a root primitive that is not an enum", () => {
+  it("imports a root primitive that is not an enum as a shared scalar", () => {
     const result = parseJsonSchemaDocument(JSON.stringify({ title: "RootString", type: "string", minLength: 3 }));
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.entities).toHaveLength(0);
+    expect(result.data.scalars.map((s) => s.name)).toEqual(["RootString"]);
   });
 
   it("is detected as JSON Schema without a $schema keyword", () => {
@@ -109,8 +112,8 @@ describe("entity naming", () => {
     expect(parse({ ...OBJ, title: "Portable Postal Address (Medium-Grained)", $id: "https://x/common/Address.v1.json" }).entities[0].name).toBe("Address");
   });
 
-  it("keeps the title when the $id gives no identifier either", () => {
-    expect(parse({ ...OBJ, title: "Some Title", $id: "https://x/some-title.json" }).entities[0].name).toBe("Some Title");
+  it("names the entity from the file the $id points at, in PascalCase, when the title is a display title", () => {
+    expect(parse({ ...OBJ, title: "Some Title", $id: "https://x/some-title.json" }).entities[0].name).toBe("SomeTitle");
   });
 
   it("names a reference to a versioned file without the version", () => {
@@ -184,7 +187,7 @@ describe("naming by the file the document came from", () => {
     expect(withName({ ...OBJ, title: "Some Title", $id: "https://x/FromId.v1.json" }, "FromFile.json").entities[0].name).toBe("FromId");
   });
 
-  it("ignores a file name that is no identifier", () => {
-    expect(withName({ ...OBJ, title: "Some Title" }, "my schema (1).json").entities[0].name).toBe("Some Title");
+  it("ignores a file name that is no identifier (the title's own words name the entity)", () => {
+    expect(withName({ ...OBJ, title: "Some Title" }, "my schema (1).json").entities[0].name).toBe("SomeTitle");
   });
 });

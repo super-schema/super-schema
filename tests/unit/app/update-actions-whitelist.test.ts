@@ -21,7 +21,7 @@ const { mockPrisma, mockAuth, mockGetActiveTenantId, mockRevalidate } = await vi
       customScalar: writable(),
       unionType: writable(),
       modelFieldDefinition: { findUnique: vi.fn(), update: vi.fn() },
-      operation: { findUnique: vi.fn(), update: vi.fn() },
+      operation: { findUnique: vi.fn(), update: vi.fn(), findMany: vi.fn() },
       $executeRaw: vi.fn(),
       $transaction: vi.fn(),
     },
@@ -72,6 +72,12 @@ beforeEach(() => {
   mockPrisma.modelFieldDefinition.update.mockResolvedValue({ id: "row-1" });
   mockPrisma.operation.findUnique.mockResolvedValue({ service: { tenantId: "tenant-1" } });
   mockPrisma.operation.update.mockResolvedValue({ id: "row-1" });
+  // the operation's API, as the update re-validates it: op-1 itself (getOrder GET /orders/{id}) and a sibling
+  mockPrisma.operation.findMany.mockResolvedValue([
+    { id: "op-1", serviceId: "svc-1", name: "getOrder", description: "", httpMethod: "GET", httpPath: "/orders/{id}",
+      parameters: [{ name: "id", type: "string", location: "path", required: true, description: "" }], responses: [] },
+    { id: "op-2", serviceId: "svc-1", name: "listOrders", description: "", httpMethod: "GET", httpPath: "/orders", parameters: [], responses: [] },
+  ]);
 });
 
 /** The payloads from the final review (D-I2) plus the other columns that place, version or identify a record. */
@@ -113,7 +119,8 @@ const DATA_TYPE_CASES = [
 
 describe.each(DATA_TYPE_CASES)("$label", ({ kind, model, update, legit, wrongType }) => {
   it("writes exactly the whitelisted columns of a row of the active tenant", async () => {
-    expect(await update("row-1", legit)).toEqual({ success: true });
+    // an enum / scalar edit also reports how many fields followed it (`updatedFields`)
+    expect(await update("row-1", legit)).toMatchObject({ success: true });
     expect(mockPrisma[model].update).toHaveBeenCalledTimes(1);
     expect(mockPrisma[model].update).toHaveBeenCalledWith({ where: { id: "row-1" }, data: legit });
     expect(mockRevalidate).toHaveBeenCalledWith("/schemas");
@@ -228,11 +235,35 @@ describe("updateOperationAction", () => {
   const opUpdate = (id: unknown, data: unknown) => updateOperationAction(asAny(id), asAny(data));
 
   it("writes exactly the whitelisted columns, with the name trimmed", async () => {
-    expect(await opUpdate("op-1", { name: " getOrder ", httpMethod: "GET", httpPath: "/orders/{id}", description: "d" })).toEqual({ success: true });
+    expect(await opUpdate("op-1", { name: " getOrder ", httpMethod: "GET", httpPath: "/orders/{id}", description: "d" })).toMatchObject({ success: true });
     expect(mockPrisma.operation.update).toHaveBeenCalledWith({
       where: { id: "op-1" },
       data: { name: "getOrder", httpMethod: "GET", httpPath: "/orders/{id}", description: "d" },
     });
+  });
+
+  it("writes the contract columns (summary, operationId, tags, deprecated); a blank operationId clears it", async () => {
+    expect(await opUpdate("op-1", { summary: "Fetch", operationId: "", tags: ["orders"], deprecated: true })).toMatchObject({ success: true });
+    expect(mockPrisma.operation.update).toHaveBeenCalledWith({
+      where: { id: "op-1" },
+      data: { summary: "Fetch", operationId: null, tags: ["orders"], deprecated: true },
+    });
+  });
+
+  it("saves a switch to OPTIONS and returns the save-time warning; a clean update carries no `warnings`", async () => {
+    const result = (await opUpdate("op-1", { httpMethod: "OPTIONS" })) as { success: boolean; warnings?: string[] };
+    expect(result).toMatchObject({ success: true, operation: { httpMethod: "OPTIONS" } });
+    expect(result.warnings).toEqual([expect.stringMatching(/OPTIONS operations are stored but left out/)]);
+    expect(mockPrisma.operation.update).toHaveBeenCalledWith({ where: { id: "op-1" }, data: { httpMethod: "OPTIONS" } });
+    const clean = await opUpdate("op-1", { summary: "Fetch" });
+    expect(clean).toMatchObject({ success: true });
+    expect(clean).not.toHaveProperty("warnings");
+  });
+
+  it("validates the operation as it would be stored: a path that drops its {id}, or the sibling's method + path, is rejected", async () => {
+    expect(await opUpdate("op-1", { httpPath: "/orders" })).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await opUpdate("op-1", { name: "list orders" })).toMatchObject({ code: "VALIDATION_ERROR", error: expect.stringMatching(/identifier/) });
+    expect(mockPrisma.operation.update).not.toHaveBeenCalled();
   });
 
   it.each([{ serviceId: "other-service" }, { decorators: {} }, { tenantId: "other" }, { id: "x" }, { name: "ok", serviceId: "s2" }])(

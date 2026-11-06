@@ -1,0 +1,114 @@
+{
+    "title": "Account closed successfully event.",
+    "description": "Event would be sent only when the account closed successfully.",
+    "type": "object",
+    "properties": {
+        "account_number": {
+            "$ref": "../common_components/v5/schema/json/openapi-2.0/domains/identity/account/account_number.json",
+            "x-securityClassification": {
+                "data_class": "class4",
+                "data_category": "Intrinsic"
+            }
+        },
+        "reason": {
+            "type": "string",
+            "description": "Reason of why the account is being closed.",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[A-Za-z][A-Za-z0-9-_,.\\s]*",
+            "x-securityClassification": {
+                "data_class": "class4",
+                "data_category": "PayPalCompany"
+            }
+        },
+        "legal_country_code": {
+            "$ref": "../common_components/v5/schema/json/openapi-2.0/address/country_code.json",
+            "x-securityClassification": {"data_class":"class3", "data_category":"ConsumerPersonal"}
+        },
+        "client_info": {
+            "type": "string",
+            "description": "Upstream client that initiated the account close request.",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^.*$",
+            "x-securityClassification": {
+                "data_class": "class4",
+                "data_category": "PayPalCompany"
+            }
+        },
+        "result_code": {
+            "type": "string",
+            "description": "Result of the account close operation. CLOSED indicates success; UNSUCCESSFUL indicates the account could not be closed.",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[0-9A-Z_]+$",
+            "x-securityClassification": {
+                "data_class": "class4",
+                "data_category": "PayPalCompany"
+            }
+        },
+        "ineligibility_reason_message": {
+            "type": "string",
+            "description": "APS-derived decision or ineligibility reasons preventing account closure. Comma-joined.",
+            "minLength": 1,
+            "maxLength": 4000,
+            "pattern": "^.*$",
+            "x-securityClassification": {
+                "data_class": "class4",
+                "data_category": "PayPalCompany"
+            }
+        },
+        "debug_id": {
+            "type": "string",
+            "description": "Correlation id for tracing the account close request across services.",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^.*$",
+            "x-securityClassification": {
+                "data_class": "class4",
+                "data_category": "Intrinsic"
+            }
+        },
+        "entry_point": {
+            "type": "string",
+            "description": "Entry point where the account close request was initiated.",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^.*$",
+            "x-securityClassification": {
+                "data_class": "class4",
+                "data_category": "PayPalCompany"
+            }
+        },
+        "event_creation_time": {
+            "$ref": "../common_components/v5/schema/json/openapi-2.0/date_time/date_time.json",
+            "x-securityClassification": {
+                "data_class": "class4",
+                "data_category": "Intrinsic"
+            }
+        },
+        "tenant_info": {
+            "$ref": "../common_components/v5/schema/json/openapi-2.0/domains/identity/account/account_tenant_context.json",
+            "x-securityClassification": {
+                "data_class": "class4",
+                "data_category": "Intrinsic"
+            }
+        },
+        "notes": {
+            "type": "string",
+            "description": "Additional close-account audit detail not captured in the other dedicated fields, JSON-encoded. Keys present depend on result_code: ineligibility_services (array of \"service:REASON_CODE\" pairs identifying which downstream service produced each ineligibility reason, on an unsuccessful close), disposition (how a successful close's outstanding balance was disposed of, e.g. WITHDRAW_TO_BANK), and request_info (array of authorized bypass flags applied on this request, e.g. skip_risk_restriction_check, skip_adjacency_account_check -- present on either outcome).",
+            "minLength": 1,
+            "maxLength": 4000,
+            "pattern": "^.*$",
+            "x-securityClassification": {
+                "data_class": "class4",
+                "data_category": "PayPalCompany"
+            }
+        }
+    },
+    "required": [
+        "account_number",
+        "event_creation_time",
+        "tenant_info"
+    ]
+}

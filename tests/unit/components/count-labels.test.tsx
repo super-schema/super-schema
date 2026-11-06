@@ -167,7 +167,7 @@ describe("field editor", () => {
         onReorderFields={async () => true}
       />
     );
-    expect(screen.getByText(/ of 1 field complete$/)).toBeTruthy();
+    expect(screen.getByLabelText(/ of 1 field complete$/)).toBeTruthy();
     expect(screen.queryByText(/1 fields/)).toBeNull();
   });
 });

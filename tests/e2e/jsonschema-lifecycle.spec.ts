@@ -3,7 +3,7 @@
  *
  *   paste -> Load -> review screen content -> create entity -> open entity -> generate EVERY target of the catalog (answering the
  *   primary-key dialog) -> content checks (JSON Schema / OpenAPI: extensions, required, enum values, formats) -> rename a field in
- *   the editor -> regenerate -> edit the TypeSpec source and Save (sync) -> regenerate -> extensions / classification survived.
+ *   the editor -> regenerate -> inspect read-only Source -> regenerate -> extensions / classification survived.
  *
  * Each variation is one independent test (own domain + product). A step failing is recorded and the next steps still run
  * where they can, so the matrix (written to <E2E_EVIDENCE_DIR>/lifecycle/<id>.json: one directory per run, helpers/evidence.ts) shows every broken step at once.
@@ -16,6 +16,7 @@
  * Cleanup of the created domains needs DATABASE_URL (see helpers/db.ts); on PGlite they stay (use a throw-away data dir).
  */
 
+import { addFieldQuick } from "./helpers/entity-page";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { test, expect } from "./helpers/fixtures";
 import { artifactProblems, canon, requiredOf } from "./helpers/artifact-text";
@@ -31,7 +32,6 @@ import {
   pasteAndReview,
   readTypeSpecSource,
   renameField,
-  saveTypeSpecSource,
   fieldName,
   type Generated,
 } from "./helpers/lifecycle";
@@ -180,26 +180,22 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
     expect(norm(d.code)).toContain(norm(to));
   });
 
-  await step("typespec source edit + sync + regenerate", async () => {
+  await step("SuperSchema edit + read-only Source + regenerate", async () => {
     const source = await readTypeSpecSource(page);
     expect(source).toContain(`model ${v.entityName}`);
     expect(source).toContain(to); // the rename reached the canonical source
-    const edited = source.replace(new RegExp(`(model ${v.entityName}[^{]*\\{[^\\n]*\\n)`), "$1  e2e_added?: string;\n");
-    expect(edited).not.toBe(source);
-    mkdirSync(`${EVIDENCE}/${v.id}`, { recursive: true });
-    writeFileSync(`${EVIDENCE}/${v.id}/typespec-before-sync.tsp`, edited);
-    // An entity whose source names another entity's model saves too: the reference resolves to that entity (multi-entity emission).
-    const saved = await saveTypeSpecSource(page, edited);
-    expect(saved.ok, saved.message).toBe(true);
     await openEditor(page);
+    await addFieldQuick(page, "e2e_added");
     await expect(fieldName(page, "e2e_added")).toBeVisible({ timeout: 30_000 });
-    writeFileSync(`${EVIDENCE}/${v.id}/typespec-after-sync.tsp`, await readTypeSpecSource(page));
-    await openEditor(page);
+    const updated = await readTypeSpecSource(page);
+    expect(updated).toContain("e2e_added");
+    mkdirSync(`${EVIDENCE}/${v.id}`, { recursive: true });
+    writeFileSync(`${EVIDENCE}/${v.id}/source-after-visual-edit.tsp`, updated);
     await openSchemasTab(page);
     const target = ENABLED_TARGETS.find((t) => t.key === "json-schema")!;
     const g = await generateTarget(page, target.displayName, { primaryKey: v.primaryKey });
     writeFileSync(`${EVIDENCE}/${v.id}/json-schema-after-sync.txt`, g.code || `ERROR: ${g.error}`);
-    // A documented defect with nothing to read: the save went through (above). What the schema says afterwards is not asserted, because
+    // A documented defect with nothing to read: the visual edit was saved (above). What the schema says afterwards is not asserted, because
     // the defect (`v.known`) is about the generation of the schema itself.
     if (v.known?.["json-schema"]) return;
     expect(g.error, g.error).toBeUndefined();

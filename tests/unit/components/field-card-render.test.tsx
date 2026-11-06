@@ -103,6 +103,43 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("FieldCard", () => {
+  it("treats default Class 3 as complete when the string constraints are present", () => {
+    render(tree({ field: { ...FIELD, classification: null, decorators: { typespec: { validation: { minLength: 0, maxLength: 100 } } } } }));
+    expect(screen.getByRole("img", { name: "Complete" })).toBeDefined();
+  });
+  it("uses an amber indicator for missing required information", () => {
+    render(tree({ completenessPolicy: { string: { minLength: "required" } } }));
+    expect(screen.getByRole("img", { name: "Field information missing" })).toBeDefined();
+    expect(screen.queryByRole("img", { name: "Missing required information" })).toBeNull();
+  });
+  it("expands and collapses a long description without selecting or opening the field", () => {
+    const originalStyle = window.getComputedStyle.bind(window);
+    const style = vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
+      const computed = originalStyle(element);
+      if (element.tagName === "P") { computed.lineHeight = "18px"; computed.fontSize = "12px"; }
+      return computed;
+    });
+    const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.tagName === "P" ? 108 : 0;
+    });
+    try {
+      render(tree({ field: { ...FIELD, description: "A description that needs more than two lines." } }));
+      const expand = screen.getByRole("button", { name: "Expand description for customerId" });
+      const description = document.getElementById(expand.getAttribute("aria-controls")!);
+      expect(expand.getAttribute("aria-expanded")).toBe("false");
+      expect(description?.classList.contains("line-clamp-2")).toBe(true);
+      fireEvent.click(expand);
+      const collapse = screen.getByRole("button", { name: "Collapse description for customerId" });
+      expect(collapse.getAttribute("aria-expanded")).toBe("true");
+      expect(description?.classList.contains("line-clamp-2")).toBe(false);
+      expect(handlers.onFieldSelect).not.toHaveBeenCalled();
+      expect(handlers.onNavigateStudio).not.toHaveBeenCalled();
+      fireEvent.click(collapse);
+      expect(screen.getByRole("button", { name: "Expand description for customerId" }).getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      style.mockRestore(); height.mockRestore();
+    }
+  });
   it("does not re-render when its parent re-renders with unchanged props", () => {
     const { rerender } = render(tree());
     const initial = counters.completeness;
@@ -173,6 +210,23 @@ describe("FieldEditor field list", () => {
       />
     );
   }
+
+  it("uses domain checks consistently for indicators, counts and completeness filtering", () => {
+    const fields = [
+      { ...FIELDS[0], decorators: { typespec: { validation: { minLength: 0, maxLength: 20 } } } },
+      FIELDS[1],
+      { ...FIELDS[1], id: "f3", name: "enabled", type: "boolean" },
+      { ...FIELDS[1], id: "f4", name: "verified", type: "boolean" },
+    ];
+    const { rerender } = render(editor({ fields }));
+    expect(screen.getByLabelText("3 of 4 fields complete")).toBeDefined();
+    fireEvent.change(screen.getByLabelText("Filter by completeness"), { target: { value: "complete" } });
+    expect(screen.getAllByTestId("field-card")).toHaveLength(3);
+    rerender(editor({ fields, domainPolicy: { fieldCompleteness: { string: { minLength: "off", maxLength: "off" } } } }));
+    expect(screen.getByLabelText("4 of 4 fields complete")).toBeDefined();
+    expect(screen.getAllByTestId("field-card")).toHaveLength(4);
+    expect(screen.getAllByRole("img", { name: "Complete" })).toHaveLength(4);
+  });
 
   it("does not re-render field rows when the workspace re-renders with fresh inline handlers", () => {
     const { rerender } = render(editor());

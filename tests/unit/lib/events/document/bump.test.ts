@@ -82,6 +82,8 @@ function classify(next: Mut | undefined, opts: { prev?: Mut; prevSide?: SideOver
 }
 const major = (...reasons: string[]): BumpDecision => ({ bump: "MAJOR", reasons });
 const minor = (...reasons: string[]): BumpDecision => ({ bump: "MINOR", reasons });
+const patch: BumpDecision = { bump: "PATCH", reasons: [] };
+const patchOf = (...reasons: string[]): BumpDecision => ({ bump: "PATCH", reasons });
 const channelNamed = (d: EventDocument, key: string): DocChannel => d.channels.find((c) => c.key === key) as DocChannel;
 
 describe("classifyEventBump: the fixture and the empty change", () => {
@@ -89,8 +91,12 @@ describe("classifyEventBump: the fixture and the empty change", () => {
     expect(parseEventDocument(base()).success).toBe(true);
   });
 
-  it("identical documents are MINOR with no reasons", () => {
-    expect(classify(undefined)).toEqual(minor());
+  it("event with no major/minor findings suggests PATCH", () => {
+    expect(classify((d) => { d.info.description = "Checkout events"; })).toEqual(patchOf("Info documentation changed"));
+  });
+
+  it("identical documents are PATCH with no reasons", () => {
+    expect(classify(undefined)).toEqual(patch);
   });
 
   it("reordering keys, key lists and trait lists is not a change", () => {
@@ -102,20 +108,27 @@ describe("classifyEventBump: the fixture and the empty change", () => {
       channelNamed(d, "orders").messageKeys.reverse();
       d.messages.find((m) => m.key === "OrderCreated")!.traitKeys.reverse();
     });
-    expect(decision).toEqual(minor());
+    expect(decision).toEqual(patch);
   });
 
   it("origin (infra sync metadata) is ignored", () => {
     const origin = { provider: "confluent", ref: "lkc-1", syncedAt: "2026-10-15T00:00:00Z" };
-    expect(classify((d) => { d.channels[0].origin = origin; d.servers[0].origin = origin; })).toEqual(minor());
+    expect(classify((d) => { d.channels[0].origin = origin; d.servers[0].origin = origin; })).toEqual(patch);
   });
 
-  it("MAJOR reasons come before MINOR reasons", () => {
+  it("MAJOR reasons come before MINOR reasons, and documentation (PATCH) reasons come last", () => {
     const decision = classify((d) => {
       d.info.description = "Checkout events";
+      d.info.title = "Checkout";
       d.operations = d.operations.filter((o) => o.key !== "cancelOrder");
     });
-    expect(decision).toEqual(major('Operation "cancelOrder" removed', "Info changed"));
+    expect(decision).toEqual(major('Operation "cancelOrder" removed', "Info changed", "Info documentation changed"));
+  });
+
+  it("a documentation edit alongside a MINOR change is MINOR, listing both", () => {
+    expect(classify((d) => { d.info.description = "Checkout events"; d.messages[0].name = "order.created"; })).toEqual(
+      minor('Message "OrderCreated" name changed', "Info documentation changed")
+    );
   });
 });
 
@@ -157,11 +170,11 @@ describe("classifyEventBump: operations", () => {
     );
   });
 
-  it("MINOR for operation trait and detail edits, naming the operation", () => {
+  it("MINOR for operation trait and detail edits, PATCH for documentation edits, naming the operation", () => {
     expect(classify((d) => { d.operations[0].traitKeys = []; })).toEqual(minor('Operation "publishOrderCreated" trait "Audited" removed'));
     expect(classify((d) => { d.operations[1].traitKeys = ["Audited"]; })).toEqual(minor('Operation "cancelOrder" trait "Audited" added'));
-    expect(classify((d) => { d.operations[0].summary = "Publish a new order"; })).toEqual(minor('Operation "publishOrderCreated" details changed'));
-    expect(classify((d) => { d.operations[0].description = "d"; })).toEqual(minor('Operation "publishOrderCreated" details changed'));
+    expect(classify((d) => { d.operations[0].summary = "Publish a new order"; })).toEqual(patchOf('Operation "publishOrderCreated" documentation changed'));
+    expect(classify((d) => { d.operations[0].description = "d"; })).toEqual(patchOf('Operation "publishOrderCreated" documentation changed'));
     expect(classify((d) => { d.operations[0].bindings = { kafka: { clientId: "c" } }; })).toEqual(minor('Operation "publishOrderCreated" details changed'));
   });
 });
@@ -202,13 +215,19 @@ describe("classifyEventBump: channels", () => {
     expect(decision).toEqual(major('Channel "refunds" format changed from json-schema to avro'));
   });
 
-  it("MINOR for every other channel field", () => {
+  it("PATCH for channel documentation edits", () => {
     const edits: Mut[] = [
       (d) => { d.channels[0].title = "Orders"; },
       (d) => { d.channels[0].summary = "s"; },
       (d) => { d.channels[0].description = "d"; },
       (d) => { d.channels[0].tags = [{ name: "orders" }]; },
       (d) => { d.channels[0].externalDocs = { url: "https://example.com" }; },
+    ];
+    for (const edit of edits) expect(classify(edit)).toEqual(patchOf('Channel "orders" documentation changed'));
+  });
+
+  it("MINOR for every other channel field", () => {
+    const edits: Mut[] = [
       (d) => { d.channels[0].bindings = { kafka: { partitions: 12 } }; },
       (d) => { d.channels[0].parameters = { region: {} }; },
       (d) => { d.servers.push({ key: "kafka-dr", protocol: "kafka", host: "dr:9092" }); d.channels[0].serverKeys = ["kafka-prod", "kafka-dr"]; },
@@ -305,16 +324,16 @@ describe("classifyEventBump: messages", () => {
   it("a correlationId with reordered members is not a change", () => {
     const withTwo: Mut = (d) => { d.messages[0].correlationId = { location: "$message.header#/id", description: "x" }; };
     const reordered: Mut = (d) => { d.messages[0].correlationId = { description: "x", location: "$message.header#/id" }; };
-    expect(classify(reordered, { prev: withTwo })).toEqual(minor());
+    expect(classify(reordered, { prev: withTwo })).toEqual(patch);
   });
 
-  it("MINOR for message documentation, examples and bindings, naming the message", () => {
-    expect(classify((d) => { d.messages[0].description = "An order was created"; })).toEqual(minor('Message "OrderCreated" documentation changed'));
-    expect(classify((d) => { d.messages[0].summary = "s"; })).toEqual(minor('Message "OrderCreated" documentation changed'));
-    expect(classify((d) => { d.messages[0].title = "t"; })).toEqual(minor('Message "OrderCreated" documentation changed'));
-    expect(classify((d) => { d.messages[0].tags = [{ name: "orders" }]; })).toEqual(minor('Message "OrderCreated" documentation changed'));
-    expect(classify((d) => { d.messages[0].externalDocs = { url: "https://example.com" }; })).toEqual(minor('Message "OrderCreated" documentation changed'));
-    expect(classify((d) => { d.messages[0].examples = [{ name: "e", payload: { id: 1 } }]; })).toEqual(minor('Message "OrderCreated" examples changed'));
+  it("PATCH for message documentation and examples, MINOR for bindings, naming the message", () => {
+    expect(classify((d) => { d.messages[0].description = "An order was created"; })).toEqual(patchOf('Message "OrderCreated" documentation changed'));
+    expect(classify((d) => { d.messages[0].summary = "s"; })).toEqual(patchOf('Message "OrderCreated" documentation changed'));
+    expect(classify((d) => { d.messages[0].title = "t"; })).toEqual(patchOf('Message "OrderCreated" documentation changed'));
+    expect(classify((d) => { d.messages[0].tags = [{ name: "orders" }]; })).toEqual(patchOf('Message "OrderCreated" documentation changed'));
+    expect(classify((d) => { d.messages[0].externalDocs = { url: "https://example.com" }; })).toEqual(patchOf('Message "OrderCreated" documentation changed'));
+    expect(classify((d) => { d.messages[0].examples = [{ name: "e", payload: { id: 1 } }]; })).toEqual(patchOf('Message "OrderCreated" examples changed'));
     expect(classify((d) => { d.messages[0].bindings = { kafka: { bindingVersion: "0.5.0" } }; })).toEqual(minor('Message "OrderCreated" bindings changed'));
   });
 });
@@ -351,8 +370,8 @@ describe("classifyEventBump: traits", () => {
     expect(classify(undefined, { nextSide: { libraryHeaders: { "lib-ce": libHeaders("lh2", 1, "1.1") } } })).toEqual(
       minor('Trait "CloudEvents": headers pin moved from v1.0 to v1.1')
     );
-    expect(classify(undefined, { nextSide: { libraryHeaders: {} } })).toEqual(minor());
-    expect(classify(undefined, { prevSide: { libraryHeaders: {} } })).toEqual(minor());
+    expect(classify(undefined, { nextSide: { libraryHeaders: {} } })).toEqual(patch);
+    expect(classify(undefined, { prevSide: { libraryHeaders: {} } })).toEqual(patch);
   });
 
   it("swapping the library trait behind a key compares the old and the new headers pin", () => {
@@ -413,9 +432,14 @@ describe("classifyEventBump: defaultContentType, external refs and the document 
     );
   });
 
-  it("MINOR for description, tags, examples, summary, bindings, server and info edits", () => {
-    expect(classify((d) => { d.info.description = "Checkout events"; })).toEqual(minor("Info changed"));
-    expect(classify((d) => { d.info.tags = [{ name: "checkout" }]; })).toEqual(minor("Info changed"));
+  it("PATCH for info and server documentation edits", () => {
+    expect(classify((d) => { d.info.description = "Checkout events"; })).toEqual(patchOf("Info documentation changed"));
+    expect(classify((d) => { d.info.tags = [{ name: "checkout" }]; })).toEqual(patchOf("Info documentation changed"));
+    expect(classify((d) => { d.servers[0].description = "Production cluster"; })).toEqual(patchOf('Server "kafka-prod" documentation changed'));
+  });
+
+  it("MINOR for the info title, server, server-list and components edits", () => {
+    expect(classify((d) => { d.info.title = "checkout"; })).toEqual(minor("Info changed"));
     expect(classify((d) => { d.servers[0].host = "kafka-eu.internal:9092"; })).toEqual(minor('Server "kafka-prod" changed'));
     expect(classify((d) => { d.servers.push({ key: "kafka-dr", protocol: "kafka", host: "dr:9092" }); })).toEqual(minor('Server "kafka-dr" added'));
     expect(classify(undefined, { prev: (d) => { d.servers.push({ key: "kafka-dr", protocol: "kafka", host: "dr:9092" }); } })).toEqual(minor('Server "kafka-dr" removed'));
@@ -469,13 +493,13 @@ describe("classifyEventBump: missing facts fail closed, unchanged pins never do"
 
   it("no change is reported for a pin that is identical on both sides, even without facts", () => {
     const unknown: Mut = (d) => { d.messages[0].payload = pin("e1", "v-unknown"); };
-    expect(classify(unknown, { prev: unknown })).toEqual(minor());
+    expect(classify(unknown, { prev: unknown })).toEqual(patch);
   });
 
   it("MAJOR when an external ref moves and a referenced major is unknown", () => {
     expect(classify((d) => { d.externalRefs[0].eventVersionId = "ev-unknown"; })).toEqual(
       major('External reference "PaymentSettled": referenced version major unavailable (treated as breaking)')
     );
-    expect(classify(undefined, { nextSide: { externalMajors: {} }, prevSide: { externalMajors: {} } })).toEqual(minor());
+    expect(classify(undefined, { nextSide: { externalMajors: {} }, prevSide: { externalMajors: {} } })).toEqual(patch);
   });
 });

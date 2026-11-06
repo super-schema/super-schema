@@ -46,12 +46,17 @@ describe("JSON Schema importer: ignoredKeywords", () => {
   it("reports every standard unsupported keyword on a field with its entity.field warning", () => {
     const d = data({ title: "T", type: "object", properties: { a: { type: "string", ...STANDARD_UNSUPPORTED } } });
     const field = d.entities[0].fields[0];
-    expect([...(field.ignoredKeywords ?? [])].sort()).toEqual(Object.keys(STANDARD_UNSUPPORTED).sort());
-    for (const keyword of Object.keys(STANDARD_UNSUPPORTED)) {
+    // readOnly / writeOnly / default are field facts now (visibility, defaultValue): neither listed as ignored nor repeated as an extension
+    const READ_NOW = ["readOnly", "writeOnly", "default"];
+    const stillIgnored = Object.fromEntries(Object.entries(STANDARD_UNSUPPORTED).filter(([k]) => !READ_NOW.includes(k)));
+    expect(field.visibility).toEqual(["Read"]);
+    expect(field.defaultValue).toBe("x");
+    expect([...(field.ignoredKeywords ?? [])].sort()).toEqual(Object.keys(stillIgnored).sort());
+    for (const keyword of Object.keys(stillIgnored)) {
       expect(d.warnings).toContain(`Field \`T.a\`: JSON Schema keyword \`${keyword}\` is not supported and was ignored`);
     }
     // lossless: also kept verbatim as extensions (deep equality), so a re-export loses nothing
-    expect(field.extensions).toEqual(STANDARD_UNSUPPORTED);
+    expect(field.extensions).toEqual(stillIgnored);
     expect(field.extensions?.not).toEqual({ type: "null" });
     expect(field.extensions?.examples).toEqual(["a"]);
   });

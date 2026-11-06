@@ -1,6 +1,6 @@
 import { computeDiffResult } from "@/lib/diff/field-diff";
 import { classifyFromDiff } from "@/services/classification.service";
-import type { FieldSnapshot } from "@/services/version-history/version.types";
+import type { DiffResult, FieldSnapshot } from "@/services/version-history/version.types";
 import type { BumpKind } from "./types";
 
 export interface BumpSuggestion {
@@ -10,9 +10,22 @@ export interface BumpSuggestion {
   summary: { added: number; removed: number; modified: number };
 }
 
+/** Snapshot properties whose change is documentation only: it never alters the contract a consumer reads. */
+const DOC_ONLY_PROPERTIES: ReadonlySet<string> = new Set(["description", "sortOrder"]);
+
+/** No field added or removed, and every modified field changed only documentation-only properties (or nothing changed). */
+export function isDocOnly(diff: DiffResult): boolean {
+  if (diff.summary.added > 0 || diff.summary.removed > 0) return false;
+  return diff.fields.every(
+    // Fail closed: a modified field that does not say what changed is not documentation only.
+    (field) => field.changeType !== "modified" || (field.changedProperties !== undefined && field.changedProperties.every((change) => DOC_ONLY_PROPERTIES.has(change.property)))
+  );
+}
+
 /**
  * Phase 2a classifier: MAJOR when the existing field-level rules (classifyFromDiff,
- * incl. its BigQuery/Avro/OpenAPI target checks) call the change breaking, else MINOR.
+ * incl. its BigQuery/Avro/OpenAPI target checks) call the change breaking; PATCH when the change
+ * is documentation only (`description` / `sortOrder`, or no field change at all); else MINOR.
  * Story 14.3's per-format rule tables (Avro / JSON Schema / Proto) replace this in 2b.
  */
 export function suggestBump(previous: FieldSnapshot[], current: FieldSnapshot[]): BumpSuggestion {
@@ -22,7 +35,7 @@ export function suggestBump(previous: FieldSnapshot[], current: FieldSnapshot[])
     .filter((t) => t.changeType === "breaking")
     .map((t) => `${t.target}: ${t.details}`);
   return {
-    bump: classification.changeType === "breaking" ? "MAJOR" : "MINOR",
+    bump: classification.changeType === "breaking" ? "MAJOR" : isDocOnly(diff) ? "PATCH" : "MINOR",
     reasons: [...classification.reasons, ...breakingTargets],
     summary: { added: diff.summary.added, removed: diff.summary.removed, modified: diff.summary.modified },
   };

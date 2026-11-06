@@ -63,7 +63,7 @@ when a test is added or removed: the unit test compares the two.
 | domain-assets.spec.ts | 12 | @regression 12 | 0 | 12 | 12 | 0 |
 | entity-field-edit.spec.ts | 3 | @regression 3 | 0 | 3 | 3 | 0 |
 | entity-publish-versions.spec.ts | 7 | @regression 7, @smoke 1 | 1 | 7 | 7 | 0 |
-| entity-tabs.spec.ts | 15 | @regression 15 | 0 | 15 | 15 | 0 |
+| entity-tabs.spec.ts | 17 | @regression 17 | 0 | 17 | 17 | 0 |
 | entity-workspace-ux.spec.ts | 4 | @regression 4 | 0 | 4 | 4 | 0 |
 | events-builder-layout.spec.ts | 2 | @regression 2 | 0 | 2 | 2 | 0 |
 | events-builder.spec.ts | 5 | @regression 5 | 0 | 5 | 5 | 0 |
@@ -80,7 +80,7 @@ when a test is added or removed: the unit test compares the two.
 | jsonschema-lifecycle.spec.ts | 16 | @regression 16, @slow 16 | 0 | 0 | 16 | 0 |
 | jsonschema-url-import.spec.ts | 1 | @regression 1 | 0 | 1 | 1 | 0 |
 | jsonschema-user-event.spec.ts | 2 | @regression 2, @smoke 1 | 1 | 2 | 2 | 0 |
-| layout.spec.ts | 5 | @regression 5, @smoke 2 | 2 | 5 | 5 | 0 |
+| layout.spec.ts | 6 | @regression 6, @smoke 2 | 2 | 6 | 6 | 0 |
 | navigation.spec.ts | 5 | @regression 5, @slow 2 | 0 | 3 | 5 | 0 |
 | product-contacts.spec.ts | 5 | @regression 5 | 0 | 5 | 5 | 0 |
 | reference-lifecycle.spec.ts | 9 | @regression 9, @smoke 1 | 1 | 9 | 9 | 0 |

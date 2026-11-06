@@ -116,7 +116,7 @@ test.describe("JSON Schema import: user event, end to end", () => {
     // The unresolved references are flagged on the entity: Alerts lists them, and the entity stays DRAFT.
     await page.locator("main").getByText(/^Alerts \(\d+\)$/).first().click();
     await expect(page.getByText(/2 unresolved references: .*date_time\.json.*user_links\.json/)).toBeVisible();
-    await page.locator("main").getByText("Editor", { exact: true }).first().click();
+    await page.locator("main").getByText("SuperSchema", { exact: true }).first().click();
     // The imported level is shown as itself (class4), not as another level's label.
     await expect(page.locator("main span", { hasText: /^class4$/ }).first()).toBeVisible();
     await expect(page.locator("main span", { hasText: /^Sensitive$/ })).toHaveCount(0);

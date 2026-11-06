@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { analyzePublish, needsReferenceOf, planPublish, type PublishState } from "@/lib/entity-versioning/publish-plan";
+import { analyzePublish, needsReferenceOf, planPromote, planPublish, type PublishState } from "@/lib/entity-versioning/publish-plan";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
 
 function f(name: string, extra: Partial<FieldSnapshot> = {}): FieldSnapshot {
@@ -17,16 +17,19 @@ const ENTITY: PublishState["entity"] = {
 };
 
 function state(overrides: Partial<PublishState> = {}): PublishState {
-  return { entity: ENTITY, latest: null, currentFields: [ID], references: [], ...overrides };
+  return { entity: ENTITY, latestRelease: null, openSnapshot: null, currentFields: [ID], references: [], ...overrides };
 }
 
-const published = (fields: FieldSnapshot[]) => ({ id: "v-5", major: 2, minor: 1, sequence: 5, fieldSnapshot: fields });
+const published = (fields: FieldSnapshot[]) => ({ id: "v-5", major: 2, minor: 1, patch: 0, sequence: 5, fieldSnapshot: fields });
 
 describe("first publish", () => {
-  it("is 1.0 INITIAL with sequence mirroring Entity.version", () => {
+  it("is 1.0.0 INITIAL with sequence mirroring Entity.version", () => {
     expect(planPublish(state())).toEqual({
       success: true,
-      data: { version: { major: 1, minor: 0 }, label: "1.0", sequence: 1, changeKind: "INITIAL", pins: [], referencedVersions: [] },
+      data: {
+        mode: "CREATE", snapshotId: null, version: { major: 1, minor: 0, patch: 0 }, label: "1.0.0_snapshot", sequence: 1,
+        changeKind: "INITIAL", pins: [], referencedVersions: [],
+      },
     });
     const legacy = planPublish(state({ entity: { ...ENTITY, version: 4 } }));
     expect(legacy.success && legacy.data.sequence).toBe(4);
@@ -34,38 +37,39 @@ describe("first publish", () => {
 
   it("ignores a requested bump", () => {
     const res = planPublish(state(), "MAJOR");
-    expect(res.success && res.data.label).toBe("1.0");
+    expect(res.success && res.data.label).toBe("1.0.0_snapshot");
   });
 
   it("offers only the initial label", () => {
     expect(analyzePublish(state())).toMatchObject({
-      isFirstPublish: true, latestLabel: null, suggestedBump: null, candidateLabels: null, initialLabel: "1.0", blockers: [],
+      isFirstPublish: true, latestLabel: null, openSnapshotLabel: null, suggestedBump: null, candidateLabels: null, initialLabel: "1.0.0_snapshot", blockers: [],
     });
   });
 });
 
 describe("later publishes", () => {
   it("suggests MINOR for an additive change and allows raising to MAJOR", () => {
-    const s = state({ latest: published([ID]), currentFields: [ID, EMAIL] });
+    const s = state({ latestRelease: published([ID]), currentFields: [ID, EMAIL] });
     expect(analyzePublish(s)).toMatchObject({
-      isFirstPublish: false, suggestedBump: "MINOR", latestLabel: "2.1", candidateLabels: { MINOR: "2.2", MAJOR: "3.0" },
+      isFirstPublish: false, suggestedBump: "MINOR", latestLabel: "2.1.0", openSnapshotLabel: null,
+      candidateLabels: { PATCH: "2.1.1_snapshot", MINOR: "2.2.0_snapshot", MAJOR: "3.0.0_snapshot" },
     });
-    expect(planPublish(s)).toMatchObject({ success: true, data: { label: "2.2", changeKind: "MINOR", sequence: 6 } });
-    expect(planPublish(s, "MAJOR")).toMatchObject({ success: true, data: { label: "3.0", changeKind: "MAJOR", sequence: 6 } });
+    expect(planPublish(s)).toMatchObject({ success: true, data: { mode: "CREATE", label: "2.2.0_snapshot", changeKind: "MINOR", sequence: 6 } });
+    expect(planPublish(s, "MAJOR")).toMatchObject({ success: true, data: { label: "3.0.0_snapshot", changeKind: "MAJOR", sequence: 6 } });
   });
 
   it("suggests MAJOR for a breaking change and refuses MINOR", () => {
-    const s = state({ latest: published([ID, EMAIL]), currentFields: [ID] });
+    const s = state({ latestRelease: published([ID, EMAIL]), currentFields: [ID] });
     expect(analyzePublish(s).suggestedBump).toBe("MAJOR");
     const low = planPublish(s, "MINOR");
     expect(!low.success && low.error.code).toBe("BUMP_TOO_LOW");
-    expect(planPublish(s)).toMatchObject({ success: true, data: { label: "3.0", changeKind: "MAJOR" } });
+    expect(planPublish(s)).toMatchObject({ success: true, data: { label: "3.0.0_snapshot", changeKind: "MAJOR" } });
   });
 
   it("suggests MAJOR for a re-pointed reference and refuses MINOR", () => {
     const toCustomer = f("customer", { type: "reference", decorators: { referencedEntityId: "cust", referencedEntityName: "Customer" } });
     const toVendor = f("customer", { type: "reference", decorators: { referencedEntityId: "vend", referencedEntityName: "Vendor" } });
-    const s = state({ latest: published([ID, toCustomer]), currentFields: [ID, toVendor] });
+    const s = state({ latestRelease: published([ID, toCustomer]), currentFields: [ID, toVendor] });
     expect(analyzePublish(s).suggestedBump).toBe("MAJOR");
     const low = planPublish(s, "MINOR");
     expect(!low.success && low.error.code).toBe("BUMP_TOO_LOW");
@@ -74,8 +78,8 @@ describe("later publishes", () => {
 
 describe("blockers and pins", () => {
   it("blocks when nothing changed since the latest version", () => {
-    const s = state({ latest: published([ID]), entity: { ...ENTITY, hasUnpublishedChanges: false } });
-    expect(analyzePublish(s).blockers).toEqual([{ kind: "NO_CHANGES", message: "No unpublished changes since v2.1." }]);
+    const s = state({ latestRelease: published([ID]), entity: { ...ENTITY, hasUnpublishedChanges: false } });
+    expect(analyzePublish(s).blockers).toEqual([{ kind: "NO_CHANGES", message: "No unpublished changes since v2.1.0." }]);
   });
 
   it("reports every blocker together", () => {
@@ -195,7 +199,7 @@ describe("the reference closure (Task 8)", () => {
       { ref: { entityId: "c", domain: "d", product: "p", entity: "C" }, version: "1.0", pinned: true },
     ];
     expect(planPublish(state({ referencedVersions }))).toMatchObject({ success: true, data: { referencedVersions } });
-    expect(planPublish(state({ latest: published([ID]), currentFields: [ID, EMAIL], referencedVersions }))).toMatchObject({
+    expect(planPublish(state({ latestRelease: published([ID]), currentFields: [ID, EMAIL], referencedVersions }))).toMatchObject({
       success: true,
       data: { referencedVersions },
     });
@@ -224,5 +228,151 @@ describe("unresolved reference names", () => {
 
   it("no warnings when every reference resolved", () => {
     expect(analyzePublish(state()).warnings).toEqual([]);
+  });
+});
+
+describe("snapshot saves (phase 1)", () => {
+  const release = (major: number, minor: number, fields: FieldSnapshot[], sequence = 1) => ({
+    id: `rel-${major}.${minor}`, major, minor, patch: 0, sequence, fieldSnapshot: fields,
+  });
+  const snapshot = (major: number, minor: number, sequence = 2) => ({ id: "snap-1", major, minor, patch: 0, sequence });
+
+  it("first save creates 1.0.0_snapshot", () => {
+    expect(planPublish(state())).toMatchObject({
+      success: true,
+      data: { mode: "CREATE", snapshotId: null, label: "1.0.0_snapshot", version: { major: 1, minor: 0, patch: 0 }, changeKind: "INITIAL" },
+    });
+  });
+
+  it("after 1.0.0 release a MINOR change creates 1.1.0_snapshot", () => {
+    const s = state({ latestRelease: release(1, 0, [ID]), currentFields: [ID, EMAIL] });
+    expect(analyzePublish(s)).toMatchObject({ suggestedBump: "MINOR", latestLabel: "1.0.0", openSnapshotLabel: null });
+    expect(planPublish(s)).toMatchObject({
+      success: true,
+      data: { mode: "CREATE", snapshotId: null, label: "1.1.0_snapshot", changeKind: "MINOR", sequence: 2 },
+    });
+  });
+
+  it("second save updates the open snapshot in place", () => {
+    const s = state({ latestRelease: release(1, 0, [ID]), openSnapshot: snapshot(1, 1), currentFields: [ID, EMAIL] });
+    expect(analyzePublish(s)).toMatchObject({ openSnapshotLabel: "1.1.0_snapshot", candidateLabels: { PATCH: "1.1.0_snapshot", MINOR: "1.1.0_snapshot", MAJOR: "2.0.0_snapshot" } });
+    expect(planPublish(s)).toMatchObject({
+      success: true,
+      data: { mode: "UPDATE", snapshotId: "snap-1", label: "1.1.0_snapshot", version: { major: 1, minor: 1, patch: 0 }, changeKind: "MINOR", sequence: 2 },
+    });
+  });
+
+  it("a save before any release updates the open 1.0.0_snapshot, whatever bump is asked", () => {
+    const s = state({ openSnapshot: { id: "snap-0", major: 1, minor: 0, patch: 0, sequence: 1 } });
+    expect(analyzePublish(s)).toMatchObject({ isFirstPublish: true, openSnapshotLabel: "1.0.0_snapshot" });
+    expect(planPublish(s, "MAJOR")).toMatchObject({
+      success: true,
+      data: { mode: "UPDATE", snapshotId: "snap-0", label: "1.0.0_snapshot", changeKind: "INITIAL", sequence: 1 },
+    });
+  });
+
+  it("breaking save raises 1.1.0_snapshot to 2.0.0_snapshot", () => {
+    const s = state({ latestRelease: release(1, 0, [ID, EMAIL]), openSnapshot: snapshot(1, 1), currentFields: [ID] });
+    expect(planPublish(s)).toMatchObject({
+      success: true,
+      data: { mode: "UPDATE", snapshotId: "snap-1", label: "2.0.0_snapshot", version: { major: 2, minor: 0, patch: 0 }, changeKind: "MAJOR" },
+    });
+  });
+
+  it("a later non-breaking save keeps 2.0.0_snapshot", () => {
+    const s = state({ latestRelease: release(1, 0, [ID]), openSnapshot: snapshot(2, 0), currentFields: [ID, EMAIL] });
+    expect(analyzePublish(s).suggestedBump).toBe("MINOR");
+    expect(planPublish(s)).toMatchObject({
+      success: true,
+      data: { mode: "UPDATE", snapshotId: "snap-1", label: "2.0.0_snapshot", version: { major: 2, minor: 0, patch: 0 }, changeKind: "MAJOR" },
+    });
+  });
+
+  it("a raised 2.0.0_snapshot is what a MINOR or PATCH save shows too (never lowered)", () => {
+    const s = state({ latestRelease: release(1, 0, [ID]), openSnapshot: snapshot(2, 0), currentFields: [ID, EMAIL] });
+    expect(analyzePublish(s).candidateLabels).toEqual({ PATCH: "2.0.0_snapshot", MINOR: "2.0.0_snapshot", MAJOR: "2.0.0_snapshot" });
+  });
+
+  it("a snapshot not above the latest release is raised past it", () => {
+    const s = state({ latestRelease: release(1, 1, [ID]), openSnapshot: snapshot(1, 1), currentFields: [ID, EMAIL] });
+    expect(planPublish(s)).toMatchObject({ success: true, data: { mode: "UPDATE", label: "1.2.0_snapshot" } });
+  });
+
+  it("still refuses a bump below the suggestion while a snapshot is open", () => {
+    const s = state({ latestRelease: release(1, 0, [ID, EMAIL]), openSnapshot: snapshot(2, 0), currentFields: [ID] });
+    const res = planPublish(s, "MINOR");
+    expect(!res.success && res.error.code).toBe("BUMP_TOO_LOW");
+  });
+
+  it("no changes since the open snapshot blocks the save, naming the snapshot", () => {
+    const s = state({ latestRelease: release(1, 0, [ID]), openSnapshot: snapshot(1, 1), entity: { ...ENTITY, hasUnpublishedChanges: false } });
+    expect(analyzePublish(s).blockers).toEqual([{ kind: "NO_CHANGES", message: "No unsaved changes since v1.1.0_snapshot." }]);
+  });
+});
+
+describe("analyzePublish: a reference changed since the open snapshot was saved", () => {
+  it("is something to save: no NO_CHANGES with a clean draft", () => {
+    const s = state({
+      entity: { ...state().entity, hasUnpublishedChanges: false },
+      latestRelease: null,
+      openSnapshot: { id: "snap-1", major: 1, minor: 0, patch: 0, sequence: 1 },
+      changedReferences: ["Customer"],
+    });
+    expect(analyzePublish(s).blockers).toEqual([]);
+    expect(planPublish(s)).toMatchObject({ success: true, data: { mode: "UPDATE", snapshotId: "snap-1" } });
+  });
+});
+
+describe("planPromote", () => {
+  const base = (overrides: Partial<PublishState> = {}) => ({
+    ...state({
+      latestRelease: { id: "rel", major: 1, minor: 0, patch: 0, sequence: 1, fieldSnapshot: [ID] },
+      openSnapshot: { id: "snap-1", major: 1, minor: 1, patch: 0, sequence: 2 },
+      ...overrides,
+    }),
+    draftDirty: false,
+    snapshotReferences: [] as string[],
+  });
+
+  it("promotes a clean snapshot to its release label", () => {
+    expect(planPromote(base())).toEqual({ success: true, data: { snapshotId: "snap-1", label: "1.1.0" } });
+  });
+
+  it("promote refuses a dirty draft", () => {
+    const res = planPromote({ ...base(), draftDirty: true });
+    expect(!res.success && res.error.code).toBe("DRAFT_NOT_SAVED");
+  });
+
+  it("promote refuses snapshot references", () => {
+    const res = planPromote({ ...base(), snapshotReferences: ["Customer", "Address"] });
+    expect(!res.success && res.error.code).toBe("SNAPSHOT_REFERENCES");
+    expect(!res.success && res.error.message).toContain("Customer");
+    expect(!res.success && res.error.message).toContain("Address");
+  });
+
+  it("promote names what changed since the snapshot was saved, with the fix that needs (save again), apart from snapshot references", () => {
+    const changed = planPromote({ ...base(), changedReferences: ["Customer"] });
+    expect(changed).toMatchObject({
+      success: false,
+      error: {
+        code: "SNAPSHOT_REFERENCES", message: "Customer changed since v1.1.0_snapshot was saved.", suggestedFix: "Save the snapshot again, then promote.",
+        details: { entities: ["Customer"], snapshots: [], changed: ["Customer"] },
+      },
+    });
+    const both = planPromote({ ...base(), snapshotReferences: ["Address"], changedReferences: ["Customer"] });
+    expect(!both.success && both.error.message).toBe(
+      "v1.1.0_snapshot references snapshot versions of Address; a release may only reference released versions. Customer changed since v1.1.0_snapshot was saved."
+    );
+    expect(!both.success && both.error.suggestedFix).toBe("Promote those first, then promote this one. Save the snapshot again, then promote.");
+  });
+
+  it("promote without snapshot fails", () => {
+    const res = planPromote(base({ openSnapshot: null }));
+    expect(!res.success && res.error.code).toBe("NO_SNAPSHOT");
+  });
+
+  it("promote refuses a snapshot whose number is not above the latest release", () => {
+    const res = planPromote(base({ openSnapshot: { id: "snap-1", major: 1, minor: 0, patch: 0, sequence: 2 } }));
+    expect(!res.success && res.error.code).toBe("SNAPSHOT_NOT_AHEAD");
   });
 });

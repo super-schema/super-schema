@@ -1,0 +1,133 @@
+{
+    "title": "login event schema",
+    "description": "Format and schema for login event.",
+    "type": "object",
+    "required": [
+        "party",
+        "intents"
+    ],
+    "properties": {
+        "intents": {
+            "type": "array",
+            "x-securityClassification":{
+                "data_class":"class4",
+                "data_category":"Intrinsic"
+            },
+            "items": {
+              "$ref": "./enums/login_intents.json"
+            },
+            "description": "The intent for this operation  to be changed.",
+            "minItems": 1,
+            "maxItems": 20
+          },
+        "login_name": {
+            "type": "string",
+            "x-securityClassification":{
+                "data_class":"class4",
+                "data_category":"Intrinsic"
+            },
+            "description": "The login name/ user id of the user.",
+            "minLength": 3,
+            "maxLength": 50
+        } ,
+        "party": {
+            "description": "Party details.",
+            "$ref": "../risk_common_components/v2/schema/party.json",
+            "x-securityClassification":{
+                "data_class":"class3",
+                "data_category": "ConsumerPersonal"
+            },
+            "x-deprecated": {
+                "since_version": "1.5.3"
+            }
+
+        },
+        "account": {
+            "description": "Account details.",
+            "$ref": "../risk_common_components/v2/schema/account.json",
+            "x-securityClassification":{
+                "data_class":"class4",
+                "data_category":"Intrinsic"
+            },
+            "x-deprecated": {
+                "since_version": "1.5.3"
+            }
+        },
+        "participant": {
+            "description": "Account/Party details of the user.",
+            "$ref": "./participant.json",
+            "x-securityClassification": {
+                "data_class": "class2",
+                "data_category": "ConsumerPersonal"
+            }
+        },
+        "session_id": {
+            "type": "string",
+            "x-securityClassification":{
+                "data_class":"class4",
+                "data_category":"Intrinsic"
+            },
+            "description": "The user's session id.",
+            "minLength" : 1,
+            "maxLength" : 30
+        },
+        "auth_claims": {
+            "type": "array",
+            "description": "The auth claims used to authenticate the user.",
+            "x-securityClassification":{
+                "data_class":"class4",
+                "data_category":"Intrinsic"
+            },
+            "items": {
+                "$ref": "./enums/auth_claims.json"
+            },
+            "minItems":1,
+            "maxItems": 20
+        },
+        "auth_token_type": {
+            "type": "string",
+            "description": "The type of token used by auth claim.",
+            "x-securityClassification":{
+                "data_class":"class4",
+                "data_category":"Intrinsic"
+            },
+            "minLength" : 1,
+            "maxLength" : 30
+        },
+        "authenticators": {
+            "type": "array",
+            "description": "The type of authenticator used to do MFA, if the auth_claims include MFA.",
+            "x-securityClassification":{
+                "data_class":"class4",
+                "data_category":"Intrinsic"
+            },
+            "items": {
+                "$ref": "./authenticator.json"
+            },
+            "minItems":1,
+            "maxItems": 20
+        },
+        "errors":{
+            "type":"array",
+            "x-securityClassification":{
+                "data_class":"class4",
+                "data_category":"Intrinsic"
+            },
+            "description": "The error code and description.",
+            "items": {
+                "$ref": "error.json"
+            },
+            "minItems":1,
+            "maxItems": 20
+        },
+
+        "application_context": {
+          "$ref": "./application_context.json",
+            "x-securityClassification": {
+                "data_class": "class3",
+                "data_category": "ConsumerPersonal"
+            }
+
+        }
+    }
+}

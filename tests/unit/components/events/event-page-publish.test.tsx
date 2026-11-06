@@ -56,10 +56,10 @@ const search = () => window.location.search;
 const publishButton = () => button("event-publish");
 
 const FIRST: EventPublishAnalysis = {
-  isFirstPublish: true, latestLabel: null, suggestedBump: null, candidateLabels: null, initialLabel: "1.0", reasons: [], blockers: [],
+  isFirstPublish: true, latestLabel: null, openSnapshotLabel: null, suggestedBump: null, candidateLabels: null, initialLabel: "1.0", reasons: [], blockers: [],
 };
 const REPUBLISH: EventPublishAnalysis = {
-  isFirstPublish: false, latestLabel: "1.0", suggestedBump: "MINOR", candidateLabels: { MAJOR: "2.0", MINOR: "1.1" },
+  isFirstPublish: false, latestLabel: "1.0", openSnapshotLabel: null, suggestedBump: "MINOR", candidateLabels: { MAJOR: "2.0", MINOR: "1.1", PATCH: "1.0.1" },
   initialLabel: "1.0", reasons: ['Message "refund" added'], blockers: [],
 };
 const BREAKING: EventPublishAnalysis = { ...REPUBLISH, suggestedBump: "MAJOR", reasons: ["payload now references OrderCancelled instead of OrderCreated"] };

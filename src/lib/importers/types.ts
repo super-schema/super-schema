@@ -60,6 +60,10 @@ export interface ParsedField {
   classification?: string;
   /** Format hint (e.g. email, uri, uuid) */
   format?: string;
+  /** The value a missing property takes (JSON Schema `default`; only for string, number and boolean fields). */
+  defaultValue?: string | number | boolean;
+  /** Description of the ELEMENTS of an array field (JSON Schema `items.description`). */
+  itemDescription?: string;
   /** Whether the field is deprecated */
   deprecated?: boolean;
   /** Deprecation message */
@@ -99,6 +103,10 @@ export interface ParsedField {
   enumName?: string;
   /** Enum symbols of an `enum` field */
   enumValues?: string[];
+  /** Per-symbol descriptions of those symbols (JSON Schema `x-enum`), symbol -> text. */
+  enumValueDescriptions?: Record<string, string>;
+  /** Shared custom scalar this field uses (an imported or domain `ParsedScalar` name); its type, format and constraints are copied onto the field. */
+  scalarName?: string;
   /** Union this `union` field (or the element of an array of unions) uses — an imported `ParsedUnion` name */
   unionName?: string;
   /** Member type names of that union, kept on the field so it stays valid when the union itself is not declared */
@@ -151,6 +159,8 @@ export interface ParsedEntity {
   deprecated?: boolean;
   /** Standard schema keywords on the entity's source node that were recognized but not mapped (see `ParsedField.ignoredKeywords`) */
   ignoredKeywords?: string[];
+  /** Name of the file this entity was imported from, without extension (`country_code` for `country_code.json`): what a `$ref` to it says. */
+  sourceRef?: string;
   /** Source format identifier */
   sourceFormat: ImportFormat;
   /** Original schema content (stored for drift detection) */
@@ -182,6 +192,10 @@ export interface ParsedEnum {
   name: string;
   values: string[];
   description?: string;
+  /** Per-symbol descriptions (JSON Schema `x-enum`), symbol -> text; only symbols that are in `values`. */
+  valueDescriptions?: Record<string, string>;
+  /** Name of the file the enum was imported from (what a `$ref` to it says). */
+  sourceRef?: string;
   /**
    * Keys of the source definition besides its symbols (JSON Schema: `x-enum-varnames`, `x-enum-descriptions`, `default`, `title`, ...), kept
    * verbatim. A shared enum row has no place for them, so the importer also puts them on every field that uses the enum, where they persist.
@@ -196,8 +210,23 @@ export interface ParsedEnum {
 /** A named scalar defined by the imported document (persisted as a CustomScalar), e.g. Avro `fixed`. */
 export interface ParsedScalar {
   name: string;
+  /** TypeSpec base the scalar extends (`string`, `int64`, `utcDateTime` ...). */
   baseType: string;
   description?: string;
+  /** Logical type a field that uses the scalar gets (`string`, `datetime`, `integer` ...); `baseType` when absent. */
+  logicalType?: string;
+  /** JSON Schema `format` kept on the scalar (and on every field that uses it). */
+  format?: string;
+  /** Validation constraints (`minLength`, `maxLength`, `pattern`, `minValue`, `maxValue`), same keys as a field's validation. */
+  constraints?: ParsedFieldConstraint[];
+  minValueExclusive?: number;
+  maxValueExclusive?: number;
+  /** The source definition is deprecated (also set on the fields that use it). */
+  deprecated?: boolean;
+  /** Vendor extensions of the definition (`x-*`), kept verbatim. */
+  extensions?: Record<string, unknown>;
+  /** Name of the file the scalar was imported from (what a `$ref` to it says). */
+  sourceRef?: string;
 }
 
 /** A named union defined by the imported document (persisted as a UnionType); same shape as the TypeSpec importer's. */
@@ -217,6 +246,8 @@ export interface MultiEntityImportResult {
    * `pickRootEntity` in multi-asset.ts.
    */
   rootEntityName?: string;
+  /** The document's own root when it is a primitive-only schema (imported as a scalar). */
+  rootScalarName?: string;
   enums: ParsedEnum[];
   scalars: ParsedScalar[];
   /** Unions (JSON Schema `oneOf` / `anyOf` of named refs). Absent for formats that have none. */

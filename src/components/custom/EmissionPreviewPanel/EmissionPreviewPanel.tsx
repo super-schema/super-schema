@@ -162,7 +162,7 @@ function CodeViewer({
   }
 
   return (
-    <div className="group/code relative rounded-lg border border-border bg-muted/30 overflow-auto max-h-[60vh]">
+    <div className="schema-code group/code relative rounded-lg border border-border overflow-auto max-h-[60vh]">
       <CopyButton text={code} />
       <pre className="p-3 text-[13px] leading-5 font-mono" data-language={language}>
         <code>
@@ -174,7 +174,7 @@ function CodeViewer({
                 key={i}
                 className={`flex ${isOverridden ? "border-l-2 border-blue-500 bg-blue-500/5 pl-0" : ""}`}
               >
-                <span className="select-none text-muted-foreground/50 w-8 text-right pr-3 shrink-0">
+                <span className="syntax-comment select-none w-8 text-right pr-3 shrink-0">
                   {i + 1}
                 </span>
                 <span className="flex-1 whitespace-pre-wrap break-all">

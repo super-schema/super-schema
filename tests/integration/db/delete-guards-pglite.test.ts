@@ -38,7 +38,7 @@ async function seed() {
     prisma.entity.create({ data: { name, slug: name.toLowerCase(), ownerId: user.id, ...placed } });
   const version = (entityId: string, major: number, minor: number, sequence: number) =>
     prisma.entityVersion.create({
-      data: { entityId, major, minor, sequence, resolvedSource: "model M {}", fieldSnapshot: [], changeKind: "INITIAL", publishedById: user.id },
+      data: { entityId, major, minor, sequence, resolvedSource: "model M {}", fieldSnapshot: [], changeKind: "INITIAL", publishedById: user.id, releasedAt: new Date() },
     });
   const money = await entity("Money");
   const order = await entity("Order");
@@ -74,7 +74,7 @@ async function seed() {
   const eventVersion = await prisma.eventSpecVersion.create({
     data: {
       eventSpecId: event.id, major: 2, minor: 0, sequence: 1, document: {}, sourceDocument: {}, frozenTraits: [{ id: trait.id }],
-      resolvedSpec: { documentVersion: 2 }, changeKind: "INITIAL", publishedById: user.id,
+      resolvedSpec: { documentVersion: 2 }, changeKind: "INITIAL", publishedById: user.id, releasedAt: new Date(),
     },
   });
   // Another product's event references that published version (an external reference edge).
@@ -90,11 +90,11 @@ async function seed() {
 describe("delete guards on PGlite", () => {
   it("entity: finds the other entity's published versions that reference it, ignoring its own (self) versions", async () => {
     const usage = await findEntityPinUsage(prisma, { id: s.money.id, tenantId: TENANT });
-    expect(usage.entities).toEqual([{ id: s.order.id, name: "Order", versions: ["1.0", "1.1"] }]);
+    expect(usage.entities).toEqual([{ id: s.order.id, name: "Order", versions: ["1.0.0", "1.1.0"] }]);
     // The trait whose headers pin holds Money is found next to them (a NO ACTION foreign key).
     expect(usage.traits).toEqual([{ id: s.trait.id, name: "CloudEvents" }]);
     expect(entityInUseError("Money", usage)?.message).toBe(
-      'Entity "Money" cannot be deleted: it is used by Trait "CloudEvents" and referenced by published versions of Entity "Order" (v1.0, v1.1).'
+      'Entity "Money" cannot be deleted: it is used by Trait "CloudEvents" and referenced by published versions of Entity "Order" (v1.0.0, v1.1.0).'
     );
     // The referencing side is not referenced: nothing to report for Order beyond its own pins.
     expect((await findEntityPinUsage(prisma, { id: s.order.id, tenantId: TENANT })).entities).toEqual([]);
@@ -104,21 +104,21 @@ describe("delete guards on PGlite", () => {
 
   it("entity (events): the draft edge and the JSON containment on the document both find the pinning event", async () => {
     const found = await findEntityEventReferrers(prisma, { id: s.order.id, tenantId: TENANT });
-    expect(found.map((r) => [r.eventId, r.eventName, r.draft, r.referencedVersions])).toEqual([[s.event.id, "orders-feed", true, ["1.0"]]]);
+    expect(found.map((r) => [r.eventId, r.eventName, r.draft, r.referencedVersions])).toEqual([[s.event.id, "orders-feed", true, ["1.0.0"]]]);
     expect(await findEntityEventReferrers(prisma, { id: s.order.id, tenantId: "other-tenant" })).toEqual([]);
     expect(await findEntityEventReferrers(prisma, { id: "unknown", tenantId: TENANT })).toEqual([]);
   }, 60_000);
 
   it("library trait (events): the draft's libraryTraitId and the published version's frozen trait are both found, tenant-bound", async () => {
     const found = await findLibraryTraitEventReferrers(prisma, { id: s.trait.id, tenantId: TENANT });
-    expect(found.map((r) => [r.eventId, r.draft, r.published, r.referencedVersions])).toEqual([[s.event.id, true, true, ["2.0"]]]);
+    expect(found.map((r) => [r.eventId, r.draft, r.published, r.referencedVersions])).toEqual([[s.event.id, true, true, ["2.0.0"]]]);
     expect(await findLibraryTraitEventReferrers(prisma, { id: s.trait.id, tenantId: "other-tenant" })).toEqual([]);
     expect(await findLibraryTraitEventReferrers(prisma, { id: "unknown", tenantId: TENANT })).toEqual([]);
   }, 60_000);
 
   it("event / product: another event's reference to a published version is found, from inside the product the other way round", async () => {
     const referrers = await findEventVersionReferrers(prisma, s.event.id);
-    expect(referrers.map((r) => [r.eventId, r.draft, r.referencedVersions])).toEqual([[s.consumer.id, true, ["2.0"]]]);
+    expect(referrers.map((r) => [r.eventId, r.draft, r.referencedVersions])).toEqual([[s.consumer.id, true, ["2.0.0"]]]);
 
     const productRefs = await findCrossProductEventRefs(prisma, { kind: "product", productId: s.product.id, tenantId: TENANT });
     expect(productRefs.map((r) => r.eventId)).toEqual([s.consumer.id]);

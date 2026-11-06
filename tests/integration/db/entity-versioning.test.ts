@@ -22,6 +22,14 @@ const BACKFILL_SQL = readFileSync(
   .filter((line) => !line.trim().startsWith("--"))
   .join("\n");
 
+// The backfill block of the snapshot migration (between its BEGIN/END backfill markers), one statement per call.
+const SNAPSHOT_BACKFILL_STATEMENTS = (() => {
+  const sql = readFileSync(join(process.cwd(), "prisma/migrations/20261102000000_snapshot_versioning/migration.sql"), "utf8");
+  const block = /-- BEGIN backfill\n([\s\S]*?)-- END backfill/.exec(sql);
+  if (!block) throw new Error("backfill markers not found in the snapshot migration");
+  return block[1].split(";").map((s) => s.trim()).filter(Boolean);
+})();
+
 class Rollback extends Error {}
 
 /** Run fn in a transaction that is always rolled back — the backfill touches every eligible row. */
@@ -71,15 +79,20 @@ describe("entity versioning schema", () => {
         data: { ...base, name: "NoSource", slug: `nosource-${s}`, status: "ACTIVE" },
       });
 
+      // The 20261015 backfill predates releasedAt: replay it on that shape (CHECK dropped), then the snapshot migration's backfill,
+      // in migration order. Rolled back with the rest.
+      await tx.$executeRawUnsafe(`ALTER TABLE "entity_versions" DROP CONSTRAINT "entity_versions_released_check"`);
       await tx.$executeRawUnsafe(BACKFILL_SQL);
       await tx.$executeRawUnsafe(BACKFILL_SQL);
+      for (const statement of SNAPSHOT_BACKFILL_STATEMENTS) await tx.$executeRawUnsafe(statement);
 
       const versions = await tx.entityVersion.findMany({ where: { entityId: active.id } });
       expect(versions).toHaveLength(1);
       expect(versions[0]).toMatchObject({
-        major: 1, minor: 0, sequence: 3, changeKind: "INITIAL",
-        resolvedSource: "model Active { id: string; }", publishedById: user.id,
+        major: 1, minor: 0, patch: 0, stage: "RELEASED", sequence: 3, changeKind: "INITIAL",
+        resolvedSource: "model Active { id: string; }", publishedById: user.id, releasedById: user.id,
       });
+      expect(versions[0].releasedAt).toEqual(versions[0].publishedAt);
       expect((versions[0].fieldSnapshot as Array<{ name: string; isKey: boolean; aliases: string[] }>)[0]).toMatchObject({
         name: "id", isKey: true, aliases: [],
       });
@@ -104,7 +117,7 @@ describe("entity versioning schema", () => {
       const e = await prisma.entity.create({
         data: { name: "Imm", slug: `imm-${s}`, tenantId: TENANT, domainId: d.id, productId: p.id, ownerId: user.id },
       });
-      const row = { entityId: e.id, resolvedSource: "model Imm {}", fieldSnapshot: [], publishedById: user.id };
+      const row = { entityId: e.id, resolvedSource: "model Imm {}", fieldSnapshot: [], publishedById: user.id, releasedAt: new Date() };
       const v = await prisma.entityVersion.create({ data: { ...row, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL" } });
       await prisma.entity.update({ where: { id: e.id }, data: { latestVersionId: v.id, hasUnpublishedChanges: false } });
 
@@ -124,6 +137,54 @@ describe("entity versioning schema", () => {
     }
   });
 
+  it("lets a SNAPSHOT be edited and promoted, freezes RELEASED rows, allows one SNAPSHOT per entity and never reuses a released number", async () => {
+    let domainId: string | undefined;
+    try {
+      const user = await prisma.user.findFirstOrThrow();
+      const s = stamp();
+      const d = await prisma.domain.create({ data: { name: `snap-${s}`, slug: `snap-${s}`, tenantId: TENANT } });
+      domainId = d.id;
+      const p = await prisma.product.create({ data: { domainId: d.id, name: "P", slug: `p-${s}` } });
+      const e = await prisma.entity.create({
+        data: { name: "Snap", slug: `snap-${s}`, tenantId: TENANT, domainId: d.id, productId: p.id, ownerId: user.id },
+      });
+      const row = { entityId: e.id, resolvedSource: "model Snap {}", fieldSnapshot: [], publishedById: user.id };
+
+      const released = await prisma.entityVersion.create({
+        data: { ...row, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", releasedAt: new Date(), releasedById: user.id },
+      });
+      expect(released).toMatchObject({ patch: 0, stage: "RELEASED" });
+      await expect(prisma.entityVersion.update({ where: { id: released.id }, data: { changeSummary: "x" } })).rejects.toThrow(
+        /Released versions are immutable; save a new snapshot instead/
+      );
+      // The released number cannot come back as a snapshot.
+      await expect(
+        prisma.entityVersion.create({ data: { ...row, major: 1, minor: 0, sequence: 2, changeKind: "MINOR", stage: "SNAPSHOT" } })
+      ).rejects.toThrow(/Unique constraint/);
+
+      const snapshot = await prisma.entityVersion.create({
+        data: { ...row, major: 1, minor: 0, patch: 1, sequence: 2, changeKind: "PATCH", stage: "SNAPSHOT" },
+      });
+      await expect(
+        prisma.entityVersion.create({ data: { ...row, major: 1, minor: 1, sequence: 3, changeKind: "MINOR", stage: "SNAPSHOT" } })
+      ).rejects.toThrow(/Unique constraint/);
+      await prisma.entityVersion.update({ where: { id: snapshot.id }, data: { fieldSnapshot: [{ name: "id" }] } });
+      const promoted = await prisma.entityVersion.update({
+        where: { id: snapshot.id }, data: { stage: "RELEASED", releasedAt: new Date(), releasedById: user.id },
+      });
+      expect(promoted).toMatchObject({ stage: "RELEASED", fieldSnapshot: [{ name: "id" }] });
+      await expect(prisma.entityVersion.update({ where: { id: snapshot.id }, data: { changeSummary: "x" } })).rejects.toThrow(
+        /Released versions are immutable/
+      );
+      // A RELEASED row needs releasedAt.
+      await expect(
+        prisma.entityVersion.create({ data: { ...row, major: 2, minor: 0, sequence: 3, changeKind: "MAJOR" } })
+      ).rejects.toThrow(/entity_versions_released_check/);
+    } finally {
+      if (domainId) await prisma.domain.deleteMany({ where: { id: domainId } });
+    }
+  });
+
   it("refuses a direct DELETE of a published version, but still cascades with its entity and its domain", async () => {
     let domainId: string | undefined;
     try {
@@ -138,7 +199,7 @@ describe("entity versioning schema", () => {
         });
       const publish = async (entityId: string) => {
         const v = await prisma.entityVersion.create({
-          data: { entityId, resolvedSource: "model X {}", fieldSnapshot: [], publishedById: user.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL" },
+          data: { entityId, resolvedSource: "model X {}", fieldSnapshot: [], publishedById: user.id, releasedAt: new Date(), major: 1, minor: 0, sequence: 1, changeKind: "INITIAL" },
         });
         await prisma.entity.update({ where: { id: entityId }, data: { latestVersionId: v.id, hasUnpublishedChanges: false } });
         return v;

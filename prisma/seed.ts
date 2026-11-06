@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { createDbAdapter } from "../src/lib/db-adapter";
+import { closeSharedPglite } from "../src/lib/pglite-open";
 import { ensureBootstrapAdmin, planSeedAdmin } from "../src/lib/admin-bootstrap";
 import { ensureBundledTraits } from "../src/services/events/bundled-traits.service";
 
@@ -307,6 +308,8 @@ async function main() {
   }
 
   await prisma.$disconnect();
+  // The embedded database keeps the process alive until it is closed (the seed used to hang here and had to be killed, which can corrupt it).
+  await closeSharedPglite();
   console.log("Seed complete.");
 }
 

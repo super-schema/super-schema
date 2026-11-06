@@ -5,7 +5,10 @@ import { ok, err, type Result } from "@/types/result";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-/** D5: `entityVersionId` omitted → latest published version; `null` → unpinned (draft preview only). */
+/**
+ * D5: `entityVersionId` omitted → the entity's `latestVersionId`: its latest RELEASE, or its open snapshot while it has none (an event
+ * pinned to a snapshot cannot be promoted until that entity is: SNAPSHOT_REFERENCES); `null` → unpinned (draft preview only).
+ */
 export interface PinInput {
   entityId: string;
   entityVersionId?: string | null;

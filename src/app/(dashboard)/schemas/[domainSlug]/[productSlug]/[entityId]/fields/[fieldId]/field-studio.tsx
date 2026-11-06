@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronRight, Loader2, Check, AlertCircle, CheckCircle2 } from "lucide-react";
@@ -10,6 +10,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { ValidationIndicator } from "@/components/custom/ValidationIndicator";
+import { FieldCompletenessDetails } from "@/components/custom/ValidationIndicator/FieldCompletenessDetails";
+import { getFieldCompleteness } from "@/lib/validation/field-completeness";
+import { readFieldCompletenessPolicy } from "@/types/schemas/field-completeness-policy";
 import {
   Accordion,
   AccordionItem,
@@ -378,13 +381,12 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
   const typeInfo = getTypeInfo(fieldType);
   const typeCategory = typeInfo?.category ?? "String";
 
-  // Determine validation status
-  const validationStatus = fieldName.trim()
-    ? ("complete" as const)
-    : ("error" as const);
-  const validationTooltip = fieldName.trim()
-    ? "Field configured"
-    : "Field name is required";
+  const completenessPolicy = useMemo(() => readFieldCompletenessPolicy(domain.policy?.fieldCompleteness), [domain.policy?.fieldCompleteness]);
+  const completeness = getFieldCompleteness({
+    ...field, name: fieldName, type: fieldType, classification: fieldClassification,
+    description: typespec.documentation?.summary || field.description,
+    decorators: { ...field.decorators, typespec },
+  }, completenessPolicy);
 
   const SaveIndicator = () => {
     switch (saveStatus) {
@@ -448,8 +450,8 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
       <div className="flex items-center justify-between mb-space-6">
         <div className="flex items-center gap-space-3">
           <ValidationIndicator
-            status={validationStatus}
-            tooltipContent={validationTooltip}
+            status={completeness.status === "complete" ? "complete" : "suggestion"}
+            tooltipContent={<FieldCompletenessDetails completeness={completeness} />}
           />
           <Input
             data-testid="field-studio-name"

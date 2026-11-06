@@ -34,7 +34,7 @@ function fakeDb(f: Fixture = {}) {
   };
 }
 
-const source = (entityId: string, name: string, major: number, minor: number) => ({ major, minor, entity: { id: entityId, name } });
+const source = (entityId: string, name: string, major: number, minor: number) => ({ major, minor, patch: 0, entity: { id: entityId, name } });
 const E1 = { id: "e1", tenantId: "t1" };
 const NO_USAGE: EntityPinUsage = { traits: [], entities: [] };
 
@@ -68,8 +68,8 @@ describe("findEntityPinUsage", () => {
       sources: [source("order", "Order", 1, 0), source("order", "Order", 1, 1), source("cart", "Cart", 2, 0)],
     });
     expect((await findEntityPinUsage(db as never, E1)).entities).toEqual([
-      { id: "order", name: "Order", versions: ["1.0", "1.1"] },
-      { id: "cart", name: "Cart", versions: ["2.0"] },
+      { id: "order", name: "Order", versions: ["1.0.0", "1.1.0"] },
+      { id: "cart", name: "Cart", versions: ["2.0.0"] },
     ]);
 
     expect(db.entityVersion.findMany.mock.calls[0][0]).toMatchObject({ where: { entityId: "e1" } });
@@ -152,7 +152,7 @@ describe("explainEntityDeleteFailure", () => {
   it("explains a referenced entity too (no FK: this is the only guard)", async () => {
     const db = fakeDb({ versions: [{ id: "v1" }], edges: [{ fromId: "o1" }], sources: [source("order", "Order", 1, 0)] });
     const error = await explainEntityDeleteFailure(db as never, { id: "e1", name: "Money", tenantId: "t1" });
-    expect(error?.message).toContain('Entity "Order" (v1.0)');
+    expect(error?.message).toContain('Entity "Order" (v1.0.0)');
   });
 });
 

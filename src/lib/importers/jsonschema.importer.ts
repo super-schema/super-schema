@@ -55,6 +55,7 @@ import type {
   ParsedFieldConstraint,
   ImportConfidence,
   MultiEntityImportResult,
+  ParsedScalar,
   ParsedUnion,
 } from "./types";
 import { IMPORTED_ENTITY_FALLBACK_NAME } from "./types";
@@ -407,6 +408,7 @@ interface ResolvedType {
   referencedEntityName?: string;
   enumName?: string;
   enumValues?: string[];
+  enumValueDescriptions?: Record<string, string>;
   unionName?: string;
   unionMembers?: string[];
   /** Constraints implied by the resolution itself (a numeric `const` / `enum` becomes a min/max range). */
@@ -667,6 +669,84 @@ export function budgetPreservedValues(entities: ParsedEntity[], warnings: string
   }
 }
 
+/** Per-symbol descriptions read from an `x-enum` (kept off the node's string keys so a spread copy keeps them and JSON never shows them). */
+const X_ENUM_DESCRIPTIONS = Symbol("x-enum-descriptions");
+
+function xEnumDescriptionsOf(node: object | undefined): Record<string, string> | undefined {
+  return node ? ((node as Record<symbol, Record<string, string> | undefined>)[X_ENUM_DESCRIPTIONS]) : undefined;
+}
+
+/** The symbols of an `x-enum` entry list (`[{ value|name|const, description }]`, or bare strings); malformed entries are skipped. */
+function readXEnum(entries: unknown[]): { values: string[]; descriptions: Record<string, string> } {
+  const values: string[] = [];
+  const descriptions: Record<string, string> = {};
+  for (const entry of entries) {
+    let symbol: unknown;
+    let description: unknown;
+    if (typeof entry === "string") symbol = entry;
+    else if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      const e = entry as Record<string, unknown>;
+      symbol = e.value ?? e.name ?? e.const;
+      description = e.description;
+    }
+    if (typeof symbol !== "string" || values.includes(symbol)) continue;
+    values.push(symbol);
+    if (typeof description === "string" && description.trim() !== "") setOwn(descriptions, symbol, description);
+  }
+  return { values, descriptions };
+}
+
+/**
+ * JSON Schema `x-enum` (PayPal's enum with per-symbol descriptions) is read once, over the whole parsed document: a node that has it and no
+ * `enum` gets the symbols as its `enum` (so every path that understands an enum understands it), and the descriptions ride on the node under a
+ * symbol key. The `x-enum` key itself is removed once it was read (it would otherwise be preserved as an unknown extension on every field).
+ * Iterative, so a deeply nested document cannot overflow the stack; a node with an unusable `x-enum` keeps it as an extension.
+ */
+function normalizeXEnums(root: unknown): void {
+  const stack: unknown[] = [root];
+  let visited = 0;
+  while (stack.length > 0 && visited < 500_000) {
+    const node = stack.pop();
+    visited += 1;
+    if (!node || typeof node !== "object") continue;
+    if (Array.isArray(node)) {
+      for (const item of node) stack.push(item);
+      continue;
+    }
+    const record = node as Record<string, unknown>;
+    const raw = record["x-enum"];
+    if (Array.isArray(raw)) {
+      const { values, descriptions } = readXEnum(raw);
+      if (values.length > 0) {
+        if (!Array.isArray(record.enum)) record.enum = values;
+        if (Object.keys(descriptions).length > 0) (record as Record<symbol, unknown>)[X_ENUM_DESCRIPTIONS] = descriptions;
+        delete record["x-enum"];
+      }
+    }
+    for (const value of Object.values(record)) stack.push(value);
+  }
+}
+
+/** The descriptions of `node` that belong to `symbols`, `undefined` when there are none. */
+function descriptionsFor(node: object | undefined, symbols: readonly string[]): Record<string, string> | undefined {
+  const all = xEnumDescriptionsOf(node);
+  if (!all) return undefined;
+  const out: Record<string, string> = {};
+  for (const symbol of symbols) if (all[symbol] !== undefined) setOwn(out, symbol, all[symbol]);
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * A NUL character cannot be stored (PostgreSQL text / jsonb refuse it) and says nothing a reader could see: it is removed from the raw text,
+ * both as the character itself and as the escape `\u0000` (an escaped backslash followed by the text `u0000` is not one and stays).
+ */
+export function stripNulText(content: string): string {
+  return content.replace(/\u0000/g, "").replace(/(?<!\\)((?:\\\\)*)\\u0000/gi, "$1");
+}
+
+/** A `default` longer than this is kept as an extension (budgeted), not as the field's default. */
+const MAX_DEFAULT_LENGTH = 1024;
+
 const MAX_REF_DEPTH = 16;
 /** Combinator nesting past this is not a real schema; resolve it as an unknown at low confidence. */
 export const MAX_SCHEMA_NESTING = 200;
@@ -708,7 +788,7 @@ function enumLabel(values: unknown[]): string {
  *
  * It never returns an enum without symbols: that would publish an unsatisfiable `{ "enum": [] }`.
  */
-function resolveLiteralValues(values: unknown[], originalType: string, ctx?: ResolveContext): ResolvedType {
+function resolveLiteralValues(values: unknown[], originalType: string, ctx?: ResolveContext, source?: object): ResolvedType {
   const nullable = values.includes(null);
   const symbols = values.filter((v) => v !== null);
 
@@ -717,7 +797,8 @@ function resolveLiteralValues(values: unknown[], originalType: string, ctx?: Res
     // Symbols travel as "A|B|C" (the generator reads them back from the pattern slot), so one that holds the
     // separator, or is empty, cannot round-trip: flag it rather than silently splitting it.
     const lossy = unique.some((s) => s === "" || s.includes("|"));
-    return { type: "enum", confidence: lossy ? "low" : "high", nullable, originalType, enumValues: unique };
+    const valueDescriptions = descriptionsFor(source, unique);
+    return { type: "enum", confidence: lossy ? "low" : "high", nullable, originalType, enumValues: unique, ...(valueDescriptions ? { enumValueDescriptions: valueDescriptions } : {}) };
   }
 
   if (symbols.length > 0 && symbols.every((v) => typeof v === "number" && Number.isFinite(v))) {
@@ -819,6 +900,7 @@ function cloneResolved(r: ResolvedType): ResolvedType {
   return {
     ...r,
     ...(r.enumValues ? { enumValues: [...r.enumValues] } : {}),
+    ...(r.enumValueDescriptions ? { enumValueDescriptions: { ...r.enumValueDescriptions } } : {}),
     ...(r.unionMembers ? { unionMembers: [...r.unionMembers] } : {}),
     ...(r.impliedConstraints ? { impliedConstraints: r.impliedConstraints.map((c) => ({ ...c })) } : {}),
   };
@@ -854,6 +936,7 @@ function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
       originalType: ref,
       enumName: def.assetName,
       enumValues: boundEnumSymbols([...new Set(values)], def.assetName, ctx.warnings, def.node),
+      ...(descriptionsFor(def.node, values) ? { enumValueDescriptions: descriptionsFor(def.node, values) } : {}),
     };
   }
   if (def?.kind === "union") {
@@ -1050,6 +1133,13 @@ function isMapSchema(node: JsonSchemaNode): boolean {
   return isSchemaObject(node.additionalProperties) && !(isSchemaObject(node.properties) && Object.keys(node.properties).length > 0);
 }
 
+/** The value schemas of `patternProperties` (pattern -> schema) of an object that declares no properties and no `additionalProperties` schema. */
+function patternMapEntries(node: JsonSchemaNode): Array<[string, JsonSchemaNode]> {
+  const raw = node.patternProperties;
+  if (!isSchemaObject(raw) || isMapSchema(node) || (isSchemaObject(node.properties) && Object.keys(node.properties).length > 0)) return [];
+  return Object.entries(raw).filter((e): e is [string, JsonSchemaNode] => isSchemaObject(e[1]));
+}
+
 function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedType {
   charge(ctx.run);
   if (typeof node.$ref === "string") {
@@ -1063,7 +1153,7 @@ function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedT
 
   // enum → logical enum
   if (Array.isArray(node.enum)) {
-    return resolveLiteralValues(node.enum, enumLabel(node.enum), ctx);
+    return resolveLiteralValues(node.enum, enumLabel(node.enum), ctx, node);
   }
 
   // allOf → intersection of every member (resolveAllOf); oneOf / anyOf below
@@ -1172,6 +1262,10 @@ function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedT
     case "object":
       // `additionalProperties: <schema>` and no declared properties: a dictionary string -> value (buildFields reads the value type).
       if (isMapSchema(node)) return { type: "map", confidence: "medium", nullable: nullableFromType, originalType: "object/additionalProperties" };
+      // `patternProperties` and no declared properties: a dictionary keyed by the pattern(s); the first value schema types it.
+      if (patternMapEntries(node).length > 0) {
+        return { type: "map", confidence: patternMapEntries(node).length === 1 ? "medium" : "low", nullable: nullableFromType, originalType: "object/patternProperties" };
+      }
       return { type: "object", confidence: "low", nullable: nullableFromType, originalType: "object" };
     case "null":
       return { type: "string", confidence: "low", nullable: true, originalType: "null" };
@@ -1298,12 +1392,29 @@ function fileBasename(sourceName: string | undefined): string | undefined {
   return IDENTIFIER.test(stripped) ? stripped : undefined;
 }
 
+/**
+ * An identifier made of the words of `raw` (`Account closed successfully event.` -> `AccountClosedSuccessfullyEvent`, `account_closed_event` ->
+ * `AccountClosedEvent`): every word capitalised, everything else kept, punctuation and separators gone. Empty when `raw` has no letter or digit.
+ */
+export function pascalIdentifier(raw: string): string {
+  const words = raw.split(/[^A-Za-z0-9]+/).filter(Boolean);
+  const joined = words.map((w) => w[0].toUpperCase() + w.slice(1)).join("");
+  return joined !== "" && /^[0-9]/.test(joined) ? `_${joined}` : joined;
+}
+
+/** A file / `$id` name written with separators (`account_closed_event`) is a name in PascalCase; a plain identifier stays as written. */
+function nameFromBasename(name: string): string {
+  return /[_-]/.test(name) ? pascalIdentifier(name) || name : name;
+}
+
 function deriveEntityName(schema: JsonSchemaNode, sourceName?: string): string {
   if (typeof schema.title === "string" && schema.title.trim()) {
     // A display title ("Portable Postal Address (Medium-Grained)") is no name: the document's `$id` is, when it is one, then the file it
-    // came from ("Address.v1.json"); that name is also what a `$ref` to the document says.
+    // came from ("Address.v1.json"); that name is also what a `$ref` to the document says. With neither, the title's own words are the name.
     const title = schema.title.trim();
-    return IDENTIFIER.test(title) ? title : (idBasename(schema) ?? fileBasename(sourceName) ?? title);
+    if (IDENTIFIER.test(title)) return title;
+    const base = idBasename(schema) ?? fileBasename(sourceName);
+    return base !== undefined ? nameFromBasename(base) : pascalIdentifier(title) || IMPORTED_ENTITY_FALLBACK_NAME;
   }
   if (typeof schema.$id === "string" && schema.$id.trim()) {
     // "https://example.com/schemas/user.json" → "user"
@@ -1311,7 +1422,16 @@ function deriveEntityName(schema: JsonSchemaNode, sourceName?: string): string {
     const stripped = withoutVersion(last.replace(/\.(json|schema\.json)$/i, ""));
     if (stripped) return stripped;
   }
-  return fileBasename(sourceName) ?? IMPORTED_ENTITY_FALLBACK_NAME;
+  const file = fileBasename(sourceName);
+  return file !== undefined ? nameFromBasename(file) : IMPORTED_ENTITY_FALLBACK_NAME;
+}
+
+/** The description an entity gets: the schema's own, else its display title when that was not used as the name (so it is not lost). */
+function descriptionOrTitle(node: JsonSchemaNode, name: string): string | undefined {
+  const own = entityDescription(node);
+  if (own !== undefined) return own;
+  const title = typeof node.title === "string" ? node.title.trim() : "";
+  return title !== "" && title !== name ? title : undefined;
 }
 
 
@@ -1850,7 +1970,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
         if (key === "format" && formatIsInterpreted(value)) continue;
         if (ELEMENT_KEYS.has(key) || key === "format") {
           const kept = `x-${siteKey(site)}-${key}`;
-          if (keep(kept, value) === "kept" && key !== "title") {
+          if (keep(kept, value) === "kept" && key !== "title" && kept !== "x-items-description") {
             note(`${key} found on ${site} of ${owner} was kept on the field as ${kept} (the IR has no element-level ${key})`);
           }
           continue;
@@ -1891,6 +2011,68 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     const ignoredKeywords = ignoredKeywordsOf([...annotationSources], true, nested);
     if (ignoredKeywords) field.ignoredKeywords = ignoredKeywords;
 
+    const patternEntries = resolved.type === "map" ? sources.map(patternMapEntries).find((e) => e.length > 0) : undefined;
+    // Standard keywords the IR can hold are read here, so they are neither listed as ignored nor repeated as an extension.
+    const consumed = new Set<string>();
+    const fieldLabel = `${ownerName}.${name}`;
+    const warn = (message: string) => baseCtx.warnings.push(message);
+    // default: only where TypeSpec writes `= value` for the field's type (string / number / boolean), never for an enum or a structure
+    const defaultSource = annotationSources.find((s) => s.default !== undefined);
+    if (defaultSource) {
+      const value = defaultSource.default;
+      const category = getTypeInfo(resolved.type)?.category;
+      // A large default stays an extension: the extension budget bounds how often it is repeated (a first-class copy on every field would not be).
+      const fits =
+        (typeof value === "string" && value.length <= MAX_DEFAULT_LENGTH && category === "String" && resolved.type !== "enum") ||
+        (typeof value === "number" && Number.isFinite(value) && category === "Number") ||
+        (typeof value === "boolean" && category === "Boolean");
+      if (fits) {
+        field.defaultValue = value as string | number | boolean;
+        consumed.add("default");
+      } else if (!(typeof value === "string" && value.length > MAX_DEFAULT_LENGTH)) {
+        warn(`Field \`${fieldLabel}\`: \`default\` (${JSON.stringify(value)?.slice(0, 40)}) was not applied to a ${resolved.type} field (only string, number and boolean defaults are written); it is kept as written.`);
+      }
+    }
+    // readOnly / writeOnly: the lifecycle phases the property takes part in
+    const readOnly = annotationSources.some((s) => s.readOnly === true);
+    const writeOnly = annotationSources.some((s) => s.writeOnly === true);
+    if (readOnly || writeOnly || annotationSources.some((s) => s.readOnly === false || s.writeOnly === false)) {
+      if (readOnly) {
+        field.visibility = ["Read"];
+        if (writeOnly) warn(`Field \`${fieldLabel}\`: readOnly and writeOnly are both true; it was imported as read-only.`);
+      } else if (writeOnly) {
+        field.visibility = ["Create", "Update"];
+      }
+      consumed.add("readOnly");
+      consumed.add("writeOnly");
+    }
+    // patternProperties: the pattern(s) are kept verbatim next to the map they type
+    if (resolved.type === "map" && patternEntries) {
+      const all = sources.find((s) => patternMapEntries(s).length > 0)?.patternProperties as Record<string, unknown>;
+      setOwn((extensions ??= {}), "x-pattern-properties", all);
+      field.extensions = extensions;
+      consumed.add("patternProperties");
+      if (patternEntries.length > 1) {
+        warn(`Field \`${fieldLabel}\`: patternProperties has ${patternEntries.length} patterns; the map is typed by the first (\`${patternEntries[0][0]}\`), all are kept as x-pattern-properties.`);
+      }
+    }
+    // A keyword hoisted from a nested node (`items`, a union member) describes THAT node, not the field: it stays listed and preserved.
+    for (const key of [...consumed]) if (nested.some((n) => Object.prototype.hasOwnProperty.call(n, key))) consumed.delete(key);
+    if (consumed.size > 0) {
+      if (field.ignoredKeywords) {
+        const left = field.ignoredKeywords.filter((k) => !consumed.has(k));
+        if (left.length > 0) field.ignoredKeywords = left;
+        else delete field.ignoredKeywords;
+      }
+      if (field.extensions) {
+        for (const key of consumed) delete field.extensions[key];
+        if (Object.keys(field.extensions).length === 0) delete field.extensions;
+      }
+    }
+    // element description: first-class on the field, and still written as x-items-description (the schema emitters' round trip)
+    const itemDescription = field.extensions?.["x-items-description"];
+    if (typeof itemDescription === "string" && itemDescription.trim() !== "") field.itemDescription = itemDescription;
+
     const classified = readClassification(sources, extensions, classificationConfig);
     if (classified.classification) field.classification = classified.classification;
     if (classified.governance) field.governance = classified.governance;
@@ -1898,6 +2080,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     if (resolved.referencedEntityName) field.referencedEntityName = resolved.referencedEntityName;
     if (resolved.enumName) field.enumName = resolved.enumName;
     if (resolved.enumValues) field.enumValues = resolved.enumValues;
+    if (resolved.enumValueDescriptions) field.enumValueDescriptions = resolved.enumValueDescriptions;
     if (resolved.unionName) field.unionName = resolved.unionName;
     if (resolved.unionMembers) field.unionMembers = resolved.unionMembers;
     if (resolved.lowFromUnresolvedRef) LOW_FROM_UNRESOLVED_REF.add(field);
@@ -1918,6 +2101,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       if (item.referencedEntityName) field.referencedEntityName = item.referencedEntityName;
       if (item.enumName) field.enumName = item.enumName;
       if (item.enumValues) field.enumValues = item.enumValues;
+      if (item.enumValueDescriptions) field.enumValueDescriptions = item.enumValueDescriptions;
       if (item.unionName) field.unionName = item.unionName;
       if (item.unionMembers) field.unionMembers = item.unionMembers;
       if (item.type === "reference" || item.type === "enum" || item.type === "union") field.confidence = item.confidence;
@@ -1930,7 +2114,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     }
 
     // Map value type (+ reference / enum target of the value). The value schema IS the type now, so it is no longer an ignored keyword.
-    const valueSchema = resolved.type === "map" ? elementSources.find((s) => isMapSchema(s))?.additionalProperties : undefined;
+    const valueSchema = resolved.type === "map" ? (elementSources.find((s) => isMapSchema(s))?.additionalProperties ?? patternEntries?.[0]?.[1]) : undefined;
     if (isSchemaObject(valueSchema)) {
       const value = resolveSchemaType(valueSchema, ctx);
       field.mapKeyType = "string";
@@ -1938,6 +2122,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       if (value.referencedEntityName) field.referencedEntityName = value.referencedEntityName;
       if (value.enumName) field.enumName = value.enumName;
       if (value.enumValues) field.enumValues = value.enumValues;
+      if (value.enumValueDescriptions) field.enumValueDescriptions = value.enumValueDescriptions;
       if (value.unionName) field.unionName = value.unionName;
       if (value.unionMembers) field.unionMembers = value.unionMembers;
       if (value.type === "reference" || value.type === "enum" || value.type === "union") field.confidence = value.confidence;
@@ -1997,7 +2182,7 @@ export function parseJsonSchemaDocument(rawContent: string, budget?: ResolveBudg
 
 /** A named `$defs` / `definitions` entry of a parsed document, as the importer classified and named it. */
 export interface DefinitionIndexEntry {
-  kind: "entity" | "enum" | "union" | "inline";
+  kind: "entity" | "enum" | "union" | "inline" | "scalar";
   assetName: string;
 }
 
@@ -2007,10 +2192,11 @@ export interface DefinitionIndexEntry {
  */
 export function parseJsonSchemaDocumentIndexed(
   rawContent: string,
-  budget?: ResolveBudget
+  budget?: ResolveBudget,
+  sourceName?: string
 ): Result<{ doc: MultiEntityImportResult; definitions: Map<string, DefinitionIndexEntry> }> {
   const definitions = new Map<string, DefinitionIndexEntry>();
-  const parsed = parseGuarded(rawContent, definitions, budget);
+  const parsed = parseGuarded(rawContent, definitions, budget, sourceName);
   if (!parsed.success) return parsed;
   return ok({ doc: parsed.data, definitions });
 }
@@ -2056,6 +2242,8 @@ function buildParsedEnum(name: string, node: JsonSchemaNode, warnings: string[])
     values: boundEnumSymbols([...new Set((node.enum ?? []).filter((v) => v !== null) as string[])], name, warnings, node),
   };
   if (typeof node.description === "string") parsedEnum.description = node.description;
+  const valueDescriptions = descriptionsFor(node, parsedEnum.values);
+  if (valueDescriptions) parsedEnum.valueDescriptions = valueDescriptions;
   const enumExtensions = captureExtensions(node, true);
   const enumIgnored = ignoredKeywordsOf([node], true);
   if (node.deprecated === true) parsedEnum.deprecated = true;
@@ -2095,7 +2283,45 @@ function unwrapRootArray(schema: JsonSchemaNode, sourceName?: string): { schema:
   };
 }
 
-function importJsonSchemaDocument(content: string, outIndex?: Map<string, DefinitionIndexEntry>, budget?: ResolveBudget, sourceName?: string): Result<MultiEntityImportResult> {
+const PRIMITIVE_ROOT_TYPES = new Set(["string", "integer", "number", "boolean"]);
+
+/** A schema that only constrains a primitive (no properties, enum, const, combinator or `$ref`): a shared scalar, not an entity. */
+function isPrimitiveScalarSchema(node: JsonSchemaNode): boolean {
+  const { base } = normalizeType(node.type);
+  if (base === undefined || !PRIMITIVE_ROOT_TYPES.has(base)) return false;
+  if (node.properties !== undefined || node.enum !== undefined || node.const !== undefined || typeof node.$ref === "string") return false;
+  return !Array.isArray(node.allOf) && !Array.isArray(node.oneOf) && !Array.isArray(node.anyOf);
+}
+
+/** The scalar a primitive-only schema defines: its type, format and constraints travel with it (and are copied onto every field that uses it). */
+function buildParsedScalar(name: string, node: JsonSchemaNode, ctx: ResolveContext, warnings: string[]): ParsedScalar {
+  const resolved = resolveSchemaType(node, ctx);
+  const { constraints, minValueExclusive, maxValueExclusive } = extractConstraints(node);
+  const applicable = constraints.filter((c) => c.type !== "minItems" && c.type !== "maxItems");
+  const kept: ParsedFieldConstraint[] = [];
+  for (const c of applicable) {
+    if (constraintAppliesTo(resolved.type, c.type as ConstraintKind)) kept.push(c);
+    else warnings.push(`Scalar \`${name}\`: constraint \`${c.type}\` was not applied to ${resolved.type} (the TypeSpec type does not accept it).`);
+  }
+  const scalar: ParsedScalar = {
+    name,
+    baseType: getTypeInfo(resolved.type)?.typespecScalar ?? resolved.type,
+    logicalType: resolved.type,
+  };
+  if (typeof node.description === "string" && node.description.trim()) scalar.description = node.description;
+  if (resolved.format) scalar.format = resolved.format;
+  if (kept.length > 0) scalar.constraints = kept;
+  if (minValueExclusive !== undefined && constraintAppliesTo(resolved.type, "minValueExclusive")) scalar.minValueExclusive = minValueExclusive;
+  if (maxValueExclusive !== undefined && constraintAppliesTo(resolved.type, "maxValueExclusive")) scalar.maxValueExclusive = maxValueExclusive;
+  if (node.deprecated === true) scalar.deprecated = true;
+  const extensions = captureExtensions(node, true);
+  if (extensions) scalar.extensions = extensions;
+  return scalar;
+}
+
+function importJsonSchemaDocument(rawContent: string, outIndex?: Map<string, DefinitionIndexEntry>, budget?: ResolveBudget, sourceName?: string): Result<MultiEntityImportResult> {
+  const content = stripNulText(rawContent);
+  const nulStripped = content.length !== rawContent.length;
   const { value: parsedRoot, message: rejected, tooBig } = parseStructured(content);
   if (parsedRoot === null) {
     return err({
@@ -2117,8 +2343,9 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     });
   }
 
+  normalizeXEnums(parsedRoot);
   let schema: JsonSchemaNode = parsedRoot;
-  const rootNotes: string[] = [];
+  const rootNotes: string[] = nulStripped ? ["The schema contained NUL (0x00) characters; they were removed."] : [];
   if (normalizeType(schema.type).base === "array") {
     const unwrapped = unwrapRootArray(schema, sourceName);
     if ("refusal" in unwrapped) {
@@ -2139,6 +2366,8 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
   const rootEntityName = rootIsEntity ? deriveEntityName(schema, sourceName) : undefined;
   // A root `type: string` + `enum` is a shared enum of its own.
   const rootIsEnum = !rootIsEntity && rootBase === "string" && Array.isArray(schema.enum) && isStringEnum(schema.enum);
+  // A root that only constrains a primitive (`type: string` + pattern / format / length ...) is a shared scalar of its own.
+  const rootIsScalar = !rootIsEntity && !rootIsEnum && isPrimitiveScalarSchema(schema);
   const { definitions, taken } = indexDefinitions(schema, rootEntityName);
   const warnings: string[] = [...rootNotes];
   const unions: ParsedUnion[] = [];
@@ -2171,7 +2400,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     const rootExtends = resolveExtends(rootEntityName, rootMembers, ctx, warnings);
     entities.push({
       name: rootEntityName,
-      description: entityDescription(schema),
+      description: descriptionOrTitle(schema, rootEntityName),
       fields: buildFields(rootMembers, ctx, rootEntityName),
       ...(rootExtends ? { extends: rootExtends } : {}),
       ...entityExtensions(schema, rootEntityName, true),
@@ -2182,6 +2411,8 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
 
   const enums: ParsedEnum[] = [];
   if (rootIsEnum) enums.push(buildParsedEnum(deriveEntityName(schema, sourceName), schema, warnings));
+  const scalars: ParsedScalar[] = [];
+  if (rootIsScalar) scalars.push(buildParsedScalar(deriveEntityName(schema, sourceName), schema, ctx, warnings));
   const sharedUnions: ParsedUnion[] = [];
   for (const def of definitions.values()) {
     if (def.kind === "entity") {
@@ -2223,7 +2454,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     for (const [pointer, def] of definitions) outIndex.set(pointer, { kind: def.kind, assetName: def.assetName });
   }
 
-  if (entities.length === 0 && enums.length === 0) {
+  if (entities.length === 0 && enums.length === 0 && scalars.length === 0) {
     return err({
       code: "PARSE_ERROR",
       message: "JSON Schema has no properties to import",
@@ -2300,7 +2531,8 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     entities,
     ...(rootIsEntity && rootEntityName ? { rootEntityName } : {}),
     enums,
-    scalars: [],
+    scalars,
+    ...(scalars.length > 0 ? { rootScalarName: scalars[0].name } : {}),
     unions: [...sharedUnions, ...unions],
     warnings,
   };

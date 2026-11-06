@@ -9,7 +9,7 @@ import type {
   PrismaEntityInput,
   PrismaFieldInput,
 } from "@/lib/compiler/compiler.service";
-import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { generateTypeSpec, generateTypeSpecWithDiagnostics } from "@/lib/compiler/typespec-generator";
 import { protobufFieldName, quoteIdentifier, sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import type { ValidationError } from "@/lib/compiler/types";
 import type { ValidationStatus } from "@/lib/emission/emission.types";
@@ -289,8 +289,14 @@ export function buildSourceForTarget(model: SuperSchemaModel, targetKey: string)
   switch (targetKey) {
     case "json-schema":
       return plainSource(['import "@typespec/json-schema";', "", baseSource, ""].join("\n"));
-    case "openapi3":
-      return plainSource(buildOpenApi3Source(baseSource, model));
+    case "openapi3": {
+      // OpenAPI 3 is the one target that carries the entity's API operations (as `paths`): regenerate with them, keeping what the
+      // generator could not write as asked (a skipped operation, a type that is not in the document) as warnings.
+      if (!model.apiOperations || model.apiOperations.length === 0) return plainSource(buildOpenApi3Source(baseSource, model));
+      const withOperations = generateTypeSpecWithDiagnostics(model, { governance: false, httpOperations: true });
+      const warnings = withOperations.diagnostics.filter((d) => d.code === "API_OPERATION").map((d) => d.message);
+      return { source: buildOpenApi3Source(withOperations.source.trim(), model), warnings, errors: [] };
+    }
     case "protobuf":
       return { source: buildProtobufSource(baseSource, sourceModel), warnings: unions?.warnings ?? [], errors: [] };
     case "avro": {

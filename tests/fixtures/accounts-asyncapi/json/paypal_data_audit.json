@@ -1,0 +1,32 @@
+{
+  "title": "PPAAS Audit Header Schema",
+  "description": "Format of schema in the Data Audit Header for Events",
+  "type": "object",
+  "required": [
+    "session_id",
+    "sequence_id"
+  ],
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "description": "GUID String format. A unique session identifier needs to be assigned for by the source machine from which the events is being generate and a designated interval (1 hour) of time. This session_id has to be refreshed on source machine at the end of time interval.",
+      "minLength" : 1,
+      "maxLength" : 256
+    },
+    "sequence_id": {
+      "type": "integer",
+      "description": "Incrementing number starting with 0 for each event published during the session by the source machine. This number will be used by EDL consumer to detect any data loss by checking missing sequence numbers at the end of session.",
+      "minLength" : 1,
+      "maxLength" : 256
+    },
+    "last": {
+      "type": "boolean",
+      "description": "Indicates if this event is the last event for the session. This option is required to populated for the last event for the session."
+    },
+    "successful_publish_count": {
+      "type": "integer",
+      "description": "This attribute is required to be populated for the last event for the session. The total number of events successfully published by source machine"
+    }
+  }
+
+}

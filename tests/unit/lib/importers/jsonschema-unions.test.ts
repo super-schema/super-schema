@@ -210,10 +210,10 @@ describe("union names are spelled the way the generator spells the assets they n
 
   it("members and union names are sanitized; page-size / page_size cannot collide", () => {
     const d = data(messy);
-    expect(d.unions!.map((u) => u.name)).toEqual(["Change_me_title_page_size_Union", "Change_me_title_page_size_Union_2"]);
+    expect(d.unions!.map((u) => u.name)).toEqual(["ChangeMeTitle_page_size_Union", "ChangeMeTitle_page_size_Union_2"]);
     expect(d.unions![0].memberTypes).toEqual(["pet_cat", "Bird_v2"]);
-    expect(field(d, "Change me title", "page-size").unionName).toBe("Change_me_title_page_size_Union");
-    expect(field(d, "Change me title", "page_size").unionName).toBe("Change_me_title_page_size_Union_2");
+    expect(field(d, "ChangeMeTitle", "page-size").unionName).toBe("ChangeMeTitle_page_size_Union");
+    expect(field(d, "ChangeMeTitle", "page_size").unionName).toBe("ChangeMeTitle_page_size_Union_2");
   });
 
   it("the emitted TypeSpec compiles and the union members are the emitted model names", async () => {
@@ -234,7 +234,7 @@ describe("union names are spelled the way the generator spells the assets they n
     const text = sources.join("\n");
     expect(text).toContain("model pet_cat");
     expect(text).toContain("model Bird_v2");
-    expect(text).toContain("model Change_me_title");
+    expect(text).toContain("model ChangeMeTitle");
     expect(sources[0]).toContain("  pet_cat,\n  Bird_v2,\n");
     expect(await compileErrors(sources)).toEqual([]);
   }, 60_000);

@@ -34,10 +34,13 @@ export interface EventSnapshot {
   event: { id: string; name: string; tenantId: string; domainId: string; productId: string; productSlug: string; specType: string };
   document: EventDocument;
   /**
-   * The latest published version. `sourceDocument`, `frozenTraits` and `compatReport` are stored JSON, handed over as read: whoever
-   * uses them parses and shape-checks them (publish does — `event-publish-facts.ts`).
+   * The highest RELEASED version (new snapshot numbers count from it, the bump is classified against it). `sourceDocument`,
+   * `frozenTraits` and `compatReport` are stored JSON, handed over as read: whoever uses them parses and shape-checks them (publish
+   * does — `event-publish-facts.ts`).
    */
-  latest: { id: string; major: number; minor: number; sequence: number; sourceDocument: unknown; resolvedSpec: unknown; frozenTraits: unknown; compatReport: unknown } | null;
+  latestRelease: StoredEventVersion | null;
+  /** The event's one open snapshot, if any (what a save updates in place and a promote releases); same shape. */
+  openSnapshot: StoredEventVersion | null;
   /** The tenant's library traits the document points at, by `libraryTraitId`. A trait that was not found is simply absent. */
   libraryTraits: Map<string, FrozenTrait>;
   /** What each `externalRefs[]` entry resolves to, by ref key, from the referenced version's stored `resolvedSpec`. A ref that cannot be resolved is absent. */
@@ -51,11 +54,25 @@ export interface EventSnapshot {
   entityFormats: Map<string, PayloadFormat>;
 }
 
+/** A stored version as publish reads it: its number, what the next save compares with, and when it was last written. */
+export interface StoredEventVersion {
+  id: string; major: number; minor: number; patch: number; sequence: number;
+  sourceDocument: unknown; resolvedSpec: unknown; frozenTraits: unknown; compatReport: unknown;
+  /** When its content was last saved (a snapshot's moves on every save); what pinned rows are compared with. */
+  publishedAt: Date;
+  /** When the row was last written: with the id, what tells a save or promote that the other ran first. */
+  updatedAt: Date;
+}
+
 const EVENT_SELECT = {
   id: true, name: true, specType: true, document: true, tenantId: true, domainId: true, productId: true,
   product: { select: { slug: true } },
-  latestVersion: { select: { id: true, major: true, minor: true, sequence: true, sourceDocument: true, resolvedSpec: true, frozenTraits: true, compatReport: true } },
 } satisfies Prisma.EventSpecSelect;
+
+const STORED_VERSION_SELECT = {
+  id: true, major: true, minor: true, patch: true, sequence: true, sourceDocument: true, resolvedSpec: true, frozenTraits: true, compatReport: true,
+  publishedAt: true, updatedAt: true,
+} satisfies Prisma.EventSpecVersionSelect;
 
 const EXTERNAL_VERSION_SELECT = { id: true, major: true, resolvedSpec: true } satisfies Prisma.EventSpecVersionSelect;
 
@@ -101,7 +118,13 @@ export async function loadEventSnapshot(db: Db, eventId: string, override?: Even
 
   const refs = collectDocumentRefs(document);
   const payloadEntityIds = [...new Set(document.messages.map((m) => m.payload.entityId).filter((id) => id !== ""))];
-  const [traitRows, versionRows, entityRows] = await Promise.all([
+  const [latestRelease, openSnapshot, traitRows, versionRows, entityRows] = await Promise.all([
+    db.eventSpecVersion.findFirst({
+      where: { eventSpecId: eventId, stage: "RELEASED" },
+      orderBy: [{ major: "desc" }, { minor: "desc" }, { patch: "desc" }],
+      select: STORED_VERSION_SELECT,
+    }),
+    db.eventSpecVersion.findFirst({ where: { eventSpecId: eventId, stage: "SNAPSHOT" }, select: STORED_VERSION_SELECT }),
     refs.libraryTraitIds.length > 0
       ? db.trait.findMany({ where: { id: { in: refs.libraryTraitIds }, tenantId: row.tenantId }, select: TRAIT_SELECT })
       : [],
@@ -143,13 +166,8 @@ export async function loadEventSnapshot(db: Db, eventId: string, override?: Even
   return ok({
     event: { id: row.id, name: row.name, tenantId: row.tenantId, domainId: row.domainId, productId: row.productId, productSlug: row.product.slug, specType: row.specType },
     document,
-    latest: row.latestVersion
-      ? {
-          id: row.latestVersion.id, major: row.latestVersion.major, minor: row.latestVersion.minor, sequence: row.latestVersion.sequence,
-          sourceDocument: row.latestVersion.sourceDocument, resolvedSpec: row.latestVersion.resolvedSpec, frozenTraits: row.latestVersion.frozenTraits,
-          compatReport: row.latestVersion.compatReport,
-        }
-      : null,
+    latestRelease,
+    openSnapshot,
     libraryTraits,
     external,
     externalMajors,

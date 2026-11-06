@@ -57,7 +57,11 @@ const FULL: ParsedField = {
   secret: true,
   discriminator: "kind",
   enumName: "Kind",
+  scalarName: "CountryCode",
+  defaultValue: "x",
+  itemDescription: "One element.",
   enumValues: ["A", "B"],
+  enumValueDescriptions: { A: "first" },
   referencedEntityName: "Customer",
   arrayElementType: "reference",
   unionName: "Payment",
@@ -231,7 +235,11 @@ const FIELD_DISPLAY: Record<keyof ParsedField, string> = {
   mapKeyType: "Map key type",
   mapValueType: "Map value type",
   enumName: "Enum",
+  scalarName: "Scalar",
+  defaultValue: "Default",
+  itemDescription: "Item description",
   enumValues: "Enum values",
+  enumValueDescriptions: "Value descriptions",
   unionName: "Union",
   unionMembers: "Union members",
   danglingRef: "Dangling reference",
@@ -256,6 +264,7 @@ const ENTITY_DISPLAY: Record<keyof ParsedEntity, string> = {
   ignoredKeywords: "not",
   sourceFormat: "Source format",
   originalContent: "internal: raw source text kept only for drift detection",
+  sourceRef: "internal: the file name a later $ref to this entity is matched by (not part of the entity's details)",
   importWarnings: "internal: said by the import service as warnings of the import (not part of the entity's details)",
 };
 
@@ -291,6 +300,7 @@ describe("display exhaustiveness", () => {
       ignoredKeywords: ["not"],
       sourceFormat: "json-schema",
       originalContent: "{}",
+      sourceRef: "customer",
       importWarnings: ["a warning of the import"],
     };
     expect(Object.keys(entity).sort()).toEqual(Object.keys(ENTITY_DISPLAY).sort());

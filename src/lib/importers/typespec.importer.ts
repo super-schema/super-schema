@@ -80,13 +80,19 @@ export interface TypeSpecImportResult {
   /** Format the assets were imported from (absent = "typespec") */
   sourceFormat?: ImportFormat;
   models: TypeSpecImportModel[];
-  sharedEnums: Array<{ name: string; values: string[]; description?: string }>;
+  sharedEnums: Array<{ name: string; values: string[]; description?: string; valueDescriptions?: Record<string, string>; sourceRef?: string }>;
   customScalars: Array<{
     name: string;
     baseType: string;
     format?: string;
     pattern?: string;
     description?: string;
+    /** From a JSON Schema import: the logical type fields get, and the constraints besides `pattern` (see `ParsedScalar`). */
+    logicalType?: string;
+    constraints?: Array<{ type: string; value: number | string }>;
+    minValueExclusive?: number;
+    maxValueExclusive?: number;
+    sourceRef?: string;
   }>;
   unions: Array<{ name: string; memberTypes: string[]; description?: string }>;
   aliases: Array<{ name: string; type: string }>;

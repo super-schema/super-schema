@@ -7,6 +7,7 @@
  */
 
 import type { EntityRef, LegacyEntityRef } from "@/lib/references/entity-reference";
+import type { ApiOperation } from "@/types/schemas/api-operation";
 
 // ---------------------------------------------------------------------------
 // Logical type — covers every supported field type
@@ -258,6 +259,8 @@ export interface SuperSchemaField {
   aliases: string[];
   decorators: DecoratorSet;
   complexType?: ComplexTypeInfo;
+  /** Per-symbol descriptions of an enum field (or of the enum an array / map holds), symbol -> text; written as `@doc` on the members. */
+  enumValueDescriptions?: Record<string, string>;
   /**
    * An external `$ref` that is defined nowhere (a JSON Schema import): the ORIGINAL reference string. The field is generated as
    * `unknown` (`unknown[]` when `element`) carrying the raw reference as a `$ref` / `items` extension, never as a name nothing declares.
@@ -316,6 +319,7 @@ export interface SuperSchemaSharedEnum {
   name: string;
   values: string[];
   description?: string;
+  valueDescriptions?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +332,15 @@ export interface SuperSchemaCustomScalar {
   format?: string;
   pattern?: string;
   description?: string;
+  /** Other validators, written as the matching TypeSpec decorators on the scalar. */
+  constraints?: {
+    minLength?: number;
+    maxLength?: number;
+    minValue?: number;
+    maxValue?: number;
+    minValueExclusive?: number;
+    maxValueExclusive?: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +424,12 @@ export interface SuperSchemaModel {
   unionTypes?: SuperSchemaUnionType[];
   aliases?: SuperSchemaAlias[];
   interfaces?: SuperSchemaInterface[];
+  /**
+   * The entity's API operations (its ENTITY-scoped services' operations, base paths already applied), in the shared contract shape.
+   * Written only into the OpenAPI 3 source (`GenerateTypeSpecOptions.httpOperations`), with typed references; unlike the free-text
+   * `interfaces` above they can be generated in a multi-entity closure. Absent when the entity has none.
+   */
+  apiOperations?: ApiOperation[];
   namespace?: string;
 }
 

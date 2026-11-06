@@ -121,8 +121,8 @@ describe("describeDraftState / toDraftVersionState", () => {
   });
 
   it("maps a loaded entity to the header state", () => {
-    expect(toDraftVersionState({ hasUnpublishedChanges: false, latestVersion: { major: 3, minor: 0 } })).toEqual({
-      latestVersionLabel: "3.0",
+    expect(toDraftVersionState({ hasUnpublishedChanges: false, latestVersion: { major: 3, minor: 0, patch: 0 } })).toEqual({
+      latestVersionLabel: "3.0.0",
       hasUnpublishedChanges: false,
     });
     expect(toDraftVersionState({ hasUnpublishedChanges: true, latestVersion: null })).toEqual({

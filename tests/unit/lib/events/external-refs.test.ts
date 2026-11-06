@@ -9,15 +9,30 @@ const without = (item: Record<string, unknown>, field: string) => Object.fromEnt
 
 describe("isNewerVersion", () => {
   it("is true only when the latest version is above the current one", () => {
-    expect(isNewerVersion({ major: 1, minor: 1 }, { major: 1, minor: 2 })).toBe(true);
-    expect(isNewerVersion({ major: 1, minor: 2 }, { major: 1, minor: 2 })).toBe(false);
-    expect(isNewerVersion({ major: 1, minor: 9 }, { major: 2, minor: 0 })).toBe(true);
+    expect(isNewerVersion({ major: 1, minor: 1, patch: 0 }, { major: 1, minor: 2, patch: 0 })).toBe(true);
+    expect(isNewerVersion({ major: 1, minor: 2, patch: 0 }, { major: 1, minor: 2, patch: 0 })).toBe(false);
+    expect(isNewerVersion({ major: 1, minor: 9, patch: 4 }, { major: 2, minor: 0, patch: 0 })).toBe(true);
   });
 
   it("compares the numbers, not their text, and is false for an older latest", () => {
-    expect(isNewerVersion({ major: 1, minor: 9 }, { major: 1, minor: 10 })).toBe(true);
-    expect(isNewerVersion({ major: 2, minor: 0 }, { major: 1, minor: 9 })).toBe(false);
-    expect(isNewerVersion({ major: 1, minor: 3 }, { major: 1, minor: 2 })).toBe(false);
+    expect(isNewerVersion({ major: 1, minor: 9, patch: 0 }, { major: 1, minor: 10, patch: 0 })).toBe(true);
+    expect(isNewerVersion({ major: 2, minor: 0, patch: 0 }, { major: 1, minor: 9, patch: 9 })).toBe(false);
+    expect(isNewerVersion({ major: 1, minor: 3, patch: 0 }, { major: 1, minor: 2, patch: 5 })).toBe(false);
+  });
+
+  it("at the same number a release supersedes a snapshot, never the other way round", () => {
+    expect(isNewerVersion({ major: 1, minor: 1, patch: 0, stage: "SNAPSHOT" }, { major: 1, minor: 1, patch: 0, stage: "RELEASED" })).toBe(true);
+    expect(isNewerVersion({ major: 1, minor: 1, patch: 0, stage: "SNAPSHOT" }, { major: 1, minor: 1, patch: 0 })).toBe(true);
+    expect(isNewerVersion({ major: 1, minor: 1, patch: 0 }, { major: 1, minor: 1, patch: 0, stage: "SNAPSHOT" })).toBe(false);
+    // a newer snapshot is newer; an older release is not
+    expect(isNewerVersion({ major: 1, minor: 0, patch: 0 }, { major: 1, minor: 1, patch: 0, stage: "SNAPSHOT" })).toBe(true);
+    expect(isNewerVersion({ major: 1, minor: 2, patch: 0, stage: "SNAPSHOT" }, { major: 1, minor: 1, patch: 0 })).toBe(false);
+  });
+
+  it("compares the patch when major and minor are equal", () => {
+    expect(isNewerVersion({ major: 1, minor: 2, patch: 0 }, { major: 1, minor: 2, patch: 1 })).toBe(true);
+    expect(isNewerVersion({ major: 1, minor: 2, patch: 9 }, { major: 1, minor: 2, patch: 10 })).toBe(true);
+    expect(isNewerVersion({ major: 1, minor: 2, patch: 3 }, { major: 1, minor: 2, patch: 1 })).toBe(false);
   });
 });
 

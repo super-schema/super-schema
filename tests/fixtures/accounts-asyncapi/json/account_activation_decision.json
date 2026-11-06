@@ -1,0 +1,31 @@
+{
+  "title": "Account activation decision",
+  "description": "Policy decision for the account activation.",
+  "type": "string",
+  "readOnly": true,
+  "pattern": "^[A-Z_]+$",
+  "minLength": 1,
+  "maxLength": 64,
+  "x-enum": [
+    {
+      "value": "APPROVED",
+      "description": "Account activation is approved by policy system."
+    },
+    {
+      "value": "NEED_MORE_DATA",
+      "description": "Account activation requires more data by policy system to make decision."
+    },
+    {
+      "value": "IN_REVIEW",
+      "description": "Account activation is under review by policy system."
+    },
+    {
+      "value": "PENDING",
+      "description": "Account activation request is delivered and would take some time to process by policy system."
+    },
+    {
+      "value": "DECLINED",
+      "description": "Account is hard declined and can't be activated again."
+    }
+  ]
+}

@@ -54,9 +54,9 @@ describe("entity version actions", () => {
     expect(h.publishEntity).not.toHaveBeenCalled();
   });
 
-  it("rejects a bump other than MAJOR or MINOR", async () => {
-    expect(await publishEntityAction("e1", { bump: "PATCH" as never })).toEqual({
-      error: "bump must be MAJOR or MINOR",
+  it("rejects a bump other than MAJOR, MINOR or PATCH", async () => {
+    expect(await publishEntityAction("e1", { bump: "MICRO" as never })).toEqual({
+      error: "bump must be MAJOR, MINOR or PATCH",
       code: "VALIDATION_ERROR",
     });
     expect(h.publishEntity).not.toHaveBeenCalled();

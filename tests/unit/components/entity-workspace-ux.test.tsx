@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { useEffect, useSyncExternalStore, type MutableRefObject } from "react";
+import { useEffect, useSyncExternalStore, type MutableRefObject, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +7,7 @@ import { EntityWorkspace, type EntityWorkspaceProps } from "@/app/(dashboard)/sc
 
 const mocks = vi.hoisted(() => {
   const push = vi.fn(), replace = vi.fn(), refresh = vi.fn();
-  return { push, replace, refresh, router: { push, replace, refresh }, invalidate: vi.fn(), save: vi.fn(), discard: vi.fn(), emit: vi.fn(), history: vi.fn(), versions: vi.fn(), preview: vi.fn(), publish: vi.fn(), updateField: vi.fn(), deleteEntity: vi.fn() };
+  return { push, replace, refresh, router: { push, replace, refresh }, invalidate: vi.fn(), save: vi.fn(), discard: vi.fn(), emit: vi.fn(), history: vi.fn(), versions: vi.fn(), preview: vi.fn(), publish: vi.fn(), updateField: vi.fn(), deleteEntity: vi.fn(), pickReference: vi.fn() };
 });
 vi.mock("next/navigation", () => ({
   useRouter: () => mocks.router,
@@ -30,8 +30,8 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/actions", () => ({ deleteEntityAction: mocks.deleteEntity }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/version-actions", () => ({ getPublishPreviewAction: mocks.preview, publishEntityAction: mocks.publish, listEntityVersionsAction: mocks.versions }));
 vi.mock("@/app/(dashboard)/schemas/usage-actions", () => ({ listUsagesAction: vi.fn().mockResolvedValue({ success: true, data: { rows: [], truncated: false } }) }));
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/useReferencePick", () => ({ useReferencePick: () => ({ pickReference: async () => true, resolveReferences: (run: () => Promise<unknown>) => run(), dialog: null }) }));
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/field-editor", () => ({ FieldEditor: ({ onFieldSelect }: { onFieldSelect: (id: string) => void }) => <><button onClick={() => onFieldSelect("field-1")}>Select email</button><button onClick={() => onFieldSelect("field-2")}>Select name</button></> }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/useReferencePick", () => ({ useReferencePick: () => ({ pickReference: mocks.pickReference, resolveReferences: (run: () => Promise<unknown>) => run(), dialog: null }) }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/field-editor", () => ({ FieldEditor: ({ onFieldSelect, toolbarAction }: { onFieldSelect: (id: string) => void; toolbarAction?: ReactNode }) => <>{toolbarAction}<button onClick={() => onFieldSelect("field-1")}>Select email</button><button onClick={() => onFieldSelect("field-2")}>Select name</button></> }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/RightPanelRouter", () => ({
   RightPanelRouter: ({ fieldSaveRef, fieldDiscardRef, onDirtyChange, onTypeSpecApplied }: {
     fieldSaveRef: MutableRefObject<(() => Promise<boolean>) | null>; fieldDiscardRef: MutableRefObject<(() => void) | null>; onDirtyChange: (dirty: boolean) => void; onTypeSpecApplied: () => void;
@@ -48,7 +48,7 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/compone
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/EntityVersionList", () => ({ EntityVersionList: () => <p>Published versions loaded</p> }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemasTab", () => ({ SchemasTab: () => <p>Generated schemas view</p> }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/EntityDeploymentsTab", () => ({ EntityDeploymentsTab: () => null }));
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/TypeSpecSourceTab", () => ({ TypeSpecSourceTab: () => <p>TypeSpec source view</p> }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/TypeSpecSourceTab", () => ({ TypeSpecSourceTab: ({ readOnly }: { readOnly?: boolean }) => <textarea aria-label="Entity source" readOnly={readOnly} /> }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/InlineEntityMeta", () => ({ InlineEntityMeta: () => null }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/ApiTab", () => ({ ApiTab: () => null }));
 vi.mock("@/components/custom/DiffViewer", () => ({ DiffViewer: () => null }));
@@ -76,6 +76,7 @@ beforeEach(() => {
   mocks.push.mockImplementation((href: string) => { window.history.pushState(null, "", href); window.dispatchEvent(new PopStateEvent("popstate")); });
   mocks.replace.mockImplementation((href: string) => { window.history.replaceState(null, "", href); window.dispatchEvent(new PopStateEvent("popstate")); });
   mocks.save.mockResolvedValue(true);
+  mocks.pickReference.mockResolvedValue(true);
   mocks.history.mockResolvedValue({ versions: [] });
   mocks.versions.mockResolvedValue({ versions: [] });
   mocks.emit.mockResolvedValue({ result: { summary: { totalTargets: 1, invalidCount: 0, warningCount: 0 } } });
@@ -84,6 +85,87 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("entity workspace UX", () => {
+  it("offers an explicit reference choice while Publish is blocked, then rechecks", async () => {
+    const details = { field: "address", name: "Address", entityId: "ent-1", fieldId: "field-1", candidates: [{ entityId: "addr-1", domain: "d", product: "p", entity: "Address" }] };
+    mocks.preview.mockResolvedValueOnce({ preview: { blockers: [{ kind: "CLOSURE_BLOCKED", code: "AMBIGUOUS_REFERENCE", message: "Choose which Address is referenced.", details }] } })
+      .mockResolvedValue({ preview: { blockers: [] } });
+    mount();
+    await waitFor(() => expect(screen.getByTestId("publish-status")).toHaveTextContent("Choose which Address"));
+    expect(screen.getByTestId("publish-entity-button")).toBeDisabled();
+    expect(mocks.pickReference).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Choose referenced entity" }));
+    await waitFor(() => expect(screen.getByTestId("publish-entity-button")).toBeEnabled());
+    expect(mocks.pickReference).toHaveBeenCalledWith(details);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("rechecks after saving another change to a draft that was already dirty", async () => {
+    mocks.preview.mockResolvedValueOnce({ preview: { blockers: [] } })
+      .mockResolvedValue({ preview: { blockers: [{ kind: "UNPUBLISHED_REFERENCE", message: "Publish Address first" }] } });
+    mount({ entity: { ...props.entity, hasUnpublishedChanges: true } });
+    await waitFor(() => expect(screen.getByTestId("publish-entity-button")).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Apply TypeSpec" }));
+    await waitFor(() => expect(screen.getByTestId("publish-status")).toHaveTextContent("Publish Address first"));
+    expect(screen.getByTestId("publish-entity-button")).toBeDisabled();
+    expect(mocks.preview).toHaveBeenCalledTimes(2);
+  });
+  it("disables both Publish controls until the server check succeeds", async () => {
+    let finish!: (response: unknown) => void;
+    mocks.preview.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    mount();
+    expect(screen.getByTestId("publish-entity-button")).toBeDisabled();
+    fireEvent.click(tab("versions"));
+    expect(screen.getByTestId("versions-publish-button")).toBeDisabled();
+    await act(async () => finish({ preview: { blockers: [] } }));
+    expect(screen.getByTestId("publish-entity-button")).toBeEnabled();
+    expect(screen.getByTestId("versions-publish-button")).toBeEnabled();
+  });
+  it("keeps Publish disabled with the server's blocking reason", async () => {
+    mocks.preview.mockResolvedValue({ preview: { blockers: [{ kind: "NO_CHANGES", message: "No unpublished changes." }] } });
+    mount();
+    await waitFor(() => expect(screen.getByTestId("publish-status")).toHaveTextContent("No unpublished changes."));
+    expect(screen.getByTestId("publish-entity-button")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("publish-entity-button"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("disables Publish for missing permission and for unsaved field edits", async () => {
+    const view = mount({ capabilities: { ...props.capabilities!, publish: false } });
+    expect(screen.getByTestId("publish-entity-button")).toBeDisabled();
+    expect(mocks.preview).not.toHaveBeenCalled();
+    view.unmount();
+    mount();
+    await waitFor(() => expect(screen.getByTestId("publish-entity-button")).toBeEnabled());
+    dirty();
+    expect(screen.getByTestId("publish-entity-button")).toBeDisabled();
+    expect(screen.getByTestId("publish-status")).toHaveTextContent("Save or discard your field edits");
+  });
+  it("opens read-only Source within SuperSchema and returns to fields", () => {
+    mount();
+    const tabs = within(screen.getByRole("tablist", { name: "Entity workspace views" }));
+    expect(tabs.queryByRole("tab", { name: "Source" })).not.toBeInTheDocument();
+    expect(tabs.getByRole("tab", { name: "SuperSchema" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("button", { name: "View source" }));
+    expect(screen.getByRole("textbox", { name: "Entity source" })).toHaveAttribute("readonly");
+    expect(tabs.getByRole("tab", { name: "SuperSchema" })).toHaveAttribute("aria-selected", "true");
+    expect(new URLSearchParams(window.location.search).get("tab")).toBe("typespec");
+    fireEvent.click(screen.getByRole("button", { name: "Back to fields" }));
+    expect(screen.queryByRole("textbox", { name: "Entity source" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select email" })).toBeInTheDocument();
+  });
+  it("guards unsaved field edits before opening Source", async () => {
+    mount(); dirty();
+    fireEvent.click(screen.getByRole("button", { name: "View source" }));
+    expect(screen.queryByRole("textbox", { name: "Entity source" })).not.toBeInTheDocument();
+    fireEvent.click(dialog().getByRole("button", { name: discardAndContinue }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Entity source" })).toHaveAttribute("readonly"));
+    expect(mocks.discard).toHaveBeenCalledTimes(1);
+  });
+  it("keeps Publish and icon-only Delete in the header without bulk generation", () => {
+    mount();
+    const actions = within(screen.getByRole("group", { name: "Entity actions" }));
+    expect(actions.getByRole("button", { name: /^Publish$/ })).toBeInTheDocument();
+    expect(actions.getByRole("button", { name: "Delete entity" }).textContent).toBe("");
+    expect(actions.queryByRole("button", { name: "Generate schemas" })).not.toBeInTheDocument();
+  });
   it("does not discard dirty edits when Escape is pressed", () => {
     mount(); dirty(); fireEvent.keyDown(window, { key: "Escape" });
     expect(mocks.discard).not.toHaveBeenCalled(); expect(mocks.save).not.toHaveBeenCalled();
@@ -137,7 +219,7 @@ describe("entity workspace UX", () => {
     act(() => { window.history.replaceState(null, "", "?tab=editor&keep=1"); window.dispatchEvent(new PopStateEvent("popstate")); });
     await waitFor(() => expect(tab("editor")).toHaveAttribute("aria-selected", "true"));
   });
-  it("falls back to Editor for an unavailable tenant API view", () => {
+  it("falls back to SuperSchema for an unavailable tenant API view", () => {
     window.history.replaceState(null, "", "?tab=api&keep=1");
     mount({ level: "TENANT", entity: { ...props.entity, domainId: null, domainSlug: null, productSlug: null, productName: null } });
     expect(tab("editor")).toHaveAttribute("aria-selected", "true"); expect(screen.queryByTestId("tab-api")).not.toBeInTheDocument();
@@ -150,9 +232,13 @@ describe("entity workspace UX", () => {
     expect(mocks.versions).toHaveBeenCalledTimes(1);
   });
   it("refreshes TypeSpec data without losing context and distinguishes draft states", async () => {
-    window.history.replaceState(null, "", "?tab=typespec&keep=1"); mount(); expect(screen.getByTestId("workspace-draft-status")).toHaveTextContent(/published.*1\.0/i);
+    window.history.replaceState(null, "", "?tab=typespec&keep=1"); mount(); expect(screen.getByTestId("entity-version-state")).toHaveTextContent(/published.*1\.0/i);
+    expect(screen.getByTestId("workspace-draft-status")).toBeEmptyDOMElement();
     fireEvent.click(screen.getByRole("button", { name: "Apply TypeSpec" })); await waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(1));
-    expect(tab("typespec")).toHaveAttribute("aria-selected", "true"); expect(new URLSearchParams(window.location.search).get("keep")).toBe("1");
-    expect(screen.getByTestId("workspace-draft-status")).toHaveTextContent(/draft saved.*unpublished/i); dirty(); expect(screen.getByTestId("workspace-draft-status")).toHaveTextContent(/unsaved field edits/i);
+    expect(tab("editor")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("textbox", { name: "Entity source" })).toHaveAttribute("readonly");
+    expect(new URLSearchParams(window.location.search).get("keep")).toBe("1");
+    expect(screen.getByTestId("entity-version-state")).toHaveTextContent(/draft.*unpublished/i);
+    expect(screen.getByTestId("workspace-draft-status")).toBeEmptyDOMElement(); dirty(); expect(screen.getByTestId("workspace-draft-status")).toHaveTextContent(/unsaved field edits/i);
   });
 });

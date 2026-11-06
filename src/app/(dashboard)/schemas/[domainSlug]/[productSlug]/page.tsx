@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { OPERATION_DETAILS_INCLUDE } from "@/lib/api-operations/records";
 import { notFound, redirect } from "next/navigation";
 import { can, canListDomain, canListProduct } from "@/lib/access";
 import { requirePageAccess } from "@/lib/access/page-access";
@@ -22,7 +23,7 @@ const SERVICE_INCLUDE = {
   entity: { select: { id: true, name: true, slug: true } },
   operations: {
     orderBy: { name: "asc" },
-    include: { parameters: true, responses: true },
+    include: OPERATION_DETAILS_INCLUDE,
   },
 } as const;
 

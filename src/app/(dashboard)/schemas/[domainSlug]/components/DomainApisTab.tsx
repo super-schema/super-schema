@@ -21,9 +21,13 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
+// Operations arrive in the contract shape (`ApiOperationRecord`, mapped by `operationRecordFromRow`); the contract's newer
+// columns are optional here so hand-built fixtures and callers that predate them still type-check.
+
 interface OperationParamData {
   name: string;
   type: string;
+  isArray?: boolean;
   location: string;
   required: boolean;
   description: string;
@@ -32,6 +36,8 @@ interface OperationParamData {
 interface OperationResponseData {
   statusCode: number;
   type: string | null;
+  isArray?: boolean;
+  contentType?: string;
   description: string;
 }
 
@@ -41,6 +47,11 @@ interface OperationData {
   httpMethod: string;
   httpPath: string;
   description: string;
+  operationId?: string;
+  summary?: string;
+  tags?: string[];
+  deprecated?: boolean;
+  requestBody?: { type: string; isArray?: boolean; contentType?: string; required?: boolean; description?: string } | null;
   parameters: OperationParamData[];
   responses: OperationResponseData[];
 }
@@ -176,6 +187,8 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
         toast.error(result.error);
         return;
       }
+      // Saved; a warning (e.g. OPTIONS is not generated) never blocks it.
+      for (const w of result.warnings ?? []) toast.warning(w);
       void invalidateDomainsTree();
       setAddingOpFor(null);
       setNewOpName("");
@@ -409,14 +422,20 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
                               <Badge className={`text-[11px] h-5 font-mono font-bold border ${methodColor}`}>
                                 {op.httpMethod}
                               </Badge>
-                              <span className="font-mono text-body-small text-foreground">
+                              <span className={`font-mono text-body-small ${op.deprecated ? "line-through text-muted-foreground" : "text-foreground"}`}>
                                 {op.httpPath}
                               </span>
                               <span className="text-caption text-muted-foreground flex-1 text-left truncate ml-2">
                                 {op.name}
                               </span>
+                              {op.deprecated && (
+                                <Badge variant="outline" className="text-[9px] h-4">deprecated</Badge>
+                              )}
+                              {op.tags?.slice(0, 3).map((t) => (
+                                <Badge key={t} variant="outline" className="text-[9px] h-4 font-normal">{t}</Badge>
+                              ))}
                               <span className="text-[10px] text-muted-foreground/50">
-                                {op.parameters.length}p / {op.responses.length}r
+                                {op.parameters.length}p / {op.responses.length}r{op.requestBody ? " / body" : ""}
                               </span>
                             </button>
                             <button
@@ -431,8 +450,16 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
                           {/* Operation details */}
                           {isOpExpanded && (
                             <div className="px-space-6 pb-space-3 space-y-space-2">
+                              {op.summary && (
+                                <p className="text-caption text-foreground">{op.summary}</p>
+                              )}
                               {op.description && (
                                 <p className="text-caption text-muted-foreground">{op.description}</p>
+                              )}
+                              {op.operationId && op.operationId !== op.name && (
+                                <p className="text-[11px] text-muted-foreground">
+                                  operationId <span className="font-mono text-foreground">{op.operationId}</span>
+                                </p>
                               )}
 
                               {/* Parameters */}
@@ -449,12 +476,32 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
                                         </Badge>
                                         <span className="font-mono text-foreground">{p.name}</span>
                                         <span className="text-muted-foreground/50">:</span>
-                                        <span className="font-mono text-muted-foreground">{p.type}</span>
+                                        <span className="font-mono text-muted-foreground">{p.type}{p.isArray ? "[]" : ""}</span>
                                         {p.required && (
                                           <span className="text-[9px] text-warning">required</span>
                                         )}
                                       </div>
                                     ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Request body */}
+                              {op.requestBody && (
+                                <div>
+                                  <span className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">
+                                    Request body
+                                  </span>
+                                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
+                                    <Badge variant="outline" className="text-[9px] h-3.5 px-1 font-mono">
+                                      {op.requestBody.contentType ?? "application/json"}
+                                    </Badge>
+                                    <span className="font-mono text-muted-foreground">
+                                      {op.requestBody.type}{op.requestBody.isArray ? "[]" : ""}
+                                    </span>
+                                    {op.requestBody.required !== false && (
+                                      <span className="text-[9px] text-warning">required</span>
+                                    )}
                                   </div>
                                 </div>
                               )}
@@ -472,7 +519,10 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
                                           {r.statusCode}
                                         </Badge>
                                         {r.type && (
-                                          <span className="font-mono text-muted-foreground">{r.type}</span>
+                                          <span className="font-mono text-muted-foreground">{r.type}{r.isArray ? "[]" : ""}</span>
+                                        )}
+                                        {r.type && r.contentType && r.contentType !== "application/json" && (
+                                          <span className="font-mono text-muted-foreground/60">{r.contentType}</span>
                                         )}
                                         {r.description && (
                                           <span className="text-muted-foreground/60">{r.description}</span>

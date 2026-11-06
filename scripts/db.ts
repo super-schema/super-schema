@@ -18,13 +18,13 @@ import "dotenv/config";
 import { installBuiltInTraits } from "../src/lib/db-built-in-traits";
 import { getDbProvider, getPgliteDataDir } from "../src/lib/db-provider";
 import { applyPgliteMigrations } from "../src/lib/pglite-migrate";
-import { assertPgliteDataDirOpenable } from "../src/lib/pglite-data-version";
+import { openPglite } from "../src/lib/pglite-open";
 
 const mode = process.argv[2] === "deploy" ? "deploy" : "ensure";
 
 async function runPglite(): Promise<void> {
-  const { PGlite } = await import("@electric-sql/pglite");
-  const db = new PGlite(assertPgliteDataDirOpenable(getPgliteDataDir()));
+  // Creates ./data (PGlite's own mkdir is not recursive); an unopenable directory fails with `npm run db:reset` named.
+  const db = await openPglite(getPgliteDataDir());
   const applied = await applyPgliteMigrations(db);
   await db.close();
   console.log(

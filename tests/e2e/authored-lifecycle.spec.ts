@@ -1,11 +1,11 @@
 /**
  * Entities AUTHORED in the app (not imported from a JSON Schema document) through the real UI, each taken through
- * create -> generate EVERY target -> edit -> TypeSpec source edit + sync -> regenerate:
+ * create -> generate EVERY target -> edit in SuperSchema -> inspect read-only Source -> regenerate:
  *
  *   1. Start Blank: fields added one by one in the wizard preview.
  *   2. Build form (JSON Schema visual editor): title, properties, types, required.
  *   3. TypeSpec pasted (decorators, an enum, an entity extension): the multi-model review.
- *   4. A blank entity whose TypeSpec source is then written by hand in the TypeSpec tab (extension + decorators + enum) and synced.
+ *   4. A blank entity whose fields are reflected in read-only Source.
  *
  * Artifacts and a step table are written to <E2E_EVIDENCE_DIR>/authored (one directory per run: helpers/evidence.ts). Steps are independent where they can be (a failed step is
  * recorded, the next still runs); the test fails with every failed step listed.
@@ -18,7 +18,6 @@ import {
   ENABLED_TARGETS,
   createEntityFromReview,
   createUiWorkspace,
-  fieldName,
   generateAllTargets,
   generateTarget,
   openEditor,
@@ -28,7 +27,6 @@ import {
   pasteAndReview,
   readTypeSpecSource,
   renameField,
-  saveTypeSpecSource,
   type Generated,
 } from "./helpers/lifecycle";
 import { evidenceDir } from "./helpers/evidence";
@@ -63,7 +61,7 @@ function recorder(id: string) {
   return { step, finish, save };
 }
 
-/** The common tail: every target, content checks, rename, TypeSpec edit + sync, regenerate. */
+/** The common tail: every target, content checks, rename, read-only Source inspection, regenerate. */
 async function lifecycleFromOpenEntity(
   page: import("@playwright/test").Page,
   r: ReturnType<typeof recorder>,
@@ -72,9 +70,6 @@ async function lifecycleFromOpenEntity(
     primaryKey: string[];
     jsonSchema: string[];
     rename: [string, string];
-    /** Added to the TypeSpec source before `model <entity>`, must reach JSON Schema and OpenAPI after the sync. */
-    extension: string;
-    extensionKey: string;
   },
 ) {
   const outputs = new Map<string, Generated>();
@@ -106,30 +101,21 @@ async function lifecycleFromOpenEntity(
     expect(canon(g.code)).toContain(`"${to}"`);
     expect(canon(g.code)).not.toContain(`"${from}"`);
   });
-  await r.step("typespec source edit + sync + regenerate", async () => {
+  await r.step("read-only Source reflects SuperSchema edits + regenerate", async () => {
     const source = await readTypeSpecSource(page);
-    writeFileSync(`${EVIDENCE}/typespec-${v.entity}-before.tsp`, source);
-    // A source without extensions has no imports yet: the decorators need them.
-    const withImports = /import "@typespec\/json-schema"/.test(source)
-      ? source
-      : `import "@typespec/openapi";\nimport "@typespec/json-schema";\n\n${source}`;
-    const edited = withImports.replace(new RegExp(`(\\n?)(model ${v.entity}\\b)`), `$1${v.extension}\n$2`);
-    expect(edited).not.toBe(source);
-    const saved = await saveTypeSpecSource(page, edited);
-    expect(saved.ok, saved.message).toBe(true);
+    writeFileSync(`${EVIDENCE}/source-${v.entity}.tsp`, source);
+    expect(source).toContain(`model ${v.entity}`);
+    expect(source).toContain(to);
     await openSchemasTab(page);
     for (const key of ["json-schema", "openapi3"]) {
       const g = await generateTarget(page, ENABLED_TARGETS.find((t) => t.key === key)!.displayName, { primaryKey: v.primaryKey });
-      r.save(`${key}-after-sync`, g);
+      r.save(`${key}-after-source-view`, g);
       expect(g.error, g.error).toBeUndefined();
-      expect(canon(g.code), `${key} has the entity extension`).toContain(v.extensionKey);
       expect(canon(g.code)).toContain(`"${to}"`);
+      for (const value of v.jsonSchema) expect(canon(g.code)).toContain(value === from ? to : value);
     }
   });
 }
-
-const EXT_BOTH = (key: string, value: string) =>
-  `@TypeSpec.JsonSchema.extension("${key}", "${value}")\n@TypeSpec.OpenAPI.extension("${key}", "${value}")`;
 
 test.describe("authored entities: full lifecycle through the UI", () => {
   test("Start Blank: fields added in the wizard", { tag: ["@regression"] }, async ({ authedPage: page }) => {
@@ -163,8 +149,6 @@ test.describe("authored entities: full lifecycle through the UI", () => {
         primaryKey: ["shipment_id"],
         jsonSchema: ["shipment_id", "carrier", "weight_kg"],
         rename: ["carrier", "carrier_name"],
-        extension: EXT_BOTH("x-authored", "blank"),
-        extensionKey: "x-authored",
       });
     } catch (e) {
       fatal = e;
@@ -212,8 +196,6 @@ test.describe("authored entities: full lifecycle through the UI", () => {
         primaryKey: ["sku"],
         jsonSchema: ["sku", "quantity", "price", "discontinued"],
         rename: ["price", "unit_price"],
-        extension: EXT_BOTH("x-authored", "form"),
-        extensionKey: "x-authored",
       });
     } catch (e) {
       fatal = e;
@@ -259,8 +241,6 @@ test.describe("authored entities: full lifecycle through the UI", () => {
         // The enum `Tier` is NOT asserted: a TypeSpec-imported enum-typed field becomes a plain string (open issue, see the report).
         jsonSchema: ["plan_name", "seats", "x-team", "growth"],
         rename: ["plan_name", "plan"],
-        extension: EXT_BOTH("x-authored", "paste"),
-        extensionKey: "x-authored",
       });
     } catch (e) {
       fatal = e;
@@ -268,7 +248,7 @@ test.describe("authored entities: full lifecycle through the UI", () => {
     await r.finish(page, fatal);
   });
 
-  test("blank entity, TypeSpec source written by hand in the TypeSpec tab", { tag: ["@regression"] }, async ({ authedPage: page }) => {
+  test("blank entity fields appear in read-only Source", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(420_000);
     const r = recorder("typespec-tab");
     let fatal: unknown;
@@ -277,47 +257,31 @@ test.describe("authored entities: full lifecycle through the UI", () => {
       await r.step("workspace", async () => {
         productUrl = (await createUiWorkspace(page, "au-tab")).productUrl;
       }, true);
-      await r.step("start blank with one field", async () => {
+      await r.step("start blank with two fields", async () => {
         await page.goto(`${productUrl.replace(/\/+$/, "")}/new`);
         await page.getByRole("button", { name: /start blank/i }).first().click();
         await page.getByPlaceholder("EntityName").fill("Reading");
         await page.getByRole("button", { name: "Add Field", exact: true }).click();
         await page.getByPlaceholder("field_name").fill("reading_id");
         await page.getByPlaceholder("field_name").press("Enter");
+        await page.getByRole("button", { name: "Add Field", exact: true }).click();
+        await page.getByPlaceholder("field_name").fill("note");
+        await page.getByPlaceholder("field_name").press("Enter");
         await page.getByRole("button", { name: /create entity/i }).click();
         await expect(page).not.toHaveURL(/\/new$/, { timeout: 30_000 });
         await openEntityFromProduct(page, productUrl, "Reading");
       }, true);
-      await r.step("author the whole model in the TypeSpec tab and Save", async () => {
-        await readTypeSpecSource(page);
-        const source = [
-          'import "@typespec/openapi";',
-          'import "@typespec/json-schema";',
-          "",
-          "enum Unit { celsius, fahrenheit }",
-          "",
-          '@TypeSpec.JsonSchema.extension("x-sensor", "t-100")',
-          '@TypeSpec.OpenAPI.extension("x-sensor", "t-100")',
-          "model Reading {",
-          "  @key reading_id: string;",
-          "  @minValue(-90) @maxValue(60) value: float64;",
-          "  unit: Unit;",
-          '  @doc("Free text note") @maxLength(200) note?: string;',
-          "}",
-          "",
-        ].join("\n");
-        const saved = await saveTypeSpecSource(page, source);
-        expect(saved.ok, saved.message).toBe(true);
-        await openEditor(page);
-        for (const f of ["value", "unit", "note"]) await expect(fieldName(page, f)).toBeVisible({ timeout: 30_000 });
+      await r.step("inspect read-only Source", async () => {
+        const source = await readTypeSpecSource(page);
+        expect(source).toContain("model Reading");
+        expect(source).toContain("reading_id");
+        expect(source).toContain("note");
       });
       await lifecycleFromOpenEntity(page, r, {
         entity: "Reading",
         primaryKey: ["reading_id"],
-        jsonSchema: ["reading_id", "value", "celsius", "x-sensor", "t-100", "note"],
+        jsonSchema: ["reading_id", "note"],
         rename: ["note", "comment"],
-        extension: EXT_BOTH("x-authored", "tab"),
-        extensionKey: "x-authored",
       });
     } catch (e) {
       fatal = e;

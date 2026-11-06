@@ -39,7 +39,7 @@ async function frozenEntity(scope: typeof own, name: string) {
   const entity = await scope.entity(name, [{ name: "id", type: "string" }]);
   const version = await prisma.entityVersion.create({
     data: {
-      entityId: entity.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId,
+      entityId: entity.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId, releasedAt: new Date(),
       resolvedSource: `model ${name} {\n  id: string;\n}\n`, fieldSnapshot: [{ name: "id", fieldNumber: 1 }],
     },
   });
@@ -493,9 +493,10 @@ describe("loadEventSnapshot / resolveEventSnapshot", { concurrent: false }, () =
       id: event.id, name: event.name, tenantId: TENANT, domainId: own.domain.id, productId: own.product.id, productSlug: own.product.slug, specType: "asyncapi@3.0",
     });
     expect(snapshot.document).toEqual(doc);
-    // publish reads the version's sequence (next sequence), its frozen traits (library drift) and its stored compat report (the
-    // representations it was published in) from here; the version was seeded with the column's default report
-    expect(snapshot.latest).toEqual({ id: latest.id, major: 3, minor: 2, sequence: 1, sourceDocument: doc, resolvedSpec: null, frozenTraits: [], compatReport: {} });
+    // publish reads the latest release's sequence (next sequence), its frozen traits (library drift) and its stored compat report (the
+    // representations it was published in) from here, and the open snapshot (none here); the version was seeded with the column's default report
+    expect(snapshot.latestRelease).toMatchObject({ id: latest.id, major: 3, minor: 2, patch: 0, sequence: 1, sourceDocument: doc, resolvedSpec: null, frozenTraits: [], compatReport: {} });
+    expect(snapshot.openSnapshot).toBeNull();
     expect([...snapshot.libraryTraits.keys()]).toEqual([libraryTrait.id]);
     expect(snapshot.libraryTraits.get(libraryTrait.id)).toMatchObject({ id: libraryTrait.id, name: libraryTrait.name, kind: "MESSAGE", ownerSlug: own.domain.slug, headersEntityVersionId: ceHeaders.version.id });
     // external items come from the referenced version's stored resolvedSpec, by externalRef key

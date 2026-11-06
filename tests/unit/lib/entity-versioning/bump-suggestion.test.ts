@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { suggestBump } from "@/lib/entity-versioning/bump-suggestion";
+import { isDocOnly, suggestBump } from "@/lib/entity-versioning/bump-suggestion";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
 
 function f(name: string, extra: Partial<FieldSnapshot> = {}): FieldSnapshot {
@@ -14,21 +14,51 @@ const ID = f("id", { nullable: false, isKey: true });
 const EMAIL = f("email");
 
 describe("suggestBump", () => {
-  it("suggests MINOR when nothing changed", () => {
-    expect(suggestBump([ID, EMAIL], [ID, EMAIL])).toMatchObject({ bump: "MINOR", summary: { added: 0, removed: 0, modified: 0 } });
+  it("no field change suggests PATCH", () => {
+    expect(suggestBump([ID, EMAIL], [ID, EMAIL])).toMatchObject({ bump: "PATCH", summary: { added: 0, removed: 0, modified: 0 } });
   });
 
-  it("suggests MINOR for an added optional field", () => {
+  it("description-only field change suggests PATCH", () => {
+    const s = suggestBump([ID, EMAIL], [ID, f("email", { description: "Primary email" })]);
+    expect(s.bump).toBe("PATCH");
+    expect(s.summary.modified).toBe(1);
+  });
+
+  it("a sortOrder-only change (reordering fields) suggests PATCH", () => {
+    expect(suggestBump([ID, EMAIL], [f("id", { nullable: false, isKey: true, sortOrder: 1 }), f("email", { sortOrder: 0 })]).bump).toBe("PATCH");
+  });
+
+  it("description edits on several fields still suggest PATCH", () => {
+    expect(suggestBump([ID, EMAIL], [f("id", { nullable: false, isKey: true, description: "Key" }), f("email", { description: "Mail" })]).bump).toBe("PATCH");
+  });
+
+  it("a description edit alongside a non-breaking property change suggests MINOR", () => {
+    expect(suggestBump([ID, EMAIL], [ID, f("email", { description: "Primary email", aliases: ["mail"] })]).bump).toBe("MINOR");
+  });
+
+  it("a description edit alongside an added optional field suggests MINOR", () => {
+    expect(suggestBump([ID, EMAIL], [ID, f("email", { description: "Primary email" }), f("phone")]).bump).toBe("MINOR");
+  });
+
+  it("a description edit alongside a type change suggests MAJOR", () => {
+    expect(suggestBump([ID, EMAIL], [ID, f("email", { description: "Primary email", type: "int32" })]).bump).toBe("MAJOR");
+  });
+
+  it("isDocOnly fails closed: a modified field without changedProperties is not documentation only", () => {
+    const diff = {
+      fromVersion: 0, toVersion: 0, summary: { added: 0, removed: 0, modified: 1, unchanged: 0 },
+      fields: [{ fieldName: "email", changeType: "modified" as const, versionA: EMAIL, versionB: EMAIL }],
+    };
+    expect(isDocOnly(diff)).toBe(false);
+  });
+
+  it("added optional field suggests MINOR", () => {
     const s = suggestBump([ID, EMAIL], [ID, EMAIL, f("phone")]);
     expect(s.bump).toBe("MINOR");
     expect(s.summary.added).toBe(1);
   });
 
-  it("suggests MINOR for a description-only edit", () => {
-    expect(suggestBump([ID, EMAIL], [ID, f("email", { description: "Primary email" })]).bump).toBe("MINOR");
-  });
-
-  it("suggests MAJOR for a removed field and says why", () => {
+  it("removed field suggests MAJOR", () => {
     const s = suggestBump([ID, EMAIL], [ID]);
     expect(s.bump).toBe("MAJOR");
     expect(s.reasons.some((r) => r.includes('Removed field "email"'))).toBe(true);

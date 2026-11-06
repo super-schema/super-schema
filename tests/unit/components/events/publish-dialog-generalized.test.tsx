@@ -10,7 +10,7 @@ const eventAnalysis = {
   isFirstPublish: false,
   latestLabel: "1.0",
   suggestedBump: "MAJOR" as const,
-  candidateLabels: { MINOR: "1.1", MAJOR: "2.0" },
+  candidateLabels: { MINOR: "1.1", MAJOR: "2.0", PATCH: "1.0.1" },
   initialLabel: "1.0",
   reasons: ["Operation action changed"],
   blockers: [{ kind: "UNPUBLISHED_MESSAGE", message: "Publish OrderCreated first" }],

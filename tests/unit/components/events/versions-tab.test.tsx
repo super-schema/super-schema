@@ -15,8 +15,8 @@ import type { EventVersionSummary } from "@/lib/events/types";
 const summary = (label: string, sequence: number, over: Partial<EventVersionSummary> = {}): EventVersionSummary => {
   const [major, minor] = label.split(".").map(Number);
   return {
-    id: `v-${label}`, major, minor, label, sequence, changeKind: minor === 0 && major > 1 ? "MAJOR" : sequence === 1 ? "INITIAL" : "MINOR",
-    changeSummary: null, publishedByName: "Ada", publishedAt: "2026-10-16T10:00:00.000Z", ...over,
+    id: `v-${label}`, major, minor, patch: 0, stage: "RELEASED", label, sequence, changeKind: minor === 0 && major > 1 ? "MAJOR" : sequence === 1 ? "INITIAL" : "MINOR",
+    changeSummary: null, publishedByName: "Ada", publishedAt: "2026-10-16T10:00:00.000Z", releasedAt: "2026-10-16T10:00:00.000Z", ...over,
   };
 };
 const V10 = summary("1.0", 1);

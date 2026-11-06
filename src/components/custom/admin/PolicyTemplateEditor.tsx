@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { PolicyTemplate, CompletenessRequirements, CompletenessRequirement } from "@/types/schemas/domain-policy";
+import { FieldCompletenessPolicyEditor } from "./FieldCompletenessPolicyEditor";
 
 interface PolicyTemplateEditorProps {
   value: PolicyTemplate | null;
@@ -202,6 +203,8 @@ export function PolicyTemplateEditor({ value, onChange }: PolicyTemplateEditorPr
       </div>
 
       {/* Save */}
+      <FieldCompletenessPolicyEditor value={draft.fieldCompleteness} onChange={(fieldCompleteness) => setDraft({ ...draft, fieldCompleteness })} />
+
       <button
         onClick={handleSave}
         className="px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small"
@@ -213,7 +216,7 @@ export function PolicyTemplateEditor({ value, onChange }: PolicyTemplateEditorPr
       {showConfirm && (
         <div className="p-space-3 rounded-md border border-warning bg-warning/10 space-y-space-2">
           <p className="text-body-small text-foreground">
-            Template changes apply to future entities only. Existing entities are not affected.
+            Completeness checks apply to existing and future fields. Other template defaults apply to future entities.
           </p>
           <div className="flex gap-space-2">
             <button

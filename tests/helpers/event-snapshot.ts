@@ -26,7 +26,8 @@ export function snapshotOf(document: EventDocument): EventSnapshot {
   return {
     event: { id: "ev1", name: "Checkout", tenantId: "t1", domainId: "d1", productId: "p1", productSlug: "checkout", specType: "asyncapi" },
     document,
-    latest: null,
+    latestRelease: null,
+    openSnapshot: null,
     libraryTraits: new Map(),
     external: new Map(),
     externalMajors: {},

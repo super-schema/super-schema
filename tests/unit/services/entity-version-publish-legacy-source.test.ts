@@ -59,6 +59,8 @@ function fakePrisma(typespecSource: string) {
     },
     field: { findMany: vi.fn().mockResolvedValue([]) },
     entityVersion: {
+      // No stored version yet: no release, no open snapshot.
+      findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn(async ({ data }: { data: { resolvedSource: string } }) => {
         created.push(data);
         return {
@@ -72,6 +74,7 @@ function fakePrisma(typespecSource: string) {
   const prisma = {
     entity: tx.entity,
     field: tx.field,
+    entityVersion: tx.entityVersion,
     $transaction: async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
   };
   return { prisma, created, executed };

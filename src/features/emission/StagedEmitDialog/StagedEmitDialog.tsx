@@ -1,15 +1,19 @@
 "use client";
 
-/**
- * StagedEmitDialog
- *
- * Modal dialog for per-target staged emission.
- * Shows a checklist of targets with compatibility and complexity badges.
- * Non-breaking targets are pre-checked; breaking targets are unchecked.
- */
+/** Modal checklist for generating schemas for selected targets. */
 
 import { useState } from "react";
-import type { PerTargetImpact } from "@/types/schemas/governance";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 
 interface TargetRow {
   target: string;
@@ -28,11 +32,11 @@ interface StagedEmitDialogProps {
   onStageForLater?: (target: string) => void;
 }
 
-const COMPLEXITY_STYLES: Record<string, { bg: string; text: string }> = {
-  trivial: { bg: "bg-emerald-500/20", text: "text-emerald-400" },
-  moderate: { bg: "bg-amber-500/20", text: "text-amber-400" },
-  complex: { bg: "bg-red-500/20", text: "text-red-400" },
-};
+const COMPLEXITY_VARIANTS = {
+  trivial: "success",
+  moderate: "warning",
+  complex: "destructive",
+} as const;
 
 export function StagedEmitDialog({
   open,
@@ -44,7 +48,6 @@ export function StagedEmitDialog({
   onStageForLater,
 }: StagedEmitDialogProps) {
   const [selected, setSelected] = useState<Set<string>>(() => {
-    // Pre-check compatible targets
     const initial = new Set<string>();
     for (const t of targets) {
       if (t.compatible) initial.add(t.target);
@@ -66,149 +69,107 @@ export function StagedEmitDialog({
     });
   };
 
-  const handleEmit = () => {
-    onEmitSelected(Array.from(selected));
-  };
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/60"
-        onClick={onClose}
-      />
-
-      {/* Dialog */}
-      <div
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <DialogContent
         data-testid="staged-emit-dialog"
-        className="relative w-[560px] max-h-[80vh] rounded-xl border border-border overflow-hidden flex flex-col"
-        style={{
-          background: "rgba(28, 28, 38, 0.95)",
-          backdropFilter: "blur(16px)",
-        }}
+        className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden sm:max-w-xl"
       >
-        {/* Header */}
-        <div className="p-5 border-b border-border">
-          <h2 className="text-heading-2 text-foreground">
-            Emit Schema &mdash; Select Targets
-          </h2>
-          <p className="text-caption text-muted-foreground mt-1">
-            {entityName} v{versionId}
-          </p>
-        </div>
+        <DialogHeader className="shrink-0 pr-8">
+          <DialogTitle>Emit Schema &mdash; Select Targets</DialogTitle>
+          <DialogDescription>
+            {entityName} v{versionId}. Generate draft schemas for the selected
+            targets. Deployment is a separate step.
+          </DialogDescription>
+        </DialogHeader>
 
-        {/* Target list */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-2">
-          {targets.map((t) => {
-            const isSelected = selected.has(t.target);
-            const compStyle =
-              COMPLEXITY_STYLES[t.migrationComplexity] ??
-              COMPLEXITY_STYLES.moderate;
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <fieldset className="flex min-w-0 flex-col gap-2 p-1">
+            <legend className="sr-only">Schema targets</legend>
+            {targets.map((t) => {
+              const isSelected = selected.has(t.target);
 
-            return (
-              <div
-                key={t.target}
-                data-testid="staged-emit-target"
-                data-target={t.target}
-                data-selected={isSelected ? "true" : "false"}
-                className={`flex items-center gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${
-                  isSelected
-                    ? "border-primary/50 bg-primary/5"
-                    : "border-border hover:border-border/80"
-                }`}
-                onClick={() => toggleTarget(t.target)}
-              >
-                {/* Checkbox */}
+              return (
                 <div
-                  className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${
+                  key={t.target}
+                  data-testid="staged-emit-target"
+                  data-target={t.target}
+                  data-selected={isSelected ? "true" : "false"}
+                  className={cn(
+                    "flex shrink-0 flex-wrap items-center gap-3 rounded-lg border p-3 transition-colors focus-within:ring-2 focus-within:ring-ring",
                     isSelected
-                      ? "border-primary bg-primary"
-                      : "border-muted-foreground"
-                  }`}
+                      ? "border-primary/50 bg-primary/5"
+                      : "border-border hover:bg-muted/50"
+                  )}
                 >
-                  {isSelected && (
-                    <span className="text-white text-mono-small">{"\u2713"}</span>
+                  <label className="flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleTarget(t.target)}
+                      aria-label={t.details || t.target}
+                      className="size-4 shrink-0 accent-primary"
+                    />
+                    <span className="min-w-0 flex-1 basis-24 break-words font-medium">
+                      {t.details || t.target}
+                    </span>
+                    <span className="flex flex-wrap items-center gap-2">
+                      <Badge variant={t.compatible ? "success" : "destructive"}>
+                        {t.compatible ? "Compatible" : "Breaking"}
+                      </Badge>
+                      <Badge variant={COMPLEXITY_VARIANTS[t.migrationComplexity] ?? "warning"}>
+                        {t.migrationComplexity}
+                      </Badge>
+                    </span>
+                  </label>
+
+                  {!t.compatible && !isSelected && onStageForLater && (
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      onClick={() => onStageForLater(t.target)}
+                    >
+                      Stage for Later
+                    </Button>
+                  )}
+                  {!t.compatible && !isSelected && !onStageForLater && (
+                    <span className="text-xs text-warning">⚠ Breaking</span>
                   )}
                 </div>
-
-                {/* Target name */}
-                <span className="text-caption font-medium text-foreground w-24">
-                  {t.target}
-                </span>
-
-                {/* Compatibility badge */}
-                <span
-                  className={`inline-flex items-center px-2 py-0.5 rounded text-mono-small font-medium ${
-                    t.compatible
-                      ? "bg-emerald-500/20 text-emerald-400"
-                      : "bg-red-500/20 text-red-400"
-                  }`}
-                >
-                  {t.compatible ? "Compatible" : "Breaking"}
-                </span>
-
-                {/* Complexity badge */}
-                <span
-                  className={`inline-flex items-center px-2 py-0.5 rounded text-mono-small font-medium ${compStyle.bg} ${compStyle.text}`}
-                >
-                  {t.migrationComplexity}
-                </span>
-
-                {/* Stage for later link (for breaking targets) */}
-                {!t.compatible && !isSelected && onStageForLater && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onStageForLater(t.target);
-                    }}
-                    className="ml-auto text-mono-small text-amber-400 hover:text-amber-300 transition-colors"
-                  >
-                    Stage for Later
-                  </button>
-                )}
-
-                {/* Warning for breaking */}
-                {!t.compatible && !isSelected && !onStageForLater && (
-                  <span className="ml-auto text-mono-small text-amber-400">
-                    {"\u26A0"} Breaking
-                  </span>
-                )}
-              </div>
-            );
-          })}
+              );
+            })}
+          </fieldset>
         </div>
 
-        {/* Footer */}
-        <div className="p-5 border-t border-border flex items-center justify-between">
-          <span data-testid="staged-emit-count" className="text-caption text-muted-foreground">
+        <DialogFooter className="shrink-0">
+          <span
+            data-testid="staged-emit-count"
+            className="text-sm text-muted-foreground sm:mr-auto sm:self-center"
+          >
             {selected.size} of {targets.length} target
             {targets.length !== 1 ? "s" : ""} selected
           </span>
-          <div className="flex items-center gap-2">
-            <button
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button
               type="button"
+              variant="outline"
               onClick={onClose}
               data-testid="staged-emit-cancel"
-              className="px-4 py-2 rounded text-caption font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              onClick={handleEmit}
+              onClick={() => onEmitSelected(Array.from(selected))}
               data-testid="staged-emit-submit"
               disabled={selected.size === 0}
-              className="px-5 py-2 rounded text-caption font-medium text-white transition-colors disabled:opacity-50"
-              style={{
-                background: "linear-gradient(135deg, #A477B2, #8B5CF6)",
-              }}
             >
               Emit Selected
-            </button>
+            </Button>
           </div>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

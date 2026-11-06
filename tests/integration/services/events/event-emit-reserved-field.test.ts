@@ -45,7 +45,7 @@ beforeAll(async () => {
   entity = await scope.entity(name, [{ name: "id", type: "string" }, { name: UNSAFE, type: "string" }]);
   version = await prisma.entityVersion.create({
     data: {
-      entityId: entity.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId,
+      entityId: entity.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId, releasedAt: new Date(),
       resolvedSource: `model ${name} {\n  id: string;\n  ${UNSAFE}: string;\n}\n`, fieldSnapshot: [{ name: "id", fieldNumber: 1 }, { name: UNSAFE, fieldNumber: 2 }],
     },
   });
@@ -54,7 +54,7 @@ beforeAll(async () => {
   named = await scope.entity(UNSAFE, [{ name: "street", type: "string" }]);
   const namedVersion = await prisma.entityVersion.create({
     data: {
-      entityId: named.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId,
+      entityId: named.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId, releasedAt: new Date(),
       resolvedSource: `model ${UNSAFE} {\n  street: string;\n}\n`, fieldSnapshot: [{ name: "street", fieldNumber: 1 }],
     },
   });
@@ -62,7 +62,7 @@ beforeAll(async () => {
   const holderEntity = await scope.entity(holderName, [{ name: "id", type: "string" }]);
   const holderVersion = await prisma.entityVersion.create({
     data: {
-      entityId: holderEntity.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId,
+      entityId: holderEntity.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId, releasedAt: new Date(),
       resolvedSource: `model ${holderName} {\n  id: string;\n  address: ${UNSAFE};\n}\n`, fieldSnapshot: [{ name: "id", fieldNumber: 1 }, { name: "address", fieldNumber: 2 }],
     },
   });

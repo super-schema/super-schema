@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 type Decorators = Record<string, unknown>;
 type FieldRow = { id: string; entityId: string; name: string; type: string; decorators: Decorators; sortOrder: number };
-type VersionRow = { id: string; entityId: string; major: number; minor: number; sequence: number; fieldSnapshot: unknown[]; compatReport?: unknown };
+type VersionRow = { id: string; entityId: string; major: number; minor: number; patch: number; stage: "SNAPSHOT" | "RELEASED"; sequence: number; fieldSnapshot: unknown[]; compatReport?: unknown; publishedAt?: Date };
 type EntityRow = {
   id: string;
   tenantId: string;
@@ -80,7 +80,7 @@ const snapshotOf = (e: EntityRow) =>
 function publishAs(id: string, major: number, minor: number, frozen: Array<[string, string, Decorators?]> = []): VersionRow {
   const owner = entityOf(id) as EntityRow;
   const row: VersionRow = {
-    id: `${id}-v${major}.${minor}`, entityId: id, major, minor, sequence: major * 10 + minor,
+    id: `${id}-v${major}.${minor}`, entityId: id, major, minor, patch: 0, stage: "RELEASED", sequence: major * 10 + minor,
     fieldSnapshot: snapshotOf(entity(id, owner.name, frozen)),
   };
   versions().push(row);
@@ -88,6 +88,8 @@ function publishAs(id: string, major: number, minor: number, frozen: Array<[stri
   owner.hasUnpublishedChanges = false;
   return row;
 }
+
+const SAVED_AT = new Date("2026-10-01T00:00:00Z");
 
 function fakePrisma() {
   const rowOf = (e: EntityRow) => ({
@@ -104,13 +106,13 @@ function fakePrisma() {
       if (args.select?.metadata) return { metadata: e.metadata }; // the closure's per-member metadata read
       if (args.select?.latestVersion) {
         const latest = latestOf(e);
-        return { tenantId: e.tenantId, latestVersion: latest ? { compatReport: latest.compatReport ?? {}, major: latest.major, minor: latest.minor } : null };
+        return { tenantId: e.tenantId, latestVersion: latest ? { compatReport: latest.compatReport ?? {}, major: latest.major, minor: latest.minor, patch: latest.patch } : null };
       }
       const latest = latestOf(e);
       return {
         ...rowOf(e),
         fields: e.fields.map((f) => ({ ...f, slug: f.name, precision: null, scale: null, nullable: true, isKey: false, fieldNumber: null, description: "", classification: null, aliases: [] })),
-        latestVersion: latest ? { id: latest.id, major: latest.major, minor: latest.minor, sequence: latest.sequence, fieldSnapshot: latest.fieldSnapshot } : null,
+        latestVersion: latest ? { id: latest.id, major: latest.major, minor: latest.minor, patch: latest.patch, sequence: latest.sequence, fieldSnapshot: latest.fieldSnapshot } : null,
       };
     }),
     findMany: vi.fn(async (args: { where: { tenantId?: string; id?: { in: string[] } } }) => {
@@ -120,7 +122,7 @@ function fakePrisma() {
           .map((e) => {
             const latest = latestOf(e);
             return {
-              id: e.id, name: e.name, latestVersionId: e.latestVersionId, latestVersion: latest ? { major: latest.major, minor: latest.minor } : null,
+              id: e.id, name: e.name, latestVersionId: e.latestVersionId, latestVersion: latest ? { major: latest.major, minor: latest.minor, patch: latest.patch } : null,
               domainId: `d-${e.domain}`, productId: `p-${e.product}`, product: { domainId: `d-${e.domain}` },
             };
           });
@@ -141,24 +143,34 @@ function fakePrisma() {
     ),
   };
   const versionApi = {
-    findUnique: vi.fn(async ({ where }: { where: { id?: string; entityId_major_minor?: { entityId: string; major: number; minor: number } } }) => {
+    findUnique: vi.fn(async ({ where }: { where: { id?: string; entityId_major_minor_patch?: { entityId: string; major: number; minor: number; patch: number }; stage?: string } }) => {
       if (where.id) return versions().find((v) => v.id === where.id) ?? null;
-      const k = where.entityId_major_minor!;
-      return versions().find((v) => v.entityId === k.entityId && v.major === k.major && v.minor === k.minor) ?? null;
+      // Like Prisma: the full number on the unique key and the extra `stage` filter must both match.
+      const k = where.entityId_major_minor_patch!;
+      return versions().find((v) => v.entityId === k.entityId && v.major === k.major && v.minor === k.minor && v.patch === k.patch && v.stage === where.stage) ?? null;
     }),
-    // The edges' targets: `where: { OR: [{ entityId, major, minor }, ...] }`.
-    findMany: vi.fn(async ({ where }: { where: { OR: Array<{ entityId: string; major: number; minor: number }> } }) =>
-      versions().filter((v) => where.OR.some((k) => k.entityId === v.entityId && k.major === v.major && k.minor === v.minor))
+    // The latest release / the open snapshot of an entity: `where: { entityId, stage }`, releases ordered by number.
+    findFirst: vi.fn(async ({ where }: { where: { entityId: string; stage: string } }) =>
+      versions()
+        .filter((v) => v.entityId === where.entityId && v.stage === where.stage)
+        .sort((a, b) => b.major - a.major || b.minor - a.minor || b.patch - a.patch)[0] ?? null
+    ),
+    // The edges' targets: `where: { OR: [{ entityId, major, minor, patch, stage }, ...] }`.
+    findMany: vi.fn(async ({ where }: { where: { OR: Array<{ entityId: string; major: number; minor: number; patch: number; stage: string }> } }) =>
+      versions()
+        .filter((v) => where.OR.some((k) => k.entityId === v.entityId && k.major === v.major && k.minor === v.minor && v.patch === k.patch && v.stage === k.stage))
+        // when each was last saved (the publish compares these between its compile and its lock)
+        .map((v) => ({ ...v, publishedAt: v.publishedAt ?? SAVED_AT }))
     ),
     create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
       h.created.push(data);
       const row: VersionRow = {
         id: `${data.entityId}-v${data.major}.${data.minor}`, entityId: data.entityId as string, major: data.major as number, minor: data.minor as number,
-        sequence: data.sequence as number, fieldSnapshot: data.fieldSnapshot as unknown[], compatReport: data.compatReport,
+        patch: data.patch as number, stage: data.stage as VersionRow["stage"], sequence: data.sequence as number, fieldSnapshot: data.fieldSnapshot as unknown[], compatReport: data.compatReport,
       };
       versions().push(row);
       return {
-        id: row.id, entityId: row.entityId, major: row.major, minor: row.minor, sequence: row.sequence, changeKind: data.changeKind, changeSummary: null,
+        id: row.id, entityId: row.entityId, major: row.major, minor: row.minor, patch: row.patch, stage: row.stage, sequence: row.sequence, changeKind: data.changeKind, changeSummary: null,
         publishedById: "u1", publishedAt: new Date("2026-10-23T00:00:00Z"), publishedBy: { name: "U" },
       };
     }),
@@ -169,7 +181,7 @@ function fakePrisma() {
     entity: entityApi,
     field: fieldApi,
     entityVersion: versionApi,
-    schemaReference: { createMany: vi.fn() },
+    schemaReference: { createMany: vi.fn(), findMany: vi.fn(async () => []), deleteMany: vi.fn() },
   };
   return { prisma: { ...tx, $transaction: async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx) }, tx };
 }
@@ -372,7 +384,7 @@ describe("publishEntity: records the versions it used", () => {
     const { prisma } = fakePrisma();
     expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
     expect(readReferencedVersions(createdReport())).toEqual([
-      { ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.2", pinned: false },
+      { ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.2.0", pinned: false },
     ]);
   });
 
@@ -382,7 +394,7 @@ describe("publishEntity: records the versions it used", () => {
     const { prisma } = fakePrisma();
     expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
     expect(readReferencedVersions(createdReport())).toEqual([
-      { ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.0", pinned: true },
+      { ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.0.0", pinned: true },
     ]);
     // The compile saw the pinned version's content, not 1.2's.
     expect(compiledSource()).not.toContain("extra");
@@ -399,8 +411,8 @@ describe("publishEntity: records the versions it used", () => {
     const { prisma } = fakePrisma();
     expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
     expect(readReferencedVersions(createdReport()).map((r) => [r.ref.entity, r.version, r.pinned])).toEqual([
-      ["Customer", "1.0", false],
-      ["Address", "2.1", false],
+      ["Customer", "1.0.0", false],
+      ["Address", "2.1.0", false],
     ]);
   });
 
@@ -409,7 +421,7 @@ describe("publishEntity: records the versions it used", () => {
     const { prisma } = fakePrisma();
     await publishEntity("order", {}, ctxFor(prisma));
     expect(JSON.parse(JSON.stringify(createdReport()))).toEqual({
-      referencedVersions: [{ ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.0", pinned: false }],
+      referencedVersions: [{ ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.0.0", pinned: false }],
       // (the entity's own name, description, status and metadata as published: final wave 2b, G7)
       entitySnapshot: { name: "Order", description: "", status: "DRAFT", metadata: {} },
     });
@@ -455,7 +467,7 @@ describe("publishEntity: records the versions it used", () => {
     h.afterCompile = null;
     const retried = await publishEntity("order", {}, ctxFor(prisma));
     expect(retried.success).toBe(true);
-    expect(readReferencedVersions(createdReport())[0].version).toBe("1.1");
+    expect(readReferencedVersions(createdReport())[0].version).toBe("1.1.0");
   });
 });
 
@@ -470,7 +482,7 @@ describe("publishEntity: the SchemaReference edges agree with the recorded versi
     const { prisma, tx } = fakePrisma();
     expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
     expect(edges(tx)).toEqual([expect.objectContaining({ fromId: "order-v1.0", toId: "cust-v1.2", role: "FIELD", isDraft: false })]);
-    expect(readReferencedVersions(createdReport())[0]).toMatchObject({ version: "1.2", pinned: false });
+    expect(readReferencedVersions(createdReport())[0]).toMatchObject({ version: "1.2.0", pinned: false });
   });
 
   it("a PINNED direct reference points at the pinned version, not at the latest published one", async () => {
@@ -479,7 +491,7 @@ describe("publishEntity: the SchemaReference edges agree with the recorded versi
     const { prisma, tx } = fakePrisma();
     expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
     expect(edges(tx).map((e) => e.toId)).toEqual(["cust-v1.0"]);
-    expect(readReferencedVersions(createdReport())[0]).toMatchObject({ version: "1.0", pinned: true });
+    expect(readReferencedVersions(createdReport())[0]).toMatchObject({ version: "1.0.0", pinned: true });
   });
 
   it("every edge names exactly the version recorded for its entity (pinned and unpinned side by side)", async () => {
@@ -497,10 +509,10 @@ describe("publishEntity: the SchemaReference edges agree with the recorded versi
     const recorded = readReferencedVersions(createdReport());
     const edgeLabels = edges(tx).map((e) => {
       const v = versions().find((row) => row.id === e.toId)!;
-      return [v.entityId, `${v.major}.${v.minor}`];
+      return [v.entityId, `${v.major}.${v.minor}.0`];
     });
     expect(edgeLabels.sort()).toEqual(recorded.map((r) => [r.ref.entityId, r.version]).sort());
-    expect(edgeLabels.sort()).toEqual([["addr", "3.0"], ["cust", "1.0"]]);
+    expect(edgeLabels.sort()).toEqual([["addr", "3.0.0"], ["cust", "1.0.0"]]);
   });
 
   it("a direct reference the closure did not use (found only through the relationships metadata) keeps the latest published version", async () => {
@@ -543,7 +555,7 @@ describe("loadReferenceStaleness", () => {
     const res = await loadReferenceStaleness(prisma as never, "order");
     expect(res).toEqual({
       success: true,
-      data: [{ ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, recorded: "1.0", latest: "1.1" }],
+      data: [{ ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, recorded: "1.0.0", latest: "1.1.0" }],
     });
   });
 
@@ -580,6 +592,7 @@ describe("KD-045: a publish only draws on entities the publisher's roles cover",
   const stewardOfSales: Assignment[] = [{ role: "STEWARD", scope: { kind: "DOMAIN", tenantId: "tenant-1", domainId: "d-Sales" } }];
   /** Order (Sales) references Customer, which sits in ANOTHER domain (Finance) and is published. */
   const orderAndForeignCustomer = () => {
+    h.store.versions = []; // a fresh start each time: the previous publish's snapshot would otherwise be saved again (updated)
     h.store.entities = [
       entity("order", "Order", [["id", "string"], ["buyer", "reference", qref("cust", "Customer")]]),
       entity("cust", "Customer", [["name", "string"]], { domain: "Finance", product: "Ledger" }),

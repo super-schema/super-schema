@@ -43,7 +43,7 @@ function fakePrisma() {
     eventSpec: { findUnique: vi.fn(async () => event) },
     product: { findUnique: vi.fn(async () => ({ id: PRODUCT, domainId: "domain-1", domain: { tenantId: TENANT_A } })) },
     trait: { findMany: vi.fn(async () => []) },
-    eventSpecVersion: { findMany: vi.fn(async () => []) },
+    eventSpecVersion: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
     entity: {
       findMany: vi.fn(async ({ where }: { where: { id?: { in: string[] }; tenantId?: string } }) =>
         inIds(ENTITIES, where.id?.in).filter((e) => where.tenantId === undefined || e.tenantId === where.tenantId)),

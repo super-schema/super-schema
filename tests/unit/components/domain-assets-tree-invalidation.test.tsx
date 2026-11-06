@@ -67,15 +67,16 @@ describe("DomainTypesTab refreshes the explorer tree", () => {
 
   it("after updating an enum's values", async () => {
     renderTypes();
-    fireEvent.click(screen.getByText("A").querySelector("button")!);
+    fireEvent.click(screen.getByTestId("data-type-edit"));
+    fireEvent.change(screen.getByTestId("data-type-edit-description"), { target: { value: "Updated status description" } });
+    fireEvent.click(screen.getByTestId("data-type-edit-save"));
     await waitFor(() => expect(actions.updateSharedEnumAction).toHaveBeenCalled());
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));
   });
 
   it("after deleting an enum", async () => {
     renderTypes();
-    const card = screen.getByText("Status").parentElement!;
-    fireEvent.click(card.querySelector("button")!);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Status" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(actions.deleteSharedEnumAction).toHaveBeenCalledWith("en1"));
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));

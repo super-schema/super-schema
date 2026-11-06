@@ -42,13 +42,13 @@ const ENTITIES: Record<string, Record<string, unknown>> = {
 
 /** Published versions: `V1` (Order) refers to a readable Customer; `V4` (Invoice) refers to Ledger of domain 2. */
 const VERSIONS: Record<string, Record<string, unknown>> = {
-  V1: { id: "V1", entityId: "E1", major: 1, minor: 0, resolvedSource: "model Order {\n  id: string;\n  customer: Customer;\n}\n", fieldSnapshot: [], entity: { name: "Order", ...D1_PLACE } },
-  V3: { id: "V3", entityId: "E3", major: 1, minor: 0, resolvedSource: "model Customer {\n  name: string;\n}\n", fieldSnapshot: [], entity: { name: "Customer", ...D1_PLACE } },
-  V4: { id: "V4", entityId: "E4", major: 1, minor: 0, resolvedSource: "model Invoice {\n  id: string;\n  ledger: Ledger;\n}\n", fieldSnapshot: [], entity: { name: "Invoice", ...D1_PLACE } },
-  V2: { id: "V2", entityId: "E2", major: 1, minor: 0, resolvedSource: "model Ledger {\n  total: string;\n}\n", fieldSnapshot: [], entity: { name: "Ledger", ...D2_PLACE } },
+  V1: { id: "V1", entityId: "E1", major: 1, minor: 0, patch: 0, stage: "RELEASED", resolvedSource: "model Order {\n  id: string;\n  customer: Customer;\n}\n", fieldSnapshot: [], entity: { name: "Order", ...D1_PLACE } },
+  V3: { id: "V3", entityId: "E3", major: 1, minor: 0, patch: 0, stage: "RELEASED", resolvedSource: "model Customer {\n  name: string;\n}\n", fieldSnapshot: [], entity: { name: "Customer", ...D1_PLACE } },
+  V4: { id: "V4", entityId: "E4", major: 1, minor: 0, patch: 0, stage: "RELEASED", resolvedSource: "model Invoice {\n  id: string;\n  ledger: Ledger;\n}\n", fieldSnapshot: [], entity: { name: "Invoice", ...D1_PLACE } },
+  V2: { id: "V2", entityId: "E2", major: 1, minor: 0, patch: 0, stage: "RELEASED", resolvedSource: "model Ledger {\n  total: string;\n}\n", fieldSnapshot: [], entity: { name: "Ledger", ...D2_PLACE } },
   /** Settlement's source has two models and none named Settlement: finding its root model fails, and that failure names both. */
-  V8: { id: "V8", entityId: "E8", major: 1, minor: 0, resolvedSource: "model Batch {\n  total: string;\n}\nmodel Netting {\n  id: string;\n}\n", fieldSnapshot: [], entity: { name: "Settlement", ...D2_PLACE } },
-  V10: { id: "V10", entityId: "E10", major: 1, minor: 0, resolvedSource: "model Statement {\n  settlement: Settlement;\n}\n", fieldSnapshot: [], entity: { name: "Statement", ...D1_PLACE } },
+  V8: { id: "V8", entityId: "E8", major: 1, minor: 0, patch: 0, stage: "RELEASED", resolvedSource: "model Batch {\n  total: string;\n}\nmodel Netting {\n  id: string;\n}\n", fieldSnapshot: [], entity: { name: "Settlement", ...D2_PLACE } },
+  V10: { id: "V10", entityId: "E10", major: 1, minor: 0, patch: 0, stage: "RELEASED", resolvedSource: "model Statement {\n  settlement: Settlement;\n}\n", fieldSnapshot: [], entity: { name: "Statement", ...D1_PLACE } },
 };
 
 /** FIELD edges: the versions each version refers to. */
@@ -81,7 +81,7 @@ function fakePrisma() {
     eventSpec: { findUnique: vi.fn(async () => event) },
     product: { findUnique: vi.fn(async () => ({ id: PRODUCT, domainId: "domain-1", domain: { tenantId: TENANT } })) },
     trait: { findMany: vi.fn(async () => []) },
-    eventSpecVersion: { findMany: vi.fn(async () => []) },
+    eventSpecVersion: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
     schemaReference: {
       findMany: vi.fn(async ({ where }: { where: { fromId: string } }) => (EDGES[where.fromId] ?? []).map((toId) => ({ toId }))),
     },

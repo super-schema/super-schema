@@ -28,6 +28,10 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: mocks.refresh }),
 }));
 vi.mock("@/lib/recent-entities", () => ({ trackRecentEntity: vi.fn() }));
+// Exercise dialog-time reference changes after the header's eligibility check passed.
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/usePublishEligibility", () => ({
+  usePublishEligibility: () => ({ checking: false, blockers: [], error: null, retry: vi.fn() }),
+}));
 vi.mock("sonner", () => ({ toast: { error: mocks.toastError, success: mocks.toastSuccess } }));
 vi.mock("@/hooks/useDomainsTree", () => ({ useInvalidateDomainsTree: () => vi.fn() }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions", () => ({
@@ -73,6 +77,7 @@ function props(): EntityWorkspaceProps {
     fields: [],
     apiServiceId: null,
     apiOperations: [],
+    capabilities: { write: true, publish: true, deploy: true, overrideEntity: true, overrideGlobal: true },
   };
 }
 

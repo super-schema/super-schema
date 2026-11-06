@@ -49,8 +49,8 @@ async function seedBase(db: PGlite) {
      VALUES ('e1','Order','order','tenant_default','d1','p1','u1',${NOW})`
   );
   await db.exec(
-    `INSERT INTO "entity_versions" ("id","entityId","major","minor","sequence","resolvedSource","fieldSnapshot","changeKind","publishedById")
-     VALUES ('v1','e1',1,0,1,'model Order {}','[]','INITIAL','u1')`
+    `INSERT INTO "entity_versions" ("id","entityId","major","minor","sequence","resolvedSource","fieldSnapshot","changeKind","publishedById","releasedAt")
+     VALUES ('v1','e1',1,0,1,'model Order {}','[]','INITIAL','u1',CURRENT_TIMESTAMP)`
   );
 }
 
@@ -117,8 +117,8 @@ describe("drop legacy event catalog migration (guard)", () => {
       await seedBase(db);
       await db.exec(v2Spec());
       await db.exec(
-        `INSERT INTO "event_spec_versions" ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenChannels","frozenTraits","changeKind","publishedById")
-         VALUES ('sv1','s2',1,0,1,'{}','{}','[]','[]','INITIAL','u1')`
+        `INSERT INTO "event_spec_versions" ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenChannels","frozenTraits","changeKind","publishedById","releasedAt")
+         VALUES ('sv1','s2',1,0,1,'{}','{}','[]','[]','INITIAL','u1',CURRENT_TIMESTAMP)`
       );
       await expectRefused(db, /1 legacy row\(s\) in "event_spec_versions"/);
     });
@@ -221,8 +221,8 @@ describe("drop legacy event catalog migration (clean database)", () => {
       await seedBase(db);
       await db.exec(v2Spec());
       await db.exec(
-        `INSERT INTO "event_spec_versions" ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenChannels","frozenTraits","changeKind","publishedById","resolvedSpec")
-         VALUES ('sv2','s2',1,0,1,'{"asyncapi":"3.0.0"}','{"documentVersion":2}','[]','[]','INITIAL','u1','{"documentVersion":2}')`
+        `INSERT INTO "event_spec_versions" ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenChannels","frozenTraits","changeKind","publishedById","releasedAt","resolvedSpec")
+         VALUES ('sv2','s2',1,0,1,'{"asyncapi":"3.0.0"}','{"documentVersion":2}','[]','[]','INITIAL','u1',CURRENT_TIMESTAMP,'{"documentVersion":2}')`
       );
       await db.exec(
         `INSERT INTO "traits" ("id","kind","name","tenantId","domainId","updatedAt") VALUES ('t-domain','MESSAGE','DomainProps','tenant_default','d1',${NOW})`
@@ -280,8 +280,8 @@ describe("drop legacy event catalog migration (clean database)", () => {
       await seedBase(db);
       await db.exec(v2Spec());
       await db.exec(
-        `INSERT INTO "event_spec_versions" ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","changeKind","publishedById","resolvedSpec")
-         VALUES ('sv2','s2',1,0,1,'{}','{}','[]','INITIAL','u1','{"documentVersion":2}')`
+        `INSERT INTO "event_spec_versions" ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","changeKind","publishedById","releasedAt","resolvedSpec")
+         VALUES ('sv2','s2',1,0,1,'{}','{}','[]','INITIAL','u1',CURRENT_TIMESTAMP,'{"documentVersion":2}')`
       );
       await db.exec(`INSERT INTO "schema_references" ("id","fromKind","fromId","role","toKind","toId","isDraft") VALUES ('r1','EVENT_SPEC_VERSION','sv2','PAYLOAD','ENTITY_VERSION','v1',false)`);
       await db.exec(`DELETE FROM "domains" WHERE "id" = 'd1'`);

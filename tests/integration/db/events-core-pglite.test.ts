@@ -20,8 +20,8 @@ describe("events core schema on PGlite (after every migration, the legacy catalo
          VALUES ('e1','Order','order','tenant_default','d1','p1','u1',${NOW})`
       );
       await db.exec(
-        `INSERT INTO "entity_versions" ("id","entityId","major","minor","sequence","resolvedSource","fieldSnapshot","changeKind","publishedById")
-         VALUES ('v1','e1',1,0,1,'model Order {}','[]','INITIAL','u1')`
+        `INSERT INTO "entity_versions" ("id","entityId","major","minor","sequence","resolvedSource","fieldSnapshot","changeKind","publishedById","releasedAt")
+         VALUES ('v1','e1',1,0,1,'model Order {}','[]','INITIAL','u1',CURRENT_TIMESTAMP)`
       );
 
       // Traits live at tenant or domain level only; only MESSAGE traits carry headers.
@@ -53,17 +53,17 @@ describe("events core schema on PGlite (after every migration, the legacy catalo
       const spec = await db.query<{ specType: string }>(`SELECT "specType" FROM "event_specs" WHERE "id" = 's1'`);
       expect(spec.rows[0].specType).toBe("asyncapi@3.0");
       await db.exec(
-        `INSERT INTO "event_spec_versions" ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","resolvedSpec","changeKind","publishedById")
-         VALUES ('sv1','s1',1,0,1,'{}','{}','[]','{"documentVersion":2}','INITIAL','u1')`
+        `INSERT INTO "event_spec_versions" ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","resolvedSpec","changeKind","publishedById","releasedAt")
+         VALUES ('sv1','s1',1,0,1,'{}','{}','[]','{"documentVersion":2}','INITIAL','u1',CURRENT_TIMESTAMP)`
       );
       await expect(
         db.exec(
-          `INSERT INTO "event_spec_versions" ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","changeKind","publishedById")
-           VALUES ('sv0','s1',0,0,2,'{}','{}','[]','INITIAL','u1')`
+          `INSERT INTO "event_spec_versions" ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","changeKind","publishedById","releasedAt")
+           VALUES ('sv0','s1',0,0,2,'{}','{}','[]','INITIAL','u1',CURRENT_TIMESTAMP)`
         )
       ).rejects.toThrow(/event_spec_versions_numbers_check/);
 
-      // Published versions are immutable.
+      // Released versions are immutable.
       await expect(db.exec(`UPDATE "event_spec_versions" SET "minor" = 1 WHERE "id" = 'sv1'`)).rejects.toThrow(/immutable/);
 
       // D3: an entity pinned by a library trait cannot be deleted on its own …

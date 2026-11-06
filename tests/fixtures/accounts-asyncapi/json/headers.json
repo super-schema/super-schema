@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "title": "Event headers",
+  "description": "Event headers.",
+  "properties": {
+
+    "PayPal-Tenant-Context": {
+      "description": "The tenant context that the message/event processed against.",
+      "type": "string"
+    },
+    "PayPal-Data-Audit": {
+      "description": "The header used by EDL consumer to track Events published by tenants. This information will be used by EDL consumer detect any data loss and republish lost events, if source system has support for republishing events.",
+      "$ref":"paypal_data_audit.json"
+    }
+
+  }
+}

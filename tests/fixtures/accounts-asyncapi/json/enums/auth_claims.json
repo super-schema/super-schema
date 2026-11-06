@@ -1,0 +1,30 @@
+{
+    "type": "string",
+    "title": "auth_claims",
+    "minLength" : 1,
+    "maxLength" : 30,
+    "description": "Auth claims by which the user was authenticated.",
+    "x-enum": [
+      {
+          "value": "USERNAME",
+          "description":"Indicates that the user was authenticated using username."
+      },
+      {
+          "value": "PASSWORD",
+          "description":"Indicates that the user was authenticated using password."
+      },
+      {
+          "value": "MFA",
+          "description":"Indicates that the user was authenticated using MFA."
+      },
+      {
+          "value": "PIN",
+          "description":"Indicates that the user was authenticated using pin."
+      },
+      {
+          "value": "TOUCH",
+          "description":"Indicates that the user was authenticated using touch."
+      }
+    ]
+
+  }

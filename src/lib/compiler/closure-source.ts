@@ -257,7 +257,7 @@ const DECLARATION = /^(?:model|enum|union|scalar|alias|interface)\s+([A-Za-z_][A
  */
 export function generateClosureTypeSpec(
   closure: { entities: ClosureEntity[] },
-  opts: { target: ClosureTarget; governance?: boolean; mergeNamespaces?: string[][] }
+  opts: { target: ClosureTarget; governance?: boolean; mergeNamespaces?: string[][]; httpOperations?: boolean }
 ): ClosureTypeSpec {
   const governance = opts.governance === true;
 
@@ -357,16 +357,36 @@ export function generateClosureTypeSpec(
       }
       return type;
     };
+    // An API operation's type names an entity or a data type by its bare name: written fully qualified (a bare `Order` inside the
+    // entity blocks can bind to the NAMESPACE `...Order` and silently become `{}`). This entity first, then the shared types it
+    // declares (under their closure names), then any other entity of the closure that the name designates unambiguously.
+    const ownShared = sharedTypeNames(compiled.get(p) as SuperSchemaModel);
+    const memberNamedType = (name: string): string | null => {
+      const wanted = name.trim();
+      if (nameKey(wanted) === nameKey(p.entity.ref.entity) || idKey(wanted) === p.modelName.toLowerCase()) return qualifiedModel(p);
+      const id = sanitizeIdentifier(wanted);
+      if (ownShared.has(id)) return `${p.namespace}.${mustPrefix(id) ? `${p.modelName}_${id}` : id}`;
+      // The entity the closure loader resolved the name to (nearest place first, among what the caller may read): it settles a name
+      // several members share, which the bare-name fallback below would leave unresolved.
+      const loaded = p.entity.operationTypes?.[wanted];
+      const resolvedByLoader = loaded === undefined ? undefined : byId.get(loaded);
+      if (resolvedByLoader) return qualifiedModel(resolvedByLoader);
+      const other = byQualified.get(wanted) ?? resolveLegacy(wanted);
+      return other ? qualifiedModel(other) : null;
+    };
     const generated = generateTypeSpecWithDiagnostics(model, {
       governance,
+      httpOperations: opts.httpOperations === true,
       closureMember: {
         modelName: p.modelName,
         referenceType: memberReferenceType,
         enterpriseShadowed,
+        namedType: memberNamedType,
         ...(!flattens && baseOf(p) ? { baseType: qualifiedModel(baseOf(p) as Placed) } : {}),
       },
     });
-    diagnostics.push(...generated.diagnostics);
+    // (an operation warning names the operation, not the entity: say whose it is)
+    diagnostics.push(...generated.diagnostics.map((d) => (d.code === "API_OPERATION" ? { ...d, message: `${p.entity.entity.name}: ${d.message}` } : d)));
 
     const lines = generated.source.replace(/\n$/, "").split("\n");
     let i = 0;

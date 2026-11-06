@@ -16,16 +16,27 @@ export interface PayloadDescription {
   schemaFormat?: string;
   /** The schema with every local `$ref` inlined (a protobuf source is text); `undefined` for `unsupported` and `none`. */
   raw?: unknown;
+  /** Set when the `schemaFormat` is not one the importer knows but the schema is an ordinary JSON Schema object, so it was read as JSON Schema. */
+  assumedJsonSchema?: boolean;
   /** Set when the schema refers to itself (a recursive type): the chain of references that closes the loop. The format is then `unsupported`. */
   recursive?: string[];
 }
 
 /** MIME types of the schema formats the importer reads, without parameters (`;version=…`) and with or without the `+json` / `+yaml` suffix. */
 const FORMATS: ReadonlyArray<{ format: "json-schema" | "avro" | "protobuf"; mimeTypes: readonly string[] }> = [
-  { format: "json-schema", mimeTypes: ["application/vnd.aai.asyncapi", "application/schema"] },
+  // CloudEvents' JSON envelope is described with a JSON Schema in practice (a message's schema $refs the CloudEvents definition).
+  { format: "json-schema", mimeTypes: ["application/vnd.aai.asyncapi", "application/schema", "application/cloudevents"] },
   { format: "avro", mimeTypes: ["application/vnd.apache.avro"] },
   { format: "protobuf", mimeTypes: ["application/vnd.google.protobuf"] },
 ];
+
+/** Formats that are really other schema languages: never read as JSON Schema, whatever the shape of the value. */
+const OTHER_LANGUAGES = /openapi|swagger|raml|graphql|wsdl|xsd|xml|avro|protobuf|proto/i;
+/** Vendor media types (`application/vnd.…`, `…+json`) are the ones a team uses for "our JSON, with our envelope": an unknown `application/x-…` stays unsupported. */
+const VENDOR_JSON_CARRIER = /^\s*application\/(vnd\.|[^;]*\+json)/i;
+/** A plain object that looks like a JSON Schema (it types something, has properties, combines schemas or references one). */
+const looksLikeJsonSchema = (value: unknown): boolean =>
+  isBag(value) && ["type", "properties", "allOf", "anyOf", "oneOf", "$ref", "enum", "items", "$schema"].some((k) => Object.hasOwn(value, k));
 
 /** AsyncAPI `schemaFormat` string → the importer's format; anything else (OpenAPI, RAML, …) is `unsupported`. */
 export function detectSchemaFormat(schemaFormat: string): "json-schema" | "avro" | "protobuf" | "unsupported" {
@@ -65,6 +76,7 @@ export function describeSchemaField(refs: RefResolver, value: unknown, at: strin
   let format: Format;
   let schemaNode: unknown;
   let schemaAt = field.data.pointer;
+  let assumedJsonSchema = false;
   const wrapped = isBag(node) && typeof node.schemaFormat === "string";
   if (wrapped) {
     // Multi Format Schema Object: { schemaFormat, schema }
@@ -74,8 +86,11 @@ export function describeSchemaField(refs: RefResolver, value: unknown, at: strin
     const detected = detectSchemaFormat(node.schemaFormat as string);
     const detectedForRole = role === "headers" && (detected === "avro" || detected === "protobuf") ? "unsupported" : detected;
     const usable = detectedForRole === "protobuf" ? typeof schema.data.value === "string" : (detectedForRole === "json-schema" || detectedForRole === "avro") && isBag(schema.data.value);
-    format = usable ? detectedForRole : "unsupported";
-    schemaNode = usable ? node.schema : undefined;
+    // A vendor format (`application/vnd.paypal.asynapi+oml`, ...) whose value is an ordinary JSON Schema object: read it as one, and say so.
+    const assumed = !usable && detected === "unsupported" && VENDOR_JSON_CARRIER.test(node.schemaFormat as string) && !OTHER_LANGUAGES.test(node.schemaFormat as string) && looksLikeJsonSchema(schema.data.value);
+    assumedJsonSchema = assumed;
+    format = usable ? detectedForRole : assumed ? "json-schema" : "unsupported";
+    schemaNode = usable || assumed ? node.schema : undefined;
     schemaAt = `${field.data.pointer}/schema`;
   } else {
     // A bare Schema Object is the AsyncAPI schema format (JSON Schema)
@@ -83,7 +98,7 @@ export function describeSchemaField(refs: RefResolver, value: unknown, at: strin
     schemaNode = isBag(node) ? node : undefined;
   }
   const schemaFormat = wrapped ? (node as { schemaFormat: string }).schemaFormat : undefined;
-  const written = schemaFormat === undefined ? {} : { schemaFormat };
+  const written = { ...(schemaFormat === undefined ? {} : { schemaFormat }), ...(assumedJsonSchema ? { assumedJsonSchema: true } : {}) };
   if (schemaNode === undefined) return ok({ format, ...written });
 
   const inlined = refs.inlineSchema(schemaNode, schemaAt);
@@ -125,7 +140,7 @@ export function extractPayloads(raw: RawAsyncApi3): Result<ExtractedPayload[]> {
       const roles: Array<["payload" | "headers", PayloadDescription | null]> = [["payload", described.data.payload], ["headers", described.data.headers]];
       for (const [role, description] of roles) {
         if (!description || (role === "headers" && description.format === "none")) continue; // no headers = no entry; no payload still needs a placeholder
-        out.push({ messageKey: message.key, role, sourcePointer: `${message.pointer}/${role}`, format: description.format, raw: description.raw, suggestedName: suggestPayloadName(message, role) });
+        out.push({ messageKey: message.key, role, sourcePointer: `${message.pointer}/${role}`, format: description.format, raw: description.raw, suggestedName: suggestPayloadName(message, role), ...(description.assumedJsonSchema ? { assumedFormat: description.schemaFormat } : {}) });
       }
     }
     return ok(out);

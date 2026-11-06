@@ -65,13 +65,13 @@ async function findEntityReferrers(db: Db, entity: { id: string; tenantId: strin
   if (edges.length === 0) return [];
   const sources = await db.entityVersion.findMany({
     where: { id: { in: edges.map((e) => e.fromId) }, entity: { tenantId: entity.tenantId, id: { not: entity.id } } },
-    select: { major: true, minor: true, entity: { select: { id: true, name: true } } },
+    select: { major: true, minor: true, patch: true, stage: true, entity: { select: { id: true, name: true } } },
     orderBy: [{ entity: { name: "asc" } }, { entityId: "asc" }, { sequence: "asc" }],
   });
   const byEntity = new Map<string, EntityReferrer>();
   for (const v of sources) {
     const entry = byEntity.get(v.entity.id) ?? { id: v.entity.id, name: v.entity.name, versions: [] };
-    entry.versions.push(formatVersionLabel(v));
+    entry.versions.push(formatVersionLabel(v, v.stage));
     byEntity.set(v.entity.id, entry);
   }
   return [...byEntity.values()];

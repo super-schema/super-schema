@@ -44,12 +44,10 @@ import {
   ENABLED_TARGETS,
   createEntityFromReview,
   generateTarget,
-  openEditor,
   openSchemasTab,
   pasteAndReview,
   readPreview,
   readTypeSpecSource,
-  saveTypeSpecSource,
 } from "./helpers/lifecycle";
 import { splitBundle } from "./helpers/preview-text";
 import { readZipDirectory } from "./helpers/zip";
@@ -252,13 +250,8 @@ test.describe("references between entities", () => {
     await addReferenceField(page, "home", address);
 
     // The entity's own publish: a blocker that names Address, and a Publish button that stays off
-    const dialog = await openPublishDialog(page);
-    const blocker = dialog.getByTestId("publish-blockers").getByTestId("publish-blocker");
-    await expect(blocker).toHaveText([`Publish ${address.name} first`]);
-    await expect(blocker).toHaveAttribute("data-kind", "UNPUBLISHED_REFERENCE");
-    await expect(dialog.getByTestId("confirm-publish")).toBeDisabled();
-    await dialog.getByTestId("publish-cancel").click();
-    await expect(dialog).toBeHidden();
+    await expect(centerPanel(page).getByTestId("publish-status")).toHaveText(`Publish ${address.name} first`);
+    await expect(centerPanel(page).getByTestId("publish-entity-button")).toBeDisabled();
 
     // The generated schema's own publish: a preview of the saved draft, refused naming the draft entity
     await openSchemasTab(page);
@@ -392,69 +385,38 @@ test.describe("a name that two entities answer to", () => {
     await expect(page.getByTestId("reference-pick-dialog")).toHaveCount(0);
   });
 
-  test("the publish dialog asks the same question and the pick lifts the ambiguity (what is left is that the chosen entity was never published)", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
+  test("an explicit reference choice lifts publish ambiguity while unpublished references keep Publish disabled", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
     const t = await twins(workspace);
     await openEntityPage(page, t.customer.url, t.customer.name);
-    const dialog = await openPublishDialog(page);
-    // the question is asked as soon as the publish dialog has found the ambiguity; declining it leaves the blocker and a button to ask again
+    const main = centerPanel(page);
+    await expect(main.getByTestId("publish-entity-button")).toBeDisabled();
+    await main.getByRole("button", { name: "Choose referenced entity", exact: true }).click();
     const declined = await expectPickDialog(page, workspace, t);
     await declined.getByRole("button", { name: "Cancel" }).click();
     await expect(declined).toBeHidden();
-    await expect(dialog.getByTestId("confirm-publish")).toBeDisabled();
-    await expect(dialog.getByTestId("publish-blocker").first()).toBeVisible();
-    await dialog.getByTestId("publish-pick-reference").click();
+    await expect(main.getByTestId("publish-entity-button")).toBeDisabled();
+    await main.getByRole("button", { name: "Choose referenced entity", exact: true }).click();
     const pick = await expectPickDialog(page, workspace, t);
     await pick.getByTestId("reference-pick-candidate").filter({ hasText: t.otherProduct.name }).click();
     await expect(pick).toBeHidden();
     // The reference is qualified now, and what blocks the publish is the plain one: the chosen entity is not published
-    await expect(dialog.getByTestId("publish-blocker").first()).toContainText(`Publish ${t.twinName} first`, { timeout: 30_000 });
-    await expect(dialog.getByTestId("publish-pick-reference")).toHaveCount(0);
+    await expect(main.getByTestId("publish-status")).toContainText(`Publish ${t.twinName} first`, { timeout: 30_000 });
+    await expect(main.getByTestId("publish-entity-button")).toBeDisabled();
+    await expect(main.getByRole("button", { name: "Choose referenced entity", exact: true })).toHaveCount(0);
   });
 
-  test("the TypeSpec tab saves a source that names another entity, and asks about a name two entities answer to", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
-    test.setTimeout(180_000);
+  test("Source shows references authored through SuperSchema without offering source editing", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
     const address = await makeEntity(workspace, "Address");
     const customer = await makeEntity(workspace, "Customer");
     await openEntityPage(page, customer.url, customer.name);
-
-    // The old defect: a source whose field is typed with another entity's name did not compile, so it could not be saved
-    const source = await readTypeSpecSource(page);
-    const modelHead = new RegExp(`(model ${customer.name}[^{]*\\{[^\\n]*\\n)`);
-    const withAddress = source.replace(modelHead, `$1  home: ${address.name};\n`);
-    expect(withAddress).not.toBe(source);
-    const saved = await saveTypeSpecSource(page, withAddress);
-    expect(saved.ok, saved.message).toBe(true);
-    await openEditor(page);
-    // saved as a reference to that entity, fully qualified
+    await addReferenceField(page, "home", address);
     await expect(centerPanel(page).locator('[data-testid="field-card"][data-field="home"]')).toContainText(`ref(${qualified(workspace, address)})`);
-    // and it is generated with it
+    const source = await readTypeSpecSource(page);
+    expect(source).toContain(address.name);
+    expect(source).toContain("home");
     await openSchemasTab(page);
     expect((await generateTarget(page, displayName("json-schema"))).error).toBeUndefined();
     expect(await filePaths(page)).toEqual([`${customer.name}.json`, `${address.name}.json`]);
-
-    // A name that two entities answer to is asked about, the pick goes with the save
-    const twinName = unique("Twin");
-    const otherProduct = await createProductInDomain(workspace.domainId);
-    await createEntityInProduct(workspace.domainId, workspace.productId, twinName);
-    await createEntityInProduct(workspace.domainId, otherProduct.id, twinName);
-    await openEntityPage(page, customer.url, customer.name);
-    const current = await readTypeSpecSource(page);
-    const withTwin = current.replace(modelHead, `$1  twin: ${twinName};\n`);
-    expect(withTwin).not.toBe(current);
-    const area = page.getByTestId("typespec-source-textarea");
-    // typed and saved as one unit, repeated until it goes through (the tab can reload its source right after it was opened)
-    await expect(async () => {
-      await area.fill(withTwin);
-      await page.getByTestId("typespec-save").click({ timeout: 2_000 });
-    }).toPass({ timeout: 30_000 });
-    const dialog = page.getByTestId("reference-pick-dialog");
-    await expect(dialog).toBeVisible({ timeout: 60_000 });
-    await expect(dialog).toContainText(`Field "twin" refers to "${twinName}", which matches 2 entities`);
-    await expect(dialog.getByTestId("reference-pick-candidate")).toHaveCount(2);
-    await dialog.getByTestId("reference-pick-candidate").filter({ hasText: otherProduct.name }).click();
-    await expect(successToast(page, /TypeSpec compiled and applied/)).toBeVisible({ timeout: 60_000 });
-    await openEditor(page);
-    await expect(centerPanel(page).locator('[data-testid="field-card"][data-field="twin"]')).toContainText(`ref(${qualified(workspace, { name: twinName }, otherProduct.name)})`);
   });
 });
 

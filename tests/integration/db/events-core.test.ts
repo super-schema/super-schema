@@ -30,7 +30,7 @@ async function seedEvents(tx: Prisma.TransactionClient) {
   const level = { tenantId: TENANT, domainId: domain.id, productId: product.id };
   const entity = await tx.entity.create({ data: { name: "Order", slug: `order-${s}`, ...level, ownerId: user.id } });
   const version = await tx.entityVersion.create({
-    data: { entityId: entity.id, major: 1, minor: 0, sequence: 1, resolvedSource: "model Order {}", fieldSnapshot: [], changeKind: "INITIAL", publishedById: user.id },
+    data: { entityId: entity.id, major: 1, minor: 0, sequence: 1, resolvedSource: "model Order {}", fieldSnapshot: [], changeKind: "INITIAL", publishedById: user.id, releasedAt: new Date() },
   });
   const trait = await tx.trait.create({
     data: { kind: "MESSAGE", name: `CloudEvents${s}`, tenantId: TENANT, headersEntityId: entity.id, headersEntityVersionId: version.id },

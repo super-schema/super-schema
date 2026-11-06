@@ -129,7 +129,7 @@ describe("emitEventStoredVersion on a stored document past the bounds", () => {
     return {
       eventSpec: { findUnique: vi.fn(async () => event) },
       product: { findUnique: vi.fn(async () => ({ id: PRODUCT, domainId: "domain-1", domain: { tenantId: TENANT } })) },
-      eventSpecVersion: { findUnique: vi.fn(async () => ({ document, major: 1, minor: 0, compatReport: {} })) },
+      eventSpecVersion: { findUnique: vi.fn(async () => ({ document, major: 1, minor: 0, patch: 0, stage: "RELEASED", compatReport: {} })) },
     };
   }
 
@@ -138,12 +138,12 @@ describe("emitEventStoredVersion on a stored document past the bounds", () => {
     vi.mocked(toYaml).mockClear();
     const prisma = fakePrisma(assembleAsyncApi3(specWithMessageBindings(deepChain(300, { value: 1 }))).document);
 
-    const res = await emitEventStoredVersion(EVENT, PRODUCT, "1.0", { userId: "u1", userRole: "ADMIN", assignments: ADMIN, prisma } as never);
+    const res = await emitEventStoredVersion(EVENT, PRODUCT, "1.0.0", { userId: "u1", userRole: "ADMIN", assignments: ADMIN, prisma } as never);
 
     expect(res.success).toBe(false);
     if (!res.success) {
       expect(res.error.code).toBe("VALIDATION_ERROR");
-      expect(res.error.message).toBe(`Version 1.0 of event "${EVENT}" cannot be served: it nests more than ${MAX_DOCUMENT_DEPTH} levels`);
+      expect(res.error.message).toBe(`Version 1.0.0 of event "${EVENT}" cannot be served: it nests more than ${MAX_DOCUMENT_DEPTH} levels`);
     }
     expect(toJson).not.toHaveBeenCalled();
     expect(toYaml).not.toHaveBeenCalled();
@@ -152,7 +152,7 @@ describe("emitEventStoredVersion on a stored document past the bounds", () => {
   it("serves a stored document within the bounds", async () => {
     const prisma = fakePrisma(assembleAsyncApi3(checkoutServiceSpec).document);
 
-    const res = await emitEventStoredVersion(EVENT, PRODUCT, "1.0", { userId: "u1", userRole: "ADMIN", assignments: ADMIN, prisma } as never);
+    const res = await emitEventStoredVersion(EVENT, PRODUCT, "1.0.0", { userId: "u1", userRole: "ADMIN", assignments: ADMIN, prisma } as never);
 
     expect(res.success).toBe(true);
   });

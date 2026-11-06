@@ -44,7 +44,7 @@ async function seedPublishedEvent(sc: Scope, label: string, pinned?: { versionId
     : await prisma.entityVersion.create({
         data: {
           entityId: entity!.id, major: 1, minor: 0, sequence: 1, resolvedSource: entity!.typespecSource ?? "", fieldSnapshot: [],
-          changeKind: "INITIAL", publishedById: ctx.userId,
+          changeKind: "INITIAL", publishedById: ctx.userId, releasedAt: new Date(),
         },
       });
   const toId = pinned?.versionId ?? entityVersion!.id;

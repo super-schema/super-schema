@@ -24,7 +24,7 @@ const h = vi.hoisted(() => {
     getGrantableScopes: fn(), updateUser: fn(), assignRole: fn(), removeRole: fn(),
     listUsers: fn(), getRoleMatrix: fn(), listPendingInvitations: fn(), inviteUser: fn(), revokeInvitation: fn(), setUserDisabled: fn(), createResetLink: fn(),
     runHealthCheck: fn(), getUsageMetrics: fn(), getActivityMetrics: fn(), getErrorSummary: fn(),
-    getEmitterConfigs: fn(), updateEmitterConfig: fn(), getDomainsAdmin: fn(), createDomainAdmin: fn(),
+    getEmitterConfigs: fn(), updateEmitterConfig: fn(), getDomainsAdmin: fn(), createDomainAdmin: fn(), updateDomainAdmin: fn(),
   };
 });
 
@@ -42,7 +42,7 @@ vi.mock("@/services/health.service", () => ({
   runHealthCheck: h.runHealthCheck, getUsageMetrics: h.getUsageMetrics, getActivityMetrics: h.getActivityMetrics, getErrorSummary: h.getErrorSummary,
 }));
 vi.mock("@/services/emitter-config.service", () => ({ getEmitterConfigs: h.getEmitterConfigs, updateEmitterConfig: h.updateEmitterConfig }));
-vi.mock("@/services/domain-admin.service", () => ({ getDomainsAdmin: h.getDomainsAdmin, createDomainAdmin: h.createDomainAdmin }));
+vi.mock("@/services/domain-admin.service", () => ({ getDomainsAdmin: h.getDomainsAdmin, createDomainAdmin: h.createDomainAdmin, updateDomainAdmin: h.updateDomainAdmin }));
 
 import * as admin from "@/app/(dashboard)/admin/actions";
 
@@ -50,7 +50,7 @@ const GENERIC_FORBIDDEN = "You do not have permission to do this";
 const SERVICES = [
   h.getGrantableScopes, h.updateUser, h.assignRole, h.removeRole, h.listUsers, h.getRoleMatrix, h.listPendingInvitations, h.inviteUser, h.revokeInvitation,
   h.setUserDisabled, h.createResetLink, h.runHealthCheck, h.getUsageMetrics, h.getActivityMetrics, h.getErrorSummary,
-  h.getEmitterConfigs, h.updateEmitterConfig, h.getDomainsAdmin, h.createDomainAdmin, h.revalidatePath,
+  h.getEmitterConfigs, h.updateEmitterConfig, h.getDomainsAdmin, h.createDomainAdmin, h.updateDomainAdmin, h.revalidatePath,
 ];
 const reached = () => SERVICES.filter((service) => service.mock.calls.length > 0);
 const errorOf = (answer: unknown) => (answer as { error?: string } | null)?.error;
@@ -73,6 +73,7 @@ const OPS: Op[] = [
   { label: "getEmitterConfigsAction", call: () => admin.getEmitterConfigsAction(), kind: "platform" },
   { label: "updateEmitterConfigAction", call: () => admin.updateEmitterConfigAction({} as never), kind: "platform" },
   { label: "createDomainAdminAction", call: () => admin.createDomainAdminAction({ name: "D" } as never), kind: "steward" },
+  { label: "updateDomainPolicyAction (domain authorization belongs to the service)", call: () => admin.updateDomainPolicyAction("domain-1", { fieldCompleteness: { string: { minLength: "required" } } }), kind: "member" },
   { label: "getDomainsAdminAction", call: () => admin.getDomainsAdminAction(), kind: "member" },
 ];
 

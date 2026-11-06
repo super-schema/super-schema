@@ -1,0 +1,33 @@
+{
+    "type": "string",
+    "title": "login_intents",
+    "description": "The intents available for login.",
+    "minLength" : 3,
+    "maxLength" : 30,
+    "x-enum": [
+      {
+        "value": "LOGIN_SUCCESS",
+        "description":"Indicates that the user was succesfully logged in."
+      },
+      {
+        "value": "LOGIN_FAILURE",
+        "description":"Indicates that the user's login is a failure."
+      },
+      {
+        "value": "LOGIN_MFA_ISSUED",
+        "description":"Indicates that an MFA has been issued to the user for login."
+      },
+      {
+        "value": "LOGIN_MFA_SUCCESS",
+        "description":"Indicates that the user was succesfully logged in after clearing MFA."
+      },
+      {
+        "value": "LOGIN_MFA_FAILURE",
+        "description":"Indicates that the user's login is a failure as he did not clear MFA."
+      },
+      {
+        "value": "LOGIN_MFA_ABANDONED",
+        "description":"Indicates that the user abandonded the MFA."
+      }
+    ]
+  }

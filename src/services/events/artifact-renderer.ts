@@ -121,7 +121,7 @@ async function loadVersionPart(
   const v = await db.entityVersion.findUnique({
     where: { id: versionId, entity: { tenantId } },
     select: {
-      id: true, entityId: true, major: true, minor: true, resolvedSource: true, fieldSnapshot: true,
+      id: true, entityId: true, major: true, minor: true, patch: true, stage: true, resolvedSource: true, fieldSnapshot: true,
       entity: { select: { name: true, tenantId: true, domainId: true, productId: true, product: { select: { domainId: true } } } },
     },
   });
@@ -134,7 +134,7 @@ async function loadVersionPart(
     orderBy: { toId: "asc" },
   });
   const snapshot = Array.isArray(v.fieldSnapshot) ? (v.fieldSnapshot as unknown as FieldSnapshot[]) : [];
-  const label = `${v.entity.name}@${formatVersionLabel(v)}`;
+  const label = `${v.entity.name}@${formatVersionLabel(v, v.stage)}`;
   const rootModel = rootModelFor(v.resolvedSource, v.entity.name, label);
   if (!rootModel.success) return rootModel;
   return ok({

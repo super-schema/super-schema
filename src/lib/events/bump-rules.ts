@@ -20,8 +20,15 @@ export function stableStringify(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-export const decide = (major: string[], minor: string[]): BumpDecision =>
-  major.length > 0 ? { bump: "MAJOR", reasons: [...major, ...minor] } : { bump: "MINOR", reasons: minor };
+/**
+ * MAJOR when any breaking reason exists, else MINOR when any minor reason exists, else PATCH (documentation-only reasons, or none).
+ * Reasons list every finding, most severe first: major, then minor, then patch.
+ */
+export const decide = (major: string[], minor: string[], patch: string[] = []): BumpDecision => {
+  if (major.length > 0) return { bump: "MAJOR", reasons: [...major, ...minor, ...patch] };
+  if (minor.length > 0) return { bump: "MINOR", reasons: [...minor, ...patch] };
+  return { bump: "PATCH", reasons: [...patch] };
+};
 
 export function comparePin(role: string, prev: ResolvedPin | null, next: ResolvedPin | null, major: string[], minor: string[]): void {
   if (!prev && !next) return;

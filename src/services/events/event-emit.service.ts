@@ -7,7 +7,7 @@ import {
 } from "@/lib/event-specs";
 import { AsyncApiParserValidator } from "@/lib/event-specs/validation/asyncapi-parser-validator";
 import { entityReader, type PlaceReader } from "@/lib/access/entity-reader";
-import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
+import { formatVersionLabel, parseVersionLabel, storedVersionWhere } from "@/lib/entity-versioning/version-math";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { isJsonObject } from "@/lib/events/inputs";
 import { admitCompilerRuns, compilerBusyError, shareInUseError } from "@/lib/emission/emission-admission";
@@ -133,15 +133,16 @@ export async function emitEventStoredVersion(eventId: string, productId: string,
     if (!label.success) return label;
     const parsed = parseVersionLabel(label.data);
     if (!parsed.success) return parsed;
+    const { stage, ...number } = storedVersionWhere(parsed.data);
     const row = await ctx.prisma.eventSpecVersion.findUnique({
-      where: { eventSpecId_major_minor: { eventSpecId: eventId, major: parsed.data.major, minor: parsed.data.minor } },
-      select: { document: true, major: true, minor: true, compatReport: true },
+      where: { eventSpecId_major_minor_patch: { eventSpecId: eventId, ...number }, stage },
+      select: { document: true, major: true, minor: true, patch: true, stage: true, compatReport: true },
     });
     if (!row) {
-      return err({ code: "NOT_FOUND", message: `Version ${formatVersionLabel(parsed.data)} of event "${eventId}" not found`, suggestedFix: "List the published versions and pick one." });
+      return err({ code: "NOT_FOUND", message: `Version ${formatVersionLabel(parsed.data, parsed.data.stage)} of event "${eventId}" not found`, suggestedFix: "List the published versions and pick one." });
     }
     if (!isJsonObject(row.document)) {
-      return err({ code: "DATA_CORRUPT", message: `Stored document of version ${formatVersionLabel(row)} is invalid` });
+      return err({ code: "DATA_CORRUPT", message: `Stored document of version ${formatVersionLabel(row, row.stage)} is invalid` });
     }
     // jsonb returns keys shortest-first; serialize in the assembler's canonical order, like the draft emission.
     const document = canonicalizeDocumentOrder(row.document);

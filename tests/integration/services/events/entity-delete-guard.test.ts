@@ -42,7 +42,7 @@ async function entityWithVersions(sc: Scope, name: string, labels: Array<[number
       await prisma.entityVersion.create({
         data: {
           entityId: entity.id, major, minor, sequence: sequence++, resolvedSource: entity.typespecSource ?? "", fieldSnapshot: [],
-          changeKind: "INITIAL", publishedById: ctx.userId,
+          changeKind: "INITIAL", publishedById: ctx.userId, releasedAt: new Date(),
         },
       })
     );

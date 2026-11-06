@@ -25,7 +25,7 @@ let orderVersionId: string;
 async function insertVersion(entityId: string, resolvedSource: string, fields: string[], pinnedVersionIds: string[] = []) {
   const version = await prisma.entityVersion.create({
     data: {
-      entityId, major: 1, minor: 0, sequence: 1, resolvedSource, changeKind: "INITIAL", publishedById: ctx.userId,
+      entityId, major: 1, minor: 0, sequence: 1, resolvedSource, changeKind: "INITIAL", publishedById: ctx.userId, releasedAt: new Date(),
       fieldSnapshot: fields.map((name, i) => ({ name, fieldNumber: i + 1 })),
     },
   });

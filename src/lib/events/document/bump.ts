@@ -31,6 +31,8 @@ interface Ctx {
   next: EventBumpSide;
   major: string[];
   minor: string[];
+  /** Documentation-only findings (spec 2026-11-02-gitops-storage-design §7: a documentation or example correction that preserves validity). */
+  patch: string[];
 }
 
 const same = (a: unknown, b: unknown) => stableStringify(a) === stableStringify(b);
@@ -38,6 +40,18 @@ const same = (a: unknown, b: unknown) => stableStringify(a) === stableStringify(
 const own = <T>(record: Readonly<Record<string, T>>, key: string): T | undefined => (Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined);
 const byKey = <T extends { key: string }>(items: readonly T[]): Map<string, T> => new Map(items.map((item) => [item.key, item]));
 const withoutOrigin = (item: object): object => Object.fromEntries(Object.entries(item).filter(([name]) => name !== "origin"));
+
+/**
+ * The AsyncAPI documentation members of an operation, channel, message or server: human-readable text and links that never change
+ * what goes over the wire or how it is decoded. Edits confined to them are PATCH.
+ */
+const DOC_KEYS: readonly string[] = ["title", "summary", "description", "tags", "externalDocs"];
+/** Splits an object's members into those named in `keys` (`docs`) and the rest. */
+const partition = (item: object, keys: readonly string[]): { docs: object; rest: object } => {
+  const entries = Object.entries(item);
+  return { docs: Object.fromEntries(entries.filter(([name]) => keys.includes(name))), rest: Object.fromEntries(entries.filter(([name]) => !keys.includes(name))) };
+};
+const docsOf = (item: object): object => partition(item, DOC_KEYS).docs;
 /** Members of `from` that `other` lacks, in `from`'s order. */
 const missingFrom = (from: readonly string[], other: readonly string[]): string[] => {
   const present = new Set(other);
@@ -74,10 +88,8 @@ function comparePinRole(c: Ctx, role: string, prev: EntityPin | undefined, next:
   comparePin(role, before, after, c.major, c.minor);
 }
 
-/** Everything about an operation that is neither its wire contract (action, channel, messages, reply routing) nor its trait list. */
-const operationDetails = (o: DocOperation) => ({
-  title: o.title, summary: o.summary, description: o.description, security: o.security, tags: o.tags, externalDocs: o.externalDocs, bindings: o.bindings,
-});
+/** Everything about an operation that is neither its wire contract (action, channel, messages, reply routing), its trait list nor its documentation. */
+const operationDetails = (o: DocOperation) => ({ security: o.security, bindings: o.bindings });
 
 function compareOperations(c: Ctx): void {
   const nextOps = byKey(c.next.doc.operations);
@@ -103,16 +115,14 @@ function compareOperations(c: Ctx): void {
     for (const key of missingFrom(p.traitKeys, n.traitKeys)) c.minor.push(`Operation "${p.key}" trait "${key}" removed`);
     for (const key of missingFrom(n.traitKeys, p.traitKeys)) c.minor.push(`Operation "${p.key}" trait "${key}" added`);
     if (!same(operationDetails(p), operationDetails(n))) c.minor.push(`Operation "${p.key}" details changed`);
+    if (!same(docsOf(p), docsOf(n))) c.patch.push(`Operation "${p.key}" documentation changed`);
   }
   for (const n of c.next.doc.operations) if (!prevOps.has(n.key)) c.minor.push(`Operation "${n.key}" added`);
 }
 
 type ChannelDoc = EventDocument["channels"][number];
-/** Everything about a channel that is neither its wire contract (compared above) nor its key list. `origin` is ignored (§5). */
-const channelDetails = (ch: ChannelDoc) => ({
-  serverKeys: [...ch.serverKeys].sort(), bindings: ch.bindings, title: ch.title, summary: ch.summary, description: ch.description,
-  parameters: ch.parameters, tags: ch.tags, externalDocs: ch.externalDocs,
-});
+/** Everything about a channel that is neither its wire contract (compared above), its key list nor its documentation. `origin` is ignored (§5). */
+const channelDetails = (ch: ChannelDoc) => ({ serverKeys: [...ch.serverKeys].sort(), bindings: ch.bindings, parameters: ch.parameters });
 
 function compareChannels(c: Ctx): void {
   const nextChannels = byKey(c.next.doc.channels);
@@ -136,12 +146,12 @@ function compareChannels(c: Ctx): void {
       c.major.push(`Channel "${p.key}" formatDialect changed from ${p.formatDialect ?? "(none)"} to ${n.formatDialect ?? "(none)"}`);
     }
     if (!same(channelDetails(p), channelDetails(n))) c.minor.push(`Channel "${p.key}" details changed`);
+    if (!same(docsOf(p), docsOf(n))) c.patch.push(`Channel "${p.key}" documentation changed`);
   }
   for (const n of c.next.doc.channels) if (!prevChannels.has(n.key)) c.minor.push(`Channel "${n.key}" added`);
 }
 
 type MessageDoc = EventDocument["messages"][number];
-const messageDocs = (m: MessageDoc) => ({ title: m.title, summary: m.summary, description: m.description, tags: m.tags, externalDocs: m.externalDocs });
 
 /**
  * A changed EFFECTIVE representation is MAJOR: consumers decode the payload with it. Compared only for a message present on both
@@ -178,10 +188,10 @@ function compareMessages(c: Ctx): void {
       c.major.push(`Message "${p.key}" contentType changed from "${p.contentType ?? "(default)"}" to "${n.contentType ?? "(default)"}"`);
     }
     if (!same(p.correlationId, n.correlationId)) c.major.push(`Message "${p.key}" correlationId changed`);
-    if (!same(messageDocs(p), messageDocs(n))) c.minor.push(`Message "${p.key}" documentation changed`);
+    if (!same(docsOf(p), docsOf(n))) c.patch.push(`Message "${p.key}" documentation changed`);
     if (!same(p.name, n.name)) c.minor.push(`Message "${p.key}" name changed`);
     if (!same(p.deprecated, n.deprecated)) c.minor.push(`Message "${p.key}" deprecation changed`);
-    if (!same(p.examples, n.examples)) c.minor.push(`Message "${p.key}" examples changed`);
+    if (!same(p.examples, n.examples)) c.patch.push(`Message "${p.key}" examples changed`);
     if (!same(p.bindings, n.bindings)) c.minor.push(`Message "${p.key}" bindings changed`);
   }
   for (const n of c.next.doc.messages) if (!prevMessages.has(n.key)) c.minor.push(`Message "${n.key}" added`);
@@ -248,15 +258,33 @@ const componentsOf = (components: DocComponents | undefined) =>
     securitySchemes: components.securitySchemes && Object.fromEntries(Object.entries(components.securitySchemes).map(([name, scheme]) => [name, withoutOrigin(scheme)])),
   };
 
-/** The document shell: `info`, `servers` and `components` are always MINOR. `origin` is ignored (§5). */
+/**
+ * The documentation members of `info`. Everything else in `info` (today only `title`) stays MINOR: the title is the spec's display
+ * name, which catalogs and generated code take identifiers from, so renaming it is more than a documentation correction.
+ * (`info.version` is not in the document; it is derived from the version label.)
+ */
+const INFO_DOC_KEYS: readonly string[] = ["description", "termsOfService", "contact", "license", "externalDocs", "tags"];
+/** A server's documentation members, including `externalRef` (the v1 shorthand for `externalDocs.url`). */
+const SERVER_DOC_KEYS: readonly string[] = [...DOC_KEYS, "externalRef"];
+
+/** The document shell: `info`, `servers` and `components` are MINOR, except documentation-only edits, which are PATCH. `origin` is ignored (§5). */
 function compareShell(c: Ctx): void {
-  if (!same(c.prev.doc.info, c.next.doc.info)) c.minor.push("Info changed");
+  const prevInfo = partition(c.prev.doc.info, INFO_DOC_KEYS);
+  const nextInfo = partition(c.next.doc.info, INFO_DOC_KEYS);
+  if (!same(prevInfo.rest, nextInfo.rest)) c.minor.push("Info changed");
+  if (!same(prevInfo.docs, nextInfo.docs)) c.patch.push("Info documentation changed");
   const nextServers = byKey(c.next.doc.servers);
   const prevServers = byKey(c.prev.doc.servers);
   for (const p of c.prev.doc.servers) {
     const n = nextServers.get(p.key);
-    if (!n) c.minor.push(`Server "${p.key}" removed`);
-    else if (!same(withoutOrigin(p), withoutOrigin(n))) c.minor.push(`Server "${p.key}" changed`);
+    if (!n) {
+      c.minor.push(`Server "${p.key}" removed`);
+      continue;
+    }
+    const before = partition(withoutOrigin(p), SERVER_DOC_KEYS);
+    const after = partition(withoutOrigin(n), SERVER_DOC_KEYS);
+    if (!same(before.rest, after.rest)) c.minor.push(`Server "${p.key}" changed`);
+    if (!same(before.docs, after.docs)) c.patch.push(`Server "${p.key}" documentation changed`);
   }
   for (const n of c.next.doc.servers) if (!prevServers.has(n.key)) c.minor.push(`Server "${n.key}" added`);
   if (!same(componentsOf(c.prev.doc.components), componentsOf(c.next.doc.components))) c.minor.push("Components changed");
@@ -268,7 +296,7 @@ function compareShell(c: Ctx): void {
  * id without `pins` / `externalMajors` facts) fail closed as MAJOR; an unchanged pin never does.
  */
 export function classifyEventBump(prev: EventBumpSide, next: EventBumpSide): BumpDecision {
-  const c: Ctx = { prev, next, major: [], minor: [] };
+  const c: Ctx = { prev, next, major: [], minor: [], patch: [] };
   compareOperations(c);
   compareChannels(c);
   compareMessages(c);
@@ -279,5 +307,5 @@ export function classifyEventBump(prev: EventBumpSide, next: EventBumpSide): Bum
     c.major.push(`defaultContentType changed from "${prev.doc.defaultContentType ?? "(none)"}" to "${next.doc.defaultContentType ?? "(none)"}"`);
   }
   compareShell(c);
-  return decide(c.major, c.minor);
+  return decide(c.major, c.minor, c.patch);
 }

@@ -11,30 +11,32 @@ datasource db {
 }
 
 model User {
-  id            String      @id @default(cuid())
-  name          String?
-  email         String      @unique
-  emailVerified DateTime?
-  image         String?
-  password      String?
-  accounts      Account[]
-  sessions      Session[]
-  entities      Entity[]
-  auditLogs     AuditLog[]
-  gitConfigs    GitConfig[]
-  roles         UserRole[]
-  notifications Notification[]
-  webhooks      WebhookEndpoint[] @relation("WebhookCreator")
-  publishedEntityVersions EntityVersion[] @relation("EntityVersionPublisher")
+  id                         String             @id @default(cuid())
+  name                       String?
+  email                      String             @unique
+  emailVerified              DateTime?
+  image                      String?
+  password                   String?
+  accounts                   Account[]
+  sessions                   Session[]
+  entities                   Entity[]
+  auditLogs                  AuditLog[]
+  gitConfigs                 GitConfig[]
+  roles                      UserRole[]
+  notifications              Notification[]
+  webhooks                   WebhookEndpoint[]  @relation("WebhookCreator")
+  publishedEntityVersions    EntityVersion[]    @relation("EntityVersionPublisher")
   publishedEventSpecVersions EventSpecVersion[] @relation("EventSpecVersionPublisher")
+  releasedEntityVersions     EntityVersion[]    @relation("EntityVersionReleaser")
+  releasedEventSpecVersions  EventSpecVersion[] @relation("EventSpecVersionReleaser")
   // Access control: a disabled user cannot sign in and is refused on every request (the principal loader checks it).
-  disabledAt    DateTime?
-  lastLoginAt   DateTime?
-  grantedRoles  UserRole[]  @relation("UserRoleGrantedBy")
-  invitationsCreated Invitation[] @relation("InvitationCreator")
-  authTokens    AuthToken[]
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  disabledAt                 DateTime?
+  lastLoginAt                DateTime?
+  grantedRoles               UserRole[]         @relation("UserRoleGrantedBy")
+  invitationsCreated         Invitation[]       @relation("InvitationCreator")
+  authTokens                 AuthToken[]
+  createdAt                  DateTime           @default(now())
+  updatedAt                  DateTime           @updatedAt
 
   // Case-insensitive uniqueness is the raw index users_email_lower_key on lower(email) (migration access_control; Prisma cannot express it).
   @@map("users")
@@ -165,30 +167,30 @@ model ProductTier {
 }
 
 model Product {
-  id          String       @id @default(cuid())
-  domainId    String
-  name        String // "OneSCM", "bank"
-  slug        String
-  description String       @default("")
-  tierId      String?
-  ownerTeam   String?
+  id              String              @id @default(cuid())
+  domainId        String
+  name            String // "OneSCM", "bank"
+  slug            String
+  description     String              @default("")
+  tierId          String?
+  ownerTeam       String?
   // Contacts, stored as canonical mailbox text: "jane@acme.com" or "Jane Doe <jane@acme.com>" (see src/lib/mailbox.ts).
   engineeringLead String?
   manager         String?
-  teamEmails      String[] @default([])
-  isSystem    Boolean      @default(false)
-  domain      Domain       @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  tier        ProductTier? @relation(fields: [tierId], references: [id])
-  entities    Entity[]
-  userRoles   UserRole[]
-  sharedEnums    SharedEnum[]
-  customScalars  CustomScalar[]
-  unionTypes     UnionType[]
-  services       ServiceDefinition[]
-  traits         Trait[]
-  eventSpecs     EventSpec[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  teamEmails      String[]            @default([])
+  isSystem        Boolean             @default(false)
+  domain          Domain              @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  tier            ProductTier?        @relation(fields: [tierId], references: [id])
+  entities        Entity[]
+  userRoles       UserRole[]
+  sharedEnums     SharedEnum[]
+  customScalars   CustomScalar[]
+  unionTypes      UnionType[]
+  services        ServiceDefinition[]
+  traits          Trait[]
+  eventSpecs      EventSpec[]
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 
   @@unique([slug, domainId])
   @@unique([name, domainId])
@@ -197,36 +199,36 @@ model Product {
 }
 
 model Entity {
-  id             String           @id @default(cuid())
-  name           String
-  slug           String
-  tenantId       String
-  domainId       String?
-  productId      String?
-  version        Int              @default(1)
-  status         EntityStatus     @default(DRAFT)
-  ownerId        String
-  description    String           @default("")
-  metadata       Json?
-  typespecSource String?
-  parentEntityId String?
-  latestVersionId       String?          @unique
-  hasUnpublishedChanges Boolean          @default(true)
-  fields         Field[]
-  services       ServiceDefinition[] @relation("EntityServices")
-  pullRequests   GitPullRequest[]
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  id                    String              @id @default(cuid())
+  name                  String
+  slug                  String
+  tenantId              String
+  domainId              String?
+  productId             String?
+  version               Int                 @default(1)
+  status                EntityStatus        @default(DRAFT)
+  ownerId               String
+  description           String              @default("")
+  metadata              Json?
+  typespecSource        String?
+  parentEntityId        String?
+  latestVersionId       String?             @unique
+  hasUnpublishedChanges Boolean             @default(true)
+  fields                Field[]
+  services              ServiceDefinition[] @relation("EntityServices")
+  pullRequests          GitPullRequest[]
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
 
-  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  domain        Domain?  @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  product       Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
-  owner         User     @relation(fields: [ownerId], references: [id])
-  parentEntity  Entity?  @relation("EntityInheritance", fields: [parentEntityId], references: [id])
-  childEntities Entity[] @relation("EntityInheritance")
-  versions      EntityVersion[] @relation("EntityVersions")
-  latestVersion EntityVersion?  @relation("EntityLatestVersion", fields: [latestVersionId], references: [id], onDelete: SetNull)
-  traitHeaderPins    Trait[]   @relation("TraitHeadersEntity")
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain          Domain?         @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  product         Product?        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  owner           User            @relation(fields: [ownerId], references: [id])
+  parentEntity    Entity?         @relation("EntityInheritance", fields: [parentEntityId], references: [id])
+  childEntities   Entity[]        @relation("EntityInheritance")
+  versions        EntityVersion[] @relation("EntityVersions")
+  latestVersion   EntityVersion?  @relation("EntityLatestVersion", fields: [latestVersionId], references: [id], onDelete: SetNull)
+  traitHeaderPins Trait[]         @relation("TraitHeadersEntity")
 
   @@unique([slug, productId])
   @@unique([name, productId])
@@ -310,7 +312,7 @@ model Field {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  entity       Entity             @relation(fields: [entityId], references: [id], onDelete: Cascade)
   conceptLinks FieldConceptLink[]
 
   @@unique([entityId, name])
@@ -326,14 +328,24 @@ enum EntityVersionChangeKind {
   INITIAL
   MINOR
   MAJOR
+  PATCH
 }
 
-/// Immutable published snapshot of an entity draft (DB trigger forbids UPDATE).
+/// SNAPSHOT: the one open, editable pre-release of an object (at most one per entity / event spec, partial unique index).
+/// RELEASED: immutable (DB trigger forbids UPDATE unless the row is still a SNAPSHOT); releasedAt is set (CHECK).
+enum VersionStage {
+  SNAPSHOT
+  RELEASED
+}
+
+/// A version of an entity draft: the open SNAPSHOT is editable, a RELEASED row is immutable (DB trigger forbids its UPDATE).
 model EntityVersion {
   id                  String                  @id @default(cuid())
   entityId            String
   major               Int
   minor               Int
+  patch               Int                     @default(0)
+  stage               VersionStage            @default(RELEASED)
   /// Monotonic publish counter; Entity.version mirrors the latest one.
   sequence            Int
   /// Phase 2a: the entity's TypeSpec source. Phase 2b adds frozen Data Type copies (14.2).
@@ -342,7 +354,7 @@ model EntityVersion {
   fieldSnapshot       Json
   changeKind          EntityVersionChangeKind
   /// Per-format compatibility findings (Story 14.3, not yet written) and, under the key `referencedVersions`, the exact
-  /// version of every entity this version's reference closure used: { ref: EntityRef; version: "MAJOR.MINOR"; pinned: boolean }[]
+  /// version of every entity this version's reference closure used: { ref: EntityRef; version: "MAJOR.MINOR.PATCH"; pinned: boolean }[]
   /// (src/lib/entity-versioning/referenced-versions.ts). Versions published before that was recorded hold {}.
   compatReport        Json                    @default("{}")
   changeSummary       String?
@@ -350,13 +362,20 @@ model EntityVersion {
   publishedAt         DateTime                @default(now())
   /// Unused until MAJOR governance (14.4).
   governanceRequestId String?
+  /// Set when the row becomes RELEASED (backfilled from publishedAt / publishedById for rows that predate snapshots).
+  releasedAt          DateTime?
+  releasedById        String?
+  /// DB default only fills rows written by raw SQL / the migration; Prisma sets it on every write.
+  updatedAt           DateTime                @default(now()) @updatedAt
 
-  entity      Entity  @relation("EntityVersions", fields: [entityId], references: [id], onDelete: Cascade)
-  publishedBy User    @relation("EntityVersionPublisher", fields: [publishedById], references: [id])
-  latestOf    Entity? @relation("EntityLatestVersion")
-  traitHeaderPins           Trait[]          @relation("TraitHeadersVersion")
+  entity          Entity  @relation("EntityVersions", fields: [entityId], references: [id], onDelete: Cascade)
+  publishedBy     User    @relation("EntityVersionPublisher", fields: [publishedById], references: [id])
+  /// Restrict like publishedBy: SET NULL would be an UPDATE of a released row, which the immutability trigger refuses.
+  releasedBy      User?   @relation("EntityVersionReleaser", fields: [releasedById], references: [id], onDelete: Restrict)
+  latestOf        Entity? @relation("EntityLatestVersion")
+  traitHeaderPins Trait[] @relation("TraitHeadersVersion")
 
-  @@unique([entityId, major, minor])
+  @@unique([entityId, major, minor, patch])
   @@unique([entityId, sequence])
   @@map("entity_versions")
 }
@@ -471,14 +490,17 @@ model EventSpec {
   @@map("event_specs")
 }
 
-/// Immutable published Event Spec (DB trigger forbids UPDATE). `document` is never regenerated (spec §7.2 step 1).
+/// A version of an Event Spec: the open SNAPSHOT is editable, a RELEASED row is immutable (DB trigger forbids its UPDATE).
+/// A released `document` is never regenerated (spec §7.2 step 1).
 model EventSpecVersion {
   id                  String                  @id @default(cuid())
   eventSpecId         String
   major               Int
   minor               Int
+  patch               Int                     @default(0)
+  stage               VersionStage            @default(RELEASED)
   sequence            Int
-  /// Fully resolved AsyncAPI document; info.version = MAJOR.MINOR.
+  /// Fully resolved AsyncAPI document; info.version = MAJOR.MINOR.PATCH.
   document            Json
   /// The EventSpecDocument draft as published (input to the next bump classification).
   sourceDocument      Json
@@ -495,11 +517,18 @@ model EventSpecVersion {
   publishedById       String
   publishedAt         DateTime                @default(now())
   governanceRequestId String?
+  /// Set when the row becomes RELEASED (backfilled from publishedAt / publishedById for rows that predate snapshots).
+  releasedAt          DateTime?
+  releasedById        String?
+  /// DB default only fills rows written by raw SQL / the migration; Prisma sets it on every write.
+  updatedAt           DateTime                @default(now()) @updatedAt
   eventSpec           EventSpec               @relation("EventSpecVersions", fields: [eventSpecId], references: [id], onDelete: Cascade)
   latestOf            EventSpec?              @relation("EventSpecLatestVersion")
   publishedBy         User                    @relation("EventSpecVersionPublisher", fields: [publishedById], references: [id])
+  /// Restrict like publishedBy: SET NULL would be an UPDATE of a released row, which the immutability trigger refuses.
+  releasedBy          User?                   @relation("EventSpecVersionReleaser", fields: [releasedById], references: [id], onDelete: Restrict)
 
-  @@unique([eventSpecId, major, minor])
+  @@unique([eventSpecId, major, minor, patch])
   @@unique([eventSpecId, sequence])
   @@map("event_spec_versions")
 }
@@ -509,32 +538,32 @@ model EventSpecVersion {
 // ============================================================
 
 model BusinessConcept {
-  id              String   @id @default(cuid())
-  name            String   @unique  // "Customer Identifier", "Transaction Amount"
-  domain          String   @default("Core")  // business domain grouping
-  definition      String   @default("")  // human-readable definition
-  synonyms        String[]  // ["cust_id", "customer_number", "CustomerNo"]
-  canonicalType   String?  // the canonical logical type: "string", "decimal", etc.
-  classification  String?  // default classification: PII, SENSITIVE, etc.
-  tags            String[]  // ["financial", "identity", "temporal"]
-  ownerId         String?
-  fieldLinks      FieldConceptLink[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id             String             @id @default(cuid())
+  name           String             @unique // "Customer Identifier", "Transaction Amount"
+  domain         String             @default("Core") // business domain grouping
+  definition     String             @default("") // human-readable definition
+  synonyms       String[] // ["cust_id", "customer_number", "CustomerNo"]
+  canonicalType  String? // the canonical logical type: "string", "decimal", etc.
+  classification String? // default classification: PII, SENSITIVE, etc.
+  tags           String[] // ["financial", "identity", "temporal"]
+  ownerId        String?
+  fieldLinks     FieldConceptLink[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 
   @@map("business_concepts")
 }
 
 model FieldConceptLink {
-  id        String @id @default(cuid())
-  fieldId   String
-  conceptId String
-  confidence Float @default(1.0)  // 0.0-1.0, how strong the link is
-  linkedBy  String?  // user who linked, or "auto" for AI-suggested
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  fieldId    String
+  conceptId  String
+  confidence Float    @default(1.0) // 0.0-1.0, how strong the link is
+  linkedBy   String? // user who linked, or "auto" for AI-suggested
+  createdAt  DateTime @default(now())
 
-  field     Field           @relation(fields: [fieldId], references: [id], onDelete: Cascade)
-  concept   BusinessConcept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  field   Field           @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  concept BusinessConcept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
 
   @@unique([fieldId, conceptId])
   @@map("field_concept_links")
@@ -632,15 +661,15 @@ model GitPullRequest {
 /// tenantId/domainId/productId stay as foreign keys so deleting a tenant/domain/product removes its assignments; a CHECK keeps them in step
 /// with `scopeKey` (G: none; T: tenantId; D: tenantId + domainId; P: tenantId + domainId + productId).
 model UserRole {
-  id        String   @id @default(cuid())
-  userId    String
-  role      String
-  scopeKey  String
-  tenantId  String?
-  domainId  String?
-  productId String?
+  id          String   @id @default(cuid())
+  userId      String
+  role        String
+  scopeKey    String
+  tenantId    String?
+  domainId    String?
+  productId   String?
   grantedById String?
-  createdAt DateTime @default(now())
+  createdAt   DateTime @default(now())
 
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -656,13 +685,13 @@ model UserRole {
 /// An invitation to join with pre-granted roles. The token itself is never stored: `tokenHash` is its SHA-256. `emailLower` is the invited
 /// address, trimmed and lower-cased. An invitation is spent when `usedAt` is set.
 model Invitation {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   emailLower  String
-  tokenHash   String   @unique
+  tokenHash   String    @unique
   expiresAt   DateTime
   usedAt      DateTime?
   createdById String
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
   createdBy User             @relation("InvitationCreator", fields: [createdById], references: [id], onDelete: Cascade)
   roles     InvitationRole[]
@@ -778,11 +807,11 @@ model Notification {
 // ============================================================
 
 model WebhookEndpoint {
-  id        String            @id @default(cuid())
-  url       String
-  events    String[]
-  secret    String
-  active    Boolean           @default(true)
+  id         String            @id @default(cuid())
+  url        String
+  events     String[]
+  secret     String
+  active     Boolean           @default(true)
   // The user who created it. Null for an endpoint the REST API key made: the key is a service principal and no row of `users` (KD-024).
   createdBy String?
   // The tenant the endpoint belongs to: it is sent the events of that tenant only. Null only for an endpoint that could not be attributed when the
@@ -800,15 +829,15 @@ model WebhookEndpoint {
 }
 
 model WebhookDelivery {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   endpointId  String
   event       String
   payload     Json
   statusCode  Int?
   error       String?
-  attempt     Int      @default(1)
+  attempt     Int       @default(1)
   nextRetryAt DateTime?
-  deliveredAt DateTime @default(now())
+  deliveredAt DateTime  @default(now())
 
   endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
 
@@ -833,18 +862,18 @@ enum GovernanceDecision {
 }
 
 model GovernanceRequest {
-  id           String           @id @default(cuid())
+  id           String               @id @default(cuid())
   entityId     String
   entityName   String
   domainId     String?
   versionId    String?
   changeType   String
   severity     String
-  status       GovernanceStatus @default(PENDING)
+  status       GovernanceStatus     @default(PENDING)
   impactReport Json?
   requestedBy  String
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
   approvals    GovernanceApproval[]
 
   @@index([status])
@@ -886,11 +915,11 @@ model TypeMappingOverride {
 }
 
 model LossyMappingAck {
-  id           String   @id @default(cuid())
-  entityId     String
-  sourceType   String
-  targetFormat String
-  userId       String
+  id             String   @id @default(cuid())
+  entityId       String
+  sourceType     String
+  targetFormat   String
+  userId         String
   acknowledgedAt DateTime @default(now())
 
   @@unique([entityId, sourceType, targetFormat, userId])
@@ -902,16 +931,16 @@ model LossyMappingAck {
 // ============================================================
 
 model EmitterConfig {
-  id             String   @id @default(cuid())
-  emitterName    String   @unique
-  targetFormat   String
-  version        String   @default("1.0.0")
-  enabled        Boolean  @default(true)
-  description    String   @default("")
+  id              String   @id @default(cuid())
+  emitterName     String   @unique
+  targetFormat    String
+  version         String   @default("1.0.0")
+  enabled         Boolean  @default(true)
+  description     String   @default("")
   configOverrides Json?
-  updatedBy      String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  updatedBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@map("emitter_configs")
 }
@@ -944,17 +973,17 @@ enum EmissionStatus {
 }
 
 model EmissionTargetStatus {
-  id              String         @id @default(cuid())
-  entityId        String
-  target          String
-  emittedVersion  Int?
-  stagedVersion   Int?
-  lastEmittedAt   DateTime?
-  status          EmissionStatus @default(BEHIND)
-  output          String?
-  formatOptions   Json?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id             String         @id @default(cuid())
+  entityId       String
+  target         String
+  emittedVersion Int?
+  stagedVersion  Int?
+  lastEmittedAt  DateTime?
+  status         EmissionStatus @default(BEHIND)
+  output         String?
+  formatOptions  Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 
   @@unique([entityId, target])
   @@map("emission_target_statuses")
@@ -971,17 +1000,17 @@ enum DeploymentStatus {
 }
 
 model DeploymentRecord {
-  id           String           @id @default(cuid())
-  entityId     String
-  target       String
-  environment  String
-  version      Int
-  status       DeploymentStatus @default(DEPLOYED)
-  driftReport  Json?
-  isDrifted    Boolean          @default(false)
-  deployedBy   String?
-  deployedAt   DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
+  id          String           @id @default(cuid())
+  entityId    String
+  target      String
+  environment String
+  version     Int
+  status      DeploymentStatus @default(DEPLOYED)
+  driftReport Json?
+  isDrifted   Boolean          @default(false)
+  deployedBy  String?
+  deployedAt  DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 
   @@unique([entityId, target, environment])
   @@map("deployment_records")
@@ -992,18 +1021,22 @@ model DeploymentRecord {
 // ============================================================
 
 model SharedEnum {
-  id          String   @id @default(cuid())
-  name        String
-  values      String[]
-  description String   @default("")
-  tenantId    String
-  domainId    String?
-  productId   String?
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  domain      Domain?  @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  product     Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                String   @id @default(cuid())
+  name              String
+  values            String[]
+  /// Per-symbol descriptions, { "<symbol>": "<text>" } (JSON Schema `x-enum`); null when the source gives none.
+  valueDescriptions Json?
+  /// Name of the file it was imported from (what a `$ref` to that file says); null for an asset made by hand.
+  sourceRef         String?
+  description       String   @default("")
+  tenantId          String
+  domainId          String?
+  productId         String?
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain            Domain?  @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  product           Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([tenantId])
   @@index([domainId])
@@ -1019,8 +1052,14 @@ model CustomScalar {
   id          String   @id @default(cuid())
   name        String
   baseType    String
+  /// Logical type a field that uses the scalar gets (`string`, `datetime` ...); the base type's own when null.
+  logicalType String?
   format      String?
   pattern     String?
+  /// Other validation constraints, same keys as a field's validation: { minLength, maxLength, minValue, maxValue, minValueExclusive, maxValueExclusive }.
+  constraints Json?
+  /// Name of the file it was imported from (what a `$ref` to that file says); null for an asset made by hand.
+  sourceRef   String?
   description String   @default("")
   tenantId    String
   domainId    String?
@@ -1096,6 +1135,14 @@ model Operation {
   httpMethod  String
   httpPath    String
   description String               @default("")
+  /// OpenAPI operationId; null = defaults to `name`.
+  operationId String?
+  summary     String               @default("")
+  /// string[] (OpenAPI tags).
+  tags        Json                 @default("[]")
+  deprecated  Boolean              @default(false)
+  /// `ApiRequestBody` (src/types/schemas/api-operation.ts); null = no request body.
+  requestBody Json?
   decorators  Json                 @default("{}")
   service     ServiceDefinition    @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   parameters  OperationParameter[]
@@ -1111,9 +1158,12 @@ model OperationParameter {
   operationId String
   name        String
   type        String
+  isArray     Boolean   @default(false)
+  /// path | query | header | cookie (PARAM_LOCATIONS). Legacy "body" rows were moved to Operation.requestBody.
   location    String
   required    Boolean   @default(true)
   description String    @default("")
+  sortOrder   Int       @default(0)
   operation   Operation @relation(fields: [operationId], references: [id], onDelete: Cascade)
 
   @@map("operation_parameters")
@@ -1124,7 +1174,10 @@ model OperationResponse {
   operationId String
   statusCode  Int
   type        String?
+  isArray     Boolean   @default(false)
+  contentType String    @default("application/json")
   description String    @default("")
+  sortOrder   Int       @default(0)
   operation   Operation @relation(fields: [operationId], references: [id], onDelete: Cascade)
 
   @@map("operation_responses")
@@ -1135,14 +1188,14 @@ model OperationResponse {
 // ============================================================
 
 model InterfaceDefinition {
-  id          String   @id @default(cuid())
-  name        String
-  description String   @default("")
-  domainId    String
-  domain      Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  id           String   @id @default(cuid())
+  name         String
+  description  String   @default("")
+  domainId     String
+  domain       Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
   operationIds String[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@unique([name, domainId])
   @@map("interface_definitions")

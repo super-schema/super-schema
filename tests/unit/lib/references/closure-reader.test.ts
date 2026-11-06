@@ -65,8 +65,8 @@ function fakeDb(rows: EntityRow[]) {
       },
     },
     entityVersion: {
-      findUnique: async ({ where }: { where: { id?: string; entityId_major_minor?: { entityId: string } } }) => {
-        reads.versionsOf.push(where.id ?? where.entityId_major_minor?.entityId ?? "?");
+      findUnique: async ({ where }: { where: { id?: string; entityId_major_minor_patch?: { entityId: string } } }) => {
+        reads.versionsOf.push(where.id ?? where.entityId_major_minor_patch?.entityId ?? "?");
         return null;
       },
     },

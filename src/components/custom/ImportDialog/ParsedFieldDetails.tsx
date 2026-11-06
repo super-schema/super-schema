@@ -346,8 +346,18 @@ export const ParsedFieldDetails = memo(function ParsedFieldDetails({ field, enti
           {field.governance?.dataClass && <Row label="Data class">{field.governance.dataClass}</Row>}
           {field.governance?.dataCategory && <Row label="Data category">{field.governance.dataCategory}</Row>}
           {field.enumName && <Row label="Enum">{field.enumName}</Row>}
+          {field.scalarName && <Row label="Scalar">{field.scalarName}</Row>}
+          {field.defaultValue !== undefined && <Row label="Default">{String(field.defaultValue)}</Row>}
+          {field.itemDescription && <Row label="Item description">{field.itemDescription}</Row>}
           {field.enumValues && field.enumValues.length > 0 && (
             <Row label="Enum values">{field.enumValues.join(", ")}</Row>
+          )}
+          {field.enumValueDescriptions && Object.keys(field.enumValueDescriptions).length > 0 && (
+            <Row label="Value descriptions">
+              {Object.entries(field.enumValueDescriptions)
+                .map(([symbol, text]) => `${symbol}: ${text}`)
+                .join(" · ")}
+            </Row>
           )}
           {field.referencedEntityName && <Row label="References">{field.referencedEntityName}</Row>}
           {field.arrayElementType && <Row label="Array element type">{field.arrayElementType}</Row>}
