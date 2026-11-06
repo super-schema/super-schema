@@ -8,6 +8,7 @@ import type {
   UnionTypeData,
 } from "./components/DomainTypesTab";
 import type { InheritedServices, ServiceData } from "./components/DomainApisTab";
+import { operationRecordFromRow, type OperationRow } from "@/lib/api-operations/records";
 
 /**
  * Row -> UI-shape mapping shared by the domain page and the product page.
@@ -48,25 +49,8 @@ interface ServiceRow {
   basePath: string;
   scope: ServiceData["scope"];
   entity: { id: string; name: string; slug: string } | null;
-  operations: {
-    id: string;
-    name: string;
-    httpMethod: string;
-    httpPath: string;
-    description: string;
-    parameters: {
-      name: string;
-      type: string;
-      location: string;
-      required: boolean;
-      description: string;
-    }[];
-    responses: {
-      statusCode: number;
-      type: string | null;
-      description: string;
-    }[];
-  }[];
+  /** Operation rows with their parameters / responses (`OPERATION_DETAILS_INCLUDE`), read through `operationRecordFromRow`. */
+  operations: Omit<OperationRow, "serviceId">[];
 }
 
 export function mapSharedEnumRows(rows: SharedEnumRow[]): SharedEnumData[] {
@@ -111,25 +95,8 @@ export function mapServiceRows(rows: ServiceRow[]): ServiceData[] {
     entity: s.entity
       ? { id: s.entity.id, name: s.entity.name, slug: s.entity.slug }
       : null,
-    operations: s.operations.map((op) => ({
-      id: op.id,
-      name: op.name,
-      httpMethod: op.httpMethod,
-      httpPath: op.httpPath,
-      description: op.description,
-      parameters: op.parameters.map((pr) => ({
-        name: pr.name,
-        type: pr.type,
-        location: pr.location,
-        required: pr.required,
-        description: pr.description,
-      })),
-      responses: op.responses.map((r) => ({
-        statusCode: r.statusCode,
-        type: r.type,
-        description: r.description,
-      })),
-    })),
+    // The contract shape (records.ts): legacy body parameters read as the request body, new columns defaulted.
+    operations: s.operations.map((op) => operationRecordFromRow({ ...op, serviceId: s.id })),
   }));
 }
 

@@ -1,12 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Search, Plus, CheckCircle, Circle, RefreshCw, X } from "lucide-react";
 import {
   getDomainsAdminAction,
   createDomainAdminAction,
+  updateDomainPolicyAction,
 } from "@/app/(dashboard)/admin/actions";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
+import type { PolicyTemplate } from "@/types/schemas/domain-policy";
+import { PolicyTemplateEditor } from "./PolicyTemplateEditor";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 interface DomainRow {
   id: string;
@@ -14,6 +19,7 @@ interface DomainRow {
   description: string;
   entityCount: number;
   policyTemplateStatus: "Configured" | "No template";
+  policyTemplate: PolicyTemplate | null;
   createdAt: string;
 }
 
@@ -24,6 +30,10 @@ export function DomainDataTable() {
   const [domains, setDomains] = useState<DomainRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [policyDomain, setPolicyDomain] = useState<DomainRow | null>(null);
+  const [policySaving, setPolicySaving] = useState(false);
+  const [policyError, setPolicyError] = useState<string | null>(null);
+  const policyRequest = useRef(false);
 
   // create form
   const [newName, setNewName] = useState("");
@@ -47,6 +57,7 @@ export function DomainDataTable() {
         description: d.description,
         entityCount: d.entityCount,
         policyTemplateStatus: d.policyTemplateStatus,
+        policyTemplate: d.policyTemplate ?? null,
         createdAt: new Date(d.createdAt).toLocaleDateString(),
       }))
     );
@@ -55,7 +66,6 @@ export function DomainDataTable() {
 
   useEffect(() => {
     // Fetch once on mount; state updates occur after the async result resolves.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
@@ -64,6 +74,29 @@ export function DomainDataTable() {
     setNewDescription("");
     setCreateError(null);
     setShowCreateDialog(true);
+  }
+
+  async function savePolicy(template: PolicyTemplate) {
+    if (!policyDomain || policyRequest.current) return;
+    policyRequest.current = true;
+    setPolicySaving(true);
+    setPolicyError(null);
+    try {
+      const result = await updateDomainPolicyAction(policyDomain.id, template);
+      if ("error" in result) { setPolicyError(result.error ?? "Could not save policy."); return; }
+      setDomains((current) => current.map((domain) => domain.id === policyDomain.id ? {
+        ...domain,
+        policyTemplate: result.data.policyTemplate,
+        policyTemplateStatus: result.data.policyTemplate ? "Configured" : "No template",
+      } : domain));
+      setPolicyDomain(null);
+      void invalidateDomainsTree();
+    } catch {
+      setPolicyError("Could not save the domain policy. Try again.");
+    } finally {
+      policyRequest.current = false;
+      setPolicySaving(false);
+    }
   }
 
   async function handleCreate() {
@@ -171,6 +204,7 @@ export function DomainDataTable() {
                   <td className="px-space-4 py-space-3 text-muted-foreground truncate max-w-xs">{domain.description}</td>
                   <td className="px-space-4 py-space-3 text-foreground">{domain.entityCount}</td>
                   <td className="px-space-4 py-space-3">
+                    <div className="flex flex-wrap items-center gap-space-2">
                     {domain.policyTemplateStatus === "Configured" ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-caption bg-success/20 text-success">
                         <CheckCircle className="w-3 h-3" />
@@ -182,6 +216,8 @@ export function DomainDataTable() {
                         No template
                       </span>
                     )}
+                      <Button type="button" size="sm" variant="outline" aria-label={`Configure policy for ${domain.name}`} onClick={() => { setPolicyError(null); setPolicyDomain(domain); }}>Configure policy</Button>
+                    </div>
                   </td>
                   <td className="px-space-4 py-space-3 text-muted-foreground">{domain.createdAt}</td>
                 </tr>
@@ -190,6 +226,22 @@ export function DomainDataTable() {
           </tbody>
         </table>
       </div>
+
+      <Dialog open={policyDomain !== null} onOpenChange={(open) => { if (!open && !policySaving) setPolicyDomain(null); }} disablePointerDismissal={policySaving}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl" showCloseButton={!policySaving}>
+          <DialogHeader>
+            <DialogTitle>Policy for {policyDomain?.name}</DialogTitle>
+            <DialogDescription>Configure domain defaults and the required or suggested information for each field type.</DialogDescription>
+          </DialogHeader>
+          {policyDomain && (
+            <fieldset disabled={policySaving} className="min-w-0">
+              <PolicyTemplateEditor key={policyDomain.id} value={policyDomain.policyTemplate} onChange={(template) => { void savePolicy(template); }} />
+            </fieldset>
+          )}
+          {policySaving && <p role="status" className="text-body-small text-muted-foreground">Saving policy…</p>}
+          {policyError && <p role="alert" className="text-body-small text-destructive">{policyError}</p>}
+        </DialogContent>
+      </Dialog>
 
       {/* Create dialog */}
       {showCreateDialog && (

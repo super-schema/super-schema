@@ -197,14 +197,8 @@ test.describe("publishing an entity", () => {
     await openEntityPage(page, invoice.url, invoice.name);
     await publishViaDialog(page);
 
-    const dialog = await openPublishDialog(page);
-    const blockers = dialog.getByTestId(ID.blockers);
-    await expect(blockers).toContainText("Cannot publish yet");
-    await expect(blockers.getByTestId(ID.blocker)).toHaveCount(1);
-    await expect(blockers.getByTestId(ID.blocker)).toHaveAttribute("data-kind", "NO_CHANGES");
-    await expect(blockers.getByTestId(ID.blocker)).toHaveText("No unpublished changes since v1.0.");
-    await expect(dialog.getByTestId(ID.confirmPublish)).toBeDisabled();
-    await dialog.getByTestId(ID.cancelPublish).click();
+    await expect(centerPanel(page).getByTestId("publish-status")).toContainText(/No (?:unpublished|unsaved) changes/);
+    await expect(centerPanel(page).getByTestId(ID.publishButton)).toBeDisabled();
 
     // The refusal is not a version: still one, and the header unchanged.
     await expect(versionState(page)).toHaveText("Published · v1.0");
@@ -240,12 +234,8 @@ test.describe("publishing an entity that references another", () => {
     await openEntityPage(page, order.url, order.name);
     await addReferenceField(page, "customer", customer);
 
-    const dialog = await openPublishDialog(page);
-    const blocker = dialog.getByTestId(ID.blockers).getByTestId(ID.blocker);
-    await expect(blocker.first()).toContainText(`Publish ${customer.name} first`);
-    await expect(blocker.first()).toHaveAttribute("data-kind", "UNPUBLISHED_REFERENCE");
-    await expect(dialog.getByTestId(ID.confirmPublish)).toBeDisabled();
-    await dialog.getByTestId(ID.cancelPublish).click();
+    await expect(centerPanel(page).getByTestId("publish-status")).toContainText(`Publish ${customer.name} first`);
+    await expect(centerPanel(page).getByTestId(ID.publishButton)).toBeDisabled();
     await expect(versionState(page)).toHaveText("Never published");
 
     // Publish the referenced entity, then Order is publishable.

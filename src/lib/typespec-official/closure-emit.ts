@@ -26,6 +26,7 @@
  */
 
 import { liftItemKeywords } from "./item-keywords";
+import { mergeEntityJsonSchemaFiles } from "./json-schema-merge";
 import { compileEntity, type PrismaEntityInput, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { CLOSURE_ROOT_NAMESPACE, builtInQualificationNotes, generateClosureTypeSpec, type ClosureTypeSpec } from "@/lib/compiler/closure-source";
 import { DEFAULT_MAX_CLOSURE_ENTITIES, type ReferenceClosure } from "@/lib/references/closure";
@@ -120,6 +121,8 @@ interface Plan {
    * the attribution to keep it under, `null` to leave it dropped. Repeated until no file is adopted any more.
    */
   adopt?: (file: { path: string; content: string }, kept: readonly EmittedFile[]) => Attribution;
+  /** JSON Schema: entity id -> the stem of the entity's own file (its model name), when the plan knows it. */
+  rootStems?: ReadonlyMap<string, string>;
   /** Checks the finished file list; returns what is wrong with it, if anything. */
   verify?: (files: EmittedFile[]) => string[];
 }
@@ -246,8 +249,24 @@ async function emitClosureUnguarded(closure: Closure, targetKey: TargetId): Prom
   const unserved = entities.filter((e) => (served.get(e.entityId)?.size ?? 0) === 0).map((e) => `The ${target.displayName} emitter wrote no file for ${e.entity.name}.`);
   const problems = [...unserved, ...(plan.verify?.(files) ?? []), ...verifyTargetOutput(key, files)];
   if (problems.length > 0) return invalid(problems, plan.warnings);
+  // JSON Schema: one file per ENTITY. The emitter's file per declaration (the entity's enums, unions, scalars) is folded into the
+  // entity's own file as `$defs`; only a `$ref` to another entity stays a file ref.
+  let finalFiles = files;
+  if (key === "json-schema") {
+    const stemOf = (path: string): string => (path.split("/").pop() ?? path).replace(/\.json$/, "");
+    const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const rootStems = new Map<string, string>();
+    for (const e of entities) {
+      const own = files.filter((f) => f.entityId === e.entityId && f.path.endsWith(".json")).map((f) => stemOf(f.path));
+      const stem = plan.rootStems?.get(e.entityId) ?? own.find((s) => s === e.entity.name) ?? own.find((s) => norm(s) === norm(e.entity.name));
+      if (stem !== undefined) rootStems.set(e.entityId, stem);
+    }
+    finalFiles = mergeEntityJsonSchemaFiles(files, rootStems);
+    served.forEach((paths) => paths.clear());
+    for (const f of finalFiles) if (f.entityId !== undefined) served.get(f.entityId)?.add(f.path);
+  }
   const entityFiles = Object.fromEntries(entities.map((e) => [e.entityId, [...(served.get(e.entityId) ?? [])].sort(compareCodeUnits)]));
-  return ok({ files, warnings: plan.warnings, entityFiles });
+  return ok({ files: finalFiles, warnings: plan.warnings, entityFiles });
 }
 
 /** Checks every target makes of what the emitter wrote (the safety nets behind the source projections). */
@@ -305,9 +324,12 @@ function combinedPlan(closure: Closure, models: SuperSchemaModel[], key: string)
     if (model.entity.parentEntityName || (model.entity.spreadFrom?.length ?? 0) > 0) {
       errors.push(`${owner}: "extends" and spread of another model are not supported in a multi-entity closure (their names cannot be qualified across entities); remove the inheritance.`);
     }
-    // Operation parameter and response types are free text naming models by their bare names. In the closure every entity
-    // sits in a namespace called like the entity, so a bare `Order` resolves to that NAMESPACE and the type silently becomes
-    // `{}` in the output (the compile still succeeds). Text cannot be qualified safely (`string` may be an entity name too), so refuse.
+    // LEGACY interfaces (`metadata.custom.interfaces`, from a TypeSpec import): their parameter and response types are free text
+    // naming models by their bare names. In the closure every entity sits in a namespace called like the entity, so a bare `Order`
+    // resolves to that NAMESPACE and the type silently becomes `{}` in the output (the compile still succeeds). Text cannot be
+    // qualified safely (`string` may be an entity name too), so refuse. The entity's API operations (`model.apiOperations`, the
+    // API tab) are NOT refused: their types are typed references (a contract primitive or a name), which the closure source writes
+    // fully qualified (`generateClosureTypeSpec`, `namedType`), and only the OpenAPI 3 plan writes them at all.
     for (const iface of model.interfaces ?? []) {
       if (iface.operations.length > 0) {
         errors.push(`${owner}: interface "${iface.name}" has operations, which are not supported in a multi-entity closure (the model names in their types cannot be qualified across entities); remove the operations or the references.`);
@@ -317,7 +339,12 @@ function combinedPlan(closure: Closure, models: SuperSchemaModel[], key: string)
   if (errors.length > 0) return { source: "", options: {}, warnings: [], errors, attribute: () => null };
 
   const groups = cycleGroups(closure);
-  const generated = generateClosureTypeSpec(closure, { target: key, ...(key === "protobuf" ? { mergeNamespaces: groups } : {}) });
+  const generated = generateClosureTypeSpec(closure, {
+    target: key,
+    ...(key === "protobuf" ? { mergeNamespaces: groups } : {}),
+    // Each entity's API operations become `paths` of its own `@service` document.
+    ...(key === "openapi3" ? { httpOperations: true } : {}),
+  });
 
   const places: Place[] = [];
   entities.forEach((entity, i) => {
@@ -327,7 +354,11 @@ function combinedPlan(closure: Closure, models: SuperSchemaModel[], key: string)
     places.push({ entityId: entity.entityId, entityName: entity.entity.name, model: models[i], namespace: qualified.slice(0, dot), modelName: qualified.slice(dot + 1) });
   });
 
-  const warnings: string[] = [...builtInQualificationNotes(entities.map((entity) => entity.ref))];
+  const warnings: string[] = [
+    ...builtInQualificationNotes(entities.map((entity) => entity.ref)),
+    // An API operation that could not be written as asked (a skipped one, a type that is not part of the closure).
+    ...generated.diagnostics.filter((d) => d.code === "API_OPERATION").map((d) => d.message),
+  ];
   // A .proto message field cannot be a union: the source types it string (generateClosureTypeSpec), and each such field is reported.
   if (key === "protobuf") {
     models.forEach((model, i) => warnings.push(...withUnionFieldsAsString(model).warnings.map((w) => (multi ? `${entities[i].entity.name}: ${w}` : w))));
@@ -476,13 +507,14 @@ const refersToFile = (ref: string, path: string): boolean => {
   return target !== "" && (target === path || path.endsWith(`/${target}`));
 };
 
-function jsonSchemaPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan, "source" | "attribute" | "adopt" | "verify"> {
+function jsonSchemaPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan, "source" | "attribute" | "adopt" | "verify" | "rootStems"> {
   // One `<Name>.json` per declaration: the model and each enum / union / scalar its block declares.
   const owner = new Map<string, string>();
   for (const [entityId, names] of generated.declarations) for (const name of names) if (!owner.has(name)) owner.set(name, entityId);
   const stemOf = (path: string): string => (path.split("/").pop() ?? path).replace(/\.json$/, "");
   return {
     source: generated.source,
+    rootStems: new Map(places.map((p) => [p.entityId, p.modelName])),
     attribute: (file) => {
       const entityId = owner.get(stemOf(file.path));
       return entityId === undefined ? null : { entityId };

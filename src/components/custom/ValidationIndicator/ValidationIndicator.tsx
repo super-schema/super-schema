@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import {
   Tooltip,
   TooltipContent,
@@ -19,18 +20,21 @@ export function ValidationIndicator({
   tooltipContent,
 }: ValidationIndicatorProps) {
   const color = STATUS_COLORS[status];
+  const tooltipId = useId();
 
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger
+          aria-describedby={tooltipId}
           render={
-            <div className="flex items-center justify-center w-4 h-4 shrink-0 cursor-help">
+            <div tabIndex={0} role="img" aria-label={status === "complete" ? "Complete" : status === "suggestion" ? "Field information missing" : "Missing required information"} className="flex items-center justify-center w-4 h-4 shrink-0 cursor-help rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <svg
                 width="16"
                 height="16"
                 viewBox="0 0 16 16"
                 className="animate-validation-ring"
+                aria-hidden="true"
               >
                 {/* Background ring */}
                 <circle
@@ -70,8 +74,8 @@ export function ValidationIndicator({
             </div>
           }
         />
-        <TooltipContent side="right">
-          <p className="text-body-small">{tooltipContent}</p>
+        <TooltipContent id={tooltipId} role="tooltip" side="right" className="max-w-xs">
+          <div className="text-body-small">{tooltipContent}</div>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

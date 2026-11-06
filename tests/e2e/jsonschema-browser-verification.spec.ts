@@ -159,8 +159,8 @@ test.describe("A2: unresolved external $ref", () => {
     }
 
     // The entity is still a DRAFT after generating; the publish dialog is reachable and shows what it says.
-    await page.getByTestId("tab-typespec").isVisible();
-    await page.locator("main").getByText("Editor", { exact: true }).first().click();
+    await page.locator("main").getByText("SuperSchema", { exact: true }).first().click();
+    await expect(page.locator("main").getByRole("button", { name: "View source", exact: true })).toBeVisible();
     await expect(page.getByText("DRAFT", { exact: true }).first()).toBeVisible();
     await page.getByTestId("publish-entity-button").click();
     await expect(page.getByRole("dialog")).toBeVisible();

@@ -30,7 +30,7 @@ function highlightTypeSpec(source: string): React.ReactNode[] {
   const lines = source.split("\n");
   return lines.map((line, i) => (
     <div key={i} className="flex">
-      <span className="inline-block w-8 text-right pr-3 select-none text-muted-foreground text-[12px]">
+      <span className="syntax-comment inline-block w-8 text-right pr-3 select-none text-[12px]">
         {i + 1}
       </span>
       <span className="flex-1">
@@ -50,7 +50,7 @@ function HighlightedLine({ line }: { line: string }) {
     // Comments
     const commentMatch = remaining.match(/^(\/\/.*)/);
     if (commentMatch) {
-      tokens.push(<span key={key++} className="text-muted-foreground/60 italic">{commentMatch[1]}</span>);
+      tokens.push(<span key={key++} className="syntax-comment italic">{commentMatch[1]}</span>);
       remaining = remaining.slice(commentMatch[1].length);
       continue;
     }
@@ -58,7 +58,7 @@ function HighlightedLine({ line }: { line: string }) {
     // Decorators: @word or #deprecated
     const decoratorMatch = remaining.match(/^(@\w+|#deprecated)/);
     if (decoratorMatch) {
-      tokens.push(<span key={key++} className="text-purple-400">{decoratorMatch[0]}</span>);
+      tokens.push(<span key={key++} className="syntax-decorator">{decoratorMatch[0]}</span>);
       remaining = remaining.slice(decoratorMatch[0].length);
       continue;
     }
@@ -66,15 +66,23 @@ function HighlightedLine({ line }: { line: string }) {
     // Strings
     const stringMatch = remaining.match(/^"([^"\\]|\\.)*"/);
     if (stringMatch) {
-      tokens.push(<span key={key++} className="text-green-400">{stringMatch[0]}</span>);
+      tokens.push(<span key={key++} className="syntax-string">{stringMatch[0]}</span>);
       remaining = remaining.slice(stringMatch[0].length);
+      continue;
+    }
+
+    // Literal constants share the JSON/YAML palette.
+    const constantMatch = remaining.match(/^(true|false|null)\b/);
+    if (constantMatch) {
+      tokens.push(<span key={key++} className="syntax-constant">{constantMatch[0]}</span>);
+      remaining = remaining.slice(constantMatch[0].length);
       continue;
     }
 
     // Keywords
     const keywordMatch = remaining.match(/^(model|namespace|enum|interface|op|union|alias|scalar|using|import|extends|is)\b/);
     if (keywordMatch) {
-      tokens.push(<span key={key++} className="text-blue-400 font-medium">{keywordMatch[0]}</span>);
+      tokens.push(<span key={key++} className="syntax-keyword font-medium">{keywordMatch[0]}</span>);
       remaining = remaining.slice(keywordMatch[0].length);
       continue;
     }
@@ -82,7 +90,7 @@ function HighlightedLine({ line }: { line: string }) {
     // TypeSpec built-in types
     const typeMatch = remaining.match(/^(string|integer|int8|int16|int32|int64|float|float32|float64|boolean|bytes|decimal|decimal128|plainDate|plainTime|utcDateTime|offsetDateTime|duration|numeric|safeint|uint8|uint16|uint32|uint64|url|unixTimestamp32|Record|Lifecycle|Versions)\b/);
     if (typeMatch) {
-      tokens.push(<span key={key++} className="text-cyan-400">{typeMatch[0]}</span>);
+      tokens.push(<span key={key++} className="syntax-type">{typeMatch[0]}</span>);
       remaining = remaining.slice(typeMatch[0].length);
       continue;
     }
@@ -90,7 +98,7 @@ function HighlightedLine({ line }: { line: string }) {
     // Numbers
     const numMatch = remaining.match(/^-?\d+(\.\d+)?/);
     if (numMatch) {
-      tokens.push(<span key={key++} className="text-amber-400">{numMatch[0]}</span>);
+      tokens.push(<span key={key++} className="syntax-constant">{numMatch[0]}</span>);
       remaining = remaining.slice(numMatch[0].length);
       continue;
     }
@@ -344,7 +352,7 @@ export function TypeSpecPreview({
       {isEditMode ? (
         <div className="flex flex-col flex-1 overflow-hidden">
           {/* Textarea */}
-          <div className="flex-1 overflow-auto">
+          <div className="schema-code flex-1 overflow-auto">
             <textarea
               ref={textareaRef}
               value={editSource}
@@ -354,7 +362,7 @@ export function TypeSpecPreview({
                 setParseError(null);
               }}
               onKeyDown={handleKeyDown}
-              className="w-full h-full min-h-[200px] p-space-3 bg-transparent font-mono text-[12px] text-foreground leading-5 resize-none border-none outline-none placeholder:text-muted-foreground/40"
+              className="w-full h-full min-h-[200px] p-space-3 bg-transparent font-mono text-[13px] leading-5 resize-none border-none outline-none placeholder:text-[var(--code-comment)]"
               placeholder="Paste or type TypeSpec here..."
               spellCheck={false}
               data-testid="typespec-editor-textarea"
@@ -509,13 +517,13 @@ export function TypeSpecPreview({
         </div>
       ) : (
         /* View mode (original) */
-        <div className="flex-1 overflow-auto p-space-3" tabIndex={0} role="region" aria-label="TypeSpec preview">
+        <div className="schema-code flex-1 overflow-auto p-space-3" tabIndex={0} role="region" aria-label="TypeSpec preview">
           {error ? (
             <div className="text-caption text-destructive p-space-2">
               {error}
             </div>
           ) : source ? (
-            <pre className="font-mono text-[12px] text-foreground leading-5 whitespace-pre">
+            <pre className="font-mono text-[13px] leading-5 whitespace-pre">
               {highlightTypeSpec(source)}
             </pre>
           ) : isGenerating ? (

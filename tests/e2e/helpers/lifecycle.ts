@@ -308,39 +308,23 @@ export async function openSchemasTab(page: Page): Promise<void> {
 
 /** Open the TypeSpec tab and read the source. */
 export async function readTypeSpecSource(page: Page): Promise<string> {
-  // In the center panel: right after a hard load the streamed segment's hidden copy holds a second `tab-typespec` (helpers/event-builder.ts).
-  await centerPanel(page).getByTestId("tab-typespec").click();
+  const main = centerPanel(page);
+  await main.getByTestId("tab-editor").click();
+  const source = main.getByRole("button", { name: "View source", exact: true });
+  if (await source.isVisible()) await source.click();
   const area = page.getByTestId("typespec-source-textarea");
   await expect(area).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText(/Compiling current fields/)).toHaveCount(0, { timeout: 60_000 });
+  await expect(page.getByText("Loading source…", { exact: true })).toHaveCount(0, { timeout: 60_000 });
+  await expect(area).toHaveAttribute("readonly");
+  await expect(page.getByTestId("typespec-save")).toHaveCount(0);
   return area.inputValue();
 }
 
-/** Replace the TypeSpec source (the tab must be open) and Save: resolves with the toast / diagnostics text. */
-export async function saveTypeSpecSource(page: Page, source: string): Promise<{ ok: boolean; message: string }> {
-  const area = page.getByTestId("typespec-source-textarea");
-  const save = page.getByRole("button", { name: /^Save$/ });
-  // A toast of an earlier save must not be taken for this one's (a second save a few seconds after the first): let it go first.
-  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 15_000 }).catch(async () => {
-    await page.keyboard.press("Escape");
-  });
-  // The tab can reload its source right after it was opened (a refresh of the page behind a just-finished edit) and put the saved text
-  // back over what was typed: Save then stays disabled (not dirty) and the click waits for it in vain. Type and click as one unit that
-  // is repeated until it goes through, instead of sleeping to see whether the text stayed.
-  await expect(async () => {
-    await area.fill(source);
-    await save.click({ timeout: 2_000 });
-  }).toPass({ timeout: 30_000 });
-  const ok = page.locator('[data-sonner-toast][data-type="success"]').filter({ hasText: /TypeSpec compiled and applied/ }).first();
-  const bad = page.locator('[data-sonner-toast][data-type="error"]').last();
-  await expect(ok.or(bad)).toBeVisible({ timeout: 90_000 });
-  if (await ok.isVisible()) return { ok: true, message: (await ok.innerText()).trim() };
-  return { ok: false, message: (await bad.innerText()).trim() };
-}
-
-/** Switch back to the field Editor tab. */
+/** Switch back to the visual SuperSchema tab. */
 export async function openEditor(page: Page): Promise<void> {
-  await openEntityTab(page, "Editor");
+  await openEntityTab(page, "SuperSchema");
+  const back = centerPanel(page).getByRole("button", { name: "Back to fields", exact: true });
+  if (await back.isVisible()) await back.click();
   await expect(page.getByRole("heading", { name: /^Fields \(\d+\)$/ })).toBeVisible({ timeout: 30_000 });
 }
 

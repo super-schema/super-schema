@@ -7,6 +7,7 @@
  */
 
 import type { EntityRef, LegacyEntityRef } from "@/lib/references/entity-reference";
+import type { ApiOperation } from "@/types/schemas/api-operation";
 
 // ---------------------------------------------------------------------------
 // Logical type — covers every supported field type
@@ -423,6 +424,12 @@ export interface SuperSchemaModel {
   unionTypes?: SuperSchemaUnionType[];
   aliases?: SuperSchemaAlias[];
   interfaces?: SuperSchemaInterface[];
+  /**
+   * The entity's API operations (its ENTITY-scoped services' operations, base paths already applied), in the shared contract shape.
+   * Written only into the OpenAPI 3 source (`GenerateTypeSpecOptions.httpOperations`), with typed references; unlike the free-text
+   * `interfaces` above they can be generated in a multi-entity closure. Absent when the entity has none.
+   */
+  apiOperations?: ApiOperation[];
   namespace?: string;
 }
 

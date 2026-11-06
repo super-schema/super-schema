@@ -11,7 +11,7 @@ export const MAX_HIGHLIGHT_CHARS = 50_000;
 /** Test seam: how many times a layer line was rendered (the layer is memoised per line, so an edit renders O(1) of them). */
 export const renderStats = { lines: 0 };
 
-const TEXT_CLS = "font-mono text-mono-small leading-5 p-space-3 whitespace-pre";
+const TEXT_CLS = "font-mono text-[13px] leading-5 p-space-3 whitespace-pre";
 
 interface LineProps {
   text: string;
@@ -26,7 +26,7 @@ interface LineProps {
 const Line = memo(function Line({ text, highlight, changed, removedBefore, removedAfter }: LineProps) {
   renderStats.lines += 1;
   return (
-    <div data-changed={changed === undefined ? undefined : changed ? "true" : "false"} className={cn("relative", changed && "bg-destructive/25")}>
+    <div data-changed={changed === undefined ? undefined : changed ? "true" : "false"} className={cn("relative", changed && "syntax-changed")}>
       {highlight ? highlightLine(text || " ", highlight) : <span className="text-transparent">{text || " "}</span>}
       {removedBefore && <span data-testid="detail-panel-removed-marker" className="absolute inset-x-0 top-0 h-0.5 bg-destructive" />}
       {removedAfter && <span data-testid="detail-panel-removed-marker" className="absolute inset-x-0 bottom-0 h-0.5 bg-destructive" />}
@@ -78,7 +78,7 @@ export function HighlightedTextarea({
     <div className="flex flex-col gap-space-1 h-full">
       <div
         className={cn(
-          "relative rounded-lg border border-border bg-muted/50 overflow-hidden transition-colors",
+          "schema-code relative rounded-lg border border-border overflow-hidden transition-colors",
           "focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-ring/40",
           className
         )}
@@ -121,8 +121,8 @@ export function HighlightedTextarea({
             }
           }}
           className={cn(
-            "absolute inset-0 w-full h-full resize-none bg-transparent outline-none overflow-auto caret-foreground placeholder:text-muted-foreground/50",
-            colour ? "text-transparent" : "text-foreground",
+            "absolute inset-0 w-full h-full resize-none bg-transparent outline-none overflow-auto caret-[var(--code-foreground)] placeholder:text-[var(--code-comment)]",
+            colour ? "text-transparent" : "text-[var(--code-foreground)]",
             TEXT_CLS
           )}
         />

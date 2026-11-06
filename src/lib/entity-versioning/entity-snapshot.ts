@@ -12,12 +12,19 @@
  * name is refreshed from it (multi-entity emission spec, decision 4). Pure and client-safe.
  */
 
+import { apiOperationSchema, type ApiOperation } from "@/types/schemas/api-operation";
+
 export type EntitySnapshot = {
   name: string;
   description: string;
   status: string;
   /** The entity's metadata without `schemaVersions` (the stored generated schemas are bookkeeping the emitters never read). */
   metadata: unknown;
+  /**
+   * The entity's API operations at publish (contract shape), so the published OpenAPI output does not follow later edits of the API
+   * tab. Absent when it had none, and on every version published before operations were frozen (read as none: never the live rows).
+   */
+  apiOperations?: ApiOperation[];
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -37,13 +44,20 @@ export function withoutSchemaVersions(metadata: unknown): unknown {
 }
 
 /** The part of a `compatReport` a publish writes for the entity itself: `{ entitySnapshot }`. */
-export function entitySnapshotReport(entity: { name: string; description: string; status: string; metadata: unknown }): { entitySnapshot: EntitySnapshot } {
+export function entitySnapshotReport(entity: {
+  name: string;
+  description: string;
+  status: string;
+  metadata: unknown;
+  apiOperations?: ApiOperation[];
+}): { entitySnapshot: EntitySnapshot } {
   return {
     entitySnapshot: {
       name: entity.name,
       description: entity.description,
       status: entity.status,
       metadata: withoutSchemaVersions(entity.metadata ?? null),
+      ...(entity.apiOperations && entity.apiOperations.length > 0 ? { apiOperations: entity.apiOperations } : {}),
     },
   };
 }
@@ -58,5 +72,15 @@ export function readEntitySnapshot(compatReport: unknown): EntitySnapshot | unde
   const status = own(raw, "status");
   if (typeof name !== "string" || typeof description !== "string" || typeof status !== "string") return undefined;
   // (a hand-edited or older row may still carry the stored schema versions inside: they are never handed out)
-  return { name, description, status, metadata: withoutSchemaVersions(own(raw, "metadata") ?? null) };
+  const apiOperations = readFrozenApiOperations(own(raw, "apiOperations"));
+  return { name, description, status, metadata: withoutSchemaVersions(own(raw, "metadata") ?? null), ...(apiOperations.length > 0 ? { apiOperations } : {}) };
+}
+
+/** The frozen operations, each validated against the contract (a hand-edited row's invalid entry is left out, never handed on). */
+function readFrozenApiOperations(raw: unknown): ApiOperation[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    const parsed = apiOperationSchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
 }

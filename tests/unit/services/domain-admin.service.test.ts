@@ -299,6 +299,14 @@ describe("Domain Admin Service", () => {
   });
 
   describe("updateDomainAdmin", () => {
+    it("persists sparse per-type field completeness overrides", async () => {
+      const original = seed({ name: "Identity" });
+      const fieldCompleteness = { string: { minLength: "required", maxLength: "off" }, decimal: { scale: "suggested" } } as const;
+      const result = await updateDomainAdmin({ id: original.id, policyTemplate: { fieldCompleteness } }, adminCtx);
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.policyTemplate?.fieldCompleteness).toEqual(fieldCompleteness);
+      expect(rows[0].policyTemplate).toEqual({ fieldCompleteness });
+    });
     it("updates name (and the slug that follows it), description, and policy template", async () => {
       const original = seed({ name: "Original" });
       const result = await updateDomainAdmin(

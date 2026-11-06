@@ -47,11 +47,11 @@ export function SchemaCodePreview({ code, language = "sql", onCopy, title = "Pre
           )}
         </button>
       </div>
-      <pre className="p-space-3 text-body-small leading-relaxed font-mono text-foreground overflow-x-auto max-h-80 overflow-y-auto">
+      <pre className="schema-code p-space-3 text-[13px] leading-5 font-mono overflow-x-auto max-h-80 overflow-y-auto">
         <code>
           {lines.map((line, i) => (
             <div key={i} className="flex">
-              <span className="inline-block w-8 text-right pr-3 text-muted-foreground/50 select-none">
+              <span className="syntax-comment inline-block w-8 text-right pr-3 select-none">
                 {i + 1}
               </span>
               <span className="flex-1">{highlightLine(line, language)}</span>

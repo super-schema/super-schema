@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Zap, Upload } from "lucide-react";
+import { Upload } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UnsavedChangesDialog } from "@/features/events/builder/UnsavedChangesDialog";
@@ -43,6 +43,7 @@ import { trackRecentEntity } from "@/lib/recent-entities";
 import { EntityHeader } from "./components/EntityHeader";
 import type { ReplacementEntityLink } from "@/components/custom/DeprecationBanner";
 import { EntityToolbar } from "./components/EntityToolbar";
+import { usePublishEligibility } from "./components/usePublishEligibility";
 import { RightPanelRouter } from "./components/RightPanelRouter";
 import { InlineEntityMeta } from "./components/InlineEntityMeta";
 import { RetentionPolicyEditor } from "@/features/governance/RetentionPolicyEditor/RetentionPolicyEditor";
@@ -61,6 +62,7 @@ import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-vers
 import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
 import { AlertsTab } from "./components/AlertsTab";
 import { ApiTab, type ApiOperationData } from "./components/ApiTab";
+import type { ApiServiceInfo } from "./components/ApiServiceSettings";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { getPublishPreviewAction, publishEntityAction, listEntityVersionsAction } from "./version-actions";
@@ -80,7 +82,7 @@ type ViewTab = "editor" | "versions" | "governance" | "alerts" | "schemas" | "ap
 type RightPanelTab = "field-edit" | "typespec-preview";
 
 const VIEW_GROUPS = [
-  { label: "Author", tabs: [["editor", "Editor"], ["typespec", "TypeSpec source"]] },
+  { label: "Author", tabs: [["editor", "SuperSchema"]] },
   { label: "Deliver", tabs: [["schemas", "Schemas"], ["api", "API"], ["deployments", "Deployments"]] },
   { label: "Govern", tabs: [["governance", "Governance"], ["alerts", "Alerts"]] },
   { label: "History", tabs: [["versions", "Versions"]] },
@@ -88,6 +90,8 @@ const VIEW_GROUPS = [
 
 function normalizeView(value: string | null, level: "TENANT" | "PRODUCT"): ViewTab {
   if (value === "api" && level !== "PRODUCT") return "editor";
+  // Source is a SuperSchema subview; keep existing source deep links working.
+  if (value === "typespec") return "typespec";
   return VIEW_GROUPS.some((group) => group.tabs.some(([id]) => id === value)) ? value as ViewTab : "editor";
 }
 
@@ -143,6 +147,8 @@ export interface EntityWorkspaceProps {
   fields: FieldData[];
   domainPolicy: Record<string, unknown> | null;
   apiServiceId: string | null;
+  /** The entity's API service (name, base path); optional so loaders and tests that predate it still compile. */
+  apiService?: ApiServiceInfo | null;
   apiOperations: ApiOperationData[];
   /**
    * The entity named by `metadata.deprecation.replacementEntityId`, resolved by the
@@ -166,7 +172,7 @@ export interface EntityWorkspaceProps {
   capabilities?: EntityCapabilities;
 }
 
-export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiOperations, replacementEntity, referenceStaleness, referenceTargets, capabilities = NO_ENTITY_CAPABILITIES }: EntityWorkspaceProps) {
+export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiService = null, apiOperations, replacementEntity, referenceStaleness, referenceTargets, capabilities = NO_ENTITY_CAPABILITIES }: EntityWorkspaceProps) {
   const readOnly_ = isReadOnly(entity.status as EntityStatus);
 
   // Track recent entity access for command palette
@@ -210,6 +216,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   const searchParams = useSearchParams();
   const requestedView = normalizeView(searchParams.get("tab"), level);
   const [activeTab, setActiveTab] = useState<ViewTab>(requestedView);
+  const workspaceTab = activeTab === "typespec" ? "editor" : activeTab;
   const activeTabRef = useRef(requestedView);
   const tabsListRef = useRef<HTMLDivElement>(null);
 
@@ -218,7 +225,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     const list = tabsListRef.current;
     if (!list) return;
     const revealSelectedTab = () => {
-      const tab = list.querySelector<HTMLElement>(`[data-testid="tab-${activeTab}"]`);
+      const tab = list.querySelector<HTMLElement>(`[data-testid="tab-${workspaceTab}"]`);
       if (!tab) return;
       const viewport = list.getBoundingClientRect();
       const bounds = tab.getBoundingClientRect();
@@ -230,7 +237,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     const observer = new ResizeObserver(revealSelectedTab);
     observer.observe(list);
     return () => observer.disconnect();
-  }, [activeTab]);
+  }, [workspaceTab]);
 
   // Draft + Publish state (spec §5.3). Server props are the source of truth;
   // saves flip the local copy until the next server render (React "adjust
@@ -248,7 +255,9 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
       hasUnpublishedChanges: entity.hasUnpublishedChanges ?? true,
     });
   }
+  const [draftRevision, setDraftRevision] = useState(0);
   const markDraftDirty = useCallback(() => {
+    setDraftRevision((current) => current + 1);
     setVersionState((s) => (s.hasUnpublishedChanges ? s : { ...s, hasUnpublishedChanges: true }));
   }, []);
 
@@ -290,6 +299,21 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   const [panelSaving, setPanelSaving] = useState(false);
   const panelSavingRef = useRef(false);
   const fieldBusy = savingField || panelSaving;
+  const publishRevision = useMemo(() => ({
+    fields, name: entity.name, description: entity.description, metadata: entity.metadata, status: entity.status, version: entity.version,
+    versionState, referenceStaleness, draftRevision,
+  }), [fields, entity.name, entity.description, entity.metadata, entity.status, entity.version, versionState, referenceStaleness, draftRevision]);
+  const eligibility = usePublishEligibility(entity.id, publishRevision, capabilities.publish && !readOnly_);
+  const publishDisabledReason = readOnly_
+    ? "Retired entities cannot be published."
+    : !capabilities.publish
+    ? "You do not have permission to publish this entity."
+    : isPending || fieldBusy ? "Wait for your changes to finish saving."
+    : isFieldDirty ? "Save or discard your field edits before publishing."
+    : isPublishing ? "Publishing…"
+    : eligibility.checking ? "Checking whether this entity can be published…"
+    : eligibility.error ?? eligibility.blockers[0]?.message ?? null;
+  const blockedPublishReference = needsReferenceOf(eligibility.blockers);
   const handlePanelSavingChange = useCallback((saving: boolean) => {
     panelSavingRef.current = saving;
     setPanelSaving(saving);
@@ -581,13 +605,14 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   }, [entity.id, pickReference]);
 
   const handleOpenPublish = useCallback(() => {
+    if (publishDisabledReason) return;
     requestAction(async () => {
       setPublishOpen(true);
       setPublishPreview(null);
       setPublishError(null);
       await loadPublishPreview();
     }, "publish");
-  }, [requestAction, loadPublishPreview]);
+  }, [requestAction, loadPublishPreview, publishDisabledReason]);
 
   const handleConfirmPublish = useCallback(async (input: PublishInput) => {
     setIsPublishing(true);
@@ -798,26 +823,39 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         showSaved={showSaved}
         versionState={versionState}
         onPublish={readOnly_ ? undefined : handleOpenPublish}
+        publishDisabledReason={publishDisabledReason}
         replacementEntity={replacementEntity}
         toolbar={
-          <EntityToolbar
-            onDelete={readOnly_ ? undefined : () => {
-              deleteReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-              setDeleteError(null);
-              setDeleteConfirmOpen(true);
-            }}
-          />
+            <EntityToolbar
+              onDelete={readOnly_ ? undefined : () => {
+                deleteReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                setDeleteError(null);
+                setDeleteConfirmOpen(true);
+              }}
+            />
         }
       />
 
-      <div className="mb-space-4 flex flex-wrap items-center justify-between gap-space-3 rounded-lg border border-border px-space-3 py-space-2">
-        <p role="status" aria-live="polite" data-testid="workspace-draft-status" className="text-body-small text-muted-foreground">
-          {fieldBusy ? "Saving field edits…" : isFieldDirty ? "Unsaved field edits" : versionState.hasUnpublishedChanges ? "Draft saved · unpublished changes" : versionState.latestVersionLabel ? `Published v${versionState.latestVersionLabel} · draft up to date` : "Draft saved · not published"}
-        </p>
-        {!readOnly_ && <Button type="button" variant="outline" size="sm" onClick={handleEmit} disabled={isEmitting || fieldBusy}>
-          <Zap data-icon="inline-start" aria-hidden="true" />{isEmitting ? "Generating…" : "Generate schemas"}
-        </Button>}
-      </div>
+      {!readOnly_ && publishDisabledReason && (
+        <div className="mb-space-4 flex flex-wrap items-center gap-space-2">
+          <p id="entity-publish-status" role="status" data-testid="publish-status" className="text-caption text-muted-foreground">{publishDisabledReason}</p>
+          {eligibility.error && capabilities.publish && (
+            <Button type="button" size="sm" variant="outline" onClick={eligibility.retry}>Retry publish check</Button>
+          )}
+          {blockedPublishReference && capabilities.publish && !isFieldDirty && !fieldBusy && (
+            <Button type="button" size="sm" variant="outline" onClick={async () => {
+              if (await pickReference(blockedPublishReference)) { eligibility.retry(); router.refresh(); }
+            }}>Choose referenced entity</Button>
+          )}
+          {eligibility.blockers.length > 0 && !blockedPublishReference && capabilities.publish && (
+            <Button type="button" size="sm" variant="outline" onClick={eligibility.retry}>Check again</Button>
+          )}
+        </div>
+      )}
+
+      <p role="status" aria-live="polite" data-testid="workspace-draft-status" className={fieldBusy || isFieldDirty ? "mb-space-4 text-body-small text-muted-foreground" : "sr-only"}>
+        {fieldBusy ? "Saving field edits…" : isFieldDirty ? "Unsaved field edits" : ""}
+      </p>
 
       {/* Inline entity metadata */}
       <InlineEntityMeta
@@ -857,7 +895,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         referenceTargets={referenceTargets}
       />
 
-      <Tabs value={activeTab} onValueChange={(value) => handleTabChange(value as ViewTab)} className="min-w-0">
+      <Tabs value={workspaceTab} onValueChange={(value) => handleTabChange(value as ViewTab)} className="min-w-0">
         <TabsList ref={tabsListRef} variant="line" aria-label="Entity workspace views" className="mb-space-4 h-auto w-full min-w-0 flex-nowrap justify-start gap-space-1 overflow-x-auto border-b border-border pb-space-2 group-data-horizontal/tabs:h-auto">
           {VIEW_GROUPS.flatMap<[ViewTab, string]>((group) => group.tabs).filter(([tab]) => level === "PRODUCT" || tab !== "api").map(([tab, label]) => (
             <TabsTrigger key={tab} value={tab} data-testid={`tab-${tab}`} data-alert-count={tab === "alerts" ? alertCount : undefined} className="min-h-9 flex-none px-space-3">
@@ -867,16 +905,29 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         </TabsList>
 
       {/* Center Panel */}
-      <TabsContent key={activeTab} value={activeTab} className="mb-space-8 min-w-0">
-        {activeTab === "editor" && (
-          showDiff && diffResult ? (
-            <DiffViewer diff={diffResult} onClose={handleCloseDiff} />
-          ) : (
-            <>
-              <h2 className="text-heading-2 text-foreground mb-space-4">
-                Fields ({fields.length})
-              </h2>
+      <TabsContent key={activeTab} value={workspaceTab} className="mb-space-8 min-w-0">
+        {(activeTab === "editor" || activeTab === "typespec") && (
+          <>
+            {(activeTab === "typespec" || (showDiff && diffResult)) && (
+            <div className="mb-space-3 flex items-center justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-pressed={activeTab === "typespec"}
+                onClick={() => handleTabChange(activeTab === "typespec" ? "editor" : "typespec")}
+              >
+                {activeTab === "typespec" ? "Back to fields" : "View source"}
+              </Button>
+            </div>
+            )}
+            {activeTab === "typespec" ? (
+              <TypeSpecSourceTab entityId={entity.id} entityName={entity.name} readOnly />
+            ) : showDiff && diffResult ? (
+              <DiffViewer diff={diffResult} onClose={handleCloseDiff} />
+            ) : (
               <FieldEditor
+                toolbarAction={<Button type="button" variant="outline" size="sm" onClick={() => handleTabChange("typespec")}>View source</Button>}
                 entityId={entity.id}
                 entitySlug={entity.slug}
                 domainSlug={entity.domainSlug}
@@ -912,8 +963,8 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
                   else markDraftDirty();
                 }}
               />
-            </>
-          )
+            )}
+          </>
         )}
 
         {activeTab === "schemas" && (
@@ -936,20 +987,6 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
           <EntityDeploymentsTab entityId={entity.id} entityName={entity.name} />
         )}
 
-        {activeTab === "typespec" && (
-          <TypeSpecSourceTab
-            entityId={entity.id}
-            entityName={entity.name}
-            readOnly={readOnly_}
-            onSaved={() => {
-              markDraftDirty();
-              // Refresh data while preserving the source tab, selected field and URL.
-              setTypeSpecTrigger((n) => n + 1);
-              router.refresh();
-            }}
-          />
-        )}
-
         {activeTab === "versions" && (
           <div className="space-y-space-6" data-testid="versions-tab">
             <div className="flex items-center justify-between">
@@ -958,6 +995,9 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
                 <Button
                   variant="outline"
                   onClick={handleOpenPublish}
+                  disabled={Boolean(publishDisabledReason)}
+                  title={publishDisabledReason ?? undefined}
+                  aria-describedby={publishDisabledReason ? "entity-publish-status" : undefined}
                   className="gap-1.5"
                   data-testid="versions-publish-button"
                 >
@@ -1086,8 +1126,10 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
             entityName={entity.name}
             domainId={entity.domainId}
             serviceId={apiServiceId}
+            service={apiService}
             initialOperations={apiOperations}
-            fields={fields.map((f) => ({ name: f.name, type: f.type }))}
+            fields={fields.map((f) => ({ name: f.name, type: f.type, isKey: f.isKey }))}
+            typeNames={referenceTargets?.map((t) => t.name)}
             isReadOnly={readOnly_}
           />
         )}
@@ -1105,10 +1147,14 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         publishError={publishError}
         onPickReference={publishPreview && needsReferenceOf(publishPreview.blockers) ? () => void loadPublishPreview() : undefined}
         nested={referenceDialog}
-        onOpenChange={setPublishOpen}
+        onOpenChange={(open) => {
+          if (isPublishing) return;
+          setPublishOpen(open);
+          if (!open) eligibility.retry();
+        }}
         onConfirm={handleConfirmPublish}
       />
-      {/* The same pick dialog, when the question comes from the all-targets emission (the publish dialog is not open to host it). */}
+      {/* Reference choices outside the publish dialog, including blocked header eligibility checks. */}
       {!publishOpen && referenceDialog}
 
       {/* Type Mapping Override Dialog */}

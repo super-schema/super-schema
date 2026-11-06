@@ -91,9 +91,12 @@ describe("a file of no entity that a kept file points at stays (JSON Schema: a l
     ]);
     expect(result.success).toBe(true);
     if (!result.success) return;
-    expect(result.data.files.map((f) => [f.path, f.entityId])).toEqual([["A.json", "a"], ["B.json", "b"], ["Inner.json", "a"], ["RecordUnknown.json", "a"]]);
-    // the adopted files are the entity's, so the UI groups them under it and a git export writes them with it
-    expect(result.data.entityFiles.a).toEqual(["A.json", "Inner.json", "RecordUnknown.json"]);
+    expect(result.data.files.map((f) => [f.path, f.entityId])).toEqual([["A.json", "a"], ["B.json", "b"]]);
+    // the adopted files are folded into the entity's own file as `$defs`, local refs between them
+    expect(result.data.entityFiles.a).toEqual(["A.json"]);
+    const a = JSON.parse(result.data.files[0].content);
+    expect(Object.keys(a.$defs)).toEqual(["Inner", "RecordUnknown"]);
+    expect(a.$defs.RecordUnknown.properties.x.$ref).toBe("#/$defs/Inner/properties");
   });
 
   it("a ref with a directory or a pointer into the file counts only when it names a file of the output", async () => {

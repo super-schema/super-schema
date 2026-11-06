@@ -16,13 +16,14 @@ export function EntityToolbar({ onDelete }: EntityToolbarProps) {
       {onDelete && (
         <Button
           variant="outline"
+          size="icon-sm"
           onClick={onDelete}
           data-testid="entity-delete-button"
           className="gap-1.5 text-muted-foreground hover:text-destructive hover:border-destructive/50"
           title="Delete entity"
+          aria-label="Delete entity"
         >
-          <Trash2 className="w-4 h-4" />
-          Delete
+          <Trash2 aria-hidden="true" />
         </Button>
       )}
       <Button

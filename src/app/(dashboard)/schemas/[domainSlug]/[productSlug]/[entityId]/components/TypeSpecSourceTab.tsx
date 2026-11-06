@@ -106,27 +106,28 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
     return (
       <div className="flex items-center justify-center py-space-12 text-muted-foreground">
         <Loader2 className="w-5 h-5 animate-spin mr-2" />
-        Compiling current fields to TypeSpec…
+        Loading source…
       </div>
     );
   }
 
   return (
     <div className="space-y-space-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-space-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <FileCode className="w-4 h-4 text-muted-foreground" />
-          <h2 className="text-heading-2 text-foreground">TypeSpec Source</h2>
+          <h2 className="text-heading-2 text-foreground">Source</h2>
+          {readOnly && <span className="text-caption text-muted-foreground">Read-only</span>}
           {wasGenerated && (
             <span className="text-caption text-muted-foreground/60">
-              (generated from current fields — not yet saved as source)
+              (generated from current fields)
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5" data-testid="typespec-export">
             <Download className="w-3.5 h-3.5" />
-            Export .tsp
+            Export source
           </Button>
           {!readOnly && (
             <Button size="sm" onClick={handleSave} disabled={isSaving || !isDirty} className="gap-1.5" data-testid="typespec-save">
@@ -138,15 +139,22 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
       </div>
 
       <p className="text-caption text-muted-foreground">
-        This is the entity&apos;s real, captured TypeSpec document — not a preview. Edits here
-        compile through the real TypeSpec compiler and the governance decorator package
-        before being applied; changes made through the visual field editor appear here too. A
-        field can be typed with the name of another entity of this tenant (<code>Address</code>, or
-        <code> Domain.Product.Entity</code> to say which one when several share a name); it is saved
-        as a reference to that entity.
+        {readOnly ? (
+          "Read-only source for this entity. Changes made in SuperSchema appear here."
+        ) : (
+          <>
+            This is the entity&apos;s real, captured TypeSpec document — not a preview. Edits here
+            compile through the real TypeSpec compiler and the governance decorator package
+            before being applied; changes made through the visual field editor appear here too. A
+            field can be typed with the name of another entity of this tenant (<code>Address</code>, or
+            <code> Domain.Product.Entity</code> to say which one when several share a name); it is saved
+            as a reference to that entity.
+          </>
+        )}
       </p>
 
       <textarea
+        aria-label="Entity source"
         data-testid="typespec-source-textarea"
         value={source}
         onChange={(e) => setSource(e.target.value)}

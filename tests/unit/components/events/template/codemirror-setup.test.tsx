@@ -113,7 +113,7 @@ describe("theme and highlighting use the app's design tokens, never fixed colour
   const rules = () => (appHighlightStyle.module?.getRules() ?? "");
 
   it("colours the syntax with CSS variables of the design system", () => {
-    for (const token of ["--primary", "--success", "--info", "--warning", "--muted-foreground", "--destructive"]) {
+    for (const token of ["--code-key", "--code-string", "--code-constant", "--code-keyword", "--code-type", "--code-decorator", "--code-comment", "--code-invalid"]) {
       expect(rules()).toContain(`var(${token})`);
     }
     expect(rules()).not.toMatch(/#[0-9a-f]{3,8}\b/i);
@@ -123,7 +123,7 @@ describe("theme and highlighting use the app's design tokens, never fixed colour
   it("styles the editor itself with tokens too, once it is mounted", () => {
     make();
     const css = Array.from(document.querySelectorAll("style")).map((s) => s.textContent ?? "").join("\n");
-    for (const token of ["--foreground", "--border", "--muted", "--ring", "--accent", "--popover", "--muted-foreground"]) {
+    for (const token of ["--code-foreground", "--code-background", "--code-gutter", "--code-selection", "--code-changed", "--border", "--ring", "--accent", "--popover", "--muted-foreground"]) {
       expect(css).toContain(`var(${token})`);
     }
     // the editor's own rules (those of our theme) carry no fixed colour

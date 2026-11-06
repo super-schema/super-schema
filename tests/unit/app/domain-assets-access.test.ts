@@ -24,7 +24,7 @@ const h = vi.hoisted(() => {
     revalidatePath: fn(),
     lookups: {
       domain: fn(), product: fn(), tenant: fn(), entity: fn(), model: fn(), modelField: fn(), sharedEnum: fn(), customScalar: fn(), unionType: fn(),
-      service: fn(), operation: fn(),
+      service: fn(), operation: fn(), serviceOperations: fn(),
     },
     effects: {
       auditCreate: fn(), transaction: fn(), createInScope: fn(), deleteEntityGuarded: fn(), ensureDefaultProduct: fn(),
@@ -52,7 +52,7 @@ vi.mock("@/lib/db", () => ({
     customScalar: { findUnique: h.lookups.customScalar, update: h.effects.scalarUpdate, delete: h.effects.scalarDelete },
     unionType: { findUnique: h.lookups.unionType, update: h.effects.unionUpdate, delete: h.effects.unionDelete },
     serviceDefinition: { findUnique: h.lookups.service, findFirst: h.effects.serviceFindFirst, delete: h.effects.serviceDelete },
-    operation: { findUnique: h.lookups.operation, create: h.effects.operationCreate, update: h.effects.operationUpdate, delete: h.effects.operationDelete },
+    operation: { findUnique: h.lookups.operation, findMany: h.lookups.serviceOperations, create: h.effects.operationCreate, update: h.effects.operationUpdate, delete: h.effects.operationDelete },
     operationParameter: { deleteMany: h.effects.paramDeleteMany },
     operationResponse: { deleteMany: h.effects.responseDeleteMany },
     auditLog: { create: h.effects.auditCreate },
@@ -79,6 +79,12 @@ function place(tenantId: string, domainId = "dom-a") {
   h.lookups.modelField.mockResolvedValue({ name: "x", model: { domainId, domain: { tenantId } } });
   for (const kind of ["sharedEnum", "customScalar", "unionType", "service"] as const) h.lookups[kind].mockResolvedValue(entityLike(tenantId, domainId));
   h.lookups.operation.mockResolvedValue({ service: entityLike(tenantId, domainId) });
+  // the operations of an API, as the operation saves re-validate them: svc-1 is empty (a create), op-1's API holds op-1 alone
+  h.lookups.serviceOperations.mockImplementation(async ({ where }: { where: { serviceId?: string } }) =>
+    where.serviceId
+      ? []
+      : [{ id: "op-1", serviceId: "svc-1", name: "getOrder", description: "", httpMethod: "GET", httpPath: "/orders", parameters: [], responses: [] }]
+  );
 }
 
 type Op = { label: string; call: () => Promise<unknown>; needs: "entity.write" | "asset.write" | "import.run" };
@@ -187,6 +193,8 @@ describe.each(OPS)("$label", (op) => {
         expect(answer.code, role).not.toBe("FORBIDDEN");
         expect(answer.code, role).not.toBe("UNAUTHORIZED");
         expect(answer.code, role).not.toBe("NOT_FOUND");
+        // the payloads here are valid: an allowed caller is never answered with a validation failure instead
+        expect(answer.code, role).not.toBe("VALIDATION_ERROR");
       } else {
         expect(answer, role).toEqual(GENERIC_FORBIDDEN);
         expect(reached(), `${role} reached an effect`).toHaveLength(0);

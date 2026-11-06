@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FieldCompletenessPolicySchema } from "./field-completeness-policy";
 
 export const PolicyTemplateSchema = z
   .object({
@@ -15,6 +16,7 @@ export const PolicyTemplateSchema = z
       )
       .optional(),
     namingConventions: z.string().optional(),
+    fieldCompleteness: FieldCompletenessPolicySchema.optional(),
   })
   .partial();
 

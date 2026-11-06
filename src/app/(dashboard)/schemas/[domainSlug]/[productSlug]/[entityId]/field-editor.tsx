@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Loader2, ExternalLink, X, Search } from "lucide-react";
 import {
@@ -27,6 +27,7 @@ import {
   getFieldCompleteness,
 } from "@/lib/validation/field-completeness";
 import { DATA_TYPE_HIERARCHY } from "@/lib/data-types";
+import { readFieldCompletenessPolicy } from "@/types/schemas/field-completeness-policy";
 import { classificationFilterOptions, matchesClassificationFilter } from "@/lib/classification-counts";
 import { assetHref } from "@/lib/navigation/asset-href";
 import {
@@ -96,6 +97,7 @@ interface FieldEditorProps {
    * field row or in the New Field form) asks for the target and saves the qualified reference with the field.
    */
   referenceTargets?: PickableEntity[];
+  toolbarAction?: ReactNode;
 }
 
 export function FieldEditor({
@@ -114,8 +116,10 @@ export function FieldEditor({
   selectedFieldId,
   referenceControls,
   referenceTargets,
+  toolbarAction,
 }: FieldEditorProps) {
   const router = useRouter();
+  const completenessPolicy = useMemo(() => readFieldCompletenessPolicy(domainPolicy?.fieldCompleteness), [domainPolicy?.fieldCompleteness]);
   const [isCreating, setIsCreating] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newFieldName, setNewFieldName] = useState("");
@@ -171,14 +175,14 @@ export function FieldEditor({
 
     if (completenessFilter) {
       result = result.filter((f) => {
-        const fc = getFieldCompleteness(f);
+        const fc = getFieldCompleteness(f, completenessPolicy);
         if (completenessFilter === "complete") return fc.status === "complete";
         return fc.status !== "complete";
       });
     }
 
     return result;
-  }, [fields, searchQuery, typeFilter, classificationFilter, completenessFilter]);
+  }, [fields, searchQuery, typeFilter, classificationFilter, completenessFilter, completenessPolicy]);
 
   const navigateToFieldStudio = useCallback(
     (fieldId: string) => {
@@ -319,7 +323,7 @@ export function FieldEditor({
     }
   }
 
-  const completeness = getEntityCompleteness(fields);
+  const completeness = useMemo(() => getEntityCompleteness(fields, completenessPolicy), [fields, completenessPolicy]);
 
   // Drag-and-drop sensors. Stable option objects + a memoized id list keep the
   // dnd-kit contexts from changing on every render (they would otherwise
@@ -359,25 +363,15 @@ export function FieldEditor({
 
   return (
     <div>
-      {/* Progress bar */}
-      {fields.length > 0 && (
-        <div className="mb-space-4">
-          <div className="flex items-center justify-between mb-space-1">
-            <span className="text-caption text-muted-foreground">
-              {completeness.complete} of {pluralize(completeness.total, "field")} complete
-            </span>
-            <span className="text-caption text-muted-foreground">
-              {completeness.percentage}%
-            </span>
-          </div>
-          <div className="h-1 bg-muted rounded-full overflow-hidden">
-            <div
-              className="h-full bg-success rounded-full transition-all duration-300"
-              style={{ width: `${completeness.percentage}%` }}
-            />
-          </div>
-        </div>
-      )}
+      <div className="mb-space-3 flex min-w-0 items-center gap-space-3" data-testid="field-list-toolbar">
+        <h2 className="shrink-0 text-body-small font-medium text-foreground">Fields ({fields.length})</h2>
+        {fields.length > 0 && (
+          <span className="min-w-0 truncate text-caption text-muted-foreground" aria-label={`${completeness.complete} of ${pluralize(completeness.total, "field")} complete`} title={`${completeness.percentage}% complete`}>
+            {completeness.complete}/{completeness.total} complete
+          </span>
+        )}
+        {toolbarAction && <div className="ml-auto shrink-0">{toolbarAction}</div>}
+      </div>
 
       {/* Filter bar */}
       {fields.length > 3 && (
@@ -469,6 +463,7 @@ export function FieldEditor({
                 onNavigateStudio={navigateToFieldStudio}
                 referenceControls={referenceControls}
                 referenceTargets={referenceTargets}
+                completenessPolicy={completenessPolicy}
               />
             ))}
           </div>

@@ -23,6 +23,7 @@ import type {
 } from "@/types/super-schema-model";
 import { ALL_DATA_TYPES } from "@/lib/data-types";
 import { readFieldReference } from "@/lib/references/entity-reference";
+import type { ApiOperation } from "@/types/schemas/api-operation";
 
 function asString(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
@@ -42,6 +43,11 @@ export interface PrismaEntityInput {
   domainId: string | null;
   metadata: unknown; // Prisma JSONB
   domain?: { id: string; name: string; slug: string } | null;
+  /**
+   * The entity's API operations in the contract shape (see `toApiOperations` in `@/lib/api-operations/to-typespec`): attached by the
+   * closure loader for a live (draft) member, or read back from a published version's entity snapshot. Absent / empty: none.
+   */
+  apiOperations?: ApiOperation[];
 }
 
 export interface PrismaFieldInput {
@@ -97,6 +103,7 @@ export function compileEntity(
     namespace: extractCustomString(metadata.custom, "namespace"),
     sharedEnums: extractCustomArray<SuperSchemaSharedEnum>(metadata.custom, "sharedEnums"),
     unionTypes: extractCustomArray<SuperSchemaUnionType>(metadata.custom, "unionTypes"),
+    ...(entity.apiOperations && entity.apiOperations.length > 0 ? { apiOperations: entity.apiOperations } : {}),
   };
 }
 

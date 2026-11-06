@@ -41,28 +41,30 @@ export interface EditorOptions {
 const External = Annotation.define<boolean>();
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// Highlighting and theme. Colours are the app's design tokens as CSS variables, so the light and the dark theme both work and
+// Highlighting and theme. Code colors use the shared GitHub Default palette as CSS variables, so light and dark both work and
 // follow a theme switch without the editor being rebuilt.
 // ---------------------------------------------------------------------------------------------------------------------------
 
 export const appHighlightStyle = HighlightStyle.define([
-  { tag: tags.propertyName, color: "var(--primary)" },
-  { tag: [tags.string, tags.special(tags.string)], color: "var(--success)" },
-  { tag: tags.number, color: "var(--info)" },
-  { tag: [tags.bool, tags.null, tags.keyword, tags.meta], color: "var(--warning)" },
-  { tag: [tags.labelName, tags.typeName, tags.attributeValue], color: "var(--info)" },
-  { tag: [tags.separator, tags.punctuation, tags.brace, tags.squareBracket], color: "var(--muted-foreground)" },
-  { tag: [tags.lineComment, tags.blockComment], color: "var(--muted-foreground)", fontStyle: "italic" },
-  { tag: tags.invalid, color: "var(--destructive)" },
+  { tag: [tags.propertyName, tags.labelName], color: "var(--code-key)" },
+  // Lezer's YAML grammar tags unquoted scalar values as content.
+  { tag: [tags.string, tags.special(tags.string), tags.attributeValue, tags.content], color: "var(--code-string)" },
+  { tag: [tags.number, tags.bool, tags.null], color: "var(--code-constant)" },
+  { tag: tags.keyword, color: "var(--code-keyword)" },
+  { tag: tags.meta, color: "var(--code-decorator)" },
+  { tag: tags.typeName, color: "var(--code-type)" },
+  { tag: [tags.separator, tags.punctuation, tags.brace, tags.squareBracket], color: "var(--code-foreground)" },
+  { tag: [tags.lineComment, tags.blockComment], color: "var(--code-comment)", fontStyle: "italic" },
+  { tag: tags.invalid, color: "var(--code-invalid)" },
 ]);
 
 const baseTheme: Record<string, Record<string, string>> = {
   "&": {
-    color: "var(--foreground)",
-    backgroundColor: "transparent",
+    color: "var(--code-foreground)",
+    backgroundColor: "var(--code-background)",
     border: "1px solid var(--input)",
     borderRadius: "var(--radius-md)",
-    fontSize: "12px",
+    fontSize: "13px",
   },
   "&.cm-focused": {
     outline: "none",
@@ -70,31 +72,31 @@ const baseTheme: Record<string, Record<string, string>> = {
     boxShadow: "0 0 0 3px color-mix(in srgb, var(--ring) 40%, transparent)",
   },
   ".cm-scroller": { fontFamily: "var(--font-mono), ui-monospace, monospace", lineHeight: "1.25rem", borderRadius: "inherit" },
-  ".cm-content": { caretColor: "var(--foreground)", padding: "8px 0" },
+  ".cm-content": { caretColor: "var(--code-foreground)", padding: "8px 0" },
   ".cm-line": { padding: "0 12px" },
-  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--foreground)" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--code-foreground)" },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-    backgroundColor: "color-mix(in srgb, var(--primary) 30%, transparent)",
+    backgroundColor: "var(--code-selection)",
   },
-  ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--accent) 55%, transparent)" },
-  // Lines the caller marked as changed (`changedLines`): the same red look as the Detail Panel's old diff backdrop.
-  ".cm-line.cm-changed-line, .cm-line.cm-changed-line.cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--destructive) 25%, transparent)" },
+  ".cm-activeLine": { backgroundColor: "var(--code-gutter)" },
+  // Changed lines use a subtle code-specific surface so syntax remains readable.
+  ".cm-line.cm-changed-line, .cm-line.cm-changed-line.cm-activeLine": { backgroundColor: "var(--code-changed)" },
   ".cm-line.cm-removed-before": { boxShadow: "inset 0 2px 0 var(--destructive)" },
   ".cm-line.cm-removed-after": { boxShadow: "inset 0 -2px 0 var(--destructive)" },
   ".cm-gutters": {
-    backgroundColor: "var(--muted)",
-    color: "var(--muted-foreground)",
+    backgroundColor: "var(--code-gutter)",
+    color: "var(--code-comment)",
     border: "none",
     borderRight: "1px solid var(--border)",
   },
-  ".cm-activeLineGutter": { backgroundColor: "var(--accent)", color: "var(--foreground)" },
+  ".cm-activeLineGutter": { backgroundColor: "var(--code-gutter)", color: "var(--code-foreground)" },
   ".cm-lineNumbers .cm-gutterElement": { padding: "0 8px 0 12px", minWidth: "2.5rem" },
   "&.cm-focused .cm-matchingBracket": {
     backgroundColor: "color-mix(in srgb, var(--primary) 22%, transparent)",
     outline: "1px solid var(--primary)",
   },
-  "&.cm-focused .cm-nonmatchingBracket": { color: "var(--destructive)" },
-  ".cm-placeholder": { color: "var(--muted-foreground)" },
+  "&.cm-focused .cm-nonmatchingBracket": { color: "var(--code-invalid)" },
+  ".cm-placeholder": { color: "var(--code-comment)" },
   ".cm-tooltip": {
     backgroundColor: "var(--popover)",
     color: "var(--popover-foreground)",

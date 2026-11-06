@@ -2,6 +2,10 @@
 
 Dual backend via `DB_PROVIDER` (`pglite` default / `postgresql`). See `docs/database.md`.
 
+## TypeSpec emitters (sibling checkout)
+
+`@typespec/{avro,bigquery,java-pojo,postgres,spanner}` install from `../typespec` and must be built there first. See `docs/developer-guide.md`.
+
 <!-- gortex:communities:start -->
 <!-- gortex:skills:start -->
 ## Community Skills

@@ -24,8 +24,9 @@ import { getAiSettings, testAiConnection, updateAiSettings } from "@/services/ai
 import {
   getDomainsAdmin,
   createDomainAdmin,
+  updateDomainAdmin,
 } from "@/services/domain-admin.service";
-import type { CreateDomainAdminInput } from "@/types/schemas/domain-policy";
+import type { CreateDomainAdminInput, PolicyTemplate } from "@/types/schemas/domain-policy";
 
 /**
  * `/schemas` pages are served from the client router cache for 30s
@@ -259,5 +260,16 @@ export async function createDomainAdminAction(input: CreateDomainAdminInput) {
   const result = await createDomainAdmin(input, access.ctx);
   if (!result.success) return { error: result.error.message };
   revalidateSchemas();
+  return { success: true as const, data: result.data };
+}
+
+/** The service checks domain.update over this domain, including scoped roles and tenant isolation. */
+export async function updateDomainPolicyAction(id: string, policyTemplate: PolicyTemplate) {
+  const access = await gate("tenant.access");
+  if (!access.ok) return { error: access.error };
+  const result = await updateDomainAdmin({ id, policyTemplate }, access.ctx);
+  if (!result.success) return { error: result.error.message };
+  revalidateSchemas();
+  revalidatePath("/admin/domains", "page");
   return { success: true as const, data: result.data };
 }

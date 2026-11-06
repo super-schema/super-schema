@@ -52,6 +52,7 @@ interface EntityHeaderProps {
   versionState: DraftVersionState;
   /** Opens the publish dialog; omit for read-only entities. */
   onPublish?: () => void;
+  publishDisabledReason?: string | null;
   /** The deprecation replacement, resolved server-side (null = named but not found). */
   replacementEntity?: ReplacementEntityLink | null;
 }
@@ -67,6 +68,7 @@ export function EntityHeader({
   showSaved = false,
   versionState,
   onPublish,
+  publishDisabledReason,
   replacementEntity,
 }: EntityHeaderProps) {
   const currentStatus = getStatusOption(entity.status);
@@ -128,7 +130,7 @@ export function EntityHeader({
   return (
     <>
       {/* Breadcrumb */}
-      <nav aria-label="Breadcrumb" className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
+      <nav aria-label="Breadcrumb" className="mb-space-4 flex min-w-0 flex-wrap items-center gap-space-1 text-body-small text-muted-foreground [overflow-wrap:anywhere]">
         {level === "TENANT" || !entity.domainSlug ? (
           <Link
             href={assetHref({ kind: "enterprise" })}
@@ -169,70 +171,72 @@ export function EntityHeader({
         <span className="text-foreground font-medium font-mono">{entity.name}</span>
       </nav>
 
-      {/* Header row (name + status + version + toolbar) */}
+      {/* Identity and status on the left; actions stay right-aligned when wrapped. */}
       <div className="mb-space-4 flex flex-wrap items-start justify-between gap-space-3">
-        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-space-3">
-        <h1 className="min-w-0 max-w-full break-all text-display text-foreground font-mono">{entity.name}</h1>
-        <span className={`w-2.5 h-2.5 rounded-full ${currentStatus.dotColor}`} />
+        <div className="flex min-w-0 flex-1 basis-80 flex-col gap-space-2">
+          <h1 className="min-w-0 text-display text-foreground font-mono [overflow-wrap:anywhere]">{entity.name}</h1>
+          <div className="flex min-w-0 flex-wrap items-center gap-space-2">
+            <span className={`size-2.5 shrink-0 rounded-full ${currentStatus.dotColor}`} />
 
-        {/* Status dropdown */}
-        <div className="relative" ref={statusDropdownRef}>
-          <button
-            onClick={() => !readOnly && setStatusDropdownOpen(!statusDropdownOpen)}
-            disabled={readOnly}
-            data-testid="entity-status-trigger"
-            className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-body-small transition-colors hover:bg-accent/50 disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{ color: currentStatus.color }}
-          >
-            {entity.status}
-            {!readOnly && (
-              <ChevronRight className="w-3 h-3 rotate-90" />
-            )}
-          </button>
+            {/* Status dropdown */}
+            <div className="relative" ref={statusDropdownRef}>
+              <button
+                onClick={() => !readOnly && setStatusDropdownOpen(!statusDropdownOpen)}
+                disabled={readOnly}
+                data-testid="entity-status-trigger"
+                className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-body-small transition-colors hover:bg-accent/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ color: currentStatus.color }}
+              >
+                {entity.status}
+                {!readOnly && (
+                  <ChevronRight className="w-3 h-3 rotate-90" />
+                )}
+              </button>
 
-          {statusDropdownOpen && (
-            <div className="absolute top-full left-0 mt-1 z-50 min-w-[140px] rounded-lg border border-border bg-popover shadow-md py-1">
-              {STATUS_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => handleStatusSelect(opt.value)}
-                  disabled={opt.value === entity.status}
-                  data-testid={`entity-status-option-${opt.value.toLowerCase()}`}
-                  className="flex items-center gap-2 w-full px-3 py-1.5 text-body-small text-left hover:bg-accent/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{ backgroundColor: opt.color }}
-                  />
-                  {opt.label}
-                </button>
-              ))}
+              {statusDropdownOpen && (
+                <div className="absolute top-full left-0 mt-1 z-50 min-w-[140px] rounded-lg border border-border bg-popover shadow-md py-1">
+                  {STATUS_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => handleStatusSelect(opt.value)}
+                      disabled={opt.value === entity.status}
+                      data-testid={`entity-status-option-${opt.value.toLowerCase()}`}
+                      className="flex items-center gap-2 w-full px-3 py-1.5 text-body-small text-left hover:bg-accent/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: opt.color }}
+                      />
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
+
+            <span
+              data-testid="entity-version-state"
+              className={`rounded-md border px-2 py-0.5 text-caption ${
+                versionState.hasUnpublishedChanges && versionState.latestVersionLabel
+                  ? "border-warning/50 text-warning"
+                  : "border-border text-muted-foreground"
+              }`}
+            >
+              {describeDraftState(versionState)}
+            </span>
+
+            {/* Saved flash indicator */}
+            {showSaved && (
+              <span data-testid="entity-saved-flash" className="flex items-center gap-1 text-caption text-success animate-auth-fade-up">
+                <Check className="w-3 h-3" /> Saved
+              </span>
+            )}
+          </div>
         </div>
 
-        <span
-          data-testid="entity-version-state"
-          className={`rounded-md border px-2 py-0.5 text-caption ${
-            versionState.hasUnpublishedChanges && versionState.latestVersionLabel
-              ? "border-warning/50 text-warning"
-              : "border-border text-muted-foreground"
-          }`}
-        >
-          {describeDraftState(versionState)}
-        </span>
-
-        {/* Saved flash indicator */}
-        {showSaved && (
-          <span data-testid="entity-saved-flash" className="flex items-center gap-1 text-caption text-success animate-auth-fade-up">
-            <Check className="w-3 h-3" /> Saved
-          </span>
-        )}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-space-2">
+        <div role="group" aria-label="Entity actions" className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-space-2">
           {onPublish && (
-            <Button size="sm" onClick={onPublish} className="gap-1.5" data-testid="publish-entity-button">
+            <Button size="sm" onClick={onPublish} disabled={Boolean(publishDisabledReason) || isPending} title={publishDisabledReason ?? undefined} aria-describedby={publishDisabledReason ? "entity-publish-status" : undefined} className="gap-1.5" data-testid="publish-entity-button">
               <Upload className="w-3.5 h-3.5" />
               Publish
             </Button>

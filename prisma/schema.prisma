@@ -1129,6 +1129,14 @@ model Operation {
   httpMethod  String
   httpPath    String
   description String               @default("")
+  /// OpenAPI operationId; null = defaults to `name`.
+  operationId String?
+  summary     String               @default("")
+  /// string[] (OpenAPI tags).
+  tags        Json                 @default("[]")
+  deprecated  Boolean              @default(false)
+  /// `ApiRequestBody` (src/types/schemas/api-operation.ts); null = no request body.
+  requestBody Json?
   decorators  Json                 @default("{}")
   service     ServiceDefinition    @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   parameters  OperationParameter[]
@@ -1144,9 +1152,12 @@ model OperationParameter {
   operationId String
   name        String
   type        String
+  isArray     Boolean   @default(false)
+  /// path | query | header | cookie (PARAM_LOCATIONS). Legacy "body" rows were moved to Operation.requestBody.
   location    String
   required    Boolean   @default(true)
   description String    @default("")
+  sortOrder   Int       @default(0)
   operation   Operation @relation(fields: [operationId], references: [id], onDelete: Cascade)
 
   @@map("operation_parameters")
@@ -1157,7 +1168,10 @@ model OperationResponse {
   operationId String
   statusCode  Int
   type        String?
+  isArray     Boolean   @default(false)
+  contentType String    @default("application/json")
   description String    @default("")
+  sortOrder   Int       @default(0)
   operation   Operation @relation(fields: [operationId], references: [id], onDelete: Cascade)
 
   @@map("operation_responses")

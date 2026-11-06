@@ -50,6 +50,20 @@ describe("TypeSpec Source tab: an ambiguous name asks, the pick comes back with 
   beforeEach(() => vi.clearAllMocks());
   afterEach(() => cleanup());
 
+  it("shows source read-only with export and no save action", async () => {
+    getSource.mockResolvedValue({ success: true, source: SOURCE, generated: false });
+    render(<TypeSpecSourceTab entityId="ent-1" entityName="Customer" readOnly />);
+
+    const textarea = await screen.findByRole("textbox", { name: "Entity source" });
+    expect((textarea as HTMLTextAreaElement).readOnly).toBe(true);
+    expect((textarea as HTMLTextAreaElement).value).toBe(SOURCE);
+    expect(screen.getByRole("heading", { name: "Source" })).toBeDefined();
+    expect(screen.getByText("Read-only")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Export source" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /Save/ })).toBeNull();
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it("a save that does not ask is one call, with no picks", async () => {
     save.mockResolvedValueOnce(SAVED);
     const onSaved = await editAndSave();

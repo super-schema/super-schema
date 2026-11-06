@@ -38,6 +38,30 @@ function renderTab(tab: "enums" | "scalars") {
 }
 
 describe("enum edit form", () => {
+  it("shows one visible value-to-description mapping without a disclosure", () => {
+    renderTab("enums");
+    const card = screen.getByTestId("data-type-card");
+    const mapping = within(card).getByTestId("enum-value-descriptions");
+    expect(card.querySelector("summary")).toBeNull();
+    expect(within(card).getAllByText("LOGIN_SUCCESS")).toHaveLength(1);
+    expect(within(card).getAllByText("LOGIN_FAILURE")).toHaveLength(1);
+    expect(within(mapping).getByText("LOGIN_SUCCESS").parentElement?.textContent).toContain("Logged in.");
+    expect(within(mapping).getByText("LOGIN_FAILURE").parentElement?.textContent).toContain("No description");
+  });
+
+  it("keeps add and remove controls working in the visible mapping", async () => {
+    actions.updateSharedEnumAction.mockResolvedValue({ success: true });
+    renderTab("enums");
+    const card = screen.getByTestId("data-type-card");
+    fireEvent.click(within(card).getByRole("button", { name: "Remove LOGIN_FAILURE" }));
+    await waitFor(() => expect(actions.updateSharedEnumAction).toHaveBeenCalledWith("en1", { values: ["LOGIN_SUCCESS"] }));
+    expect(within(card).queryByText("LOGIN_FAILURE")).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "Add value" }));
+    fireEvent.change(within(card).getByRole("textbox", { name: "New value" }), { target: { value: "LOCKED" } });
+    fireEvent.keyDown(within(card).getByRole("textbox", { name: "New value" }), { key: "Enter" });
+    await waitFor(() => expect(actions.updateSharedEnumAction).toHaveBeenCalledWith("en1", { values: ["LOGIN_SUCCESS", "LOCKED"] }));
+    expect(within(card).getByText("LOCKED")).toBeDefined();
+  });
   it("shows the saved value descriptions and edits them", async () => {
     actions.updateSharedEnumAction.mockResolvedValue({ success: true, updatedFields: 4 });
     renderTab("enums");

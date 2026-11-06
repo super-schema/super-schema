@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, User, LogOut, Settings } from "lucide-react";
+import { Blocks, Search, User, LogOut, Settings } from "lucide-react";
 import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
 import {
@@ -31,7 +31,8 @@ export function TopBar({ showAdmin = false }: { showAdmin?: boolean } = {}) {
     >
       {/* Left: Logo + organization switcher */}
       <div className="flex items-center gap-space-3">
-        <span className="text-heading-3 text-primary font-semibold">
+        <span className="inline-flex shrink-0 items-center gap-space-2 text-heading-3 text-primary font-semibold">
+          <Blocks className="size-5 shrink-0" aria-hidden="true" />
           Super Schema
         </span>
         <TenantSwitcher />

@@ -1,19 +1,4 @@
-/**
- * Shared syntax highlighting for code previews.
- *
- * Provides line-level tokenizers for SQL, JSON, and YAML that return
- * React nodes with Tailwind CSS color classes.
- *
- * Color palette matches TypeSpecPreview's existing scheme:
- * - Keywords: text-blue-400
- * - Types/builtins: text-cyan-400
- * - Strings: text-green-400
- * - Numbers: text-amber-400
- * - Comments: text-muted-foreground/60 italic
- * - Decorators/special: text-purple-400
- *
- * Pure functions — no side effects.
- */
+/** Shared schema tokenizers. Colors resolve through the GitHub Default light/dark code palette in globals.css. */
 
 import React from "react";
 
@@ -39,7 +24,7 @@ const SQL_TYPES = new Set([
 export function highlightSQL(line: string): React.ReactNode {
   // Full-line comment
   if (line.trimStart().startsWith("--")) {
-    return <span className="text-muted-foreground/60 italic">{line}</span>;
+    return <span className="syntax-comment italic">{line}</span>;
   }
 
   const tokens: React.ReactNode[] = [];
@@ -53,13 +38,13 @@ export function highlightSQL(line: string): React.ReactNode {
     const upper = token.toUpperCase();
 
     if (token.startsWith("'") || token.startsWith('"')) {
-      tokens.push(<span key={key++} className="text-green-400">{token}</span>);
+      tokens.push(<span key={key++} className="syntax-string">{token}</span>);
     } else if (/^\d+(?:\.\d+)?$/.test(token)) {
-      tokens.push(<span key={key++} className="text-amber-400">{token}</span>);
+      tokens.push(<span key={key++} className="syntax-constant">{token}</span>);
     } else if (SQL_KEYWORDS.has(upper)) {
-      tokens.push(<span key={key++} className="text-blue-400 font-medium">{token}</span>);
+      tokens.push(<span key={key++} className="syntax-keyword font-medium">{token}</span>);
     } else if (SQL_TYPES.has(upper)) {
-      tokens.push(<span key={key++} className="text-cyan-400">{token}</span>);
+      tokens.push(<span key={key++} className="syntax-type">{token}</span>);
     } else {
       tokens.push(<span key={key++}>{token}</span>);
     }
@@ -87,16 +72,16 @@ export function highlightJSON(line: string): React.ReactNode {
       // Check if this is a key (followed by `:`) or value
       const remaining = line.substring(regex.lastIndex).trimStart();
       if (remaining.startsWith(":") && !expectValue) {
-        tokens.push(<span key={key++} className="text-blue-400">{token}</span>);
+        tokens.push(<span key={key++} className="syntax-key">{token}</span>);
       } else {
-        tokens.push(<span key={key++} className="text-green-400">{token}</span>);
+        tokens.push(<span key={key++} className="syntax-string">{token}</span>);
         expectValue = false;
       }
     } else if (/^\d/.test(token)) {
-      tokens.push(<span key={key++} className="text-amber-400">{token}</span>);
+      tokens.push(<span key={key++} className="syntax-constant">{token}</span>);
       expectValue = false;
     } else if (token === "true" || token === "false" || token === "null") {
-      tokens.push(<span key={key++} className="text-purple-400">{token}</span>);
+      tokens.push(<span key={key++} className="syntax-constant">{token}</span>);
       expectValue = false;
     } else if (token === ":") {
       tokens.push(<span key={key++}>{token}</span>);
@@ -119,7 +104,7 @@ export function highlightJSON(line: string): React.ReactNode {
 export function highlightYAML(line: string): React.ReactNode {
   // Full-line comment
   if (line.trimStart().startsWith("#")) {
-    return <span className="text-muted-foreground/60 italic">{line}</span>;
+    return <span className="syntax-comment italic">{line}</span>;
   }
 
   // Key: value pattern
@@ -128,7 +113,7 @@ export function highlightYAML(line: string): React.ReactNode {
     const [, indent, key, colon, value] = kvMatch;
     const tokens: React.ReactNode[] = [];
     tokens.push(<span key="i">{indent}</span>);
-    tokens.push(<span key="k" className="text-blue-400">{key}</span>);
+    tokens.push(<span key="k" className="syntax-key">{key}</span>);
     tokens.push(<span key="c">{colon}</span>);
 
     if (value !== undefined && value.length > 0) {
@@ -164,7 +149,7 @@ function highlightYAMLValue(value: string): React.ReactNode {
     return (
       <>
         {highlightYAMLValue(actualValue)}
-        <span className="text-muted-foreground/60 italic">{comment}</span>
+        <span className="syntax-comment italic">{comment}</span>
       </>
     );
   }
@@ -172,30 +157,30 @@ function highlightYAMLValue(value: string): React.ReactNode {
   // Quoted string
   if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
       (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-    return <span className="text-green-400">{value}</span>;
+    return <span className="syntax-string">{value}</span>;
   }
 
   // Boolean
   if (trimmed === "true" || trimmed === "false") {
-    return <span className="text-purple-400">{value}</span>;
+    return <span className="syntax-constant">{value}</span>;
   }
 
   // Null
   if (trimmed === "null" || trimmed === "~") {
-    return <span className="text-purple-400">{value}</span>;
+    return <span className="syntax-constant">{value}</span>;
   }
 
   // Number
   if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
-    return <span className="text-amber-400">{value}</span>;
+    return <span className="syntax-constant">{value}</span>;
   }
 
   // $ref or special
   if (trimmed.startsWith("$ref") || trimmed.startsWith("#/")) {
-    return <span className="text-green-400">{value}</span>;
+    return <span className="syntax-string">{value}</span>;
   }
 
-  return <span>{value}</span>;
+  return <span className="syntax-string">{value}</span>;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,17 +209,19 @@ export function highlightCode(line: string): React.ReactNode {
   while ((match = regex.exec(line)) !== null) {
     const token = match[0];
     if (token.startsWith("//")) {
-      tokens.push(<span key={key++} className="text-muted-foreground/60 italic">{token}</span>);
+      tokens.push(<span key={key++} className="syntax-comment italic">{token}</span>);
     } else if (token.startsWith('"') || token.startsWith("'")) {
-      tokens.push(<span key={key++} className="text-green-400">{token}</span>);
+      tokens.push(<span key={key++} className="syntax-string">{token}</span>);
     } else if (token.startsWith("@")) {
-      tokens.push(<span key={key++} className="text-purple-400">{token}</span>);
+      tokens.push(<span key={key++} className="syntax-decorator">{token}</span>);
+    } else if (token === "true" || token === "false" || token === "null") {
+      tokens.push(<span key={key++} className="syntax-constant">{token}</span>);
     } else if (/^\d/.test(token)) {
-      tokens.push(<span key={key++} className="text-amber-400">{token}</span>);
+      tokens.push(<span key={key++} className="syntax-constant">{token}</span>);
     } else if (CODE_KEYWORDS.has(token)) {
-      tokens.push(<span key={key++} className="text-blue-400 font-medium">{token}</span>);
+      tokens.push(<span key={key++} className="syntax-keyword font-medium">{token}</span>);
     } else if (CODE_TYPES.has(token)) {
-      tokens.push(<span key={key++} className="text-cyan-400">{token}</span>);
+      tokens.push(<span key={key++} className="syntax-type">{token}</span>);
     } else {
       tokens.push(<span key={key++}>{token}</span>);
     }

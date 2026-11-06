@@ -21,6 +21,7 @@
  * their own tests (tests/integration/corpus), this is about the path through the UI.
  */
 import { readFileSync } from "node:fs";
+import { addFieldQuick } from "./helpers/entity-page";
 import path from "node:path";
 import { test, expect } from "./helpers/fixtures";
 import { centerPanel } from "./helpers/event-builder";
@@ -38,7 +39,7 @@ import {
 } from "./helpers/lifecycle";
 import { expectPasteStatus, fillWorkbenchPaste } from "./helpers/workbench";
 import { pg } from "./helpers/db";
-import { saveTypeSpecSource, readTypeSpecSource, openEditor } from "./helpers/lifecycle";
+import { readTypeSpecSource, openEditor } from "./helpers/lifecycle";
 
 const SAMPLES = path.join(__dirname, "fixtures/importer-samples");
 const samplePath = (name: string) => path.join(SAMPLES, name);
@@ -288,15 +289,13 @@ test.describe("importers", () => {
     expect(postgres.code).toContain("Primary identifier of the order");
     expect(postgres.code).toMatch(/total: declared decimal\(12,\s?2\)/);
 
-    // The TypeSpec source is canonical, and it cannot carry a precision: a Save of the TypeSpec tab (the fields are projected from it
-    // again) must leave the precision and scale of the column where they were.
+    // Inspecting Source and adding a field through SuperSchema preserve imported column precision.
     const source = await readTypeSpecSource(page);
-    const edited = source.replace(/\}\s*$/, "  memo?: string;\n}");
-    expect(edited).not.toBe(source);
-    const saved = await saveTypeSpecSource(page, edited);
-    expect(saved.ok, saved.message).toBe(true);
-    expect((await stored()).rows).toEqual([{ precision: 12, scale: 2 }]);
+    expect(source).toContain("total");
     await openEditor(page);
+    await addFieldQuick(page, "memo");
+    expect(await readTypeSpecSource(page)).toContain("memo");
+    expect((await stored()).rows).toEqual([{ precision: 12, scale: 2 }]);
     await openSchemasTab(page);
     const again = await generateTarget(page, "PostgreSQL DDL");
     expect(again.error).toBeUndefined();

@@ -10,6 +10,7 @@ import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-vers
 import { loadReferenceStaleness } from "@/services/entity-version.service";
 import { loadPickableEntities } from "@/lib/references/pickable-entities";
 import type { ReplacementEntityLink } from "@/components/custom/DeprecationBanner";
+import { OPERATION_DETAILS_INCLUDE, operationRecordFromRow } from "@/lib/api-operations/records";
 import type { EntityWorkspaceProps } from "./entity-workspace";
 
 const ENTITY_INCLUDE = {
@@ -20,7 +21,7 @@ const ENTITY_INCLUDE = {
   services: {
     include: {
       operations: {
-        include: { parameters: true, responses: true },
+        include: OPERATION_DETAILS_INCLUDE,
         orderBy: { createdAt: "asc" as const },
       },
     },
@@ -177,27 +178,11 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
       })),
       replacementEntity,
       apiServiceId: entity.services[0]?.id ?? null,
+      apiService: entity.services[0]
+        ? { id: entity.services[0].id, name: entity.services[0].name, basePath: entity.services[0].basePath }
+        : null,
       apiOperations: entity.services.flatMap((service) =>
-        service.operations.map((op) => ({
-          id: op.id,
-          serviceId: service.id,
-          name: op.name,
-          httpMethod: op.httpMethod,
-          httpPath: op.httpPath,
-          description: op.description,
-          parameters: op.parameters.map((p) => ({
-            name: p.name,
-            type: p.type,
-            location: p.location,
-            required: p.required,
-            description: p.description,
-          })),
-          responses: op.responses.map((r) => ({
-            statusCode: r.statusCode,
-            type: r.type,
-            description: r.description,
-          })),
-        }))
+        service.operations.map((op) => operationRecordFromRow({ ...op, serviceId: service.id }))
       ),
     },
   };

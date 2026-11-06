@@ -104,6 +104,21 @@
   --warning: #d4920a;
   --info: #3b82f6;
 
+  /* GitHub Light Default. Shared by CodeMirror and schema preview tokenizers. */
+  --code-background: #ffffff;
+  --code-foreground: #1f2328;
+  --code-gutter: #f6f8fa;
+  --code-key: #116329;
+  --code-string: #0a3069;
+  --code-constant: #0550ae;
+  --code-keyword: #cf222e;
+  --code-type: #953800;
+  --code-decorator: #8250df;
+  --code-comment: #656d76;
+  --code-invalid: #82071e;
+  --code-selection: #edf3fa;
+  --code-changed: #fff1ef;
+
   /* Border Radius: 12px global */
   --radius: 12px;
 
@@ -162,6 +177,21 @@
   --warning: #e5a93b;
   --info: #6ba3e8;
 
+  /* GitHub Dark Default. */
+  --code-background: #0d1117;
+  --code-foreground: #e6edf3;
+  --code-gutter: #161b22;
+  --code-key: #7ee787;
+  --code-string: #a5d6ff;
+  --code-constant: #79c0ff;
+  --code-keyword: #ff7b72;
+  --code-type: #ffa657;
+  --code-decorator: #d2a8ff;
+  --code-comment: #8b949e;
+  --code-invalid: #ffa198;
+  --code-selection: #152330;
+  --code-changed: #20171b;
+
   --chart-1: #A97FB7;
   --chart-2: #F5C0C0;
   --chart-3: #5bc27a;
@@ -197,6 +227,21 @@
   background: rgba(229, 91, 91, 0.15);
   color: #e55b5b;
 }
+
+/* Code colors have their own palette, independent of governance and validation status. */
+.schema-code {
+  color: var(--code-foreground);
+  background-color: var(--code-background);
+}
+.syntax-key { color: var(--code-key); }
+.syntax-string { color: var(--code-string); }
+.syntax-constant { color: var(--code-constant); }
+.syntax-keyword { color: var(--code-keyword); }
+.syntax-type { color: var(--code-type); }
+.syntax-decorator { color: var(--code-decorator); }
+.syntax-comment { color: var(--code-comment); }
+.syntax-changed { background-color: var(--code-changed); }
+.schema-code ::selection { color: var(--code-foreground); background-color: var(--code-selection); }
 
 /* On the dark theme's surface #e55b5b is 4.08:1 for 11 px text; #ee7070 is 4.91:1 */
 .dark .badge-pii {

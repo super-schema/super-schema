@@ -131,9 +131,12 @@ describe("three-entity closure, one file per entity on every target", () => {
     ]);
     const { files, entityFiles } = await emit(closureOf([orderWithMap, customer(), address()]), "json-schema");
     const paths = files.map((f) => f.path);
-    expect(paths).toEqual(["Address.json", "Customer.json", "Order.json", "RecordString.json"]);
-    // kept under the entity whose file points at it
-    expect(entityFiles.o).toEqual(["Order.json", "RecordString.json"]);
+    expect(paths).toEqual(["Address.json", "Customer.json", "Order.json"]);
+    // folded into the entity whose file points at it: one file per entity, the library model is one of its `$defs`
+    expect(entityFiles.o).toEqual(["Order.json"]);
+    const order = JSON.parse(byPath(files, "Order.json").content);
+    expect(Object.keys(order.$defs)).toEqual(["RecordString"]);
+    expect(order.properties.attributes.$ref).toBe("#/$defs/RecordString");
     for (const f of files) {
       const refs = [...f.content.matchAll(/"\$ref":\s*"([^"#]+)"/g)].map((m) => m[1]);
       for (const ref of refs) expect(paths, `${f.path} refers to ${ref}`).toContain(ref);
@@ -243,10 +246,11 @@ describe("entities with enums and shared types", () => {
     expect(text(files)).not.toContain("SuperSchemaClosure");
     expect(new Set(files.map((f) => f.path)).size).toBe(files.length);
     if (target === "json-schema") {
-      // the model, the inline enum and the shared enum of Address are each a file, all attributed to Address
-      expect(files.map((f) => f.path)).toEqual(expect.arrayContaining(["Address.json", "Address_kind.json", "Status.json"]));
+      // one file per entity: the inline enum and the shared enum of Address are `$defs` of Address.json, not files of their own
+      expect(files.map((f) => f.path)).toEqual(["Address.json", "Customer.json", "Order.json"]);
       for (const f of files) expect(f.entityId).toBeDefined();
-      expect(filesForEntity(files, "a").length).toBeGreaterThanOrEqual(3);
+      expect(filesForEntity(files, "a")).toHaveLength(1);
+      expect(Object.keys(JSON.parse(byPath(files, "Address.json").content).$defs)).toEqual(expect.arrayContaining(["Address_kind", "Status"]));
     } else if (target === "java-pojo") {
       // a class per model plus a class per enum, in the entity's package directory
       expect(files).toHaveLength(5);
@@ -447,7 +451,7 @@ describe("a reference cycle and a self-reference", () => {
   });
 
   it("the self-reference refers to its own file / record / class / schema, by the entity name", async () => {
-    expect(JSON.parse((await emit(selfRef(), "json-schema")).files[0].content).properties.parent.$ref).toBe("Node.json");
+    expect(JSON.parse((await emit(selfRef(), "json-schema")).files[0].content).properties.parent.$ref).toBe("#");
     expect(JSON.parse((await emit(selfRef(), "avro")).files[0].content).fields[1].type).toBe("com.superschema.sales.orders.node.Node");
     const openapi = parseYaml((await emit(selfRef(), "openapi3")).files[0].content) as { components: { schemas: { Node: { properties: { parent: { $ref: string } } } } } };
     expect(openapi.components.schemas.Node.properties.parent.$ref).toBe("#/components/schemas/Node");

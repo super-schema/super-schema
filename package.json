@@ -70,6 +70,8 @@
     "@orpc/server": "^1.13.13",
     "@prisma/adapter-pg": "^7.6.0",
     "@prisma/client": "^7.6.0",
+    "@scalar/openapi-parser": "^0.24.17",
+    "@scalar/openapi-upgrader": "^0.1.11",
     "@t3-oss/env-nextjs": "^0.13.11",
     "@tanstack/react-query": "^5.101.2",
     "@types/dagre": "^0.7.54",

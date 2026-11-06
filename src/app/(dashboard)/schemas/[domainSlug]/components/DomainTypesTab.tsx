@@ -228,9 +228,9 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
         </div>
       )}
 
-      <div className="flex gap-space-4">
-        {/* Vertical sub-tabs */}
-        <div className="w-[140px] shrink-0 space-y-1">
+      <div className="flex flex-col gap-space-4 sm:flex-row">
+        {/* Sub-tabs stack above the mappings on narrow screens. */}
+        <div className="grid grid-cols-3 gap-1 sm:flex sm:w-[140px] sm:shrink-0 sm:flex-col">
           {subTabs.map((tab) => (
             <button
               key={tab.id}
@@ -548,9 +548,9 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
   }
 
   return (
-    <div data-testid="data-type-card" data-kind="enum" data-name={e.name} className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/enum">
-      <div className="flex items-center gap-space-2 mb-1">
-        <span className="font-mono text-body-small text-foreground font-medium">{e.name}</span>
+    <div data-testid="data-type-card" data-kind="enum" data-name={e.name} className="min-w-0 rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/enum">
+      <div className="mb-1 flex min-w-0 flex-wrap items-center gap-space-2">
+        <span className="min-w-0 max-w-full font-mono text-body-small text-foreground font-medium [overflow-wrap:anywhere]">{e.name}</span>
         <Badge variant="secondary" className="text-[10px] h-4 px-1">{pluralize(values.length, "value")}</Badge>
         {described.length > 0 && <Badge variant="outline" className="text-[10px] h-4 px-1" data-testid="enum-described-count">{described.length} described</Badge>}
         <button
@@ -602,13 +602,22 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
       ) : (
         saved.description && <p className="text-caption text-muted-foreground mb-1.5">{saved.description}</p>
       )}
+      {!editing && (
+        <dl className="mb-space-2 flex min-w-0 flex-col divide-y divide-border/30" data-testid="enum-value-descriptions">
+          {values.map((v) => (
+            <div key={v} data-member={v} className="grid min-w-0 grid-cols-[minmax(0,2fr)_minmax(0,3fr)] items-start gap-space-3 py-space-2">
+              <dt data-testid="data-type-member" data-member={v} className="min-w-0 font-mono text-[11px] text-foreground [overflow-wrap:anywhere]">{v}</dt>
+              <dd className="flex min-w-0 items-start gap-space-2">
+                <span className="min-w-0 flex-1 text-caption text-muted-foreground [overflow-wrap:anywhere]">{saved.valueDescriptions[v] || "No description"}</span>
+                <button type="button" onClick={() => removeValue(v)} aria-label={`Remove ${v}`} className="shrink-0 p-0.5 text-muted-foreground hover:text-destructive">
+                  <X className="size-3" />
+                </button>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
       <div className="flex flex-wrap gap-1">
-        {values.map((v) => (
-          <Badge key={v} variant="outline" data-testid="data-type-member" data-member={v} title={saved.valueDescriptions[v]} className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
-            {v}
-            <button onClick={() => removeValue(v)} aria-label={`Remove ${v}`} className="hover:text-destructive ml-0.5"><X className="w-2.5 h-2.5" /></button>
-          </Badge>
-        ))}
         {isAdding ? (
           <input autoFocus value={newValue} onChange={(ev) => setNewValue(ev.target.value)}
             onKeyDown={(ev) => { if (ev.key === "Enter") addValue(); if (ev.key === "Escape") { setIsAdding(false); setNewValue(""); } }}
@@ -620,19 +629,6 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
           </button>
         )}
       </div>
-      {!editing && described.length > 0 && (
-        <details className="mt-1.5" data-testid="enum-value-descriptions">
-          <summary className="cursor-pointer text-caption text-muted-foreground hover:text-foreground">Value descriptions</summary>
-          <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
-            {described.map((v) => (
-              <div key={v} className="contents">
-                <dt className="font-mono text-[11px] text-foreground">{v}</dt>
-                <dd className="text-caption text-muted-foreground">{saved.valueDescriptions[v]}</dd>
-              </div>
-            ))}
-          </dl>
-        </details>
-      )}
     </div>
   );
 }

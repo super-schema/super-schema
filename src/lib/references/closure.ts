@@ -4,9 +4,14 @@ import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compile
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-generator";
 import { formatVersionLabel, parseVersionLabel, storedVersionWhere } from "@/lib/entity-versioning/version-math";
 import { readEntitySnapshot, withoutSchemaVersions, type EntitySnapshot } from "@/lib/entity-versioning/entity-snapshot";
+import { loadEntityApiOperations } from "@/lib/api-operations/load-entity-operations";
+import { primitiveTypeSpecScalar } from "@/lib/api-operations/to-typespec";
+import { compileEntity } from "@/lib/compiler/compiler.service";
+import type { ApiOperation } from "@/types/schemas/api-operation";
 import {
   TENANT_PLACEHOLDER,
   holdsEntityReference,
+  parseQualifiedName,
   qualifiedName,
   readFieldReference,
   type EntityRef,
@@ -29,6 +34,12 @@ export type ClosureEntity = {
   entity: PrismaEntityInput;
   /** The member this entity extends (its `metadata.extends` name, resolved to the latest of that name), when the closure has one. */
   baseEntityId?: string;
+  /**
+   * The entity each type name its API operations use resolved to (name as written, trimmed -> member entity id), for the names that are
+   * neither a primitive, this entity itself nor one of its own data types. The closure source writes those names as the member's
+   * qualified model. A name that resolved to nothing (or to several entities equally well) is absent.
+   */
+  operationTypes?: Record<string, string>;
 };
 
 export type ClosureError =
@@ -198,6 +209,8 @@ function toEntityInput(e: IndexedEntity, metadata: unknown, version?: number, sn
     domainId: e.domainId,
     metadata: snapshot ? snapshot.metadata : metadata,
     domain: e.domain ? { id: e.domain.id, name: e.domain.name, slug: e.domain.slug } : null,
+    // API operations: frozen with the version, else (a live member) attached by the caller from the live rows.
+    ...(snapshot?.apiOperations && snapshot.apiOperations.length > 0 ? { apiOperations: snapshot.apiOperations } : {}),
   };
 }
 
@@ -272,6 +285,63 @@ function resolveBase<T extends Resolvable & { place: ClosurePlace }>(
     if (here.length > 1) return { ambiguous: here.sort(byQualified) };
   }
   return undefined;
+}
+
+/**
+ * The entity / data-type names an entity's API operations use (parameter, request body and response types), trimmed, each once with the
+ * first operation that uses it, in operation order. Primitives of the contract are left out.
+ */
+function operationTypeNames(operations: ReadonlyArray<ApiOperation> | undefined): Array<{ name: string; operation: string }> {
+  const found = new Map<string, string>();
+  const note = (type: string | null | undefined, operation: string) => {
+    const name = typeof type === "string" ? type.trim() : "";
+    if (name === "" || primitiveTypeSpecScalar(name) !== undefined || found.has(name)) return;
+    found.set(name, operation);
+  };
+  for (const op of operations ?? []) {
+    for (const p of op.parameters) note(p.type, op.name);
+    note(op.requestBody?.type, op.name);
+    for (const r of op.responses) note(r.type, op.name);
+  }
+  return [...found].map(([name, operation]) => ({ name, operation }));
+}
+
+/** The (sanitized) names of the data types an entity declares itself: an operation name that matches one means it, never another entity. */
+function ownDataTypeNames(entity: PrismaEntityInput, fields: PrismaFieldInput[]): Set<string> {
+  try {
+    const model = compileEntity(entity, fields);
+    const names = new Set<string>();
+    for (const group of [model.sharedEnums, model.customScalars, model.unionTypes, model.aliases, model.interfaces]) {
+      for (const d of group ?? []) names.add(sanitizeIdentifier(d.name));
+    }
+    return names;
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * The entity an API operation's type name means (see {@link loadReferenceClosure}): a qualified `domain/product/entity` name exactly, a bare
+ * name like a base name ({@link resolveBase}: the latest of that name, nearest place first: the owner's product, its domain, the tenant).
+ * Only entities `canRead` admits are candidates, so an entity the caller may not read neither resolves nor makes a name ambiguous.
+ */
+function resolveOperationType<T extends Resolvable & { place: ClosurePlace }>(
+  index: Map<string, T>,
+  owner: T,
+  name: string,
+  canRead: (e: T) => boolean
+): { target: T } | { ambiguous: T[] } | undefined {
+  if (name.includes("/")) {
+    const parsed = parseQualifiedName(name);
+    if (!parsed) return undefined;
+    const q = qualifiedName(parsed);
+    const matches = [...index.values()].filter((e) => qualifiedName(e.ref) === q && canRead(e));
+    if (matches.length === 0) return undefined;
+    return matches.length === 1 ? { target: matches[0] } : { ambiguous: matches.sort(byQualified) };
+  }
+  // The caller's roles are asked about the entities that answer to the name only (never the whole tenant).
+  const named = [...index.values()].filter((e) => (nameKey(e.name) === nameKey(name) || idKey(e.name) === idKey(name)) && (e.id === owner.id || canRead(e)));
+  return resolveBase(new Map(named.map((e) => [e.id, e])), owner, name);
 }
 
 /** What {@link createRefResolver} answers: the one entity a reference means, the several a bare name matches, or nothing (dangling). */
@@ -407,6 +477,12 @@ function findCycles(graph: Map<string, string[]>, label: (id: string) => string)
  * `opts.reader` (KD-045): who may read what. The root is the caller's own (they were authorized for it before the load); every OTHER entity the walk
  * is about to add is asked about first, and one the caller may not read refuses the whole closure with `REFERENCE_NOT_READABLE` before a single row of its
  * content (fields, versions, metadata) is read, so nothing of it can reach a source or a file, an error text or a candidate list.
+ *
+ * API operations: a type name an entity's operations use (response, request body, parameter) that is not a primitive, the entity itself or
+ * one of its own data types is resolved to an entity like a base name (a `domain/product/entity` name exactly, a bare one nearest place first)
+ * among the entities the caller may read, and that entity joins the closure unpinned (by `mode`, with the same published / never-published
+ * rules as a reference). The resolution is recorded on the member (`operationTypes`). A name several entities answer to equally well adds a
+ * note and stays unresolved (the operation types it `unknown`); a name nothing answers to is left to the operation's own warning.
  */
 export async function loadReferenceClosure(
   db: DbClient,
@@ -424,6 +500,9 @@ export async function loadReferenceClosure(
   if (!rootIndexed) return { success: false, error: { code: "CROSS_TENANT" } };
   const reader = opts?.reader;
   const refuse = (field: string): Result<never, ClosureError> => ({ success: false, error: { code: "REFERENCE_NOT_READABLE", field } });
+  // An API operation's type is free text, not a reference the caller picked: it resolves among the entities the caller may read only, so
+  // an entity outside their roles is never added, never makes a name ambiguous, and is not betrayed by an error (it reads as no match).
+  const canRead = (e: IndexedEntity): boolean => !reader || reader(e.place);
 
   /** One edge to an entity, as a field of a member declared it: who owns the field and the version it pins (none: unpinned). */
   type Observation = { field: string; owner: IndexedEntity; ownerRef: EntityRef; pin?: string };
@@ -439,6 +518,8 @@ export async function loadReferenceClosure(
     legacy: Set<string>;
     /** One sentence per entity whose `extends` name nothing answers to (generated without the base). */
     danglingBases: string[];
+    /** One sentence per API operation type name that several entities answer to equally well (emitted as unknown). */
+    operationNotes: string[];
   };
 
   /**
@@ -454,6 +535,7 @@ export async function loadReferenceClosure(
     const applied = new Map<string, string | undefined>();
     const legacy = new Set<string>();
     const danglingBases: string[] = [];
+    const operationNotes: string[] = [];
 
     const add = async (
       e: IndexedEntity,
@@ -468,13 +550,17 @@ export async function loadReferenceClosure(
       const frozen = loaded.data.snapshot;
       const metadata = frozen ? undefined : await loadMemberMetadata(db, e.id);
       if (!frozen && loaded.data.source !== "draft") legacy.add(e.id);
+      // A live member's API operations come from its live rows (like its metadata); a version published before operations were frozen
+      // has none (published output never picks up later API edits).
+      const apiOperations = loaded.data.source === "draft" ? await loadEntityApiOperations(db, e.id) : [];
+      const entity = toEntityInput(e, metadata, loaded.data.sequence, frozen);
       entities.push({
         entityId: e.id,
         ref: e.ref,
         source: loaded.data.source,
         ...(loaded.data.version ? { version: loaded.data.version } : {}),
         fields: loaded.data.fields,
-        entity: toEntityInput(e, metadata, loaded.data.sequence, frozen),
+        entity: apiOperations.length > 0 ? { ...entity, apiOperations } : entity,
       });
       applied.set(e.id, pin);
       return loaded;
@@ -541,6 +627,34 @@ export async function loadReferenceClosure(
       }
       graph.set(current.entityId, [...new Set(edges.map((e) => e.target.id))]);
 
+      // The entities its API operations name (a response / request body / parameter type), found by NAME like a base: unpinned, so the
+      // latest by the mode (a published version in `published` mode, never a draft). They join the closure so the OpenAPI document can type
+      // them; they are not edges of the reference graph (no target links them, so they make no cycle).
+      const operationNames = owner ? operationTypeNames(current.entity.apiOperations) : [];
+      if (owner && operationNames.length > 0) {
+        const ownTypes = ownDataTypeNames(current.entity, current.fields);
+        const types: Record<string, string> = {};
+        for (const { name, operation } of operationNames) {
+          if (nameKey(name) === nameKey(current.ref.entity) || idKey(name) === idKey(current.ref.entity)) continue;
+          if (ownTypes.has(sanitizeIdentifier(name))) continue;
+          const found = resolveOperationType(index, owner, name, canRead);
+          if (found === undefined) continue; // not an entity: the operation writes it `unknown` and says so
+          if ("ambiguous" in found) {
+            operationNotes.push(`${current.ref.entity}: operation "${operation}" uses the type "${name}", which ${found.ambiguous.length} entities answer to equally well (the same product or domain does not settle it): it is emitted as unknown.`);
+            continue;
+          }
+          types[name] = found.target.id;
+          const field = `operation ${operation}`;
+          edges.push({ field, target: found.target });
+          if (found.target.id !== rootIndexed.id) {
+            const list = observed.get(found.target.id) ?? [];
+            list.push({ field, owner, ownerRef: current.ref });
+            observed.set(found.target.id, list);
+          }
+        }
+        if (Object.keys(types).length > 0) current.operationTypes = types;
+      }
+
       // Breadth-first by qualified name, a field's name breaking ties.
       edges.sort((a, b) => byQualified(a.target, b.target) || compareStr(a.field, b.field));
       for (const edge of edges) {
@@ -554,7 +668,7 @@ export async function loadReferenceClosure(
         seen.add(edge.target.id);
       }
     }
-    return ok({ entities, graph, upgrades, observed, applied, legacy, danglingBases });
+    return ok({ entities, graph, upgrades, observed, applied, legacy, danglingBases, operationNotes });
   };
 
   // A closure resolves each entity ONCE (the emitted files are per entity), so a pin on any edge to an entity applies to it everywhere:
@@ -600,7 +714,7 @@ export async function loadReferenceClosure(
     };
   }
 
-  const { entities, graph, upgrades, observed, legacy, danglingBases } = result;
+  const { entities, graph, upgrades, observed, legacy, danglingBases, operationNotes } = result;
   // Entities that extend each other in a circle have no schema: walk every chain of bases once.
   const baseOf = new Map(entities.flatMap((e) => (e.baseEntityId ? [[e.entityId, e.baseEntityId] as const] : [])));
   for (const member of entities) {
@@ -613,7 +727,7 @@ export async function loadReferenceClosure(
       chain.push(next);
     }
   }
-  const notes: string[] = [...danglingBases];
+  const notes: string[] = [...danglingBases, ...operationNotes];
   for (const entity of entities) {
     const list = observed.get(entity.entityId) ?? [];
     const pinning = distinctPins(list)[0];

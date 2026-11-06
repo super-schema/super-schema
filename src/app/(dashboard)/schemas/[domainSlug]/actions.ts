@@ -13,7 +13,7 @@ import type { ActionId } from "@/lib/access";
 import { authorizeSubject, guardSubject, guardTarget, unexpectedFailure } from "@/lib/action-context";
 import { FOREIGN_REFERENCE_MESSAGE, fieldsReferenceAllowed } from "@/lib/references/foreign-reference-guard";
 import {
-  isBoolean, isInt, isPlainObject, isString, isStringArray, isStringOrNull, optional, pickEditable, readFields,
+  isBoolean, isPlainObject, isString, isStringArray, isStringOrNull, optional, pickEditable, readFields,
 } from "@/lib/editable-fields";
 import { parseScopeTarget, requireId } from "@/services/events/service-guards";
 import { STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
@@ -27,10 +27,21 @@ import { cascadeEnumToFields, cascadeScalarToFields, EXTENDS_METADATA_KEY, linkI
 import { readScalarConstraints, SCALAR_CONSTRAINT_KEYS, type ScalarConstraints } from "@/lib/importers/scalar-asset";
 import { builtInNameConflict } from "@/lib/compiler/built-in-names";
 import { renameBuiltInPayload } from "@/lib/builtin-entity-renames";
-import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
+import { createInScope, ServiceErrorRejection, writeWithUniqueName } from "@/services/scoped-create.service";
 import { actionErrorText, isOpaqueErrorCode } from "@/types/action-result";
 import { err, ok } from "@/types/result";
 import type { Result, ServiceError } from "@/types/result";
+import type { z } from "zod";
+import {
+  LEGACY_BODY_LOCATION,
+  type apiParameterSchema,
+  type apiResponseSchema,
+  type ApiOperation,
+  type ApiOperationInput,
+  type ApiParameter,
+} from "@/types/schemas/api-operation";
+import { checkApiOperation, formatIssues, parseApiOperation, validateApiOperation, type ApiOperationIssue } from "@/lib/api-operations/validate";
+import { OPERATION_DETAILS_INCLUDE, operationChildRows, operationColumns, operationFromRecord, operationRecordFromRow } from "@/lib/api-operations/records";
 
 const STALE_SESSION_IMPORT_ERROR =
   "Your session is stale. Sign out and sign in again, then retry the import.";
@@ -881,108 +892,220 @@ export async function deleteServiceAction(serviceId: string) {
   }
 }
 
-export interface OperationParamInput {
-  name: string;
-  type: string;
-  location: string;
-  required: boolean;
-  description?: string;
+/** Editable columns of an API service. Placement, scope and the owning entity have no edit path here. */
+const SERVICE_EDITABLE = { name: isString, basePath: isString };
+
+/** A base path: "/" or "/segment[/segment...]", no whitespace, query or fragment; a trailing slash is dropped. */
+function normalizedBasePath(value: string): Result<string> {
+  const trimmed = value.trim() || "/";
+  if (!trimmed.startsWith("/") || /[\s?#{}]/.test(trimmed)) {
+    return err({ code: "VALIDATION_ERROR", message: 'Base path must start with "/" and must not contain spaces, ?, #, { or }' });
+  }
+  return ok(trimmed.length > 1 ? trimmed.replace(/\/+$/, "") || "/" : trimmed);
 }
-
-export interface OperationResponseInput {
-  statusCode: number;
-  type?: string | null;
-  description?: string;
-}
-
-const isOperationParam = (v: unknown) =>
-  isPlainObject(v) &&
-  isString((v as Record<string, unknown>).name) &&
-  isString((v as Record<string, unknown>).type) &&
-  isString((v as Record<string, unknown>).location) &&
-  isBoolean((v as Record<string, unknown>).required) &&
-  optional(isString)((v as Record<string, unknown>).description);
-
-const isOperationResponse = (v: unknown) =>
-  isPlainObject(v) &&
-  isInt((v as Record<string, unknown>).statusCode) &&
-  optional(isStringOrNull)((v as Record<string, unknown>).type) &&
-  optional(isString)((v as Record<string, unknown>).description);
-
-const isListOf = (check: (v: unknown) => boolean) => (v: unknown) => Array.isArray(v) && v.every(check);
 
 /**
- * The editor's operation payload, checked at runtime (it arrives from the browser untyped): a missing or malformed
- * `parameters` / `responses` list, a non-string name... is a VALIDATION_ERROR here, never a TypeError ("Cannot read
- * properties of undefined") or a Prisma validation message further down. The name is trimmed and must not be blank.
+ * Renames an API service and / or changes its base path. The service must be in the active tenant and writable by the caller
+ * (`asset.write` at its place, like every sibling); a new name goes through the line-unique name registry under the tenant
+ * lock, the service itself excluded.
  */
-function readOperationDetails(data: unknown, listsRequired: boolean) {
-  const lists = listsRequired
-    ? { parameters: isListOf(isOperationParam), responses: isListOf(isOperationResponse) }
-    : { parameters: optional(isListOf(isOperationParam)), responses: optional(isListOf(isOperationResponse)) };
-  const input = readFields(
-    data,
-    { name: isString, httpMethod: isString, httpPath: isString, description: optional(isString), ...lists },
-    "an operation"
-  );
-  if (!input.success) return input;
-  const name = trimmedName(input.data.name, "Operation");
-  if (!name.success) return name;
-  return ok({
-    name: name.data,
-    httpMethod: input.data.httpMethod as string,
-    httpPath: input.data.httpPath as string,
-    description: (input.data.description as string | undefined) ?? "",
-    parameters: ((input.data.parameters as OperationParamInput[] | undefined) ?? []).map((p) => ({
-      name: p.name,
-      type: p.type,
-      location: p.location,
-      required: p.required,
-      description: p.description ?? "",
-    })),
-    responses: ((input.data.responses as OperationResponseInput[] | undefined) ?? []).map((r) => ({
-      statusCode: r.statusCode,
-      type: r.type ?? null,
-      description: r.description ?? "",
-    })),
-  });
+export async function updateServiceAction(
+  serviceId: string,
+  data: { name?: string; basePath?: string }
+): Promise<{ success: true; service: { id: string; name: string; basePath: string } } | { success?: undefined; error: string; code?: string }> {
+  const id = requireId(serviceId, "Service id");
+  if (!id.success) return failure(id.error);
+  const picked = pickEditable(data, SERVICE_EDITABLE, "an API");
+  if (!picked.success) return failure(picked.error);
+  const changes: { name?: string; basePath?: string } = {};
+  if (picked.data.name !== undefined) {
+    const name = trimmedName(picked.data.name, "API");
+    if (!name.success) return failure(name.error);
+    changes.name = name.data;
+  }
+  if (picked.data.basePath !== undefined) {
+    const basePath = normalizedBasePath(picked.data.basePath as string);
+    if (!basePath.success) return failure(basePath.error);
+    changes.basePath = basePath.data;
+  }
+
+  try {
+    const access = await guardSubject("asset.write", { kind: "service", id: id.data }, { label: "API service" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const row = await prisma.serviceDefinition.findUnique({
+      where: { id: id.data },
+      select: { id: true, name: true, basePath: true, tenantId: true, domainId: true, productId: true },
+    });
+    if (!row) return { error: "API service not found", code: "NOT_FOUND" };
+
+    const write = (db: Pick<Prisma.TransactionClient, "serviceDefinition">) =>
+      db.serviceDefinition.update({ where: { id: id.data }, data: changes, select: { id: true, name: true, basePath: true } });
+    let updated: { id: string; name: string; basePath: string };
+    if (changes.name !== undefined && changes.name !== row.name) {
+      const result = await writeWithUniqueName(prisma, {
+        scope: { tenantId: row.tenantId, domainId: row.domainId, productId: row.productId },
+        name: changes.name,
+        exclude: { kind: "service", id: id.data },
+        write: (tx) => write(tx),
+      });
+      if (!result.success) return failure(result.error);
+      updated = result.data;
+    } else {
+      updated = await write(prisma);
+    }
+    revalidatePath("/schemas");
+    return { success: true, service: { id: updated.id ?? row.id, name: updated.name ?? changes.name ?? row.name, basePath: updated.basePath ?? changes.basePath ?? row.basePath } };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("updateServiceAction", e) };
+  }
 }
+
+/**
+ * Persists the editor order of a service's operations. Operations carry no sort column: every loader (entity page, emission)
+ * reads them by `createdAt`, so the order is written there, spaced one millisecond apart from the earliest stored timestamp
+ * (later creates still land after them). `orderedIds` must name exactly the service's operations; anything else is a stale list.
+ */
+export async function reorderOperationsAction(
+  serviceId: string,
+  orderedIds: string[]
+): Promise<{ success: true } | { success?: undefined; error: string; code?: string }> {
+  const id = requireId(serviceId, "Service id");
+  if (!id.success) return failure(id.error);
+  if (!isStringArray(orderedIds) || new Set(orderedIds).size !== orderedIds.length) {
+    return failure({ code: "VALIDATION_ERROR", message: "Expected a list of distinct operation ids" });
+  }
+  try {
+    const access = await guardSubject("asset.write", { kind: "service", id: id.data }, { label: "API service" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const rows = (await prisma.operation.findMany({ where: { serviceId: id.data }, select: { id: true, createdAt: true } })) ?? [];
+    const stored = new Set(rows.map((r) => r.id));
+    if (rows.length !== orderedIds.length || orderedIds.some((o) => !stored.has(o))) {
+      return failure({ code: "VALIDATION_ERROR", message: "The operation list is out of date. Reload the page and try again." });
+    }
+    if (rows.length === 0) return { success: true };
+    const base = Math.min(...rows.map((r) => new Date(r.createdAt).getTime()));
+    await prisma.$transaction(
+      orderedIds.map((opId, i) => prisma.operation.update({ where: { id: opId }, data: { createdAt: new Date(base + i) } }))
+    );
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("reorderOperationsAction", e) };
+  }
+}
+
+/** A parameter as the editor may send it: the contract's, plus the legacy `"body"` location (read as the request body). */
+export type OperationParamInput = Omit<z.input<typeof apiParameterSchema>, "location"> & {
+  location: ApiParameter["location"] | typeof LEGACY_BODY_LOCATION;
+};
+
+export type OperationResponseInput = z.input<typeof apiResponseSchema>;
+
+/**
+ * An operation as the editor sends it: the `api-operation.ts` contract (defaults not yet applied). `httpMethod` is any
+ * string here and is checked (case-insensitively) at runtime; a legacy body parameter becomes `requestBody`.
+ */
+export type OperationDetailsInput = Omit<ApiOperationInput, "httpMethod" | "parameters" | "responses"> & {
+  httpMethod: string;
+  parameters?: OperationParamInput[];
+  responses?: OperationResponseInput[];
+};
+
+/** A failed operation save: the toast text, plus every issue (field path + message) for the editor to place. */
+type OperationValidationFailure = { error: string; code: "VALIDATION_ERROR"; issues: ApiOperationIssue[] };
+
+const operationInvalid = (issues: ApiOperationIssue[]): OperationValidationFailure => ({
+  error: formatIssues(issues),
+  code: "VALIDATION_ERROR",
+  issues,
+});
+
+/**
+ * The editor's operation payload, checked at runtime (it arrives from the browser untyped) against the contract and the
+ * operation's own rules (identifier names, `{placeholders}` vs path parameters, unique status codes): a malformed payload is
+ * a VALIDATION_ERROR here, before any query, never a TypeError or a Prisma message further down. `listsRequired`: the
+ * live save always sends both complete lists, so a missing one is an error rather than "no parameters".
+ */
+function readOperationDetails(
+  data: unknown,
+  listsRequired: boolean
+): { success: true; data: ApiOperation } | { success: false; failure: OperationValidationFailure } {
+  const invalid = (issues: ApiOperationIssue[]) => ({ success: false as const, failure: operationInvalid(issues) });
+  if (!isPlainObject(data)) return invalid([{ path: "", message: "Expected an operation object" }]);
+  const record = data as Record<string, unknown>;
+  if (typeof record.name !== "string" || record.name.trim() === "") return invalid([{ path: "name", message: "Operation name is required" }]);
+  if (listsRequired) {
+    const missing = (["parameters", "responses"] as const).filter((k) => !Array.isArray(record[k]));
+    if (missing.length) return invalid(missing.map((k) => ({ path: k, message: "must be a list" })));
+  }
+  const parsed = parseApiOperation(data);
+  if (!parsed.success) return invalid(parsed.issues);
+  const issues = checkApiOperation(parsed.data);
+  return issues.length ? invalid(issues) : { success: true, data: parsed.data };
+}
+
+/**
+ * The stored operations of a service, in the contract shape, for the sibling checks (duplicate method + path,
+ * operationId). Selected by the service id, or by one of its operations' ids (`ofOperation`), which is then left out.
+ */
+async function serviceOperations(where: { serviceId: string } | { ofOperation: string }) {
+  const rows = await prisma.operation.findMany({
+    where: "serviceId" in where ? { serviceId: where.serviceId } : { service: { operations: { some: { id: where.ofOperation } } } },
+    include: OPERATION_DETAILS_INCLUDE,
+  });
+  const records = (rows ?? []).map(operationRecordFromRow);
+  const self = "ofOperation" in where ? records.find((r) => r.id === where.ofOperation) : undefined;
+  const siblings = records.filter((r) => r !== self).map(operationFromRecord);
+  return { self, siblings };
+}
+
+/**
+ * Sibling rules + `@scalar/openapi-parser` on the (already self-checked) operation: the failure when it may not be stored,
+ * otherwise its save-time warnings (what is stored but will not be generated as written, e.g. OPTIONS), as display text.
+ */
+async function operationServiceIssues(
+  op: ApiOperation,
+  siblings: ApiOperation[]
+): Promise<{ invalid: OperationValidationFailure; warnings?: undefined } | { invalid?: undefined; warnings: string[] }> {
+  const result = await validateApiOperation(op, siblings);
+  return result.valid ? { warnings: result.warnings.map((w) => w.message) } : { invalid: operationInvalid(result.issues) };
+}
+
+/** `{ warnings }` when there are any, `{}` otherwise: spread into a success result so a clean save carries no key. */
+const withWarnings = (warnings: string[]): { warnings?: string[] } => (warnings.length ? { warnings } : {});
 
 export async function createOperationAction(
   serviceId: string,
-  data: {
-    name: string;
-    httpMethod: string;
-    httpPath: string;
-    description?: string;
-    parameters?: OperationParamInput[];
-    responses?: OperationResponseInput[];
-  }
-) {
-
+  data: OperationDetailsInput
+): Promise<
+  | { success: true; operationId: string; operation: ApiOperation; warnings?: string[] }
+  | { success?: undefined; error: string; code?: string; issues?: ApiOperationIssue[] }
+> {
   const id = requireId(serviceId, "Service id");
   if (!id.success) return failure(id.error);
   const details = readOperationDetails(data, false);
-  if (!details.success) return failure(details.error);
+  if (!details.success) return details.failure;
 
   try {
     // The PARENT is an API of a domain or product: judged at its place (`asset.write`), in the active tenant, before anything is written.
     const access = await guardSubject("asset.write", { kind: "service", id: id.data }, { label: "API service" });
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
+    const { siblings } = await serviceOperations({ serviceId: id.data });
+    const { invalid, warnings } = await operationServiceIssues(details.data, siblings);
+    if (invalid) return invalid;
+
+    const children = operationChildRows(details.data);
     const created = await prisma.operation.create({
       data: {
         serviceId: id.data,
-        name: details.data.name,
-        httpMethod: details.data.httpMethod,
-        httpPath: details.data.httpPath,
-        description: details.data.description,
-        parameters: { create: details.data.parameters },
-        responses: { create: details.data.responses },
+        ...operationColumns(details.data),
+        parameters: { create: children.parameters },
+        responses: { create: children.responses },
       },
     });
     revalidatePath("/schemas");
-    return { success: true, operationId: created.id };
+    return { success: true, operationId: created.id, operation: details.data, ...withWarnings(warnings) };
   } catch (e: unknown) {
     return { ...unexpectedFailure("createOperationAction", e) };
   }
@@ -992,13 +1115,40 @@ export async function createOperationAction(
  * Editable columns of an operation. `serviceId` (the move-to-another-API column), `decorators` and everything else are
  * deliberately absent: an update that names anything else is rejected with VALIDATION_ERROR.
  */
-const OPERATION_EDITABLE = { name: isString, httpMethod: isString, httpPath: isString, description: isString };
+const OPERATION_EDITABLE = {
+  name: isString,
+  httpMethod: isString,
+  httpPath: isString,
+  description: isString,
+  summary: isString,
+  operationId: isStringOrNull,
+  tags: isStringArray,
+  deprecated: isBoolean,
+};
 
+export type OperationUpdateInput = Partial<{
+  name: string;
+  httpMethod: string;
+  httpPath: string;
+  description: string;
+  summary: string;
+  /** null or "" = defaults to the name. */
+  operationId: string | null;
+  tags: string[];
+  deprecated: boolean;
+}>;
+
+/**
+ * Updates an operation's scalar columns (not its parameters / responses: `replaceOperationDetailsAction`). The result is
+ * validated as a whole (the stored operation with the change applied) against the contract, its own rules and its siblings.
+ */
 export async function updateOperationAction(
   operationId: string,
-  data: { name?: string; httpMethod?: string; httpPath?: string; description?: string }
-) {
-
+  data: OperationUpdateInput
+): Promise<
+  | { success: true; operation: ApiOperation; warnings?: string[] }
+  | { success?: undefined; error: string; code?: string; issues?: ApiOperationIssue[] }
+> {
   const id = requireId(operationId, "Operation id");
   if (!id.success) return failure(id.error);
   const picked = pickEditable(data, OPERATION_EDITABLE, "an operation");
@@ -1012,34 +1162,61 @@ export async function updateOperationAction(
   try {
     const access = await guardSubject("asset.write", { kind: "operation", id: id.data }, { label: "Operation" });
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
-    await prisma.operation.update({ where: { id: id.data }, data: picked.data as Prisma.OperationUpdateInput });
+
+    const { self, siblings } = await serviceOperations({ ofOperation: id.data });
+    if (!self) return { error: "Operation not found", code: "NOT_FOUND" };
+    const { operationId: newOperationId, ...rest } = picked.data;
+    const candidate = {
+      ...operationFromRecord(self),
+      ...rest,
+      ...(newOperationId !== undefined ? { operationId: (newOperationId as string | null) || undefined } : {}),
+    };
+    const details = readOperationDetails(candidate, true);
+    if (!details.success) return details.failure;
+    const { invalid, warnings } = await operationServiceIssues(details.data, siblings);
+    if (invalid) return invalid;
+
+    // Only the named columns are written, in their normalized form.
+    const columns = operationColumns(details.data);
+    const write = Object.fromEntries(Object.keys(picked.data).map((k) => [k, columns[k as keyof typeof columns]]));
+    await prisma.operation.update({ where: { id: id.data }, data: write as Prisma.OperationUpdateInput });
     revalidatePath("/schemas");
-    return { success: true };
+    return { success: true, operation: details.data, ...withWarnings(warnings) };
   } catch (e: unknown) {
     return { ...unexpectedFailure("updateOperationAction", e) };
   }
 }
 
+/** Columns an editor may not know about yet: absent from a replace payload means "keep what is stored", not "reset". */
+const KEPT_WHEN_UNSENT = ["operationId", "summary", "tags", "deprecated", "requestBody"] as const;
+
+function keepUnsentColumns(op: ApiOperation, sent: unknown, stored: ApiOperation): ApiOperation {
+  const raw = sent as Record<string, unknown>;
+  const sentLegacyBody = Array.isArray(raw.parameters) && raw.parameters.some((p) => isPlainObject(p) && (p as { location?: unknown }).location === LEGACY_BODY_LOCATION);
+  const kept: Partial<ApiOperation> = {};
+  for (const key of KEPT_WHEN_UNSENT) {
+    if (raw[key] !== undefined || (key === "requestBody" && sentLegacyBody)) continue;
+    Object.assign(kept, { [key]: stored[key] });
+  }
+  return { ...op, ...kept };
+}
+
 // Replaces an operation's core fields and its full parameter/response list in
 // one transaction — simpler than per-row param/response CRUD actions, and the
-// editor always has the complete lists in hand anyway.
+// editor always has the complete lists in hand anyway. Contract columns the payload
+// leaves out (`KEPT_WHEN_UNSENT`) keep their stored values.
 export async function replaceOperationDetailsAction(
   operationId: string,
-  data: {
-    name: string;
-    httpMethod: string;
-    httpPath: string;
-    description?: string;
-    parameters: OperationParamInput[];
-    responses: OperationResponseInput[];
-  }
-) {
-
+  data: OperationDetailsInput & { parameters: OperationParamInput[]; responses: OperationResponseInput[] }
+): Promise<
+  | { success: true; operation: ApiOperation; warnings?: string[] }
+  | { success?: undefined; error: string; code?: string; issues?: ApiOperationIssue[] }
+> {
   const id = requireId(operationId, "Operation id");
   if (!id.success) return failure(id.error);
   // Both lists are required here (the editor always sends the complete lists): a missing one is a validation failure.
   const details = readOperationDetails(data, true);
-  if (!details.success) return failure(details.error);
+  if (!details.success) return details.failure;
 
   try {
     // Ownership: the operation's API must belong to the active tenant; anything else reads as missing. Checked before the
@@ -1047,23 +1224,26 @@ export async function replaceOperationDetailsAction(
     const access = await guardSubject("asset.write", { kind: "operation", id: id.data }, { label: "Operation" });
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
 
+    const { self, siblings } = await serviceOperations({ ofOperation: id.data });
+    const operation = self ? keepUnsentColumns(details.data, data, operationFromRecord(self)) : details.data;
+    const { invalid, warnings } = await operationServiceIssues(operation, siblings);
+    if (invalid) return invalid;
+
+    const children = operationChildRows(operation);
     await prisma.$transaction([
       prisma.operationParameter.deleteMany({ where: { operationId: id.data } }),
       prisma.operationResponse.deleteMany({ where: { operationId: id.data } }),
       prisma.operation.update({
         where: { id: id.data },
         data: {
-          name: details.data.name,
-          httpMethod: details.data.httpMethod,
-          httpPath: details.data.httpPath,
-          description: details.data.description,
-          parameters: { create: details.data.parameters },
-          responses: { create: details.data.responses },
+          ...operationColumns(operation),
+          parameters: { create: children.parameters },
+          responses: { create: children.responses },
         },
       }),
     ]);
     revalidatePath("/schemas");
-    return { success: true };
+    return { success: true, operation, ...withWarnings(warnings) };
   } catch (e: unknown) {
     return { ...unexpectedFailure("replaceOperationDetailsAction", e) };
   }

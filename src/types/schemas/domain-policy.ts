@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { RetentionPolicySchema } from "./retention-policy.schema";
+import { FieldCompletenessPolicySchema } from "./field-completeness-policy";
 
 export const QualityRuleTemplateSchema = z.object({
   type: z.string(),
@@ -43,6 +44,7 @@ export const PolicyTemplateSchema = z
     qualityRules: z.array(QualityRuleTemplateSchema).optional(),
     namingConventions: z.string().optional(),
     completenessRequirements: CompletenessRequirementsSchema.optional(),
+    fieldCompleteness: FieldCompletenessPolicySchema.optional(),
   })
   .partial();
 
