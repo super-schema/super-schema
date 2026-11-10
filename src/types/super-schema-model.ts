@@ -8,6 +8,7 @@
 
 import type { EntityRef, LegacyEntityRef } from "@/lib/references/entity-reference";
 import type { ApiOperation } from "@/types/schemas/api-operation";
+import type { Governance } from "@/types/schemas/typespec-decorator.schema";
 
 // ---------------------------------------------------------------------------
 // Logical type — covers every supported field type
@@ -147,8 +148,6 @@ export interface VisibilityDecorators {
 }
 
 export interface DocumentationDecorators {
-  doc?: string;
-  summary?: string;
   example?: unknown;
   deprecated?: string | null;
   externalDocsUrl?: string | null;
@@ -184,6 +183,7 @@ export interface TypeSpecPanelDecorators {
   documentation?: DocumentationDecorators;
   versioning?: VersioningDecorators;
   extensions?: ExtensionsDecorators;
+  governance?: Governance;
 }
 
 // Full decorator set: 8 categories + typespec panels

@@ -748,41 +748,9 @@ describe("Git Service — Service Functions", () => {
   });
 
   describe("exportAll", () => {
-    it("exports multiple entities in a single commit", async () => {
-      vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue({
-        id: "gc-1",
-        basePath: "schemas/",
-        enabled: true,
-      } as never);
-      vi.mocked(prisma.entity.findMany).mockResolvedValue([
-        {
-          id: "e1",
-          name: "User",
-          description: "User entity",
-          status: "ACTIVE",
-          metadata: {},
-          domain: { name: "Core" },
-          fields: [],
-        },
-        {
-          id: "e2",
-          name: "Order",
-          description: "Order entity",
-          status: "ACTIVE",
-          metadata: {},
-          domain: { name: "Commerce" },
-          fields: [],
-        },
-      ] as never);
-      vi.mocked(prisma.gitConfig.update).mockResolvedValue({} as never);
-
-      const result = await exportAll(adminCtx);
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.success).toBe(true);
-        expect(result.data.filesExported).toBe(2); // 1 superschema each
-      }
+    it("requires an explicit pinned workflow instead of reporting a fabricated commit", async () => {
+      expect(await exportAll(adminCtx)).toMatchObject({ success: false, error: { code: "WORKFLOW_REQUIRED" } });
+      expect(prisma.gitConfig.update).not.toHaveBeenCalled();
     });
 
     it("rejects non-Admin users", async () => {

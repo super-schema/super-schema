@@ -93,7 +93,7 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/compone
   },
 }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemasTab", () => ({ SchemasTab: () => <p>Generated schemas view</p> }));
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/EntityDeploymentsTab", () => ({ EntityDeploymentsTab: () => null }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/DeploymentWorkflowsTab", () => ({ DeploymentWorkflowsTab: () => null }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/AlertsTab", () => ({ AlertsTab: () => null }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/ApiTab", () => ({ ApiTab: () => null }));
 vi.mock("@/components/custom/DiffViewer", () => ({ DiffViewer: () => null }));

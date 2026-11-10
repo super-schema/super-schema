@@ -39,13 +39,11 @@ import {
 } from "@/services/git-pr.service";
 import { prisma } from "@/lib/db";
 import type { ServiceContext } from "@/types/service-context";
-import type { TargetOutput } from "@/lib/emission/emission.types";
-import type { MigrationArtifacts } from "@/lib/migration/migration.types";
 import { assign } from "../../helpers/access-mocks";
 
-const authorCtx: ServiceContext = {
+const adminCtx: ServiceContext = {
   userId: "user-author",
-  userRole: "AUTHOR", assignments: [assign.tenant("AUTHOR", "tenant-1")],
+  userRole: "ADMIN", assignments: [assign.global()],
   prisma: prisma as unknown as ServiceContext["prisma"],
 };
 
@@ -401,28 +399,6 @@ describe("Git PR Service — Service Functions", () => {
     vi.clearAllMocks();
   });
 
-  const mockEntity = {
-    id: "entity-1",
-    name: "Transaction",
-    description: "A transaction",
-    status: "ACTIVE",
-    metadata: { currentVersion: 3, emittedOutputs: {} },
-    domain: { id: "dom-1", name: "Payments" },
-    fields: [
-      {
-        id: "f-1",
-        name: "id",
-        type: "STRING",
-        nullable: false,
-        isKey: true,
-        description: "Primary key",
-        classification: null,
-        decorators: {},
-        sortOrder: 0,
-      },
-    ],
-  };
-
   const breakingChange: ChangeRecordWithClassification = {
     isBreaking: true,
     changeType: "breaking",
@@ -430,261 +406,15 @@ describe("Git PR Service — Service Functions", () => {
     changeRecord: null,
   };
 
-  const nonBreakingChange: ChangeRecordWithClassification = {
-    isBreaking: false,
-    changeType: "non-breaking",
-    summary: "Added optional field",
-    changeRecord: null,
-  };
-
-  describe("exportWithReview", () => {
-    it("creates PR for breaking change when prReviewMode is BREAKING_ONLY", async () => {
-      vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue({
-        id: "gc-1",
-        basePath: "schemas/",
-        enabled: true,
-        prReviewMode: "BREAKING_ONLY",
-        repositoryUrl: "https://github.com/org/repo",
-      } as never);
-      vi.mocked(prisma.entity.findUnique).mockResolvedValue(
-        mockEntity as never
-      );
-      vi.mocked(prisma.gitPullRequest.create).mockResolvedValue({
-        id: "pr-1",
-        entityId: "entity-1",
-        versionId: "v-1",
-        prUrl: "https://github.com/org/repo/pull/42",
-        prNumber: 42,
-        branchName: "schema/transaction/v3",
-        status: "OPEN",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as never);
-      vi.mocked(prisma.gitConfig.update).mockResolvedValue({} as never);
-
-      const result = await exportWithReview(
-        "entity-1",
-        "v-1",
-        breakingChange,
-        authorCtx
-      );
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.success).toBe(true);
-        expect(result.data.pr).toBeDefined();
-        expect(result.data.pr!.branchName).toBe("schema/transaction/v3");
-      }
+  describe("legacy delivery migration", () => {
+    it("requires an explicit pinned workflow instead of fabricating PRs or commits", async () => {
+      const result = await exportWithReview("entity-1", "v-1", breakingChange, adminCtx);
+      expect(result).toMatchObject({ success: false, error: { code: "WORKFLOW_REQUIRED" } });
+      expect(prisma.gitPullRequest.create).not.toHaveBeenCalled();
+      expect(prisma.gitConfig.update).not.toHaveBeenCalled();
     });
-
-    it("pushes directly for non-breaking change when prReviewMode is BREAKING_ONLY", async () => {
-      vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue({
-        id: "gc-1",
-        basePath: "schemas/",
-        enabled: true,
-        prReviewMode: "BREAKING_ONLY",
-        repositoryUrl: "https://github.com/org/repo",
-      } as never);
-      vi.mocked(prisma.entity.findUnique).mockResolvedValue(
-        mockEntity as never
-      );
-      vi.mocked(prisma.gitConfig.update).mockResolvedValue({} as never);
-
-      const result = await exportWithReview(
-        "entity-1",
-        "v-1",
-        nonBreakingChange,
-        authorCtx
-      );
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.success).toBe(true);
-        expect(result.data.pr).toBeUndefined();
-      }
-      // Should NOT create a PR
-      expect(vi.mocked(prisma.gitPullRequest.create)).not.toHaveBeenCalled();
-    });
-
-    it("always creates PR when prReviewMode is ALWAYS", async () => {
-      vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue({
-        id: "gc-1",
-        basePath: "schemas/",
-        enabled: true,
-        prReviewMode: "ALWAYS",
-        repositoryUrl: "https://github.com/org/repo",
-      } as never);
-      vi.mocked(prisma.entity.findUnique).mockResolvedValue(
-        mockEntity as never
-      );
-      vi.mocked(prisma.gitPullRequest.create).mockResolvedValue({
-        id: "pr-1",
-        entityId: "entity-1",
-        versionId: "v-1",
-        prUrl: "https://github.com/org/repo/pull/10",
-        prNumber: 10,
-        branchName: "schema/transaction/v3",
-        status: "OPEN",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as never);
-      vi.mocked(prisma.gitConfig.update).mockResolvedValue({} as never);
-
-      const result = await exportWithReview(
-        "entity-1",
-        "v-1",
-        nonBreakingChange,
-        authorCtx
-      );
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.pr).toBeDefined();
-      }
-      expect(vi.mocked(prisma.gitPullRequest.create)).toHaveBeenCalled();
-    });
-
-    it("never creates PR when prReviewMode is NEVER", async () => {
-      vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue({
-        id: "gc-1",
-        basePath: "schemas/",
-        enabled: true,
-        prReviewMode: "NEVER",
-        repositoryUrl: "https://github.com/org/repo",
-      } as never);
-      vi.mocked(prisma.entity.findUnique).mockResolvedValue(
-        mockEntity as never
-      );
-      vi.mocked(prisma.gitConfig.update).mockResolvedValue({} as never);
-
-      const result = await exportWithReview(
-        "entity-1",
-        "v-1",
-        breakingChange,
-        authorCtx
-      );
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.pr).toBeUndefined();
-      }
-      expect(vi.mocked(prisma.gitPullRequest.create)).not.toHaveBeenCalled();
-    });
-
-    it("stores PR record in git_pull_requests table", async () => {
-      vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue({
-        id: "gc-1",
-        basePath: "schemas/",
-        enabled: true,
-        prReviewMode: "ALWAYS",
-        repositoryUrl: "https://github.com/org/repo",
-      } as never);
-      vi.mocked(prisma.entity.findUnique).mockResolvedValue(
-        mockEntity as never
-      );
-      vi.mocked(prisma.gitPullRequest.create).mockResolvedValue({
-        id: "pr-1",
-        entityId: "entity-1",
-        versionId: "v-1",
-        prUrl: "https://github.com/org/repo/pull/99",
-        prNumber: 99,
-        branchName: "schema/transaction/v3",
-        status: "OPEN",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as never);
-      vi.mocked(prisma.gitConfig.update).mockResolvedValue({} as never);
-
-      await exportWithReview("entity-1", "v-1", breakingChange, authorCtx);
-
-      expect(vi.mocked(prisma.gitPullRequest.create)).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            entityId: "entity-1",
-            versionId: "v-1",
-            status: "OPEN",
-          }),
-        })
-      );
-    });
-
-    it("returns NOT_CONFIGURED when Git is not enabled", async () => {
-      vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue(null);
-
-      const result = await exportWithReview(
-        "entity-1",
-        "v-1",
-        breakingChange,
-        authorCtx
-      );
-
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe("NOT_CONFIGURED");
-      }
-    });
-
-    it("logs PR creation via withAudit", async () => {
-      vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue({
-        id: "gc-1",
-        basePath: "schemas/",
-        enabled: true,
-        prReviewMode: "ALWAYS",
-        repositoryUrl: "https://github.com/org/repo",
-      } as never);
-      vi.mocked(prisma.entity.findUnique).mockResolvedValue(
-        mockEntity as never
-      );
-      vi.mocked(prisma.gitPullRequest.create).mockResolvedValue({
-        id: "pr-1",
-        entityId: "entity-1",
-        versionId: "v-1",
-        prUrl: "https://github.com/org/repo/pull/1",
-        prNumber: 1,
-        branchName: "schema/transaction/v3",
-        status: "OPEN",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as never);
-      vi.mocked(prisma.gitConfig.update).mockResolvedValue({} as never);
-
-      await exportWithReview("entity-1", "v-1", breakingChange, authorCtx);
-
-      expect(vi.mocked(prisma.auditLog.create)).toHaveBeenCalled();
-    });
-  });
-
-  describe("syncPrStatus", () => {
-    it("returns current PR status", async () => {
-      vi.mocked(prisma.gitPullRequest.findUnique).mockResolvedValue({
-        id: "pr-1",
-        entityId: "entity-1",
-        versionId: "v-1",
-        prUrl: "https://github.com/org/repo/pull/42",
-        prNumber: 42,
-        branchName: "schema/transaction/v3",
-        status: "OPEN",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as never);
-
-      const result = await syncPrStatus("pr-1", authorCtx);
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.status).toBe("OPEN");
-      }
-    });
-
-    it("returns NOT_FOUND for missing PR", async () => {
-      vi.mocked(prisma.gitPullRequest.findUnique).mockResolvedValue(null);
-
-      const result = await syncPrStatus("pr-missing", authorCtx);
-
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe("NOT_FOUND");
-      }
+    it("does not claim to synchronize legacy PRs without a delivery connection", async () => {
+      expect(await syncPrStatus("pr-1", adminCtx)).toMatchObject({ success: false, error: { code: "WORKFLOW_REQUIRED" } });
     });
   });
 
@@ -710,7 +440,7 @@ describe("Git PR Service — Service Functions", () => {
         prs as never
       );
 
-      const result = await getPrHistory("entity-1", authorCtx);
+      const result = await getPrHistory("entity-1", adminCtx);
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -735,7 +465,7 @@ describe("Git PR Service — Service Functions", () => {
         createdAt: new Date(),
       } as never);
 
-      const result = await getLatestPr("entity-1", authorCtx);
+      const result = await getLatestPr("entity-1", adminCtx);
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -747,7 +477,7 @@ describe("Git PR Service — Service Functions", () => {
     it("returns null when no PRs exist", async () => {
       vi.mocked(prisma.gitPullRequest.findFirst).mockResolvedValue(null);
 
-      const result = await getLatestPr("entity-1", authorCtx);
+      const result = await getLatestPr("entity-1", adminCtx);
 
       expect(result.success).toBe(true);
       if (result.success) {

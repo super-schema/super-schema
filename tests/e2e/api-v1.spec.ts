@@ -142,6 +142,7 @@ const PROTECTED_APP: RouteCase[] = [
 
 /** Answered without a credential on purpose: the health probe, the API's own description, Auth.js, and the preview iframe's assets (it sends no cookie). */
 const PUBLIC_ROUTES = ["GET /api/v1/health", "GET /api/v1/docs", "GET /api/auth/{...nextauth}", "POST /api/auth/{...nextauth}", "GET /api/asyncapi-preview/{asset}"];
+const WORKER_ROUTES = ["POST /api/deployments/process"];
 
 const call = (context: APIRequestContext, route: RouteCase): Promise<APIResponse> =>
   context.fetch(route.path, { method: route.method, ...(route.body !== undefined ? asJson(route.body) : {}), maxRedirects: 0 });
@@ -305,8 +306,13 @@ test.describe("docs", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("authentication", () => {
+  test("the deployment worker requires its own bearer token", { tag: ["@regression"] }, async ({ api }) => {
+    const response = await api.anon.post("/api/deployments/process");
+    expect(response.status()).toBe(401);
+    expect(await jsonOf(response)).toEqual({ error: "Unauthorized" });
+  });
   test("every route of src/app/api is either public, or in the table of this spec that is checked for a 401 below", { tag: ["@regression"] }, async () => {
-    const listed = new Set([...PROTECTED_V1, ...PROTECTED_APP].map((r) => `${r.method} ${r.template}`).concat(PUBLIC_ROUTES));
+    const listed = new Set([...PROTECTED_V1, ...PROTECTED_APP].map((r) => `${r.method} ${r.template}`).concat(PUBLIC_ROUTES, WORKER_ROUTES));
     const found = discoverHandlers();
     expect(found.length).toBeGreaterThan(10);
     expect(found.filter((handler) => !listed.has(handler)), "a route handler that this spec does not know: say whether it is public, and test its 401").toEqual([]);

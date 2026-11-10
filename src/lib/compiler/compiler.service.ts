@@ -7,6 +7,7 @@
  */
 
 import { activeDanglingRef } from "@/lib/field-dangling";
+import { normalizeFieldDocumentation } from "@/lib/field-attributes";
 import type {
   SuperSchemaModel,
   SuperSchemaField,
@@ -111,7 +112,8 @@ export function compileEntity(
 // ---------------------------------------------------------------------------
 
 function compileField(field: PrismaFieldInput): SuperSchemaField {
-  const rawDecorators = (field.decorators ?? {}) as Record<string, unknown>;
+  const normalized = normalizeFieldDocumentation(field);
+  const rawDecorators = normalized.decorators;
   const decorators = extractDecoratorSet(rawDecorators);
   const complexType = extractComplexTypeInfo(field.type, rawDecorators);
   const logicalType = resolveLogicalType(field.type);
@@ -126,7 +128,7 @@ function compileField(field: PrismaFieldInput): SuperSchemaField {
     ...(rawDecorators.nullableType === true ? { nullableType: true, ...(rawDecorators.requiredNullable === true ? { requiredNullable: true } : {}) } : {}),
     isKey: field.isKey,
     fieldNumber: field.fieldNumber ?? undefined,
-    description: field.description,
+    description: normalized.description,
     classification: field.classification ?? undefined,
     aliases: field.aliases ?? [],
     decorators,

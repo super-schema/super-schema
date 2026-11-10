@@ -1,229 +1,212 @@
 "use client";
-
 import { useState } from "react";
-import { Plus, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import {
+  FieldGroup,
+  FieldDescription,
+  FieldError,
+} from "@/components/ui/field";
+import {
+  AttributeControl,
+  SELECT_CLASS,
+} from "@/components/custom/FieldAttributes/AttributeControl";
 import type { Extensions } from "@/types/schemas/typespec-decorator.schema";
 
-interface ExtensionsPanelProps {
-  extensions: Extensions;
-  showXml?: boolean;
-  onChange: (extensions: Extensions) => void;
+type ValueKind = "string" | "number" | "boolean" | "null" | "json";
+function valueKind(v: unknown): ValueKind {
+  return v === null
+    ? "null"
+    : typeof v === "object"
+      ? "json"
+      : (typeof v as ValueKind);
 }
-
 export function ExtensionsPanel({
   extensions,
-  showXml = false,
   onChange,
-}: ExtensionsPanelProps) {
-  const [newKey, setNewKey] = useState("");
-  const [newValue, setNewValue] = useState("");
-  const [jsonError, setJsonError] = useState<string | null>(null);
-
-  function update(partial: Partial<Extensions>) {
-    onChange({ ...extensions, ...partial });
+}: {
+  extensions: Extensions;
+  showXml?: boolean;
+  onChange: (v: Extensions) => void;
+}) {
+  const [key, setKey] = useState("");
+  const [text, setText] = useState("");
+  const [kind, setKind] = useState<ValueKind>("string");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  function reset() {
+    setKey("");
+    setText("");
+    setKind("string");
+    setEditing(null);
+    setError(null);
   }
-
-  const openapiEntries = Object.entries(extensions.openapi ?? {});
-  const xml = extensions.xml ?? {};
-  const activeCount =
-    openapiEntries.length +
-    Object.values(xml).filter((v) => v != null && v !== false && v !== "")
-      .length;
-
-  function addExtension() {
-    const key = newKey.trim();
-    if (!key) return;
-
-    // Auto-prefix x- if not present
-    const prefixedKey = key.startsWith("x-") ? key : `x-${key}`;
-
-    // Try parsing as JSON for complex values
-    let parsedValue: unknown = newValue;
-    if (newValue.trim().startsWith("{") || newValue.trim().startsWith("[")) {
-      try {
-        parsedValue = JSON.parse(newValue);
-        setJsonError(null);
-      } catch (e) {
-        setJsonError("Invalid JSON");
-        return;
-      }
-    } else if (newValue === "true") {
-      parsedValue = true;
-    } else if (newValue === "false") {
-      parsedValue = false;
-    } else if (!isNaN(Number(newValue)) && newValue.trim() !== "") {
-      parsedValue = Number(newValue);
+  function save() {
+    const name =
+      editing && key.trim() === editing
+        ? editing
+        : key.trim().startsWith("x-")
+          ? key.trim()
+          : `x-${key.trim()}`;
+    if (name === "x-") {
+      setError("Enter an extension name.");
+      return;
     }
-
-    update({
-      openapi: {
-        ...(extensions.openapi ?? {}),
-        [prefixedKey]: parsedValue,
-      },
-    });
-    setNewKey("");
-    setNewValue("");
-    setJsonError(null);
+    if (name !== editing && Object.hasOwn(extensions.openapi ?? {}, name)) {
+      setError("This extension already exists. Edit its existing entry.");
+      return;
+    }
+    try {
+      let value: unknown = text;
+      if (kind === "null") value = null;
+      if (kind === "boolean") {
+        if (!["true", "false"].includes(text))
+          throw new Error("Choose true or false.");
+        value = text === "true";
+      }
+      if (kind === "number") {
+        value = Number(text);
+        if (!text.trim() || !Number.isFinite(value))
+          throw new Error("Enter a finite number.");
+        if (Number.isInteger(value) && !Number.isSafeInteger(value))
+          throw new Error(
+            "Use a string to preserve integers beyond the safe numeric range.",
+          );
+      }
+      if (kind === "json") value = JSON.parse(text);
+      const entries = { ...extensions.openapi };
+      if (editing) delete entries[editing];
+      entries[name] = value;
+      onChange({ ...extensions, openapi: entries });
+      reset();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Enter a valid value.");
+    }
   }
-
   return (
-    <div className="space-y-space-4 pb-space-2">
-      {/* Active count badge */}
-      {activeCount > 0 && (
-        <Badge variant="secondary" className="text-[10px]">
-          {activeCount} active extension{activeCount !== 1 ? "s" : ""}
-        </Badge>
-      )}
-
-      {/* OpenAPI @extension key-value editor */}
-      <div>
-        <label className="text-caption text-muted-foreground mb-1 block">
-          @extension (OpenAPI x-* properties)
-        </label>
-        <div className="space-y-1">
-          {openapiEntries.map(([key, val]) => (
-            <div key={key} className="flex items-center gap-2">
-              <span className="text-caption font-mono text-muted-foreground w-40 truncate">
-                {key}
-              </span>
-              <span className="text-caption text-muted-foreground/50">=</span>
-              <span className="text-caption font-mono text-foreground truncate flex-1">
-                {typeof val === "object" ? JSON.stringify(val) : String(val)}
-              </span>
-              <button
-                onClick={() => {
-                  const next = { ...(extensions.openapi ?? {}) };
-                  delete next[key];
-                  update({ openapi: next });
-                }}
-                className="p-0.5 text-muted-foreground hover:text-destructive shrink-0"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
+    <FieldGroup>
+      <FieldDescription>
+        Advanced schema metadata. Names use an x- prefix. JSON Schema and
+        OpenAPI preserve these extensions; other targets may ignore them.
+      </FieldDescription>
+      {Object.entries(extensions.openapi ?? {}).map(([name, value]) => (
+        <div
+          key={name}
+          className="flex min-w-0 flex-wrap items-start gap-2 rounded-md border border-border p-2"
+        >
+          <div className="min-w-0 flex-1">
+            <code className="break-all text-xs">{name}</code>
+            <pre className="whitespace-pre-wrap break-all text-xs text-muted-foreground">
+              {JSON.stringify(value)}
+            </pre>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            aria-label={`Edit extension ${name}`}
+            onClick={() => {
+              setEditing(name);
+              setKey(name);
+              setKind(valueKind(value));
+              setText(
+                typeof value === "string" ? value : JSON.stringify(value),
+              );
+              setError(null);
+            }}
+          >
+            Edit
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            aria-label={`Remove extension ${name}`}
+            onClick={() => {
+              const next = { ...extensions.openapi };
+              delete next[name];
+              onChange({ ...extensions, openapi: next });
+              if (editing === name) reset();
+            }}
+          >
+            Remove
+          </Button>
+        </div>
+      ))}
+      <AttributeControl label="Extension name">
+        <Input
+          value={key}
+          spellCheck={false}
+          placeholder="x-company-policy"
+          onChange={(e) => setKey(e.target.value)}
+        />
+      </AttributeControl>
+      <AttributeControl label="Extension value type">
+        <select
+          className={SELECT_CLASS}
+          value={kind}
+          onChange={(e) => {
+            const value = e.target.value as ValueKind;
+            setKind(value);
+            if (value === "boolean") setText("false");
+            setError(null);
+          }}
+        >
+          {["string", "number", "boolean", "null", "json"].map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
           ))}
-
-          {/* Add new extension */}
-          <div className="flex items-center gap-2">
-            <Input
-              value={newKey}
-              onChange={(e) => setNewKey(e.target.value)}
-              placeholder="x-property-name"
-              className="h-6 text-caption w-40 font-mono"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") addExtension();
-              }}
-            />
-            <span className="text-caption text-muted-foreground/50">=</span>
-            <Input
-              value={newValue}
-              onChange={(e) => {
-                setNewValue(e.target.value);
-                setJsonError(null);
-              }}
-              placeholder="value"
-              className="h-6 text-caption flex-1 font-mono"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") addExtension();
-              }}
-            />
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              disabled={!newKey.trim()}
-              onClick={addExtension}
+        </select>
+      </AttributeControl>
+      {kind !== "null" && (
+        <AttributeControl label="Extension value">
+          {kind === "boolean" ? (
+            <select
+              className={SELECT_CLASS}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
             >
-              <Plus className="w-3 h-3" />
-            </Button>
-          </div>
-          {jsonError && (
-            <span className="text-[10px] text-destructive">{jsonError}</span>
-          )}
-        </div>
-      </div>
-
-      {/* XML decorators — only shown when XML emitter is active */}
-      {showXml && (
-      <div className="border-t border-border/50 pt-space-3">
-        <label className="text-caption text-muted-foreground mb-2 block">
-          XML Decorators
-        </label>
-        <div className="space-y-space-2">
-          <div className="flex items-center gap-space-4">
-            <label className="flex items-center gap-2 text-caption text-muted-foreground cursor-pointer">
-              <input
-                type="checkbox"
-                checked={xml.attribute ?? false}
-                onChange={(e) =>
-                  update({ xml: { ...xml, attribute: e.target.checked } })
-                }
-                className="accent-primary"
-              />
-              @xmlAttribute
-            </label>
-            <label className="flex items-center gap-2 text-caption text-muted-foreground cursor-pointer">
-              <input
-                type="checkbox"
-                checked={xml.element ?? false}
-                onChange={(e) =>
-                  update({ xml: { ...xml, element: e.target.checked } })
-                }
-                className="accent-primary"
-              />
-              @xmlElement
-            </label>
-          </div>
-
-          <div className="flex items-center gap-space-3">
-            <div className="flex-1">
-              <label className="text-[10px] text-muted-foreground mb-0.5 block">
-                @xmlNamespace URI
-              </label>
-              <Input
-                value={xml.namespace ?? ""}
-                onChange={(e) =>
-                  update({ xml: { ...xml, namespace: e.target.value || null } })
-                }
-                placeholder="http://example.com/ns"
-                className="h-6 text-caption font-mono"
-              />
-            </div>
-            <div className="w-24">
-              <label className="text-[10px] text-muted-foreground mb-0.5 block">
-                Prefix
-              </label>
-              <Input
-                value={xml.namespacePrefix ?? ""}
-                onChange={(e) =>
-                  update({
-                    xml: { ...xml, namespacePrefix: e.target.value || null },
-                  })
-                }
-                placeholder="ns"
-                className="h-6 text-caption font-mono"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="text-[10px] text-muted-foreground mb-0.5 block">
-              @xmlName (override element name)
-            </label>
-            <Input
-              value={xml.name ?? ""}
-              onChange={(e) =>
-                update({ xml: { ...xml, name: e.target.value || null } })
-              }
-              placeholder="Use field name"
-              className="h-6 text-caption font-mono w-48"
+              <option value="false">false</option>
+              <option value="true">true</option>
+            </select>
+          ) : (
+            <Textarea
+              value={text}
+              rows={kind === "json" ? 4 : 2}
+              spellCheck={false}
+              onChange={(e) => {
+                setText(e.target.value);
+                setError(null);
+              }}
             />
-          </div>
-        </div>
-      </div>
+          )}
+        </AttributeControl>
       )}
-    </div>
+      {error && <FieldError>{error}</FieldError>}
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" size="sm" disabled={!key.trim()} onClick={save}>
+          {editing ? "Update extension" : "Add extension"}
+        </Button>
+        {editing && (
+          <Button type="button" variant="ghost" size="sm" onClick={reset}>
+            Cancel edit
+          </Button>
+        )}
+      </div>
+      {extensions.xml && Object.values(extensions.xml).some(Boolean) && (
+        <details>
+          <summary>Preserved XML settings</summary>
+          <FieldDescription>
+            XML settings are preserved for source compatibility. This
+            application does not currently offer an XML output target.
+          </FieldDescription>
+          <pre className="whitespace-pre-wrap break-all text-xs">
+            {JSON.stringify(extensions.xml, null, 2)}
+          </pre>
+        </details>
+      )}
+    </FieldGroup>
   );
 }

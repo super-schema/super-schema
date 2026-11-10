@@ -65,7 +65,8 @@ const ORDER: PrismaEntityInput = {
   id: "o", name: "Order", description: "", status: "DRAFT", version: 1, domainId: "d", metadata: {},
   domain: { id: "d", name: "Sales", slug: "sales" }, apiOperations: OPERATIONS,
 };
-const ORDER_FIELDS = [field("id", "uuid", 0, {}, true), field("qty", "int32", 1)];
+const UUID_DECORATORS = { typespec: { identity: { format: "uuid" } } };
+const ORDER_FIELDS = [field("id", "string", 0, UUID_DECORATORS, true), field("qty", "int32", 1)];
 
 type Doc = { paths: Record<string, Record<string, Record<string, unknown>>>; components?: { schemas?: Record<string, unknown> } };
 
@@ -120,6 +121,7 @@ describe("API operations in the OpenAPI 3 output", () => {
     expect((await validateOpenApi(result.output)).ok).toBe(true);
     const doc = parseYaml(result.output) as Doc;
     assertOrderPaths(doc, /#\/components\/schemas\/Order"/);
+    expect(doc.components?.schemas?.Order).toMatchObject({ properties: { id: { type: "string", format: "uuid" } } });
     // response envelopes are not schemas
     expect(Object.keys(doc.components?.schemas ?? {})).toEqual(["Order"]);
   });
@@ -147,7 +149,7 @@ describe("API operations in the OpenAPI 3 output", () => {
       ...toApiOperations([{ name: "getBuyer", httpMethod: "GET", httpPath: "/orders/{id}/buyer", parameters: [{ name: "id", type: "uuid", location: "path" }], responses: [{ statusCode: 200, type: "Customer" }] }]),
     ];
     const order = member("o", "Order", [...ORDER_FIELDS, field("buyer", "reference", 2, writeFieldReference({}, customerRef) as Record<string, unknown>)], withCustomer);
-    const customer = member("c", "Customer", [field("id", "uuid", 0, {}, true), field("name", "string", 1)]);
+    const customer = member("c", "Customer", [field("id", "string", 0, UUID_DECORATORS, true), field("name", "string", 1)]);
     const closure: ReferenceClosure = { root: order, entities: [order, customer], draftEntities: [], cycles: [], upgrades: [], notes: [] };
 
     const emitted = await emitClosure(closure, "openapi3");

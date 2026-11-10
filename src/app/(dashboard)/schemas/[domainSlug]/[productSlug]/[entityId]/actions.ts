@@ -2,6 +2,7 @@
 
 import { activeDanglingRef, decoratorsAfterFieldEdit } from "@/lib/field-dangling";
 import { prisma } from "@/lib/db";
+import { fieldAttributeErrors, normalizeFieldDocumentation } from "@/lib/field-attributes";
 import type { Entity, Prisma } from "@/generated/prisma/client";
 import { withAudit, recordAuditFailure } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
@@ -217,6 +218,7 @@ export async function addFieldAction(
       }
     }
 
+    if (opts?.fieldNumber == null && assignedFieldNumber >= 19000 && assignedFieldNumber <= 19999) assignedFieldNumber = 20000;
     // Validate field number uniqueness
     if (assignedFieldNumber != null) {
       const conflict = await prisma.field.findFirst({
@@ -228,6 +230,9 @@ export async function addFieldAction(
       }
     }
 
+    const normalizedDocumentation = normalizeFieldDocumentation({ description: opts?.description, decorators: opts?.decorators });
+    const attributeErrors = fieldAttributeErrors({ type, precision: opts?.precision, scale: opts?.scale, fieldNumber: assignedFieldNumber, decorators: normalizedDocumentation.decorators });
+    if (attributeErrors.length) return { error: attributeErrors.join(" "), code: "VALIDATION_ERROR" as const };
     const field = await withAudit({
       action: "CREATE",
       entityType: "Field",
@@ -245,7 +250,7 @@ export async function addFieldAction(
               slug: generateSlug(fieldName.name),
               type,
               sortOrder: maxField ? maxField.sortOrder + 1 : 0,
-              ...(opts?.description != null && { description: opts.description }),
+              description: normalizedDocumentation.description,
               classification: opts?.classification !== undefined ? opts.classification : "SENSITIVE",
               ...(opts?.nullable != null && { nullable: opts.nullable }),
               ...(opts?.isKey != null && { isKey: opts.isKey }),
@@ -253,7 +258,7 @@ export async function addFieldAction(
               ...(opts?.scale !== undefined && { scale: opts.scale }),
               fieldNumber: assignedFieldNumber,
               ...(opts?.aliases && { aliases: opts.aliases }),
-              ...(opts?.decorators && { decorators: opts.decorators as Prisma.InputJsonValue }),
+              ...(opts?.decorators && { decorators: normalizedDocumentation.decorators as Prisma.InputJsonValue }),
             },
           }),
           prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
@@ -376,7 +381,14 @@ export async function updateFieldAction(
     }
 
     // An edit that resolves an unresolved external reference (the type changes away from it, or its target changes) clears the marker.
-    const nextDecorators = decoratorsAfterFieldEdit(existing, { type: typeof rest.type === "string" ? rest.type : undefined, decorators });
+    const editedDecorators = decoratorsAfterFieldEdit(existing, { type: typeof rest.type === "string" ? rest.type : undefined, decorators });
+    const normalized = normalizeFieldDocumentation({ ...existing, decorators: editedDecorators ?? existing.decorators }, typeof rest.description === "string" ? rest.description : undefined);
+    const nextDecorators = editedDecorators !== undefined || JSON.stringify(normalized.decorators) !== JSON.stringify(existing.decorators ?? {}) ? normalized.decorators : undefined;
+    if (rest.description !== undefined || normalized.description !== (existing.description ?? "")) rest.description = normalized.description;
+    const errorsBefore = fieldAttributeErrors(existing);
+    const errorsAfter = fieldAttributeErrors({ ...existing, ...rest, decorators: nextDecorators ?? existing.decorators });
+    const newErrors = errorsAfter.filter((error) => !errorsBefore.includes(error));
+    if (newErrors.length) return { error: newErrors.join(" "), code: "VALIDATION_ERROR" as const };
 
     // A key must be able to identify a row (the rule of the primary-key dialog). An edit that makes the field a key, or changes the type of a
     // key, is refused when the field it leaves cannot be one. It is judged as the field will be after this edit, so a reference this save
@@ -393,6 +405,13 @@ export async function updateFieldAction(
       if (reason) return { error: reason, code: "VALIDATION_ERROR" as const };
     }
 
+    const selectedDiscriminator = (nextDecorators?.typespec as { identity?: { discriminator?: boolean } } | undefined)?.identity?.discriminator;
+    const priorDiscriminator = (existing.decorators as { typespec?: { identity?: { discriminator?: boolean } } } | null)?.typespec?.identity?.discriminator;
+    if (selectedDiscriminator && !priorDiscriminator) {
+      const siblings = await prisma.field.findMany({ where: { entityId: existing.entityId, id: { not: fieldId } }, select: { name: true, decorators: true } });
+      const selected = siblings.find((sibling) => (sibling.decorators as { typespec?: { identity?: { discriminator?: boolean } } } | null)?.typespec?.identity?.discriminator);
+      if (selected) return { error: `Entity already uses "${selected.name}" as its discriminator. Clear that selection before choosing another.`, code: "VALIDATION_ERROR" as const };
+    }
     await withAudit({
       action: "UPDATE",
       entityType: "Field",
@@ -1651,7 +1670,7 @@ async function generateSchema(entityId: string, target: string, opts: { mode?: R
       errors: unknown[];
     };
     // Set by the closure targets only: the structured files, the versions used and the legacy references that resolved.
-    let closureRun: { files?: EmittedFile[]; resolution: SchemaVersionResolution; upgrades: LegacyUpgrade[] } | undefined;
+    let closureRun: { files?: EmittedFile[]; primaryFile?: string; resolution: SchemaVersionResolution; upgrades: LegacyUpgrade[] } | undefined;
 
     if (targetDefinition.runtime === "native") {
       const { emitEntity } = await import("@/lib/emission/emission.service");
@@ -1695,7 +1714,7 @@ async function generateSchema(entityId: string, target: string, opts: { mode?: R
         } finally {
           share();
         }
-        closureRun = { files: officialResult.files, resolution: describeResolution(loaded.data, mode), upgrades: loaded.data.upgrades };
+        closureRun = { files: officialResult.files, primaryFile: officialResult.primaryFile, resolution: describeResolution(loaded.data, mode), upgrades: loaded.data.upgrades };
       } else {
         const { emitOfficialTypeSpecTargetForEntity } = await import(
           "@/lib/typespec-official/emitter.service"
@@ -1788,7 +1807,7 @@ async function generateSchema(entityId: string, target: string, opts: { mode?: R
       output: targetOutput.output,
       generatedAt: new Date().toISOString(),
       entityVersion: entity.version,
-      ...(closureRun?.files ? { files: closureRun.files, resolution: closureRun.resolution } : {}),
+      ...(closureRun?.files ? { files: closureRun.files, ...(closureRun.primaryFile ? { primaryFile: closureRun.primaryFile } : {}), resolution: closureRun.resolution } : {}),
       fieldTypeMappings,
       typeOverrideSnapshot,
       overrideDriftSummary: typeOverrideSnapshot
@@ -2240,10 +2259,11 @@ export async function getEntityDeploymentStatusAction(
 export async function markEntityDeployedAction(
   entityId: string,
   targetId: string,
-  environment: string
+  environment: string,
+  version?: number
 ): Promise<{ success: true } | { error: string; code?: string }> {
 
-  if (typeof environment !== "string") return { error: "The environment is required" };
+  if (typeof environment !== "string" || !environment.trim() || environment.length > 100) return { error: "The environment is required (1–100 characters)" };
 
   try {
     const access = await guardSubject("deploy.run", { kind: "entity", id: entityId }, { label: "Entity" });
@@ -2259,11 +2279,13 @@ export async function markEntityDeployedAction(
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
     const versions = schemaVersions[targetKey] ?? [];
-    const latest = versions[0];
-    if (!latest) return { error: `No emitted version for target "${targetKey}"` };
+    if (!versions.length) return { error: `No emitted version for target "${targetKey}"` };
+    if (!Number.isInteger(version) || (version ?? 0) <= 0) return { error: "Select the exact published schema version to record" };
+    const selected = versions.find((entry) => entry.version === version);
+    if (!selected || (selected.status !== "published" && selected.status !== "deployed")) return { error: "Only an existing published schema version can be recorded as deployed" };
 
     const res = await markAsDeployed(
-      { emissionTargetId: targetId, environment, versionId: `v${latest.version}` },
+      { emissionTargetId: targetId, environment: environment.trim(), versionId: `v${selected.version}` },
       access.principal.userId
     );
     if (!res.success) return { ...failureOf(res.error, "markEntityDeployedAction") };

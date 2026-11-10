@@ -114,6 +114,8 @@ export const ACTIONS = freezeTable({
   "event.publish": { minRole: "STEWARD", level: "resource" },
   // deploy: deploySchemaAction, markEntityDeployedAction [the entity]
   "deploy.run": { minRole: "STEWARD", level: "resource" },
+  // Shared outbound connections contain tenant credentials; only tenant/global administrators configure them.
+  "deploy.configure": { minRole: "ADMIN", level: "tenant" },
   // governance approve / reject: approveGovernanceRequestAction, rejectGovernanceRequestAction (approveRequest, rejectRequest) [the request's entity]
   "governance.decide": { minRole: "STEWARD", level: "resource" },
   // retention policy edit: updateRetentionPolicyAction [the entity]

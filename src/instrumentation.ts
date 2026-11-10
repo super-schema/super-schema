@@ -9,16 +9,18 @@
  * `next build` does not run this (there is no secret at build time and none is needed).
  */
 export async function register(): Promise<void> {
-  if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  if (process.env.NEXT_PHASE === "phase-production-build") return;
-  const { refuseToStartWithoutProductionSecret } = await import("@/lib/auth-secret-startup");
-  // Ends the process: a throw here leaves `next start` listening and answering 500 to every request.
-  refuseToStartWithoutProductionSecret();
-  // The same refusal for the sign-in providers (an administrator's AUTH_PROVIDERS): production only, nothing for a sound configuration or none at all.
-  const { refuseToStartWithBadProviderConfiguration } = await import("@/lib/auth/providers");
-  refuseToStartWithBadProviderConfiguration();
-  // Not a refusal: a production server without a trusted proxy runs, and says once that its address-based limits have no address to count.
-  const { trustProxyStartupWarning } = await import("@/lib/auth/client-ip");
-  const warning = trustProxyStartupWarning();
-  if (warning) console.warn(warning);
+  // Keep Node-only imports inside the runtime branch so the Edge development bundle excludes them.
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    if (process.env.NEXT_PHASE === "phase-production-build") return;
+    const { refuseToStartWithoutProductionSecret } = await import("@/lib/auth-secret-startup");
+    // Ends the process: a throw here leaves `next start` listening and answering 500 to every request.
+    refuseToStartWithoutProductionSecret();
+    // The same refusal for the sign-in providers (an administrator's AUTH_PROVIDERS): production only, nothing for a sound configuration or none at all.
+    const { refuseToStartWithBadProviderConfiguration } = await import("@/lib/auth/providers");
+    refuseToStartWithBadProviderConfiguration();
+    // Not a refusal: a production server without a trusted proxy runs, and says once that its address-based limits have no address to count.
+    const { trustProxyStartupWarning } = await import("@/lib/auth/client-ip");
+    const warning = trustProxyStartupWarning();
+    if (warning) console.warn(warning);
+  }
 }

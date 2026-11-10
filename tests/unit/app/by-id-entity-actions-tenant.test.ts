@@ -263,8 +263,8 @@ const CASES: Case[] = [
     mustNotRun: ALL_EFFECTS, main: () => mk(h.getDeploymentStatus), failing: () => [mk(h.getDeploymentStatus)], revalidates: false,
   },
   {
-    label: "markEntityDeployedAction", call: () => actions.markEntityDeployedAction("ent-1", "ent-1:bigquery", "production"),
-    lookup: entityLookup, row: (t) => entityRow(t), notFound: { error: "Entity not found", code: "NOT_FOUND" },
+    label: "markEntityDeployedAction", call: () => actions.markEntityDeployedAction("ent-1", "ent-1:bigquery", "production", 1),
+    lookup: entityLookup, row: (t) => entityRow(t, "published"), notFound: { error: "Entity not found", code: "NOT_FOUND" },
     mustNotRun: ALL_EFFECTS, main: () => mk(h.markAsDeployed), failing: () => [mk(h.markAsDeployed)],
   },
   {
@@ -467,7 +467,7 @@ describe("the second client-supplied id of the deployment actions (the emission 
   });
 
   it("markEntityDeployedAction rejects a non-string environment before any query", async () => {
-    expect(await actions.markEntityDeployedAction("ent-1", "ent-1:bigquery", asAny(5))).toEqual({ error: "The environment is required" });
+    expect(await actions.markEntityDeployedAction("ent-1", "ent-1:bigquery", asAny(5))).toEqual({ error: "The environment is required (1–100 characters)" });
     expect(p.entity.findUnique).not.toHaveBeenCalled();
   });
 });

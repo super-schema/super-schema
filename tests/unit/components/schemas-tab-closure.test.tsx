@@ -183,7 +183,7 @@ describe("SchemasTab: the Preview badge and the versions the references used", (
     ]);
     expect(screen.getByTestId("schema-preview-badge")).toBeDefined();
 
-    fireEvent.click(screen.getByText("v1").closest("button") as HTMLButtonElement);
+    fireEvent.click(screen.getByRole("tab", { name: "v1 — Draft" }));
 
     expect(screen.queryByTestId("schema-preview-badge")).toBeNull();
   });
@@ -286,7 +286,7 @@ describe("SchemasTab: an ambiguous reference opens the pick dialog", () => {
     expect(screen.queryByTestId("reference-pick-dialog")).toBeNull();
   });
 
-  it("on Mark Deployed: asks BEFORE any error toast (the refusal carries the pick), saves it and publishes once more", async () => {
+  it("on Publish schema: asks BEFORE any error toast (the refusal carries the pick), saves it and publishes once more", async () => {
     getVersions.mockResolvedValue({
       success: true,
       schemaVersions: { "json-schema": [closureVersion([{ ref: ROOT, source: "draft" }])] },
@@ -297,7 +297,7 @@ describe("SchemasTab: an ambiguous reference opens the pick dialog", () => {
     setReference.mockResolvedValue({ success: true, data: undefined });
     render(<SchemasTab {...baseProps} />);
 
-    fireEvent.click(await screen.findByText("Mark Deployed"));
+    fireEvent.click(await screen.findByText("Publish schema"));
     const dialog = await screen.findByTestId("reference-pick-dialog");
     expect(toastMock.error).not.toHaveBeenCalled();
 
@@ -306,7 +306,7 @@ describe("SchemasTab: an ambiguous reference opens the pick dialog", () => {
     await waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
     expect(setReference).toHaveBeenCalledWith("member-1", "fld-9", { entityId: "x1" });
     expect(publish.mock.calls[1]).toEqual(publish.mock.calls[0]);
-    await waitFor(() => expect(toastMock.success).toHaveBeenCalledWith("JSON Schema v1 marked as deployed"));
+    await waitFor(() => expect(toastMock.success).toHaveBeenCalledWith("JSON Schema v1 published"));
     expect(toastMock.error).not.toHaveBeenCalled();
   });
 
@@ -322,7 +322,7 @@ describe("SchemasTab: an ambiguous reference opens the pick dialog", () => {
     setReference.mockResolvedValue({ success: true, data: undefined });
     render(<SchemasTab {...baseProps} />);
 
-    fireEvent.click(await screen.findByText("Mark Deployed"));
+    fireEvent.click(await screen.findByText("Publish schema"));
     await waitFor(() => expect(toastMock.error).toHaveBeenCalledTimes(1));
     const [, options] = toastMock.error.mock.calls[0] as [string, { action: { label: string; onClick: () => void } }];
     expect(options.action.label).toBe("Regenerate from published and publish");

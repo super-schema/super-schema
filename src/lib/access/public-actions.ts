@@ -25,6 +25,7 @@ export const PUBLIC_ROUTES: Readonly<Record<string, string>> = Object.freeze({
   "/api/v1/health": "liveness probe for the load balancer: answers up or down, and the detailed report only to a platform administrator",
   "/api/v1/docs": "the public API reference page (static OpenAPI text, no tenant content)",
   "/api/asyncapi-preview/*": "static AsyncAPI preview assets (no tenant content)",
+  "/api/deployments/process": "worker infrastructure: requires an exact server-configured bearer token before claiming work; returns only a processed count, never tenant content",
 });
 
 /** Is `routePath` (`/api/v1/schemas/[id]`) covered by an entry of `PUBLIC_ROUTES`? */

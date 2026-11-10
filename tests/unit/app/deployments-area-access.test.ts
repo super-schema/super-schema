@@ -13,13 +13,13 @@ const T = "tenant-1";
 const OTHER = "tenant-2";
 
 const h = vi.hoisted(() => ({
-  activeTenant: vi.fn(), getEntities: vi.fn(), getDeploymentOverview: vi.fn(), productFindMany: vi.fn(), domainFindMany: vi.fn(),
+  activeTenant: vi.fn(), getEntities: vi.fn(), getDeploymentOverview: vi.fn(), productFindMany: vi.fn(), runFindMany: vi.fn(), domainFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).principalModule);
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.activeTenant }));
-vi.mock("@/lib/db", () => ({ prisma: { product: { findMany: h.productFindMany }, domain: { findMany: h.domainFindMany } } }));
+vi.mock("@/lib/db", () => ({ prisma: { deploymentRun: { findMany: h.runFindMany }, product: { findMany: h.productFindMany }, domain: { findMany: h.domainFindMany } } }));
 vi.mock("@/services/entity.service", () => ({ getEntities: h.getEntities }));
 vi.mock("@/services/deployment.service", () => ({ getDeploymentOverview: h.getDeploymentOverview }));
 
@@ -29,6 +29,7 @@ const reached = () => [h.getEntities, h.getDeploymentOverview, h.productFindMany
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.runFindMany.mockResolvedValue([]);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   signInAs(tenantMember("VIEWER", T));
   h.activeTenant.mockResolvedValue(T);

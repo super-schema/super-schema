@@ -95,9 +95,8 @@ const ID = {
   schemaGenerate: "schema-generate",
   schemaStage: "schema-stage-emit",
   schemaContentTab: (name: "schema" | "overrides" | "matrix") => `schema-content-tab-${name}`,
-  schemaMarkDeployed: "schema-mark-deployed",
-  schemaDeployedBadge: "schema-deployed-badge",
-  schemaVersion: "schema-version-button",
+  schemaPublish: "schema-publish",
+  schemaVersion: "schema-target-version",
   overrideRow: "override-row",
   overrideTrigger: "override-type-trigger",
   primaryKeyDialog: "primary-key-dialog",
@@ -442,6 +441,7 @@ test.describe("API, Deployments and TypeSpec", () => {
     await openEntityPage(page, invoice.url, invoice.name);
 
     await main.getByTestId(ID.tab("deployments")).click();
+    await main.getByText("Recorded environments and generated-output comparison", { exact: true }).click();
     const deployments = main.getByTestId(ID.deploymentsTab);
     await expect(deployments).toBeVisible();
     await expect(deployments.getByTestId(ID.deploymentEmpty)).toContainText("No emission targets configured");
@@ -453,12 +453,13 @@ test.describe("API, Deployments and TypeSpec", () => {
     // A schema version is a Draft until it is marked deployed on the Schemas tab.
     const version = main.getByTestId(ID.schemaVersion).first();
     await expect(version).toHaveAttribute("data-status", "draft");
-    await main.getByTestId(ID.schemaMarkDeployed).click();
-    await expect(successToast(page, /Avro Schema v\d+ marked as deployed/)).toBeVisible();
-    await expect(main.getByTestId(ID.schemaDeployedBadge)).toBeVisible();
+    await main.getByTestId(ID.schemaPublish).click();
+    await expect(successToast(page, /Avro Schema v\d+ published/)).toBeVisible();
+    await expect(main.getByRole("tab", { name: /^v\d+ — Published$/ })).toBeVisible();
     await expect(version).toHaveAttribute("data-status", "published");
 
     await main.getByTestId(ID.tab("deployments")).click();
+    await main.getByText("Recorded environments and generated-output comparison", { exact: true }).click();
     const target = deployments.getByTestId(ID.deploymentTarget);
     await expect(target).toHaveCount(1);
     await expect(target).toContainText(/avro/i);
@@ -484,6 +485,7 @@ test.describe("API, Deployments and TypeSpec", () => {
     // Persisted.
     await openEntityPage(page, invoice.url, invoice.name);
     await main.getByTestId(ID.tab("deployments")).click();
+    await main.getByText("Recorded environments and generated-output comparison", { exact: true }).click();
     await expect(main.locator('[data-testid="deployment-environment"][data-environment="staging"]')).toBeVisible();
   });
 

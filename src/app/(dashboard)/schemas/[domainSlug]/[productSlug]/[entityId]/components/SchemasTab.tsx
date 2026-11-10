@@ -18,9 +18,11 @@ import {
 import { GenerationIcon } from "@/components/icons/feature-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { getSchemaVersionsAction, publishSchemaAction, saveSchemaFieldTypeOverrideAction } from "../actions";
-import type { SchemaVersionsMap, SchemaVersion, FieldTypeMapping } from "@/types/schema-version";
+import type { SchemaVersionsMap, FieldTypeMapping } from "@/types/schema-version";
 import { SchemaVersionOutput } from "./SchemaVersionOutput";
 import { useGenerateWithInputs } from "./useGenerateWithInputs";
 import { publishRefusalToast } from "./publish-refusal";
@@ -59,6 +61,7 @@ interface FieldData {
 }
 
 export interface SchemasTabProps {
+  onDeploy?: (format: string, version: number) => void;
   entityId: string;
   entityName: string;
   fields: FieldData[];
@@ -385,7 +388,7 @@ function MappingMatrixView({
 
 type ContentTab = "schema" | "overrides" | "matrix";
 
-export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabProps) {
+export function SchemasTab({ entityId, entityName, fields, entity, onDeploy }: SchemasTabProps) {
   const [schemaVersions, setSchemaVersions] = useState<SchemaVersionsMap>({});
   const [isLoading, setIsLoading] = useState(true);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
@@ -396,7 +399,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
   const [stagedOpen, setStagedOpen] = useState(false);
   // Local override state (not yet saved until regeneration)
   const [localOverrides, setLocalOverrides] = useState<Map<string, Map<string, string>>>(new Map());
-  const [viewingVersionIdx, setViewingVersionIdx] = useState(0);
+  const [viewingVersion, setViewingVersion] = useState<number | null>(null);
 
   const loadVersions = useCallback(async () => {
     const result = await getSchemaVersionsAction(entityId);
@@ -408,21 +411,24 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
 
   useEffect(() => { loadVersions(); }, [loadVersions]);
 
-  // Reset viewing version when switching targets
-  useEffect(() => { setViewingVersionIdx(0); }, [selectedTarget]);
-
   const catalogTargets = getSchemaTargetAvailabilities();
   const generatedTargetKeys = Object.keys(schemaVersions)
     .filter((target) => (schemaVersions[target] ?? []).length > 0);
 
   const allTargets = catalogTargets
     .filter((entry) => entry.available || generatedTargetKeys.includes(entry.target.key))
-    .map((entry) => ({
-      ...getTargetMeta(entry.target.key),
-      hasVersions: generatedTargetKeys.includes(entry.target.key),
-      versionCount: (schemaVersions[entry.target.key] ?? []).length,
-      latestVersion: (schemaVersions[entry.target.key] ?? [])[0] as SchemaVersion | undefined,
-    }));
+    .map((entry) => {
+      const versions = (schemaVersions[entry.target.key] ?? []).toSorted((a, b) =>
+        Number(b.status === "draft") - Number(a.status === "draft") || b.version - a.version
+      );
+      return {
+        ...getTargetMeta(entry.target.key),
+        hasVersions: versions.length > 0,
+        versions,
+        // Legacy deployment markers do not establish an environment deployment.
+        latestPublishedVersion: versions.find((version) => version.status !== "draft"),
+      };
+    });
 
   useEffect(() => {
     if (selectedTarget) return;
@@ -443,6 +449,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
       const warningToast = generationWarningToast(result.warnings);
       if (warningToast) toast.warning(warningToast.title, warningToast.options);
       else toast.success(`${getTargetMeta(targetKey).displayName} schema generated (Draft)`);
+      setViewingVersion(null);
       await loadVersions();
     } catch { toast.error("Generation failed"); }
     finally { setIsGenerating(false); }
@@ -459,7 +466,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
       if (result.error) { toast.error(result.error); return; }
       toast.success(`${getTargetMeta(targetKey).displayName} regenerated from the published versions and published`);
       await loadVersions();
-    } catch { toast.error("Deploy failed"); }
+    } catch { toast.error("Publish failed"); }
     finally { setIsPublishing(false); }
   }
 
@@ -475,9 +482,9 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
         else toast.error(refusal.message);
         return;
       }
-      toast.success(`${getTargetMeta(targetKey).displayName} v${version} marked as deployed`);
+      toast.success(`${getTargetMeta(targetKey).displayName} v${version} published`);
       await loadVersions();
-    } catch { toast.error("Deploy failed"); }
+    } catch { toast.error("Publish failed"); }
     finally { setIsPublishing(false); }
   }
 
@@ -500,6 +507,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
         const warningToast = stagedWarningToast(ok, runs);
         if (warningToast) toast.warning(warningToast.title, warningToast.options);
         else toast.success(`Generated ${ok} schema${ok === 1 ? "" : "s"} (Draft)`);
+        setViewingVersion(null);
         await loadVersions();
       }
     } catch { toast.error("Staged emission failed"); }
@@ -538,6 +546,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
       const warningToast = generationWarningToast(saveResult.warnings);
       if (warningToast) toast.warning(warningToast.title, warningToast.options);
       else toast.success("Override applied — schema regenerated");
+      setViewingVersion(null);
       await loadVersions();
     } catch {
       toast.error("Failed to apply override");
@@ -556,37 +565,58 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
   }
 
   const selected = allTargets.find((t) => t.key === selectedTarget);
-  const selectedVersions = selectedTarget ? (schemaVersions[selectedTarget] ?? []) : [];
+  const selectedVersions = selected?.versions ?? [];
   const latestVersion = selectedVersions[0];
-  const displayVersion = selectedVersions[viewingVersionIdx] ?? latestVersion;
+  const displayVersion = selectedVersions.find((version) => version.version === viewingVersion) ?? latestVersion;
 
   return (
     <div data-testid="schemas-tab">
-      <div className="flex gap-space-4">
-        {/* Vertical technology tabs */}
-        <div className="w-[160px] shrink-0 space-y-1">
-          {allTargets.map((target) => (
-            <button
-              key={target.key}
-              type="button"
-              data-testid={`schema-target-${target.key}`}
-              aria-pressed={selectedTarget === target.key}
-              onClick={() => { setSelectedTarget(target.key); setContentTab((current) => current === "matrix" ? "matrix" : "schema"); }}
-              className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-body-small transition-colors ${
-                selectedTarget === target.key
-                  ? "bg-accent text-foreground font-medium"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-              }`}
-            >
-              <span className="shrink-0">{target.icon}</span>
-              <span className="truncate flex-1 text-left">{target.displayName}</span>
-              {target.hasVersions && (
-                <Badge variant="secondary" className="text-[9px] h-3.5 px-1 shrink-0">
-                  v{target.latestVersion?.version}
-                </Badge>
-              )}
-            </button>
-          ))}
+      <div className="flex min-w-0 flex-col gap-space-4 sm:flex-row">
+        {/* Technology selection and latest published artifact */}
+        <div className="flex shrink-0 gap-1 overflow-x-auto sm:w-[160px] sm:flex-col">
+          {allTargets.map((target) => {
+            const isSelected = selectedTarget === target.key;
+            const version = target.latestPublishedVersion ?? target.versions[0];
+            const status = version?.status === "draft" ? "Draft" : "Published";
+            const versionLabel = `${target.displayName} v${version?.version} — ${status}`;
+
+            return (
+              <button
+                key={target.key}
+                type="button"
+                data-testid={`schema-target-${target.key}`}
+                aria-pressed={isSelected}
+                onClick={() => {
+                  if (!isSelected) setViewingVersion(null);
+                  setSelectedTarget(target.key);
+                  setContentTab((current) => current === "matrix" ? "matrix" : "schema");
+                }}
+                className={cn(
+                  "flex min-w-0 shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-body-small transition-colors",
+                  isSelected
+                    ? "bg-accent text-foreground font-medium"
+                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                )}
+              >
+                <span className="shrink-0">{target.icon}</span>
+                <span className="truncate flex-1 text-left">{target.displayName}</span>
+                {version && (
+                  <Badge
+                    variant={version.status === "draft" ? "secondary" : "info"}
+                    className="h-5 shrink-0 px-1 text-[9px]"
+                    aria-label={versionLabel}
+                    title={versionLabel}
+                    data-testid="schema-target-version"
+                    data-target={target.key}
+                    data-version={version.version}
+                    data-status={version.status === "draft" ? "draft" : "published"}
+                  >
+                    v{version.version}
+                  </Badge>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {/* Content area */}
@@ -594,8 +624,8 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
           {selected ? (
             <>
               {/* Horizontal tabs + actions */}
-              <div className="flex items-center justify-between border-b border-border/50 mb-space-3">
-                <div className="flex gap-1">
+              <div className="mb-space-3 flex flex-wrap items-center gap-2 border-b border-border/50">
+                <div className="flex min-w-0 max-w-full gap-1 overflow-x-auto">
                   <button
                     type="button"
                     data-testid="schema-content-tab-schema"
@@ -632,7 +662,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                     Mapping Matrix
                   </button>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="ml-auto flex shrink-0 items-center gap-2">
                   {/* Generate button */}
                   <Button
                     size="sm"
@@ -654,71 +684,94 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                     data-testid="schema-stage-emit"
                   >
                     <Layers className="w-3.5 h-3.5" />
-                    Stage Emit
+                    Generate selected formats
                   </Button>
                 </div>
               </div>
 
-              {/* Version selector — Draft vs Deployed */}
-              {contentTab === "schema" && selectedVersions.length > 0 && (
-                <div className="flex items-center gap-2 mb-space-3">
-                  {selectedVersions.map((v, idx) => (
-                    <button
-                      type="button"
-                      key={v.version}
-                      data-testid="schema-version-button"
-                      data-version={v.version}
-                      data-status={v.status}
-                      onClick={() => setViewingVersionIdx(idx)}
-                      className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-caption transition-colors ${
-                        viewingVersionIdx === idx
-                          ? "bg-accent text-foreground font-medium"
-                          : "text-muted-foreground hover:bg-accent/50"
-                      }`}
-                    >
-                      <span className={`w-2 h-2 rounded-full ${
-                        v.status === "draft" ? "bg-amber-500" : "bg-green-500"
-                      }`} />
-                      v{v.version}
-                      <span className="text-[10px]">
-                        {v.status === "draft" ? "Draft" : "Deployed"}
-                      </span>
-                    </button>
-                  ))}
-
-                  {/* Mark as Deployed — only for the currently viewed draft */}
-                  {displayVersion?.status === "draft" && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5 ml-auto"
-                      disabled={isPublishing}
-                      data-testid="schema-mark-deployed"
-                      onClick={() => handlePublish(selected.key, displayVersion.version)}
-                    >
-                      {isPublishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                      Mark Deployed
-                    </Button>
-                  )}
-                  {displayVersion?.status !== "draft" && (
-                    <Badge variant="success" className="text-[10px] h-5 ml-auto" data-testid="schema-deployed-badge">
-                      <Check className="w-3 h-3 mr-0.5" />
-                      Deployed
-                    </Badge>
-                  )}
-                </div>
-              )}
-
-              {/* Schema content */}
+              {/* Artifact publication status is independent of delivery and environment tracking. */}
               {contentTab === "schema" && (
                 displayVersion ? (
-                  <SchemaVersionOutput
-                    version={displayVersion}
-                    entityId={entityId}
-                    entityName={entityName}
-                    language={selected.language}
-                    onCopy={() => toast.success("Copied to clipboard")}
-                  />
+                  <Tabs
+                    key={selected.key}
+                    value={String(displayVersion.version)}
+                    onValueChange={(value) => setViewingVersion(Number(value))}
+                    className="min-w-0"
+                  >
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <div className="min-w-0 flex-1 overflow-x-auto p-1">
+                        <TabsList variant="line" activateOnFocus aria-label={`${selected.displayName} schema versions`}>
+                          {selectedVersions.map((version) => {
+                            const status = version.status === "draft" ? "Draft" : "Published";
+                            const label = `v${version.version} — ${status}`;
+                            return (
+                              <TabsTrigger
+                                key={version.version}
+                                value={String(version.version)}
+                                aria-label={label}
+                                title={label}
+                                data-testid="schema-version-button"
+                                data-version={version.version}
+                                data-status={status.toLowerCase()}
+                                className="shrink-0 px-3"
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  className={cn(
+                                    "size-2 shrink-0 rounded-full",
+                                    status === "Draft" ? "bg-warning" : version.version === selected.latestPublishedVersion?.version ? "bg-info" : "bg-muted-foreground/40"
+                                  )}
+                                />
+                                v{version.version}
+                                {status === "Draft" && <span className="text-caption">Draft</span>}
+                              </TabsTrigger>
+                            );
+                          })}
+                        </TabsList>
+                      </div>
+                      {displayVersion.status === "draft" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="ml-auto shrink-0 gap-1.5"
+                          disabled={isPublishing}
+                          data-testid="schema-publish"
+                          onClick={() => handlePublish(selected.key, displayVersion.version)}
+                        >
+                          {isPublishing ? <Loader2 className="animate-spin" /> : <Send />}
+                          Publish schema
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        className="ml-auto shrink-0 gap-1.5"
+                        disabled={displayVersion.status === "draft" || isPublishing}
+                        title={displayVersion.status === "draft" ? "Publish this version before deploying" : "Choose a delivery workflow for this exact version"}
+                        data-testid="schema-deploy"
+                        onClick={() => {
+                          if (onDeploy) { onDeploy(selected.key, displayVersion.version); return; }
+                          const url = new URL(window.location.href);
+                          url.searchParams.set("tab", "deployments");
+                          url.searchParams.set("schemaFormat", selected.key);
+                          url.searchParams.set("schemaVersion", String(displayVersion.version));
+                          window.location.assign(url);
+                        }}
+                      >
+                        <Send data-icon="inline-start" />Deploy…
+                      </Button>
+                    </div>
+                    {selectedVersions.map((version) => (
+                      <TabsContent key={version.version} value={String(version.version)} className="min-w-0">
+                        <SchemaVersionOutput
+                          version={version}
+                          entityId={entityId}
+                          entityName={entityName}
+                          language={selected.language}
+                          onCopy={() => toast.success("Copied to clipboard")}
+                        />
+                      </TabsContent>
+                    ))}
+                  </Tabs>
                 ) : (
                   <div className="text-center py-space-8 text-muted-foreground">
                     <p className="text-body-small">No schema generated yet</p>

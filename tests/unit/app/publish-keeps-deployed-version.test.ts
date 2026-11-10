@@ -166,11 +166,11 @@ describe("publishSchemaAction after a version was deployed", () => {
   it("the drift check judges each environment against the version it runs, and the publish leaves the records on the versions they run", async () => {
     seed([versionRow(1, "published", { publishedAt: T1, output: "CREATE TABLE v1" })]);
     expect(await deploySchemaAction("ent-1", TARGET, 1)).toEqual({ success: true });
-    expect(await markEntityDeployedAction("ent-1", TARGET_ID, "staging")).toEqual({ success: true }); // staging runs v1
+    expect(await markEntityDeployedAction("ent-1", TARGET_ID, "staging", 1)).toEqual({ success: true }); // staging runs v1
 
     generate("CREATE TABLE v2 with a new column");
     expect(await publishSchemaAction("ent-1", TARGET, 2)).toEqual({ success: true });
-    expect(await markEntityDeployedAction("ent-1", TARGET_ID, "production")).toEqual({ success: true }); // production runs v2
+    expect(await markEntityDeployedAction("ent-1", TARGET_ID, "production", 2)).toEqual({ success: true }); // production runs v2
 
     expect(statusOf(1)).toBe("deployed");
     expect(records.map((row) => [row.environment, row.version])).toEqual([
@@ -188,7 +188,7 @@ describe("publishSchemaAction after a version was deployed", () => {
   it("with no drift check run, an environment on an older version reads as drifted once the new version is published", async () => {
     seed([versionRow(1, "published", { publishedAt: T1, output: "CREATE TABLE v1" })]);
     expect(await deploySchemaAction("ent-1", TARGET, 1)).toEqual({ success: true });
-    expect(await markEntityDeployedAction("ent-1", TARGET_ID, "staging")).toEqual({ success: true }); // staging runs v1
+    expect(await markEntityDeployedAction("ent-1", TARGET_ID, "staging", 1)).toEqual({ success: true }); // staging runs v1
 
     generate("CREATE TABLE v2 with a new column");
     expect(await publishSchemaAction("ent-1", TARGET, 2)).toEqual({ success: true });

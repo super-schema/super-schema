@@ -41,6 +41,8 @@ export interface SchemaVersion {
    * Do not assume every entity has a file of its own (see `ClosureEmission.entityFiles`).
    */
   files?: EmittedFile[];
+  /** The file that serves the root, including a Protobuf cycle shared with another entity. */
+  primaryFile?: string;
   /** Absent exactly when `files` is (same targets, same age). */
   resolution?: SchemaVersionResolution;
   fieldTypeMappings?: FieldTypeMapping[];

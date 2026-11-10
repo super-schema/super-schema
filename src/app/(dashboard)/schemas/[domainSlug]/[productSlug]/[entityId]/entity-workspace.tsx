@@ -1,4 +1,6 @@
 "use client";
+import { fieldPolicyContext } from "@/lib/field-policy-context";
+import { evolutionVersions } from "@/lib/field-attributes";
 
 import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -26,7 +28,7 @@ import {
 } from "./actions";
 import { deleteEntityAction } from "../../actions";
 import { SchemasTab } from "./components/SchemasTab";
-import { EntityDeploymentsTab } from "./components/EntityDeploymentsTab";
+import { DeploymentWorkflowsTab } from "./components/DeploymentWorkflowsTab";
 import { TypeSpecSourceTab } from "./components/TypeSpecSourceTab";
 import { DiffViewer } from "@/components/custom/DiffViewer";
 import type { VersionSnapshot, DiffResult } from "@/services/version-history/version.types";
@@ -487,6 +489,8 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     });
   }, [rightPanelTab, requestAction, applyView]);
 
+  const fieldPolicy = useMemo(() => fieldPolicyContext(entity.metadata, domainPolicy, entity.domainName), [entity.metadata, domainPolicy, entity.domainName]);
+  const knownFieldVersions = useMemo(() => evolutionVersions(fields), [fields]);
   // Compute entity alerts from domain completeness requirements
   const entityAlerts = useMemo(() => {
     const completenessReqs = (domainPolicy?.completenessRequirements as CompletenessRequirements) ?? undefined;
@@ -927,6 +931,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
 
       {/* Right panel router (renders nothing itself, pushes content via context) */}
       <RightPanelRouter
+        policyContext={fieldPolicy} knownVersions={knownFieldVersions}
         selectedField={selectedField}
         entityId={entity.id}
         entitySlug={entity.slug}
@@ -1060,6 +1065,14 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
 
         {activeTab === "schemas" && (
           <SchemasTab
+            onDeploy={(format, version) => requestAction(() => {
+              const url = new URL(window.location.href);
+              url.searchParams.set("tab", "deployments");
+              url.searchParams.set("schemaFormat", format);
+              url.searchParams.set("schemaVersion", String(version));
+              window.history.pushState(null, "", url);
+              applyView("deployments", "none");
+            })}
             entityId={entity.id}
             entityName={entity.name}
             fields={fields}
@@ -1075,7 +1088,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         )}
 
         {activeTab === "deployments" && (
-          <EntityDeploymentsTab entityId={entity.id} entityName={entity.name} />
+              <DeploymentWorkflowsTab key={`${entity.id}:${searchParams.get("schemaFormat")}:${searchParams.get("schemaVersion")}`} entityId={entity.id} entityName={entity.name} initialFormat={searchParams.get("schemaFormat") ?? ""} initialVersion={searchParams.get("schemaVersion") ?? ""} />
         )}
 
         {activeTab === "versions" && (

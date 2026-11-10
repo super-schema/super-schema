@@ -9,14 +9,14 @@ const mocks = vi.hoisted(() => ({
   activeTenant: vi.fn(),
   getEntities: vi.fn(),
   getDeploymentOverview: vi.fn(),
-  productFindMany: vi.fn(),
+  productFindMany: vi.fn(), runFindMany: vi.fn(),
   domainFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.activeTenant }));
-vi.mock("@/lib/db", () => ({ prisma: { product: { findMany: mocks.productFindMany }, domain: { findMany: mocks.domainFindMany } } }));
+vi.mock("@/lib/db", () => ({ prisma: { deploymentRun: { findMany: mocks.runFindMany }, product: { findMany: mocks.productFindMany }, domain: { findMany: mocks.domainFindMany } } }));
 vi.mock("@/services/entity.service", () => ({ getEntities: mocks.getEntities }));
 vi.mock("@/services/deployment.service", () => ({ getDeploymentOverview: mocks.getDeploymentOverview }));
 
@@ -25,6 +25,7 @@ import { getDeploymentOverviewAction } from "@/app/(dashboard)/deployments/actio
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.runFindMany.mockResolvedValue([]);
   mocks.auth.mockResolvedValue({ user: { id: "user-1" } });
   resetSessionPrincipal();
   mocks.activeTenant.mockResolvedValue("tenant-1");
@@ -44,6 +45,13 @@ beforeEach(() => {
 });
 
 describe("getDeploymentOverviewAction", () => {
+  it("returns public delivery receipts scoped to visible entities in the active tenant", async () => {
+    mocks.runFindMany.mockResolvedValue([{ id: "run-1", entityId: "e1", method: "git", format: "avro", artifactVersion: 1, environment: "staging", status: "SUCCEEDED", createdAt: new Date("2026-11-07T10:00:00Z"), receipt: { outcome: "pr-opened", url: "https://github.com/acme/contracts/pull/1" }, snapshot: "private-schema-bytes", credentials: "never-public" }]);
+    const answer = await getDeploymentOverviewAction();
+    expect(answer).toMatchObject({ success: true, data: { deliveries: [{ entityName: "Order", href: "/schemas/payments/checkout/order?tab=deployments", format: "avro", artifactVersion: 1, outcome: "pr-opened" }] } });
+    expect(mocks.runFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-1", entityId: { in: ["e1", "e0"] }, status: { not: "PREVIEWED" } }, take: 50 }));
+    expect(JSON.stringify(answer)).not.toMatch(/private-schema-bytes|never-public/);
+  });
   it("carries route slugs: real for a product entity, null for a tenant-level entity", async () => {
     const res = await getDeploymentOverviewAction();
 

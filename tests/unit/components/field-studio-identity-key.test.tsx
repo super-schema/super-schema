@@ -50,8 +50,8 @@ afterEach(cleanup);
 function mount(field: typeof base & { decorators: Record<string, unknown> }) {
   return render(<FieldStudio field={field} entity={ENTITY} domain={DOMAIN} />);
 }
-const keyCheckbox = () => screen.getByRole("checkbox", { name: "@key" }) as HTMLInputElement;
-const optionalCheckbox = () => screen.getByRole("checkbox", { name: /Optional/ }) as HTMLInputElement;
+const keyCheckbox = () => screen.getByRole("checkbox", { name: /^Key/ }) as HTMLInputElement;
+const optionalCheckbox = () => screen.getByRole("checkbox", { name: /^Required/ }) as HTMLInputElement;
 const rename = (value: string) => fireEvent.change(screen.getByTestId("field-studio-name"), { target: { value } });
 /** The autosave fires after its debounce: wait for it and read what it wrote. */
 async function saved() {
@@ -101,7 +101,7 @@ describe("Field Studio: the @key checkbox", () => {
 
   it("a key stored as optional is shown and saved as required", async () => {
     mount({ ...base, isKey: true, nullable: true, decorators: {} });
-    expect(optionalCheckbox().checked).toBe(false);
+    expect(optionalCheckbox().checked).toBe(true);
 
     rename("orderId");
     const data = await saved();

@@ -1,31 +1,27 @@
 /**
  * Git PR Service
  *
- * Handles PR-based change review with compatibility reports.
- * Delegates to git.service.ts for low-level Git operations.
+ * Legacy review formatting and migration history. Real delivery is owned by
+ * deployment-workflow.service.ts and the deployment GitHub adapter.
  *
  * Pure helper functions for PR body generation and branch naming
  * are exported separately for unit testing.
  */
 
 import { prisma } from "@/lib/db";
-import { withAudit } from "@/lib/audit";
+import { ctxCan } from "@/lib/access/context";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import type { GitExportResult } from "@/types/schemas/git";
-import type { GitPrResult, GitPrStatus } from "@/types/schemas/git-pr";
+import type { GitPrResult } from "@/types/schemas/git-pr";
 import type { ChangeRecord } from "@/services/version-history/version.types";
 import type { MigrationArtifacts } from "@/lib/migration/migration.types";
 import type { TargetOutput } from "@/lib/emission/emission.types";
 import {
   slugify,
-  planGitExport,
-  toExportEntityInput,
-  exportedTargetSummary,
   type ExportedTargetSummary,
 } from "./git.service";
-import { domainLabel } from "@/lib/entity-placement";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -316,185 +312,27 @@ export function buildPrBody(input: PrBodyInput): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Export with review — creates a PR for breaking changes or pushes directly
- * depending on the configured prReviewMode.
+ * Legacy export is disabled: a real delivery requires an explicit frozen workflow plan.
  */
 export async function exportWithReview(
-  entityId: string,
-  versionId: string,
-  changeInfo: ChangeRecordWithClassification,
+  _entityId: string,
+  _versionId: string,
+  _changeInfo: ChangeRecordWithClassification,
   ctx: ServiceContext
 ): Promise<Result<GitExportResult & { pr?: GitPrResult }>> {
-  const config = await prisma.gitConfig.findFirst({
-    where: { enabled: true },
-  });
-
-  if (!config) {
-    return err({
-      code: "NOT_CONFIGURED",
-      message: "Git export is not configured or not enabled",
-      suggestedFix:
-        "Configure and enable Git integration in the Admin Panel.",
-    });
-  }
-
-  const entity = await prisma.entity.findUnique({
-    where: { id: entityId },
-    include: {
-      domain: true,
-      product: true,
-      fields: { orderBy: { sortOrder: "asc" } },
-    },
-  });
-
-  if (!entity) {
-    return err({
-      code: "NOT_FOUND",
-      message: `Entity with ID "${entityId}" not found`,
-    });
-  }
-
-  const metadata = (entity.metadata as Record<string, unknown>) ?? {};
-  const version = (metadata.currentVersion as number) ?? 1;
-
-  const createPr = shouldCreatePr(config.prReviewMode, changeInfo.isBreaking);
-
-  if (!createPr) {
-    // Direct push
-    const plan = planGitExport(config.basePath, [toExportEntityInput(entity, version)]);
-    const files = plan.files;
-
-    await withAudit({
-      action: "GIT_DIRECT_PUSH",
-      entityType: "Entity",
-      entityId,
-      userId: ctx.userId,
-      fn: async () => {
-        await prisma.gitConfig.update({
-          where: { id: config.id },
-          data: {
-            lastSyncAt: new Date(),
-            lastSyncStatus: "SUCCESS",
-          },
-        });
-        return null;
-      },
-    });
-
-    return ok({
-      success: true,
-      filesExported: files.length,
-      commitSha: `sha-${Date.now()}`,
-      ...(plan.warnings.length > 0 ? { warnings: plan.warnings } : {}),
-    });
-  }
-
-  // Create PR
-  try {
-    const branchName = buildPrBranchName(entity.name, version);
-    const title = buildPrTitle(entity.name, version, changeInfo.changeType);
-
-    const emittedOutputs =
-      (metadata.emittedOutputs as Record<string, TargetOutput>) ?? {};
-    const exportInput = toExportEntityInput(entity, version);
-
-    const prBody = buildPrBody({
-      entity: { ...entity, domain: entity.domain ?? { name: domainLabel(null) } },
-      version: { id: versionId, version },
-      changeInfo,
-      emittedOutputs,
-      exportedTargets: exportedTargetSummary(exportInput),
-      appUrl: process.env.NEXT_PUBLIC_APP_URL,
-    });
-
-    // In a real implementation, this would:
-    // 1. Create branch, push files
-    // 2. Call GitHub API to create PR
-    // For now, simulate the PR creation
-    const prNumber = Math.floor(Math.random() * 10000);
-    const prUrl = `${config.repositoryUrl}/pull/${prNumber}`;
-
-    const prRecord = await withAudit({
-      action: "GIT_CREATE_PR",
-      entityType: "GitPullRequest",
-      entityId,
-      userId: ctx.userId,
-      fn: async () => {
-        return prisma.gitPullRequest.create({
-          data: {
-            entityId,
-            versionId,
-            prUrl,
-            prNumber,
-            branchName,
-            status: "OPEN",
-          },
-        });
-      },
-    });
-
-    await prisma.gitConfig.update({
-      where: { id: config.id },
-      data: {
-        lastSyncAt: new Date(),
-        lastSyncStatus: "SUCCESS",
-      },
-    });
-
-    const plan = planGitExport(config.basePath, [exportInput]);
-    const files = plan.files;
-
-    return ok({
-      success: true,
-      filesExported: files.length,
-      commitSha: `sha-${Date.now()}`,
-      ...(plan.warnings.length > 0 ? { warnings: plan.warnings } : {}),
-      pr: {
-        prUrl: prRecord.prUrl,
-        prNumber: prRecord.prNumber,
-        branchName: prRecord.branchName,
-      },
-      prBody,
-      prTitle: title,
-    } as GitExportResult & { pr?: GitPrResult });
-  } catch (e: unknown) {
-    await prisma.gitConfig.update({
-      where: { id: config.id },
-      data: {
-        lastSyncAt: new Date(),
-        lastSyncStatus: "FAILED",
-      },
-    });
-
-    return ok({
-      success: false,
-      filesExported: 0,
-      error: e instanceof Error ? e.message : "PR creation failed",
-    });
-  }
+  if (!ctxCan(ctx, "git.manage")) return err({ code: "FORBIDDEN", message: "Platform administrator access is required" });
+  return err({ code: "WORKFLOW_REQUIRED", message: "Select a published schema version in Deployments > Git PR. Legacy exports cannot publish an unpinned artifact.", suggestedFix: "Import the legacy Git settings into a tenant deployment connection, then save and preview a workflow." });
 }
 
 /**
  * Sync PR status from GitHub API.
  */
 export async function syncPrStatus(
-  prId: string,
-  _ctx: ServiceContext
+  _prId: string,
+  ctx: ServiceContext
 ): Promise<Result<GitPullRequestRecord>> {
-  const pr = await prisma.gitPullRequest.findUnique({
-    where: { id: prId },
-  });
-
-  if (!pr) {
-    return err({
-      code: "NOT_FOUND",
-      message: `Pull request with ID "${prId}" not found`,
-    });
-  }
-
-  // In a real implementation, this would fetch status from GitHub API
-  // For now, return the current status
-  return ok(pr as unknown as GitPullRequestRecord);
+  if (!ctxCan(ctx, "git.manage")) return err({ code: "FORBIDDEN", message: "Platform administrator access is required" });
+  return err({ code: "WORKFLOW_REQUIRED", message: "Legacy PR records have no verified connection. Refresh the real delivery receipt in Deployments > Git PR." });
 }
 
 /**
@@ -502,8 +340,9 @@ export async function syncPrStatus(
  */
 export async function getPrHistory(
   entityId: string,
-  _ctx: ServiceContext
+  ctx: ServiceContext
 ): Promise<Result<GitPullRequestRecord[]>> {
+  if (!ctxCan(ctx, "git.manage")) return err({ code: "FORBIDDEN", message: "Platform administrator access is required" });
   const prs = await prisma.gitPullRequest.findMany({
     where: { entityId },
     orderBy: { createdAt: "desc" },
@@ -517,8 +356,9 @@ export async function getPrHistory(
  */
 export async function getLatestPr(
   entityId: string,
-  _ctx: ServiceContext
+  ctx: ServiceContext
 ): Promise<Result<GitPullRequestRecord | null>> {
+  if (!ctxCan(ctx, "git.manage")) return err({ code: "FORBIDDEN", message: "Platform administrator access is required" });
   const pr = await prisma.gitPullRequest.findFirst({
     where: { entityId },
     orderBy: { createdAt: "desc" },

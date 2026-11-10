@@ -203,3 +203,39 @@ export function postWebhook(target: string, request: WebhookRequest): Promise<We
     req.end(request.body);
   });
 }
+
+/** Bounded, DNS-pinned outbound requests for explicit deployment adapters. Redirects are never followed. */
+export function requestExternal(target: string, request: {
+  method: "GET" | "POST" | "PATCH"; headers?: Record<string, string>; body?: string;
+  timeoutMs?: number; maxBytes?: number;
+}): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
+  return new Promise((resolve, reject) => {
+    let url: URL;
+    try { url = new URL(target); } catch { reject(new WebhookTargetError("Invalid destination URL")); return; }
+    const allowPrivate = privateTargetsAllowed();
+    if (url.username || url.password || url.hash || (url.protocol !== "https:" && !(allowPrivate && url.protocol === "http:"))) {
+      reject(new WebhookTargetError("Use an HTTPS destination without URL credentials or a fragment")); return;
+    }
+    const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
+    if (!allowPrivate && net.isIP(host) && !isPublicAddress(host)) { reject(new WebhookTargetError("Destination is not public")); return; }
+    const body = request.body;
+    const req = (url.protocol === "http:" ? http : https).request(url, {
+      method: request.method,
+      headers: { ...request.headers, ...(body === undefined ? {} : { "Content-Length": Buffer.byteLength(body) }) },
+      ...(allowPrivate ? {} : { lookup: publicOnlyLookup }),
+      signal: AbortSignal.timeout(request.timeoutMs ?? 30000),
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      res.on("data", (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > (request.maxBytes ?? 5 * 1024 * 1024)) { res.destroy(new Error("Destination response exceeds the size limit")); return; }
+        chunks.push(chunk);
+      });
+      res.on("error", reject);
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks).toString("utf8") }));
+    });
+    req.on("error", reject);
+    req.end(body);
+  });
+}

@@ -7,12 +7,14 @@ import { Button } from "@/components/ui/button";
 import { DeploymentOverviewFilters, DeploymentOverviewTable } from "@/components/custom/DeploymentOverview";
 import { getDeploymentOverviewAction } from "./actions";
 import type { DeploymentOverviewFilters as OverviewFilters, DeploymentOverviewRow } from "@/services/deployment.service";
+import type { DeploymentSummary } from "@/lib/deployments/contracts";
 
 /** Rows per page of the overview: every entity of the tenant is reached by moving through the pages. */
 const PAGE_SIZE = 25;
 
 export default function DeploymentsPage() {
   const [rows, setRows] = useState<DeploymentOverviewRow[]>([]);
+  const [deliveries, setDeliveries] = useState<DeploymentSummary[]>([]);
   const [targetFormats, setTargetFormats] = useState<string[]>([]);
   const [domains, setDomains] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
@@ -45,6 +47,7 @@ export default function DeploymentsPage() {
         return;
       }
       setRows(res.data.rows);
+      setDeliveries(res.data.deliveries ?? []);
       setTargetFormats(res.data.targetFormats);
       setDomains(res.data.domains);
       setTotal(res.data.total);
@@ -78,9 +81,9 @@ export default function DeploymentsPage() {
             <Rocket className="w-5 h-5 text-muted-foreground" />
           </div>
           <div>
-            <h1 className="text-heading-2 text-foreground">Deployment Tracking</h1>
+            <h1 className="text-heading-2 text-foreground">Deployments</h1>
             <p className="text-body-small text-muted-foreground">
-              Which schema versions are deployed per target. Deploy from an entity&apos;s Schemas tab.
+              Delivery receipts and recorded environments. Configure and run workflows from each schema&apos;s Deployments tab.
             </p>
           </div>
         </div>
@@ -128,6 +131,19 @@ export default function DeploymentsPage() {
         </div>
       ) : error ? null : (
         <>
+          <section className="space-y-2" aria-label="Recent deliveries">
+            <h2 className="text-heading-3">Recent deliveries</h2>
+            <p className="text-caption text-muted-foreground">Latest 50 attempts for the selected domain and format. A delivery receipt records the destination&apos;s response.</p>
+            {deliveries.length === 0 ? <p className="text-body-small text-muted-foreground">No delivery attempts yet.</p> : <div className="overflow-x-auto rounded-lg border"><table className="w-full text-left text-body-small">
+              <thead className="bg-muted"><tr>{["Schema", "Version", "Destination", "Environment", "Result"].map((title) => <th key={title} className="px-3 py-2 font-medium">{title}</th>)}</tr></thead>
+              <tbody>{deliveries.map((delivery) => <tr key={delivery.id} className="border-t">
+                <td className="px-3 py-2"><Link className="text-primary hover:underline" href={delivery.href}>{delivery.entityName}</Link></td>
+                <td className="px-3 py-2 whitespace-nowrap">{delivery.format} v{delivery.artifactVersion}</td><td className="px-3 py-2">{delivery.method === "http" ? "API" : delivery.method === "git" ? "Git PR" : "Registry"}</td>
+                <td className="px-3 py-2">{delivery.environment}</td><td className="px-3 py-2">{delivery.url?.startsWith("https://") ? <a className="text-primary hover:underline" href={delivery.url} target="_blank" rel="noreferrer">{delivery.outcome ?? delivery.status}</a> : delivery.outcome ?? delivery.status}</td>
+              </tr>)}</tbody>
+            </table></div>}
+          </section>
+          <h2 className="text-heading-3">Recorded environments</h2>
           <DeploymentOverviewTable rows={rows} targetFormats={targetFormats} />
           {total > 0 && (
             <div className="flex items-center justify-between">

@@ -1,4 +1,5 @@
 "use client";
+import type { PolicyContext } from "../fields/[fieldId]/panels/GovernancePanel";
 
 import { useEffect, type MutableRefObject } from "react";
 import { FieldQuickEditPanel } from "@/components/custom/FieldQuickEditPanel";
@@ -26,6 +27,8 @@ interface FieldData {
 }
 
 interface RightPanelRouterProps {
+  policyContext?: PolicyContext;
+  knownVersions?: string[];
   selectedField: FieldData | null;
   entityId: string;
   entitySlug?: string;
@@ -66,7 +69,7 @@ export function RightPanelRouter({
   onSavingChange,
   fieldSaveRef,
   fieldDiscardRef,
-  referenceTargets,
+  referenceTargets, policyContext, knownVersions,
 }: RightPanelRouterProps) {
   const { setContent: setRightPanelContent } = useRightPanelContent();
 
@@ -109,6 +112,7 @@ export function RightPanelRouter({
             fieldSaveRef={fieldSaveRef}
             fieldDiscardRef={fieldDiscardRef}
             referenceTargets={referenceTargets}
+            policyContext={policyContext} knownVersions={knownVersions}
           />
         );
       } else {
@@ -160,7 +164,7 @@ export function RightPanelRouter({
     onSavingChange,
     fieldSaveRef,
     fieldDiscardRef,
-    referenceTargets,
+    referenceTargets, policyContext, knownVersions,
   ]);
 
   // This component renders nothing itself -- it pushes content into the layout's RightPanel via context

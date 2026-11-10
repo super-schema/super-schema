@@ -64,8 +64,6 @@ export const VisibilitySchema = z
 // Panel 5: Documentation
 export const DocumentationSchema = z
   .object({
-    doc: z.string(),
-    summary: z.string(),
     example: z.unknown().nullable(),
     deprecated: z.string().nullable(),
     externalDocsUrl: z.string().nullable(),
@@ -119,6 +117,10 @@ export const GovernanceSchema = z
   .object({
     anonymization: z.string().nullable(),
     encryption: z.string().nullable(),
+    encryptionConfig: z.object({ scope: z.string().nullable(), algorithm: z.string().nullable(), policyRef: z.string().nullable() }).partial(),
+    sensitiveDataCategories: z.array(z.string()),
+    businessTerm: z.string().nullable(),
+    unit: z.string().nullable(),
     qualityRules: z.array(
       z.object({
         type: z.string(),

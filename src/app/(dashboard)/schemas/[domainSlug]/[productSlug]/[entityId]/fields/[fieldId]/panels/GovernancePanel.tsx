@@ -1,439 +1,431 @@
 "use client";
-
 import { useState } from "react";
-import { Plus, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { FieldGroup, FieldDescription } from "@/components/ui/field";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
+import {
+  AttributeControl,
+  SELECT_CLASS,
+} from "@/components/custom/FieldAttributes/AttributeControl";
 import type { Governance } from "@/types/schemas/typespec-decorator.schema";
 
-const ANONYMIZATION_OPTIONS = [
-  { value: "", label: "None" },
-  { value: "mask", label: "Mask" },
-  { value: "hash", label: "Hash" },
-  { value: "redact", label: "Redact" },
-  { value: "pseudonymize", label: "Pseudonymize" },
-];
-
-const ENCRYPTION_OPTIONS = [
-  { value: "", label: "None" },
-  { value: "AES-256", label: "AES-256" },
-  { value: "field-level", label: "Field-level" },
-];
-
-const QUALITY_RULE_TYPES = [
-  "not-null",
-  "unique",
-  "range",
-  "regex",
-  "enum",
-  "custom",
-];
-
-interface GovernancePanelProps {
-  governance: Governance;
-  onChange: (governance: Governance) => void;
-  /** Classification from field.classification (single source of truth) */
-  fieldClassification: string | null;
-  /** Callback to update field.classification directly */
-  onClassificationChange: (classification: string | null) => void;
+export interface PolicyContext {
+  source: string;
+  retention?: string;
+  owner?: string;
 }
-
-export function GovernancePanel({ governance, onChange, fieldClassification, onClassificationChange }: GovernancePanelProps) {
-  const [newAttrKey, setNewAttrKey] = useState("");
-  const [newAttrValue, setNewAttrValue] = useState("");
-
-  function update(partial: Partial<Governance>) {
-    onChange({ ...governance, ...partial });
+interface Props {
+  governance: Governance;
+  onChange: (v: Governance) => void;
+  fieldClassification: string | null;
+  onClassificationChange: (v: string | null) => void;
+  secret?: boolean;
+  onSecretChange?: (v: boolean) => void;
+  policyContext?: PolicyContext;
+}
+export function GovernancePanel({
+  governance: g,
+  onChange,
+  fieldClassification,
+  onClassificationChange,
+  secret,
+  onSecretChange,
+  policyContext,
+}: Props) {
+  function update(patch: Partial<Governance>) {
+    onChange({ ...g, ...patch });
   }
-
-  const qualityRules = governance.qualityRules ?? [];
-  const operationalHints = governance.operationalHints ?? {};
-  const customAttributes = governance.customAttributes ?? {};
-  const customEntries = Object.entries(customAttributes);
-
-  // Count active governance settings for the badge
-  const activeCount =
-    (fieldClassification ? 1 : 0) +
-    (governance.anonymization ? 1 : 0) +
-    (governance.encryption ? 1 : 0) +
-    qualityRules.length +
-    Object.values(operationalHints).filter(Boolean).length +
-    customEntries.length;
-
+  const encryption = g.encryptionConfig ?? {};
+  function updateEncryption(
+    patch: NonNullable<Governance["encryptionConfig"]>,
+  ) {
+    const next = { ...encryption, ...patch };
+    update({
+      encryptionConfig: next,
+      encryption: next.algorithm || next.scope || next.policyRef || null,
+    });
+  }
   return (
-    <div className="space-y-space-4 pb-space-2">
-      {/* Active count badge */}
-      {activeCount > 0 && (
-        <Badge variant="secondary" className="text-[10px]">
-          {activeCount} governance setting{activeCount !== 1 ? "s" : ""}
-        </Badge>
-      )}
-
-      {/* Section 1: Classification (source of truth: field.classification) */}
-      <div>
-        <label className="text-caption text-muted-foreground mb-1 block">
-          Classification
+    <FieldGroup>
+      <FieldDescription>
+        Classification and protection requirements are metadata used by
+        governance checks. Runtime protection is implemented by consuming
+        systems.
+      </FieldDescription>
+      <AttributeControl label="Classification" group>
+        <ClassificationPicker
+          value={fieldClassification}
+          onChange={onClassificationChange}
+        />
+      </AttributeControl>
+      {onSecretChange && (
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={secret ?? false}
+            onChange={(e) => onSecretChange(e.target.checked)}
+            className="mt-1 accent-primary"
+          />
+          <span>
+            Secret
+            <span className="block text-xs text-muted-foreground">
+              Marks a sensitive value. This annotation does not itself mask
+              logs, redact responses, or encrypt data.
+            </span>
+          </span>
         </label>
-        <div className="flex items-center gap-space-3">
-          <ClassificationPicker
-            value={fieldClassification}
-            onChange={(level) => onClassificationChange(level)}
+      )}
+      <details>
+        <summary className="cursor-pointer text-sm font-medium">
+          Semantic metadata
+        </summary>
+        <FieldGroup className="pt-3">
+          {" "}
+          <AttributeControl
+            label="Sensitive data categories"
+            help="Comma-separated categories, for example personal identifier, financial, or authentication."
+          >
+            <Input
+              value={(g.sensitiveDataCategories ?? []).join(", ")}
+              onChange={(e) =>
+                update({
+                  sensitiveDataCategories: e.target.value
+                    .split(",")
+                    .map((v) => v.trim()),
+                })
+              }
+            />
+          </AttributeControl>
+          <AttributeControl
+            label="Business term"
+            help="Business glossary term identifier or URL."
+          >
+            <Input
+              value={g.businessTerm ?? ""}
+              onChange={(e) => update({ businessTerm: e.target.value || null })}
+            />
+          </AttributeControl>
+          <AttributeControl
+            label="Unit or semantic convention"
+            help="For example USD, milliseconds, or UTC. This documents meaning; it does not convert values."
+          >
+            <Input
+              value={g.unit ?? ""}
+              onChange={(e) => update({ unit: e.target.value || null })}
+            />
+          </AttributeControl>
+        </FieldGroup>
+      </details>
+      <AttributeControl
+        label="Data treatment"
+        help="A required treatment policy. Masking, hashing, and pseudonymization do not by themselves guarantee anonymity."
+      >
+        <select
+          className={SELECT_CLASS}
+          value={
+            Object.hasOwn(g, "anonymization")
+              ? (g.anonymization ?? "none")
+              : "inherit"
+          }
+          onChange={(e) =>
+            e.target.value === "inherit"
+              ? onChange(
+                  Object.fromEntries(
+                    Object.entries(g).filter(
+                      ([key]) => key !== "anonymization",
+                    ),
+                  ),
+                )
+              : update({
+                  anonymization:
+                    e.target.value === "none" ? null : e.target.value,
+                })
+          }
+        >
+          <option value="inherit">Use existing source policy</option>
+          <option value="none">No treatment requirement</option>
+          {["mask", "hash", "redact", "pseudonymize"].map((v) => (
+            <option key={v}>{v}</option>
+          ))}
+          {g.anonymization &&
+            !["mask", "hash", "redact", "pseudonymize"].includes(
+              g.anonymization,
+            ) && <option>{g.anonymization}</option>}
+        </select>
+      </AttributeControl>
+      <fieldset className="flex min-w-0 flex-col gap-3">
+        <legend className="mb-2 text-sm font-medium">
+          Encryption requirement
+        </legend>
+        {g.encryption && !g.encryptionConfig && (
+          <FieldDescription>
+            Existing requirement: {g.encryption}. It is preserved until you
+            change these controls.
+          </FieldDescription>
+        )}
+        <AttributeControl label="Encryption scope">
+          <select
+            className={SELECT_CLASS}
+            value={encryption.scope ?? ""}
+            onChange={(e) =>
+              updateEncryption({ scope: e.target.value || null })
+            }
+          >
+            <option value="">No field override</option>
+            <option value="field-level">Field-level</option>
+            <option value="at-rest">At rest</option>
+            <option value="in-transit">In transit</option>
+          </select>
+        </AttributeControl>
+        <AttributeControl label="Encryption algorithm">
+          <Input
+            value={encryption.algorithm ?? ""}
+            placeholder="For example AES-256-GCM"
+            onChange={(e) =>
+              updateEncryption({ algorithm: e.target.value || null })
+            }
+          />
+        </AttributeControl>
+        <AttributeControl label="Protection policy reference">
+          <Input
+            value={encryption.policyRef ?? ""}
+            placeholder="Policy identifier, never a key or secret"
+            onChange={(e) =>
+              updateEncryption({ policyRef: e.target.value || null })
+            }
+          />
+        </AttributeControl>
+      </fieldset>
+      <fieldset className="flex min-w-0 flex-col gap-1 rounded-md border border-border p-3">
+        <legend className="px-1 text-sm font-medium">Inherited context</legend>
+        <FieldDescription>
+          Source: {policyContext?.source ?? "Entity / domain policies"}
+        </FieldDescription>
+        <FieldDescription>
+          Owner / steward: {policyContext?.owner ?? "Not specified"}
+        </FieldDescription>
+        <FieldDescription>
+          Retention: {policyContext?.retention ?? "Not specified"}. Retention is
+          managed at entity or domain level.
+        </FieldDescription>
+      </fieldset>
+      <details>
+        <summary className="cursor-pointer text-sm font-medium">
+          Custom governance attributes
+        </summary>
+        <div className="pt-3">
+          {" "}
+          <JsonObjectControl
+            label="Custom governance attributes"
+            value={g.customAttributes ?? {}}
+            stringsOnly
+            onChange={(value) =>
+              update({ customAttributes: value as Record<string, string> })
+            }
           />
         </div>
-      </div>
-
-      {/* Section 2: Data Protection */}
-      <div className="border-t border-border/50 pt-space-3">
-        <label className="text-caption text-muted-foreground mb-2 block">
-          Data Protection
-        </label>
-        <div className="grid grid-cols-2 gap-space-3">
-          <div>
-            <label className="text-[10px] text-muted-foreground mb-0.5 block">
-              Anonymization
-            </label>
+      </details>
+    </FieldGroup>
+  );
+}
+export function QualityPanel({
+  governance: g,
+  onChange,
+}: Pick<Props, "governance" | "onChange">) {
+  const rules = g.qualityRules ?? [];
+  return (
+    <FieldGroup>
+      <FieldDescription>
+        Dataset and business assertions for external quality tools. These do not
+        automatically run against production data. Use Validation for payload
+        bounds and patterns.
+      </FieldDescription>
+      {rules.map((rule, i) => (
+        <fieldset
+          key={i}
+          className="flex min-w-0 flex-col gap-3 rounded-md border border-border p-3"
+        >
+          <legend className="px-1 text-sm">Rule {i + 1}</legend>
+          <AttributeControl label={`Quality rule ${i + 1} type`}>
             <select
-              value={governance.anonymization ?? ""}
+              className={SELECT_CLASS}
+              value={rule.type}
               onChange={(e) =>
-                update({ anonymization: e.target.value || null })
+                onChange({
+                  ...g,
+                  qualityRules: rules.map((r, idx) =>
+                    idx === i ? { ...r, type: e.target.value } : r,
+                  ),
+                })
               }
-              className="h-7 w-full rounded border border-border bg-background px-2 text-body-small text-foreground"
             >
-              {ANONYMIZATION_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
+              {["unique", "not-null", "range", "regex", "enum", "custom"].map(
+                (v) => (
+                  <option key={v}>{v}</option>
+                ),
+              )}
             </select>
-          </div>
-
-          <div>
-            <label className="text-[10px] text-muted-foreground mb-0.5 block">
-              Encryption
-            </label>
-            <select
-              value={governance.encryption ?? ""}
-              onChange={(e) =>
-                update({ encryption: e.target.value || null })
-              }
-              className="h-7 w-full rounded border border-border bg-background px-2 text-body-small text-foreground"
-            >
-              {ENCRYPTION_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Section 3: Quality Rules */}
-      <div className="border-t border-border/50 pt-space-3">
-        <label className="text-caption text-muted-foreground mb-2 block">
-          Quality Rules
-        </label>
-        <div className="space-y-1">
-          {qualityRules.map((rule, idx) => (
-            <div key={idx} className="flex items-center gap-2">
-              <select
-                value={rule.type}
-                onChange={(e) => {
-                  const next = [...qualityRules];
-                  next[idx] = { ...rule, type: e.target.value };
-                  update({ qualityRules: next });
-                }}
-                className="h-6 rounded border border-border bg-background px-2 text-caption text-foreground w-32"
-              >
-                {QUALITY_RULE_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-
-              {/* Type-specific param inputs */}
-              {rule.type === "range" && (
-                <div className="flex items-center gap-1">
-                  <Input
-                    value={
-                      rule.params.min != null ? String(rule.params.min) : ""
-                    }
-                    onChange={(e) => {
-                      const next = [...qualityRules];
-                      next[idx] = {
-                        ...rule,
-                        params: {
-                          ...rule.params,
-                          min: e.target.value ? Number(e.target.value) : undefined,
-                        },
-                      };
-                      update({ qualityRules: next });
-                    }}
-                    placeholder="min"
-                    className="h-6 text-caption w-16 font-mono"
-                  />
-                  <span className="text-caption text-muted-foreground">-</span>
-                  <Input
-                    value={
-                      rule.params.max != null ? String(rule.params.max) : ""
-                    }
-                    onChange={(e) => {
-                      const next = [...qualityRules];
-                      next[idx] = {
-                        ...rule,
-                        params: {
-                          ...rule.params,
-                          max: e.target.value ? Number(e.target.value) : undefined,
-                        },
-                      };
-                      update({ qualityRules: next });
-                    }}
-                    placeholder="max"
-                    className="h-6 text-caption w-16 font-mono"
-                  />
-                </div>
-              )}
-
-              {rule.type === "regex" && (
-                <Input
-                  value={
-                    rule.params.pattern != null
-                      ? String(rule.params.pattern)
-                      : ""
-                  }
-                  onChange={(e) => {
-                    const next = [...qualityRules];
-                    next[idx] = {
-                      ...rule,
-                      params: { ...rule.params, pattern: e.target.value },
-                    };
-                    update({ qualityRules: next });
-                  }}
-                  placeholder="^[A-Z]+$"
-                  className="h-6 text-caption flex-1 font-mono"
-                />
-              )}
-
-              {rule.type === "enum" && (
-                <Input
-                  value={
-                    rule.params.values != null
-                      ? String(rule.params.values)
-                      : ""
-                  }
-                  onChange={(e) => {
-                    const next = [...qualityRules];
-                    next[idx] = {
-                      ...rule,
-                      params: { ...rule.params, values: e.target.value },
-                    };
-                    update({ qualityRules: next });
-                  }}
-                  placeholder="val1, val2, val3"
-                  className="h-6 text-caption flex-1 font-mono"
-                />
-              )}
-
-              {rule.type === "custom" && (
-                <Input
-                  value={
-                    rule.params.expression != null
-                      ? String(rule.params.expression)
-                      : ""
-                  }
-                  onChange={(e) => {
-                    const next = [...qualityRules];
-                    next[idx] = {
-                      ...rule,
-                      params: { ...rule.params, expression: e.target.value },
-                    };
-                    update({ qualityRules: next });
-                  }}
-                  placeholder="Custom expression"
-                  className="h-6 text-caption flex-1 font-mono"
-                />
-              )}
-
-              <button
-                onClick={() => {
-                  const next = qualityRules.filter((_, i) => i !== idx);
-                  update({ qualityRules: next });
-                }}
-                className="p-0.5 text-muted-foreground hover:text-destructive shrink-0"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
-
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={() =>
-              update({
-                qualityRules: [
-                  ...qualityRules,
-                  { type: "not-null", params: {} },
-                ],
+          </AttributeControl>
+          <RuleParameters
+            value={rule.params}
+            onChange={(params) =>
+              onChange({
+                ...g,
+                qualityRules: rules.map((r, idx) =>
+                  idx === i ? { ...r, params } : r,
+                ),
               })
             }
-            className="gap-1 w-auto px-2"
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={`Remove quality rule ${i + 1}`}
+            onClick={() =>
+              onChange({
+                ...g,
+                qualityRules: rules.filter((_, idx) => idx !== i),
+              })
+            }
           >
-            <Plus className="w-3 h-3" />
-            <span className="text-caption">Add rule</span>
+            Remove rule
           </Button>
-        </div>
-      </div>
-
-      {/* Section 4: Operational Hints */}
-      <div className="border-t border-border/50 pt-space-3">
-        <label className="text-caption text-muted-foreground mb-2 block">
-          Operational Hints
+        </fieldset>
+      ))}
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() =>
+          onChange({
+            ...g,
+            qualityRules: [...rules, { type: "unique", params: {} }],
+          })
+        }
+      >
+        Add quality rule
+      </Button>
+    </FieldGroup>
+  );
+}
+function RuleParameters({
+  value,
+  onChange,
+}: {
+  value: Record<string, unknown>;
+  onChange: (v: Record<string, unknown>) => void;
+}) {
+  return (
+    <JsonObjectControl
+      label="Rule parameters"
+      value={value}
+      onChange={onChange}
+    />
+  );
+}
+export function StorageHintsPanel({
+  governance: g,
+  onChange,
+}: Pick<Props, "governance" | "onChange">) {
+  return (
+    <FieldGroup>
+      <FieldDescription>
+        Requested physical-design hints. Target adapters or deployment tooling
+        must support them; selecting a hint does not create an index or change a
+        live table.
+      </FieldDescription>
+      {(["partition", "index", "cluster"] as const).map((key) => (
+        <label key={key} className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={g.operationalHints?.[key] ?? false}
+            onChange={(e) =>
+              onChange({
+                ...g,
+                operationalHints: {
+                  ...g.operationalHints,
+                  [key]: e.target.checked,
+                },
+              })
+            }
+            className="mt-1 accent-primary"
+          />
+          <span>
+            {
+              {
+                partition: "Partition key",
+                index: "Index",
+                cluster: "Cluster key",
+              }[key]
+            }
+          </span>
         </label>
-        <div className="flex items-center gap-space-6">
-          <label className="flex items-center gap-2 text-body-small text-muted-foreground cursor-pointer">
-            <input
-              type="checkbox"
-              checked={operationalHints.partition ?? false}
-              onChange={(e) =>
-                update({
-                  operationalHints: {
-                    ...operationalHints,
-                    partition: e.target.checked,
-                  },
-                })
-              }
-              className="accent-primary"
-            />
-            Partition key
-          </label>
+      ))}
+    </FieldGroup>
+  );
+}
 
-          <label className="flex items-center gap-2 text-body-small text-muted-foreground cursor-pointer">
-            <input
-              type="checkbox"
-              checked={operationalHints.index ?? false}
-              onChange={(e) =>
-                update({
-                  operationalHints: {
-                    ...operationalHints,
-                    index: e.target.checked,
-                  },
-                })
-              }
-              className="accent-primary"
-            />
-            Index
-          </label>
-
-          <label className="flex items-center gap-2 text-body-small text-muted-foreground cursor-pointer">
-            <input
-              type="checkbox"
-              checked={operationalHints.cluster ?? false}
-              onChange={(e) =>
-                update({
-                  operationalHints: {
-                    ...operationalHints,
-                    cluster: e.target.checked,
-                  },
-                })
-              }
-              className="accent-primary"
-            />
-            Cluster key
-          </label>
-        </div>
-      </div>
-
-      {/* Section 5: Custom Governance Attributes */}
-      <div className="border-t border-border/50 pt-space-3">
-        <label className="text-caption text-muted-foreground mb-2 block">
-          Custom Governance Attributes
-        </label>
-        <div className="space-y-1">
-          {customEntries.map(([key, val]) => (
-            <div key={key} className="flex items-center gap-2">
-              <span className="text-caption font-mono text-muted-foreground w-40 truncate">
-                {key}
-              </span>
-              <span className="text-caption text-muted-foreground/50">=</span>
-              <span className="text-caption font-mono text-foreground truncate flex-1">
-                {val}
-              </span>
-              <button
-                onClick={() => {
-                  const next = { ...customAttributes };
-                  delete next[key];
-                  update({ customAttributes: next });
-                }}
-                className="p-0.5 text-muted-foreground hover:text-destructive shrink-0"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
-
-          {/* Add new attribute */}
-          <div className="flex items-center gap-2">
-            <Input
-              value={newAttrKey}
-              onChange={(e) => setNewAttrKey(e.target.value)}
-              placeholder="attribute-name"
-              className="h-6 text-caption w-40 font-mono"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && newAttrKey.trim()) {
-                  update({
-                    customAttributes: {
-                      ...customAttributes,
-                      [newAttrKey.trim()]: newAttrValue,
-                    },
-                  });
-                  setNewAttrKey("");
-                  setNewAttrValue("");
-                }
-              }}
-            />
-            <span className="text-caption text-muted-foreground/50">=</span>
-            <Input
-              value={newAttrValue}
-              onChange={(e) => setNewAttrValue(e.target.value)}
-              placeholder="value"
-              className="h-6 text-caption flex-1 font-mono"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && newAttrKey.trim()) {
-                  update({
-                    customAttributes: {
-                      ...customAttributes,
-                      [newAttrKey.trim()]: newAttrValue,
-                    },
-                  });
-                  setNewAttrKey("");
-                  setNewAttrValue("");
-                }
-              }}
-            />
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              disabled={!newAttrKey.trim()}
-              onClick={() => {
-                update({
-                  customAttributes: {
-                    ...customAttributes,
-                    [newAttrKey.trim()]: newAttrValue,
-                  },
-                });
-                setNewAttrKey("");
-                setNewAttrValue("");
-              }}
-            >
-              <Plus className="w-3 h-3" />
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
+function JsonObjectControl({
+  label,
+  value,
+  stringsOnly = false,
+  onChange,
+}: {
+  label: string;
+  value: Record<string, unknown>;
+  stringsOnly?: boolean;
+  onChange: (v: Record<string, unknown>) => void;
+}) {
+  const [draft, setDraft] = useState<{ original: string; text: string } | null>(
+    null,
+  );
+  const stored = JSON.stringify(value, null, 2);
+  const text = draft?.original === stored ? draft.text : stored;
+  let error: string | undefined;
+  try {
+    const parsed = JSON.parse(text);
+    if (
+      !parsed ||
+      Array.isArray(parsed) ||
+      typeof parsed !== "object" ||
+      (stringsOnly &&
+        !Object.values(parsed).every((v) => typeof v === "string"))
+    )
+      error = stringsOnly
+        ? "Enter an object with string values."
+        : "Enter a JSON object.";
+  } catch {
+    error = "Enter valid JSON.";
+  }
+  return (
+    <FieldGroup>
+      <AttributeControl
+        label={label}
+        help="Edit the JSON, then apply it to the field draft."
+        error={error}
+      >
+        <Textarea
+          value={text}
+          rows={3}
+          spellCheck={false}
+          onChange={(e) => setDraft({ original: stored, text: e.target.value })}
+        />
+      </AttributeControl>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={Boolean(error) || text === stored}
+        onClick={() => {
+          onChange(JSON.parse(text));
+          setDraft(null);
+        }}
+      >
+        Apply {label.toLowerCase()}
+      </Button>
+    </FieldGroup>
   );
 }

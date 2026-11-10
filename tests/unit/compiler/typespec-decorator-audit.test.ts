@@ -480,7 +480,7 @@ describe("TypeSpec Decorator Generation", () => {
       ],
     });
     const output = generateTypeSpec(model);
-    expect(output).toContain('@encode("unixTimestamp", "int32")');
+    expect(output).toContain('@encode("unixTimestamp", int32)');
   });
 });
 

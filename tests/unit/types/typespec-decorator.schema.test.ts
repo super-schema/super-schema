@@ -33,11 +33,11 @@ describe("TypeSpecDecoratorSchema", () => {
   it("accepts partial structure with only some panels", () => {
     const partial = {
       identity: { key: true },
-      documentation: { doc: "A user ID field" },
+      documentation: { example: "A user ID field" },
     };
     const result = TypeSpecDecoratorSchema.parse(partial);
     expect(result.identity?.key).toBe(true);
-    expect(result.documentation?.doc).toBe("A user ID field");
+    expect(result.documentation?.example).toBe("A user ID field");
     expect(result.validation).toBeUndefined();
   });
 
@@ -154,13 +154,12 @@ describe("VisibilitySchema", () => {
 });
 
 describe("DocumentationSchema", () => {
-  it("accepts doc and summary", () => {
+  it("strips retired doc and summary attributes", () => {
     const result = DocumentationSchema.parse({
       doc: "# User ID\nThe primary identifier",
       summary: "User ID field",
     });
-    expect(result.doc).toContain("User ID");
-    expect(result.summary).toBe("User ID field");
+    expect(result).toEqual({});
   });
 
   it("accepts deprecated with message", () => {

@@ -144,7 +144,7 @@ describe("Auto-save debounce logic", () => {
       validation: { minLength: 1, maxLength: 255 },
       wireFormat: { httpBinding: "header" as const, httpBindingName: "X-Request-Id" },
       visibility: { phases: ["Read" as const], invisible: false },
-      documentation: { doc: "Request ID", summary: "Unique request identifier" },
+      documentation: { example: "request-001" },
       versioning: { added: "v2" },
       extensions: { openapi: { "x-internal": true } },
     };

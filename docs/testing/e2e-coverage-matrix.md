@@ -55,7 +55,7 @@ when a test is added or removed: the unit test compares the two.
 | a11y.spec.ts | 36 | @regression 36 | 0 | 36 | 36 | 0 |
 | access-matrix.spec.ts | 11 | @external 1, @regression 11 | 0 | 10 | 11 | 0 |
 | admin.spec.ts | 23 | @regression 23 | 0 | 23 | 23 | 0 |
-| api-v1.spec.ts | 71 | @regression 71, @smoke 1 | 1 | 71 | 71 | 0 |
+| api-v1.spec.ts | 72 | @regression 72, @smoke 1 | 1 | 72 | 72 | 0 |
 | auth.spec.ts | 43 | @regression 43, @smoke 5 | 5 | 43 | 43 | 0 |
 | authored-lifecycle.spec.ts | 4 | @regression 4 | 0 | 4 | 4 | 0 |
 | dashboard-not-found.spec.ts | 2 | @regression 2 | 0 | 2 | 2 | 0 |

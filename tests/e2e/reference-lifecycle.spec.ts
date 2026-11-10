@@ -222,17 +222,17 @@ test.describe("references between entities", () => {
     expect(fileOf(await fileSet(page), address.name).content).toContain("zipdraft");
 
     // It cannot be published as it is: the refusal names the draft entity and offers the way out
-    await tab.getByTestId("schema-mark-deployed").click();
+    await tab.getByTestId("schema-publish").click();
     const refusal = errorToast(page).filter({ hasText: "cannot be published" });
     await expect(refusal).toBeVisible();
     await expect(refusal).toContainText(qualified(workspace, address));
-    await expect(tab.getByTestId("schema-version-button").first()).toHaveAttribute("data-status", "draft");
+    await expect(tab.locator('[data-testid="schema-target-version"][data-target="json-schema"]')).toHaveAttribute("data-status", "draft");
 
     // The way out: generated from the published versions, so the draft field is not in it, and published
     // (a toast this long used to be taller than the window, with this button below the fold: it is clicked as a user would)
     await refusal.getByRole("button", { name: REGENERATE_AND_PUBLISH }).click();
     await expect(successToast(page, /regenerated from the published versions and published/)).toBeVisible({ timeout: 60_000 });
-    await expect(tab.getByTestId("schema-deployed-badge")).toBeVisible();
+    await expect(tab.getByRole("tab", { name: /^v\d+ — Published$/ })).toBeVisible();
     await expect(tab.getByTestId("schema-preview-badge")).toHaveCount(0);
     await expect(tab.getByTestId("schema-reference-version")).toHaveAttribute("data-source", "published");
     await expect(tab.getByTestId("schema-reference-version")).toContainText("v1.0");
@@ -240,7 +240,7 @@ test.describe("references between entities", () => {
     expect(fileOf(published, address.name).content).toContain("city");
     expect(fileOf(published, address.name).content).not.toContain("zipdraft");
     // the version that was published is the regenerated one
-    await expect(tab.getByTestId("schema-version-button").first()).toHaveAttribute("data-status", "published");
+    await expect(tab.locator('[data-testid="schema-target-version"][data-target="json-schema"]')).toHaveAttribute("data-status", "published");
   });
 
   test("publishing is blocked while the referenced entity was never published, and the refusals name it", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
@@ -256,7 +256,7 @@ test.describe("references between entities", () => {
     // The generated schema's own publish: a preview of the saved draft, refused naming the draft entity
     await openSchemasTab(page);
     expect((await generateTarget(page, displayName("json-schema"))).error).toBeUndefined();
-    await schemasTab(page).getByTestId("schema-mark-deployed").click();
+    await schemasTab(page).getByTestId("schema-publish").click();
     const refusal = errorToast(page).filter({ hasText: "cannot be published" });
     await expect(refusal).toContainText(qualified(workspace, address));
     // and generating from the published versions, which do not exist yet, says which entity was never published
@@ -310,8 +310,8 @@ test.describe("references between entities", () => {
     expect(pinned).toContain("city");
     expect(pinned).not.toContain("zippin");
     // so it can be published as it is
-    await tab.getByTestId("schema-mark-deployed").click();
-    await expect(successToast(page, /marked as deployed/)).toBeVisible();
+    await tab.getByTestId("schema-publish").click();
+    await expect(successToast(page, /published/)).toBeVisible();
 
     // The pin survives a reload, and removing it gives the live Address back (a draft preview again)
     await openEntityPage(page, customer.url, customer.name);

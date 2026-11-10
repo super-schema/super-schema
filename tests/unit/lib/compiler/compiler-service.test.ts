@@ -161,7 +161,9 @@ describe("compileEntity", () => {
     expect(field.decorators.typespec?.validation?.maxLength).toBe(128);
     expect(field.decorators.typespec?.wireFormat?.encode).toBe("rfc3339");
     expect(field.decorators.typespec?.visibility?.phases).toEqual(["Create", "Read"]);
-    expect(field.decorators.typespec?.documentation?.doc).toBe("The customer ID");
+    expect(field.description).toBe("The customer ID");
+    expect(field.decorators.typespec?.documentation ?? {}).not.toHaveProperty("doc");
+    expect(field.decorators.typespec?.documentation ?? {}).not.toHaveProperty("summary");
     expect(field.decorators.typespec?.versioning?.added).toBe("v1");
     expect(field.decorators.typespec?.extensions?.openapi).toEqual({ "x-custom": true });
   });

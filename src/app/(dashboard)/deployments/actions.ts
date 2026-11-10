@@ -11,6 +11,8 @@ import {
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import { domainLabel } from "@/lib/entity-placement";
 import { GetDeploymentOverviewInput } from "@/types/schemas/deployment";
+import { assetHref } from "@/lib/navigation/asset-href";
+import type { DeliveryReceipt, DeploymentSummary } from "@/lib/deployments/contracts";
 
 /**
  * The deployment overview of the ACTIVE tenant, for the entities the caller may read (`deploy.read`, a viewer's act over each entity): the caller
@@ -85,7 +87,21 @@ export async function getDeploymentOverviewAction(request?: z.input<typeof GetDe
       productSlug: slugById.get(r.entityId)?.productSlug,
     }));
 
-    return { success: true as const, data: { rows, targetFormats, domains, total: overview.data.total } };
+    const visible = entitiesRes.data.filter((e) => !filters?.domain || (e.domainId ? domainById.get(e.domainId)?.name : domainLabel(null)) === filters.domain);
+    const deliveryRows = visible.length ? await prisma.deploymentRun.findMany({
+      where: { tenantId: access.resource.tenantId, entityId: { in: visible.map((e) => e.id) }, status: { not: "PREVIEWED" },
+        ...(filters?.targetFormat ? { format: { in: targets.filter((t) => t.targetFormat === filters.targetFormat).map((t) => t.key) } } : {}) },
+      select: { id: true, entityId: true, method: true, format: true, artifactVersion: true, environment: true, status: true, createdAt: true, receipt: true },
+      orderBy: { createdAt: "desc" }, take: 50,
+    }) : [];
+    const deliveries: DeploymentSummary[] = deliveryRows.map((run) => {
+      const entity = visible.find((e) => e.id === run.entityId)!;
+      const slugs = slugById.get(run.entityId)!;
+      const receipt = run.receipt as unknown as DeliveryReceipt | null;
+      return { id: run.id, entityName: entity.name, href: `${assetHref({ kind: "entity", slug: entity.slug, domainSlug: slugs.domainSlug ?? null, productSlug: slugs.productSlug ?? null })}?tab=deployments`,
+        method: run.method, format: run.format, artifactVersion: run.artifactVersion, environment: run.environment, status: run.status, createdAt: run.createdAt.toISOString(), outcome: receipt?.outcome, url: receipt?.url };
+    });
+    return { success: true as const, data: { rows, targetFormats, domains, total: overview.data.total, deliveries } };
   } catch (e: unknown) {
     return { ...unexpectedFailure("getDeploymentOverviewAction", e) };
   }

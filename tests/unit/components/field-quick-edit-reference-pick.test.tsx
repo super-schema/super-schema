@@ -80,8 +80,7 @@ const referenceKeys = (d: Record<string, unknown>) => Object.keys(d).filter((k) 
 
 describe("selected-field editing safety", () => {
   const editDescription = (value: string) => {
-    if (!screen.queryByLabelText("Field description")) fireEvent.click(screen.getByText("Add description..."));
-    fireEvent.change(screen.getByLabelText("Field description"), { target: { value } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value } });
   };
 
   it("registers save/discard handlers and releases them when the panel unmounts", () => {
@@ -147,11 +146,11 @@ describe("selected-field editing safety", () => {
     let result: boolean | undefined;
     await act(async () => { resolve(); result = await pending; });
     expect(result).toBe(false);
-    expect((screen.getByLabelText("Field description") as HTMLTextAreaElement).value).toBe("newer description");
+    expect((screen.getByLabelText("Description") as HTMLTextAreaElement).value).toBe("newer description");
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
     await act(async () => { result = await saveRef.current!(); });
     expect(result).toBe(true);
-    expect((screen.getByLabelText("Field description") as HTMLTextAreaElement).value).toBe("newer description");
+    expect((screen.getByLabelText("Description") as HTMLTextAreaElement).value).toBe("newer description");
     expect(onUpdateField.mock.calls[1][1]).toMatchObject({ description: "newer description" });
   });
 
@@ -168,7 +167,7 @@ describe("selected-field editing safety", () => {
   it("merges independent nested decorator controls from a same-field refresh", async () => {
     const saveRef = { current: null as (() => Promise<boolean>) | null };
     const { rerender } = mount(STRING_FIELD, TARGETS, { fieldSaveRef: saveRef });
-    fireEvent.click(screen.getByRole("button", { name: "Constraints" }));
+    fireEvent.click(screen.getByRole("button", { name: "Storage Hints" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /^Partition/ }));
     const incoming = { ...STRING_FIELD, decorators: { keep: "me", typespec: { governance: { operationalHints: { index: true } } } } };
     rerender(<FieldQuickEditPanel field={incoming} entityId="ent-1" domainSlug="payments" onUpdateField={onUpdateField as never} fieldSaveRef={saveRef} />);
@@ -190,7 +189,7 @@ describe("selected-field editing safety", () => {
     expect(onSavingChange).toHaveBeenLastCalledWith(true);
     editDescription("newer C");
     act(() => { discardRef.current!(); });
-    expect((screen.getByLabelText("Field description") as HTMLTextAreaElement).value).toBe("newer C");
+    expect((screen.getByLabelText("Description") as HTMLTextAreaElement).value).toBe("newer C");
     editDescription("");
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
     expect(screen.queryByTestId("field-discard-btn")).toBeNull();
@@ -271,7 +270,7 @@ describe("selected-field editing safety", () => {
     editDescription("discard this edit");
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
     act(() => { discardRef.current!(); });
-    expect((screen.getByLabelText("Field description") as HTMLTextAreaElement).value).toBe("saved description");
+    expect((screen.getByLabelText("Description") as HTMLTextAreaElement).value).toBe("saved description");
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 });
@@ -375,8 +374,7 @@ describe("choosing the reference type in the selected-field panel", () => {
 
   it("an edit that leaves the reference alone keeps it and its pin", async () => {
     mount(REFERENCE_FIELD);
-    fireEvent.click(screen.getByText("Add description..."));
-    fireEvent.change(screen.getByPlaceholderText("Add description..."), { target: { value: "where it ships" } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "where it ships" } });
 
     const data = await save();
 
@@ -445,8 +443,7 @@ describe("retyping a reference field in the selected-field panel", () => {
       decorators: { arrayElementType: "reference", referencedEntityId: "e-cust", referencedEntityName: "Customer", referencedQualifiedName: "Sales/Crm/Customer", referencedEntityVersion: "1.0" },
     };
     mount(list as never);
-    fireEvent.click(screen.getByText("Add description..."));
-    fireEvent.change(screen.getByPlaceholderText("Add description..."), { target: { value: "many" } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "many" } });
 
     const data = await save();
 

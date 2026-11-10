@@ -16,6 +16,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { assertUpgradeRuntime } from "./pglite-upgrade-runtime.mjs";
 
 const OLD_PGLITE = "@electric-sql/pglite@0.4.6";
 const OLD_PGLITE_TOOLS = "@electric-sql/pglite-tools@0.3.6";
@@ -50,9 +51,12 @@ if (major !== "17") fail(`${dataDir} was made by PostgreSQL ${major}; this scrip
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const backupDir = `${dataDir}.pg17-backup-${stamp}`;
 const dumpFile = `${dataDir}.pg17-dump-${stamp}.sql`;
-const work = mkdtempSync(path.join(os.tmpdir(), "pglite-upgrade-"));
+let work;
 
 try {
+  const { PGlite } = await import("@electric-sql/pglite");
+  await assertUpgradeRuntime(PGlite, Number(NEW_MAJOR));
+  work = mkdtempSync(path.join(os.tmpdir(), "pglite-upgrade-"));
   console.log(`[pglite-upgrade] installing ${OLD_PGLITE} and ${OLD_PGLITE_TOOLS} into ${work} ...`);
   writeFileSync(path.join(work, "package.json"), JSON.stringify({ private: true, type: "module" }));
   // npm is npm.cmd on Windows, which only a shell can start; the arguments are constants.
@@ -69,10 +73,18 @@ try {
       'import { PGlite } from "@electric-sql/pglite";',
       'import { pgDump } from "@electric-sql/pglite-tools/pg_dump";',
       'import { writeFileSync } from "node:fs";',
-      "const db = new PGlite(process.argv[2]);",
-      'const dump = await pgDump({ pg: db, args: ["--no-owner", "--no-privileges"] });',
-      "writeFileSync(process.argv[3], await dump.text());",
-      "await db.close();",
+      "const db = new PGlite(process.argv[2], { debug: 1 });",
+      "try {",
+      "  await db.waitReady;",
+      '  const dump = await pgDump({ pg: db, args: ["--no-owner", "--no-privileges"] });',
+      "  writeFileSync(process.argv[3], await dump.text(), { mode: 0o600 });",
+      "} catch (error) {",
+      '  console.error("[pglite-upgrade] PostgreSQL 17 could not be opened or dumped: " + (error instanceof Error ? error.message : String(error)));',
+      '  console.error("[pglite-upgrade] The original database was not replaced. If startup reports corrupt WAL/checkpoints, recover a copy before retrying; do not reset the original directory.");',
+      "  process.exitCode = 1;",
+      "} finally {",
+      "  await db.close().catch(() => {});",
+      "}",
     ].join("\n"),
   );
   console.log(`[pglite-upgrade] dumping ${dataDir} (PostgreSQL 17) ...`);
@@ -80,7 +92,6 @@ try {
   const sql = readFileSync(dumpFile, "utf8");
   if (!sql.includes("PostgreSQL database dump complete")) throw new Error(`the dump ${dumpFile} is incomplete; ${dataDir} was left as it was.`);
 
-  const { PGlite } = await import("@electric-sql/pglite");
   renameSync(dataDir, backupDir);
   console.log(`[pglite-upgrade] restoring into a new ${dataDir} (PostgreSQL ${NEW_MAJOR}) ...`);
   let db;
@@ -111,5 +122,5 @@ try {
   process.exitCode = 1;
   console.error(`[pglite-upgrade] ${error instanceof Error ? error.message : String(error)}`);
 } finally {
-  rmSync(work, { recursive: true, force: true });
+  if (work) rmSync(work, { recursive: true, force: true });
 }

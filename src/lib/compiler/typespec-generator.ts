@@ -18,6 +18,7 @@ import type {
   SuperSchemaInterface,
   SuperSchemaOperation,
 } from "@/types/super-schema-model";
+import { LIFECYCLE_PHASES, evolutionVersions, fieldDeprecation } from "@/lib/field-attributes";
 import { getTypeInfo } from "@/lib/data-types";
 import { boundFor, constraintAppliesTo, type BoundKind, type ConstraintKind } from "@/lib/compiler/constraint-targets";
 import { activeDanglingRef } from "@/lib/field-dangling";
@@ -88,6 +89,8 @@ export interface GenerateTypeSpecOptions {
    * have no use for HTTP operations, and the canonical source does not import `@typespec/http`. Default false.
    */
   httpOperations?: boolean;
+  /** Closure coordinator supplies a shared version enum for merged namespaces. */
+  evolution?: { versions: string[]; declare: boolean; enumName: string };
 }
 
 export interface ClosureMemberOptions {
@@ -117,7 +120,7 @@ export interface ClosureMemberOptions {
  */
 export interface GeneratorDiagnostic {
   severity: "error" | "warning";
-  code: "ENUM_NO_VALUES" | "ENUM_DUPLICATE_VALUE" | "DEFAULT_NOT_EMITTED" | "EXAMPLE_NOT_EMITTED" | "API_OPERATION";
+  code: "ENUM_NO_VALUES" | "ENUM_DUPLICATE_VALUE" | "DEFAULT_NOT_EMITTED" | "EXAMPLE_NOT_EMITTED" | "API_OPERATION" | "FIELD_ATTRIBUTE";
   fieldName?: string;
   message: string;
 }
@@ -147,15 +150,23 @@ export function generateTypeSpecWithDiagnostics(
   const governance = resolveGovernance(model, options);
   const ctx = createContext(model, member?.referenceType);
   const lines: string[] = [...governanceImportLines(model, governance)];
+  if (model.fields.some((f) => f.decorators.typespec?.documentation?.externalDocsUrl) && !lines.includes(OPENAPI_LIBRARY_IMPORT)) lines.push(OPENAPI_LIBRARY_IMPORT);
+  const versions = options.evolution?.versions ?? evolutionVersions(model.fields);
+  const versionName = options.evolution?.enumName ?? evolutionEnumName(model);
+  ctx.versionEnumName = versionName;
+  if (versions.length) lines.push('import "@typespec/versioning";');
 
   // Emit namespace if present
-  const ns = model.namespace || model.entity.domain;
-  const useNamespace = model.namespace !== undefined;
+  const ns = model.namespace || model.entity.domain || "Schema";
+  const useNamespace = model.namespace !== undefined || (!options.closureMember && versions.length > 0);
 
   if (useNamespace && ns) {
+    if (versions.length) lines.push(`@TypeSpec.Versioning.versioned(${versionName})`);
     lines.push(`namespace ${sanitizeNamespace(ns)};`);
     lines.push("");
   }
+
+  if (versions.length && options.evolution?.declare !== false) lines.push(...versionEnum(versions, versionName), "");
 
   // Emit custom scalars
   if (model.customScalars && model.customScalars.length > 0) {
@@ -199,7 +210,7 @@ export function generateTypeSpecWithDiagnostics(
   }
 
   // Emit model-level decorators
-  lines.push(...generateModelDecorators(model, governance));
+  lines.push(...generateModelDecorators(model, governance), ...discriminatorDecorators(model, ctx));
 
   // Emit model definition with optional extends
   const modelName = sanitizeIdentifier(model.entity.name);
@@ -309,15 +320,23 @@ export function generateTypeSpecWithSourceMap(
   const governance = resolveGovernance(model, options);
   const ctx = createContext(model);
   const lines: string[] = [...governanceImportLines(model, governance)];
+  if (model.fields.some((f) => f.decorators.typespec?.documentation?.externalDocsUrl) && !lines.includes(OPENAPI_LIBRARY_IMPORT)) lines.push(OPENAPI_LIBRARY_IMPORT);
+  const versions = options.evolution?.versions ?? evolutionVersions(model.fields);
+  const versionName = options.evolution?.enumName ?? evolutionEnumName(model);
+  ctx.versionEnumName = versionName;
+  if (versions.length) lines.push('import "@typespec/versioning";');
   const sourceMap: SourceMapEntry[] = [];
 
   // Namespace
-  const ns = model.namespace || model.entity.domain;
-  const useNamespace = model.namespace !== undefined;
+  const ns = model.namespace || model.entity.domain || "Schema";
+  const useNamespace = model.namespace !== undefined || (!options.closureMember && versions.length > 0);
   if (useNamespace && ns) {
+    if (versions.length) lines.push(`@TypeSpec.Versioning.versioned(${versionName})`);
     lines.push(`namespace ${sanitizeNamespace(ns)};`);
     lines.push("");
   }
+
+  if (versions.length && options.evolution?.declare !== false) lines.push(...versionEnum(versions, versionName), "");
 
   // Custom scalars
   if (model.customScalars && model.customScalars.length > 0) {
@@ -366,7 +385,7 @@ export function generateTypeSpecWithSourceMap(
   }
 
   // Emit model-level decorators
-  lines.push(...generateModelDecorators(model, governance));
+  lines.push(...generateModelDecorators(model, governance), ...discriminatorDecorators(model, ctx));
 
   // Emit model definition
   const modelName = sanitizeIdentifier(model.entity.name);
@@ -515,6 +534,7 @@ function generateModelDecorators(model: SuperSchemaModel, governance: Governance
 interface GenContext {
   /** The entity (model) name the inline enums are scoped to. */
   entityName: string;
+  versionEnumName?: string;
   diagnostics: GeneratorDiagnostic[];
   /** TypeSpec type name of the field-scoped enum of `field` (unique within the document). */
   enumNameOf(field: SuperSchemaField): string;
@@ -1035,11 +1055,6 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
   // it stays in the field's decorators in the database and comes back when the reference is resolved.
   const unknownTyped = isDanglingField(field);
 
-  // @discriminator
-  if (field.decorators.typespec?.identity?.discriminator && !unknownTyped) {
-    decorators.push(`@discriminator("${escapeString(field.name)}")`);
-  }
-
   // @format (from typespec identity)
   if (field.decorators.typespec?.identity?.format && !unknownTyped) {
     decorators.push(`@format("${escapeString(field.decorators.typespec.identity.format)}")`);
@@ -1091,10 +1106,10 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
     if (wireFormat.encode && !unknownTyped) {
       if (wireFormat.encodeSubType) {
         decorators.push(
-          `@encode("${escapeString(wireFormat.encode)}", "${escapeString(wireFormat.encodeSubType)}")`
+          `@encode("${escapeString(wireFormat.encode)}", ${sanitizeIdentifier(wireFormat.encodeSubType)})`
         );
       } else {
-        decorators.push(`@encode("${escapeString(wireFormat.encode)}")`);
+        decorators.push(wireFormat.encode === "string" ? "@encode(string)" : `@encode("${escapeString(wireFormat.encode)}")`);
       }
     }
     if (wireFormat.encodedNames) {
@@ -1106,43 +1121,39 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
 
   // Visibility decorators
   const visibility = field.decorators.typespec?.visibility;
-  if (visibility?.phases && visibility.phases.length > 0) {
-    const phaseList = visibility.phases
-      .map((p) => `Lifecycle.${p}`)
-      .join(", ");
-    decorators.push(`@visibility(${phaseList})`);
+  if (visibility?.invisible || visibility?.phases?.length === 0) {
+    decorators.push("@invisible(Lifecycle)");
+  } else if (visibility?.phases) {
+    const phases = visibility.removeVisibility ? LIFECYCLE_PHASES.filter((p) => !visibility.phases!.includes(p)) : visibility.phases;
+    if (phases.length) decorators.push(`@${visibility.removeVisibility ? "removeVisibility" : "visibility"}(${phases.map((p) => `Lifecycle.${p}`).join(", ")})`);
   }
 
   // Documentation decorators
   const docs = field.decorators.typespec?.documentation;
   if (docs) {
-    if (docs.summary) {
-      decorators.push(`@summary("${escapeString(docs.summary)}")`);
-    }
     // The example is the stored value itself (the Documentation panel keeps the parsed JSON, or the text typed), written as a value of the
     // field's type; withheld, with a warning, when it does not fit that type.
     const example = storedLiteral(docs.example, field, ctx, "example");
     if (example !== undefined) decorators.push(`@example(${example})`);
-    if (docs.deprecated) {
-      decorators.push(`#deprecated "${escapeString(docs.deprecated)}"`);
-    }
   }
-  // A deprecated flag without a message (JSON Schema `deprecated: true`, the field panel's checkbox) lives in `evolution`; TypeSpec's
-  // directive needs a message, so the flag is written with a plain one. The official emitters map it to `deprecated: true`.
-  if (!docs?.deprecated && field.decorators.evolution?.deprecated === true) {
-    decorators.push(`#deprecated "deprecated"`);
-  }
+  const deprecated = fieldDeprecation(field.decorators);
+  if (deprecated !== null) decorators.push(`#deprecated "${escapeString(deprecated || "Deprecated")}"`);
 
-  // Versioning decorators
+  // Evolution decorators refer to the declared enum; old types are checked identifiers, never arbitrary source text.
   const versioning = field.decorators.typespec?.versioning;
+  const versionRef = (v: string) => `${ctx.versionEnumName ?? "SuperSchemaVersions"}.${quoteIdentifier(v)}`;
   if (versioning) {
-    if (versioning.added) {
-      decorators.push(`@added(Versions.${sanitizeIdentifier(versioning.added)})`);
+    for (const key of ["added", "removed", "madeOptional", "madeRequired"] as const) {
+      if (versioning[key]) decorators.push(`@TypeSpec.Versioning.${key}(${versionRef(versioning[key]!)})`);
     }
-    if (versioning.removed) {
-      decorators.push(`@removed(Versions.${sanitizeIdentifier(versioning.removed)})`);
+    if (versioning.renamedFrom?.version && versioning.renamedFrom.oldName) decorators.push(`@TypeSpec.Versioning.renamedFrom(${versionRef(versioning.renamedFrom.version)}, "${escapeString(versioning.renamedFrom.oldName)}")`);
+    if (versioning.typeChangedFrom?.version) {
+      const oldType = versioning.typeChangedFrom.oldType;
+      if (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(oldType)) decorators.push(`@TypeSpec.Versioning.typeChangedFrom(${versionRef(versioning.typeChangedFrom.version)}, ${oldType})`);
+      else ctx.diagnostics.push({ code: "FIELD_ATTRIBUTE", severity: "error", fieldName: field.name, message: "Previous type must be a valid type name." });
     }
   }
+  if (docs?.externalDocsUrl) decorators.push(`@TypeSpec.OpenAPI.externalDocs("${escapeString(docs.externalDocsUrl)}"${docs.externalDocsDescription ? `, "${escapeString(docs.externalDocsDescription)}"` : ""})`);
 
   // Classification (Story 16.6): the governance package's `@Enterprise.dataClassification`, or
   // `x-classification` for a level with no enum member — see governance-decorators.ts. Never `@tag`, which
@@ -1321,3 +1332,22 @@ function sanitizeNamespace(ns: string): string {
     .join(".");
 }
 
+
+/** Per-namespace schema versions, shared by canonical and source-map generation. */
+function versionEnum(versions: string[], name: string): string[] {
+  return [`enum ${name} {`, ...versions.map((v) => `  ${quoteIdentifier(v)}: "${escapeString(v)}",`), "}"];
+}
+function discriminatorDecorators(model: SuperSchemaModel, ctx: GenContext): string[] {
+  const fields = model.fields.filter((f) => f.decorators.typespec?.identity?.discriminator);
+  if (fields.length > 1) {
+    ctx.diagnostics.push({ code: "FIELD_ATTRIBUTE", severity: "error", message: "An entity can have only one discriminator property." });
+    return ["// ERROR: An entity can have only one discriminator property.", "@__SuperSchemaAmbiguousDiscriminator"];
+  }
+  return fields.length ? [`@discriminator("${escapeString(fields[0].name)}")`] : [];
+}
+
+function evolutionEnumName(model: SuperSchemaModel): string {
+  const names = declaredTypeNames(model); let name = "SuperSchemaVersions";
+  while (names.has(name)) name = `_${name}`;
+  return name;
+}

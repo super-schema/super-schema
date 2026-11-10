@@ -1,134 +1,91 @@
 "use client";
-
 import { Button } from "@/components/ui/button";
+import { FieldGroup, FieldDescription } from "@/components/ui/field";
+import { LIFECYCLE_PHASES } from "@/lib/field-attributes";
 import type { Visibility } from "@/types/schemas/typespec-decorator.schema";
-
-const ALL_PHASES = ["Create", "Read", "Update", "Delete", "Query"] as const;
-type Phase = (typeof ALL_PHASES)[number];
-
-interface VisibilityPanelProps {
-  visibility: Visibility;
-  onChange: (visibility: Visibility) => void;
-}
-
 export function VisibilityPanel({
-  visibility,
+  visibility: v,
   onChange,
-}: VisibilityPanelProps) {
-  const phases = (visibility.phases ?? [...ALL_PHASES]) as Phase[];
-  const isInvisible = visibility.invisible ?? false;
-  const removeVisibility = visibility.removeVisibility ?? false;
-
-  function update(partial: Partial<Visibility>) {
-    onChange({ ...visibility, ...partial });
+}: {
+  visibility: Visibility;
+  onChange: (v: Visibility) => void;
+}) {
+  const phases = v.invisible ? [] : (v.phases ?? [...LIFECYCLE_PHASES]);
+  function set(phases: Visibility["phases"]) {
+    onChange({ ...v, phases, invisible: phases?.length === 0 });
   }
-
-  function togglePhase(phase: Phase) {
-    const next = phases.includes(phase)
-      ? phases.filter((p) => p !== phase)
-      : [...phases, phase];
-    update({
-      phases: next as Visibility["phases"],
-      invisible: next.length === 0,
-    });
-  }
-
-  function setPhases(newPhases: Phase[]) {
-    update({
-      phases: newPhases as Visibility["phases"],
-      invisible: newPhases.length === 0,
-    });
-  }
-
-  // Generate TypeSpec decorator preview
-  function getDecoratorPreview(): string {
-    if (isInvisible || phases.length === 0) {
-      return "@invisible";
-    }
-    if (phases.length === ALL_PHASES.length) {
-      return "// visible in all phases (default)";
-    }
-    if (removeVisibility) {
-      const removed = ALL_PHASES.filter((p) => !phases.includes(p));
-      return `@removeVisibility(${removed.map((p) => `Lifecycle.${p}`).join(", ")})`;
-    }
-    return `@visibility(${phases.map((p) => `Lifecycle.${p}`).join(", ")})`;
-  }
-
+  const removed = LIFECYCLE_PHASES.filter((phase) => !phases.includes(phase));
+  const preview = !phases.length
+    ? "@invisible(Lifecycle)"
+    : v.removeVisibility && removed.length
+      ? `@removeVisibility(${removed.map((p) => `Lifecycle.${p}`).join(", ")})`
+      : `@visibility(${phases.map((p) => `Lifecycle.${p}`).join(", ")})`;
   return (
-    <div className="space-y-space-4 pb-space-2">
-      {/* Checkbox matrix */}
-      <div>
-        <div className="flex items-center gap-space-4">
-          {ALL_PHASES.map((phase) => (
-            <label
-              key={phase}
-              className="flex flex-col items-center gap-1 cursor-pointer"
-            >
-              <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
-                {phase}
-              </span>
-              <input
-                type="checkbox"
-                checked={phases.includes(phase)}
-                onChange={() => togglePhase(phase)}
-                className="accent-primary w-4 h-4"
-              />
-            </label>
-          ))}
-        </div>
+    <FieldGroup>
+      <FieldDescription>
+        Controls when emitters include this field in lifecycle-specific schemas.
+        User and role authorization is managed separately.
+      </FieldDescription>
+      <fieldset className="flex flex-wrap gap-4">
+        <legend className="mb-2 text-sm font-medium">
+          Include field during
+        </legend>
+        {LIFECYCLE_PHASES.map((phase) => (
+          <label key={phase} className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="accent-primary"
+              checked={phases.includes(phase)}
+              onChange={() =>
+                set(
+                  phases.includes(phase)
+                    ? phases.filter((p) => p !== phase)
+                    : [...phases, phase],
+                )
+              }
+            />
+            {phase}
+          </label>
+        ))}
+      </fieldset>
+      <div className="flex flex-wrap gap-2">
+        {[
+          ["Read only", ["Read"]],
+          ["Create and read", ["Create", "Read"]],
+          ["Write only", ["Create", "Update"]],
+          ["All phases", [...LIFECYCLE_PHASES]],
+          ["Invisible", []],
+        ].map(([label, selected]) => (
+          <Button
+            key={String(label)}
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => set(selected as Visibility["phases"])}
+          >
+            {label}
+          </Button>
+        ))}
       </div>
-
-      {/* Bulk action buttons */}
-      <div className="flex items-center gap-space-2 flex-wrap">
-        <Button
-          size="xs"
-          variant="outline"
-          onClick={() => setPhases(["Read"])}
-        >
-          Read Only
-        </Button>
-        <Button
-          size="xs"
-          variant="outline"
-          onClick={() => setPhases(["Create", "Read"])}
-        >
-          Create + Read
-        </Button>
-        <Button
-          size="xs"
-          variant="outline"
-          onClick={() => setPhases([...ALL_PHASES])}
-        >
-          All
-        </Button>
-        <Button
-          size="xs"
-          variant="outline"
-          onClick={() => setPhases([])}
-        >
-          None / @invisible
-        </Button>
-      </div>
-
-      {/* Decorator preview */}
-      <div className="bg-muted/50 rounded-md px-space-3 py-space-2">
-        <code className="text-caption font-mono text-foreground">
-          {getDecoratorPreview()}
-        </code>
-      </div>
-
-      {/* @removeVisibility toggle */}
-      <label className="flex items-center gap-2 text-caption text-muted-foreground cursor-pointer">
-        <input
-          type="checkbox"
-          checked={removeVisibility}
-          onChange={(e) => update({ removeVisibility: e.target.checked })}
-          className="accent-primary"
-        />
-        Use @removeVisibility (advanced — invert to specify which phases to
-        remove)
-      </label>
-    </div>
+      <details>
+        <summary className="cursor-pointer text-xs text-muted-foreground">
+          Advanced visibility syntax
+        </summary>
+        <label className="mt-2 flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={v.removeVisibility ?? false}
+            className="accent-primary"
+            onChange={(e) =>
+              onChange({ ...v, removeVisibility: e.target.checked })
+            }
+          />
+          Express omitted phases with removeVisibility
+        </label>
+      </details>
+      <code className="whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">
+        {preview}
+      </code>
+    </FieldGroup>
   );
 }

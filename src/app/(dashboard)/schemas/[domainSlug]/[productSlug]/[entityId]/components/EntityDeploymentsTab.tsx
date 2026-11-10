@@ -16,9 +16,10 @@ import { errorMessage } from "@/lib/error-message";
 interface EntityDeploymentsTabProps {
   entityId: string;
   entityName: string;
+  recordVersion?: { targetId: string; version: number };
 }
 
-export function EntityDeploymentsTab({ entityId, entityName }: EntityDeploymentsTabProps) {
+export function EntityDeploymentsTab({ entityId, entityName, recordVersion }: EntityDeploymentsTabProps) {
   const [statuses, setStatuses] = useState<DeploymentStatus[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   // The targets whose drift check is in flight: each check holds only its own button, and a check that fails releases it.
@@ -46,9 +47,9 @@ export function EntityDeploymentsTab({ entityId, entityName }: EntityDeployments
     void load();
   }, [load]);
 
-  async function handleMarkDeployed(targetId: string, environment: string) {
+  async function handleMarkDeployed(targetId: string, environment: string, version: number) {
     try {
-      const res = await markEntityDeployedAction(entityId, targetId, environment);
+      const res = await markEntityDeployedAction(entityId, targetId, environment, version);
       if ("error" in res) {
         toast.error(res.error);
         return;
@@ -93,9 +94,9 @@ export function EntityDeploymentsTab({ entityId, entityName }: EntityDeployments
         <div className="flex items-center gap-space-2">
           <Rocket className="w-5 h-5 text-muted-foreground" />
           <div>
-            <h2 className="text-heading-2 text-foreground">Deployments</h2>
+            <h2 className="text-heading-2 text-foreground">Recorded environments</h2>
             <p className="text-caption text-muted-foreground">
-              Track which emitted version is live per environment, and detect drift.
+              Manually recorded versions per environment. Comparison checks stored output against the latest generated artifact.
             </p>
           </div>
         </div>
@@ -124,6 +125,7 @@ export function EntityDeploymentsTab({ entityId, entityName }: EntityDeployments
           onMarkDeployed={handleMarkDeployed}
           onCheckDrift={handleCheckDrift}
           checkingTargetIds={checkingTargetIds}
+          recordVersion={recordVersion}
         />
       )}
     </div>

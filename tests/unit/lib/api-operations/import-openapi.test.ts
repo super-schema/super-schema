@@ -216,7 +216,10 @@ const OPENAPI_31 = {
         parameters: [{ name: "isbn", in: "path", required: true, schema: { type: "string" } }],
         responses: { "200": { description: "ok", content: { "application/json": { schema: { type: "object", properties: { ok: { type: "boolean" } } } } } } },
       },
-      trace: { responses: { "200": { description: "trace" } } },
+      trace: {
+        parameters: [{ name: "isbn", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "trace" } },
+      },
     },
   },
   webhooks: { newBook: { post: { responses: { "200": { description: "ok" } } } } },

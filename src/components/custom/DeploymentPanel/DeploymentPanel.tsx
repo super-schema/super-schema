@@ -12,7 +12,8 @@ interface DeploymentPanelProps {
   entityName: string;
   deploymentStatuses: DeploymentStatus[];
   onCheckDrift?: (targetId: string) => void;
-  onMarkDeployed?: (targetId: string, environment: string) => void;
+  onMarkDeployed?: (targetId: string, environment: string, version: number) => void;
+  recordVersion?: { targetId: string; version: number };
   /** The targets whose drift check is in flight. Only their check button is disabled and spinning. */
   checkingTargetIds?: ReadonlySet<string>;
 }
@@ -23,6 +24,7 @@ export function DeploymentPanel({
   onCheckDrift,
   onMarkDeployed,
   checkingTargetIds,
+  recordVersion,
 }: DeploymentPanelProps) {
   const [deployDialog, setDeployDialog] = useState<{
     targetId: string;
@@ -78,11 +80,12 @@ export function DeploymentPanel({
               )}
               {onMarkDeployed && (
                 <button
+                  disabled={recordVersion !== undefined && recordVersion.targetId !== target.targetId}
                   onClick={() =>
                     setDeployDialog({
                       targetId: target.targetId,
                       targetFormat: target.targetFormat,
-                      version: target.emittedVersion || "v0",
+                      version: recordVersion?.targetId === target.targetId ? `v${recordVersion.version}` : target.emittedVersion || "v0",
                     })
                   }
                   className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
@@ -141,7 +144,7 @@ export function DeploymentPanel({
           isOpen={true}
           onClose={() => setDeployDialog(null)}
           onConfirm={(environment) => {
-            onMarkDeployed?.(deployDialog.targetId, environment);
+            onMarkDeployed?.(deployDialog.targetId, environment, Number(deployDialog.version.replace(/^v/, "")));
             setDeployDialog(null);
           }}
           targetFormat={deployDialog.targetFormat}

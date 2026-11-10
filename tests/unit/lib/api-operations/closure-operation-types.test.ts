@@ -18,22 +18,24 @@ import { toApiOperations, type ApiOperationRowLike } from "@/lib/api-operations/
 import type { PrismaEntityInput } from "@/lib/compiler/compiler.service";
 import { validateOpenApi } from "../../../helpers/corpus/validators";
 
+type DataField = { name: string; type: string; isKey?: boolean; decorators?: Record<string, unknown> };
+
 type Row = {
   id: string;
   name: string;
   domain?: string;
   product?: string;
   tenantId?: string;
-  fields?: Array<{ name: string; type: string; isKey?: boolean }>;
+  fields?: DataField[];
   operations?: ApiOperationRowLike[];
   /** A published version: its fields and the operations its snapshot froze. */
-  published?: { fields: Array<{ name: string; type: string }>; operations?: ApiOperationRowLike[] };
+  published?: { fields: DataField[]; operations?: ApiOperationRowLike[] };
   metadata?: unknown;
 };
 
-const toField = (entityId: string) => (f: { name: string; type: string; isKey?: boolean }, i: number) => ({
+const toField = (entityId: string) => (f: DataField, i: number) => ({
   id: `${entityId}-${f.name}`, name: f.name, type: f.type, precision: null, scale: null, nullable: false, isKey: f.isKey ?? false,
-  fieldNumber: null, description: "", classification: null, aliases: [], decorators: {}, sortOrder: i,
+  fieldNumber: null, description: "", classification: null, aliases: [], decorators: f.decorators ?? {}, sortOrder: i,
 });
 
 /** A Prisma double with exactly what the closure loader reads (tenant index, metadata, fields, versions, entity-scoped services). */
@@ -91,8 +93,9 @@ const getCustomer: ApiOperationRowLike = {
   parameters: [{ name: "id", type: "uuid", location: "path", required: true }],
   responses: [{ statusCode: 200, type: "Customer", description: "The buyer" }],
 };
-const ORDER_FIELDS = [{ name: "id", type: "uuid", isKey: true }, { name: "qty", type: "int32" }];
-const CUSTOMER_FIELDS = [{ name: "id", type: "uuid", isKey: true }, { name: "name", type: "string" }];
+const UUID_DECORATORS = { typespec: { identity: { format: "uuid" } } };
+const ORDER_FIELDS = [{ name: "id", type: "string", decorators: UUID_DECORATORS, isKey: true }, { name: "qty", type: "int32" }];
+const CUSTOMER_FIELDS = [{ name: "id", type: "string", decorators: UUID_DECORATORS, isKey: true }, { name: "name", type: "string" }];
 const names = (r: { entities: Array<{ ref: { entity: string } }> }) => r.entities.map((e) => e.ref.entity);
 
 type Doc = { paths: Record<string, Record<string, { responses: Record<string, unknown>; requestBody?: unknown }>>; components?: { schemas?: Record<string, unknown> } };
@@ -117,7 +120,7 @@ describe("closure loader: entities named by API operations", () => {
     expect((await validateOpenApi(orderFile.content)).ok).toBe(true);
     const doc = parseYaml(orderFile.content) as Doc;
     expect(JSON.stringify(doc.paths["/orders/{id}/buyer"].get.responses)).toMatch(/#\/components\/schemas\/Customer"/);
-    expect(doc.components?.schemas?.Customer).toMatchObject({ type: "object" });
+    expect(doc.components?.schemas?.Customer).toMatchObject({ type: "object", properties: { id: { type: "string", format: "uuid" } } });
   });
 
   it("follows request body and parameter types too, and an entity's own data types are never looked up as entities", async () => {

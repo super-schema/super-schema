@@ -252,11 +252,16 @@ The PGlite data directory ./data/pglite was made by PostgreSQL 17, and this PGli
 Run `npm run db:pglite-upgrade` to move it to PostgreSQL 18 ...
 ```
 
-Stop the app, then run:
+Stop the app and use the Node version in `.nvmrc`. Install the locked dependencies before upgrading:
 
 ```bash
+npm ci
 npm run db:pglite-upgrade
+npm run dev
 ```
+
+The upgrader checks the installed engine in memory before installing tools or replacing a directory. If `node_modules` still contains
+PGlite 0.4 after switching branches, it reports the stale dependencies and stops; the runtime must actually embed PostgreSQL 18.
 
 It installs PGlite 0.4.6 and its `pg_dump` (`@electric-sql/pglite-tools` 0.3.6) into a temporary directory (never into
 the checkout, so it needs npm and network access), dumps the database to SQL with them, and restores the SQL into a new
@@ -266,6 +271,12 @@ old directory is put back as it was; if even that fails, the error names the bac
 `npm run dev` makes a new, empty one.
 
 PostgreSQL deployments (`DB_PROVIDER=postgresql`, the Docker image) aren't affected.
+
+If the PostgreSQL 17 dump fails with `invalid checkpoint record` or `could not locate a valid checkpoint record`, the old database needs
+recovery before it can be upgraded. The upgrader prints the startup diagnostics and leaves the source directory in place. Preserve that
+directory and work on a separate copy. Inspect the copy with matching PostgreSQL 17 tools; WAL recovery is a last resort described in the
+[PostgreSQL 17 recovery documentation](https://www.postgresql.org/docs/17/app-pgresetwal.html). Immediately dump a recovered copy, restore it
+into a fresh database, and validate the rows and constraints before replacing the active database. Keep the original and the SQL dump.
 
 ---
 

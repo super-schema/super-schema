@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { SchemasTab } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemasTab";
 
 // The toasts are what the user sees: record them.
@@ -99,6 +99,99 @@ describe("SchemasTab UI", () => {
       expect(screen.getByText("Generated Schema")).toBeDefined();
       expect(screen.getByText("Manual Override")).toBeDefined();
     });
+  });
+
+  it("orders version tabs draft first, then newest published versions, while keeping the sidebar on the latest publication", async () => {
+    const version = { output: "CREATE TABLE customer (...)", generatedAt: "2026-04-07T10:00:00.000Z", entityVersion: 1 };
+    (getSchemaVersionsActionMock as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      schemaVersions: {
+        bigquery: [
+          { ...version, version: 1, status: "published" },
+          { ...version, version: 3, status: "draft" },
+          { ...version, version: 2, status: "published" },
+        ],
+        avro: [{ ...version, version: 1, status: "deployed" }],
+      },
+    });
+
+    render(<SchemasTab {...baseProps} />);
+    const tabs = await screen.findByRole("tablist", { name: "BigQuery schema versions" });
+    expect(within(tabs).getAllByRole("tab").map((tab) => [
+      tab.getAttribute("data-version"), tab.getAttribute("data-status"),
+    ])).toEqual([["3", "draft"], ["2", "published"], ["1", "published"]]);
+    expect(screen.getByRole("tab", { name: "v3 — Draft" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("schema-publish")).toBeDefined();
+    expect(screen.getByLabelText("BigQuery v2 — Published")).toBeDefined();
+    expect(screen.getByLabelText("Avro v1 — Published")).toBeDefined();
+    expect(screen.queryByTestId("schema-deployed-badge")).toBeNull();
+    expect(screen.queryByRole("menuitemradio")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "v1 — Published" }));
+    expect(screen.getByRole("tab", { name: "v1 — Published" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByLabelText("BigQuery v2 — Published")).toBeDefined();
+    expect(screen.queryByTestId("schema-publish")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("schema-target-avro"));
+    expect(screen.getByRole("tab", { name: "v1 — Published" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByTestId("schema-target-bigquery"));
+    const draft = screen.getByRole("tab", { name: "v3 — Draft" });
+    expect(draft.getAttribute("aria-selected")).toBe("true");
+
+    // The shared tabs support arrow-key navigation without opening a menu.
+    draft.focus();
+    fireEvent.keyDown(draft, { key: "ArrowRight" });
+    await waitFor(() => expect(screen.getByRole("tab", { name: "v2 — Published" }).getAttribute("aria-selected")).toBe("true"));
+    expect(screen.queryByTestId("schema-publish")).toBeNull();
+  });
+
+  it("shows the newest draft in the sidebar when a target has never been deployed", async () => {
+    const version = { status: "draft", output: "schema", generatedAt: "2026-04-07T10:00:00.000Z", entityVersion: 1 };
+    (getSchemaVersionsActionMock as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      schemaVersions: { bigquery: [{ ...version, version: 1 }, { ...version, version: 4 }] },
+    });
+    render(<SchemasTab {...baseProps} />);
+
+    expect(await screen.findByLabelText("BigQuery v4 — Draft")).toBeDefined();
+    expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-version"))).toEqual(["4", "1"]);
+    fireEvent.click(screen.getByRole("tab", { name: "v1 — Draft" }));
+    expect(screen.getByLabelText("BigQuery v4 — Draft")).toBeDefined();
+  });
+
+  it("defaults to the latest published artifact when there is no draft", async () => {
+    const version = { output: "schema", generatedAt: "2026-04-07T10:00:00.000Z", entityVersion: 1 };
+    (getSchemaVersionsActionMock as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      schemaVersions: {
+        bigquery: [
+          { ...version, version: 1, status: "deployed" },
+          { ...version, version: 3, status: "published" },
+          { ...version, version: 2, status: "published" },
+        ],
+      },
+    });
+    render(<SchemasTab {...baseProps} />);
+
+    const latest = await screen.findByRole("tab", { name: "v3 — Published" });
+    expect(latest.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-version"))).toEqual(["3", "2", "1"]);
+    expect(screen.queryByTestId("schema-publish")).toBeNull();
+    expect(screen.getByLabelText("BigQuery v3 — Published")).toBeDefined();
+  });
+  it("opens deployment for the selected published version without publishing or generating", async () => {
+    const value = { output: "schema", generatedAt: "2026-04-07T10:00:00.000Z", entityVersion: 1 };
+    vi.mocked(getSchemaVersionsActionMock).mockResolvedValue({ success: true, schemaVersions: { bigquery: [
+      { ...value, version: 4, status: "draft" }, { ...value, version: 3, status: "published" }, { ...value, version: 1, status: "published" },
+    ] } });
+    const onDeploy = vi.fn();
+    render(<SchemasTab {...baseProps} onDeploy={onDeploy} />);
+    await screen.findByRole("tab", { name: "v4 — Draft" });
+    expect((screen.getByTestId("schema-deploy") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("tab", { name: "v1 — Published" }));
+    fireEvent.click(screen.getByTestId("schema-deploy"));
+    expect(onDeploy).toHaveBeenCalledWith("bigquery", 1);
+    expect(generateSchemaActionMock).not.toHaveBeenCalled();
   });
 
   it("offers Manual Override only for a target whose generation applies overrides", async () => {
@@ -277,7 +370,7 @@ describe("SchemasTab: Stage Emit shows one toast for the whole run", () => {
     asMock(getSchemaVersionsActionMock).mockResolvedValue({ success: true, schemaVersions: {} });
     asMock(generateSchemaActionMock).mockImplementation(async (_entityId: string, target: string) => answers[target]);
     render(<SchemasTab {...baseProps} />);
-    (await screen.findByText("Stage Emit")).click();
+    (await screen.findByText("Generate selected formats")).click();
     (await screen.findByText("Emit all three")).click();
     await waitFor(() => expect(generateSchemaActionMock).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(toastsShown()).toBeGreaterThan(0));

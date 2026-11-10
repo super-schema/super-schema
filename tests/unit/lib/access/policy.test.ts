@@ -126,6 +126,7 @@ const EXPECTED_ACTIONS: ReadonlyArray<readonly [string, Role | null, Level]> = [
   ["entity.lifecycle", "STEWARD", "resource"],
   ["event.publish", "STEWARD", "resource"],
   ["deploy.run", "STEWARD", "resource"],
+  ["deploy.configure", "ADMIN", "tenant"],
   ["governance.decide", "STEWARD", "resource"],
   ["retention.write", "STEWARD", "resource"],
   ["product.create", "STEWARD", "resource"],

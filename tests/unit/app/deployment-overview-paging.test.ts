@@ -12,7 +12,7 @@ const h = vi.hoisted(() => ({
   getEntities: vi.fn(),
   deploymentFindMany: vi.fn(),
   domainFindMany: vi.fn(),
-  productFindMany: vi.fn(),
+  productFindMany: vi.fn(), runFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn().mockResolvedValue({ user: { id: "user-1" } }) }));
@@ -21,6 +21,7 @@ vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.activeTenant }));
 vi.mock("@/lib/db", () => ({
   prisma: {
     deploymentRecord: { findMany: h.deploymentFindMany },
+    deploymentRun: { findMany: h.runFindMany },
     domain: { findMany: h.domainFindMany },
     product: { findMany: h.productFindMany },
   },
@@ -68,6 +69,7 @@ const record = (target: string, isDrifted: boolean) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.runFindMany.mockResolvedValue([]);
   h.activeTenant.mockResolvedValue("tenant-1");
   h.getEntities.mockResolvedValue({ success: true, data: entities() });
   h.domainFindMany.mockResolvedValue([

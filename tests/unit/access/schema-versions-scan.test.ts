@@ -28,6 +28,8 @@ const REDACTED = new Set<string>([`${A}#getSchemaVersionsAction`]);
 
 /** Places that may see the stored value whole, and why. */
 const STORED = new Map<string, string>([
+  ["src/services/deployment-workflow.service.ts#getDeploymentWorkspace", "Returns only published version numbers and legacy markers, never artifact content; authorizes deploy.read on the entity"],
+  ["src/services/deployment-workflow.service.ts#previewDeployment", "Pins a published artifact after deploy.run and verifies entity.read access to every reference through readableBundle before returning any full content; processing rechecks current permissions"],
   [`${A}#METADATA_KEY_ACTIONS`, "names the key to ask `entity.publish` + `deploy.run` for when a client writes it through updateEntityMetadataAction (a guard table, no data)"],
   [`${A}#generateSchema`, "WRITER: adds a version to the stored list and writes the whole list back; the caller's own generation is what it returns (KD-045 closed it). The exported generateSchemaAction is its wrapper and names no key"],
   [`${A}#publishSchemaAction`, "WRITER: flips a version's status in the stored list; returns a status and a message, never a file or an output"],

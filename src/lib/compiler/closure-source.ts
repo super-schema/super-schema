@@ -1,3 +1,4 @@
+import { evolutionVersions } from "@/lib/field-attributes";
 /**
  * Combined multi-entity TypeSpec source for a reference closure (multi-entity emission, Task 4).
  *
@@ -338,6 +339,21 @@ export function generateClosureTypeSpec(
     (p) => p.modelName === ENTERPRISE_NAMESPACE || p.namespace.split(".").includes(ENTERPRISE_NAMESPACE)
   );
 
+  const namespaceEvolution = new Map<string, { versions: string[]; enumName: string }>();
+  const namespaceMembers = new Map<string, Placed[]>();
+  for (const p of placed) {
+    const members = namespaceMembers.get(p.namespace) ?? [];
+    members.push(p);
+    namespaceMembers.set(p.namespace, members);
+  }
+  for (const [namespace, members] of namespaceMembers) {
+    const versions = evolutionVersions(members.flatMap((member) => compiled.get(member)?.fields ?? []));
+    let enumName = "SuperSchemaVersions";
+    const names = new Set(members.flatMap((member) => [member.modelName, ...sharedTypeNames(compiled.get(member) as SuperSchemaModel)]));
+    while (names.has(enumName)) enumName = `_${enumName}`;
+    namespaceEvolution.set(namespace, { versions, enumName });
+  }
+  const declaredVersionNamespaces = new Set<string>();
   const imports: string[] = [];
   const blocks: string[] = [];
   const diagnostics: GeneratorDiagnostic[] = [];
@@ -374,8 +390,11 @@ export function generateClosureTypeSpec(
       const other = byQualified.get(wanted) ?? resolveLegacy(wanted);
       return other ? qualifiedModel(other) : null;
     };
+    const evolution = namespaceEvolution.get(p.namespace)!;
+    const declaresEvolution = evolution.versions.length > 0 && !declaredVersionNamespaces.has(p.namespace);
     const generated = generateTypeSpecWithDiagnostics(model, {
       governance,
+      evolution: { ...evolution, declare: declaresEvolution },
       httpOperations: opts.httpOperations === true,
       closureMember: {
         modelName: p.modelName,
@@ -402,7 +421,8 @@ export function generateClosureTypeSpec(
         return declared ? [declared[1]] : [];
       })
     );
-    blocks.push([`namespace ${p.namespace} {`, ...body.map((l) => (l === "" ? "" : `  ${l}`)), "}"].join("\n"));
+    if (declaresEvolution) declaredVersionNamespaces.add(p.namespace);
+    blocks.push([...(declaresEvolution ? [`@TypeSpec.Versioning.versioned(${p.namespace}.${evolution.enumName})`] : []), `namespace ${p.namespace} {`, ...body.map((l) => (l === "" ? "" : `  ${l}`)), "}"].join("\n"));
   }
 
   if (opts.target === "json-schema" && !imports.includes(JSON_SCHEMA_LIBRARY_IMPORT)) imports.push(JSON_SCHEMA_LIBRARY_IMPORT);

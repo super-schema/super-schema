@@ -757,18 +757,6 @@ const adminCtx: ServiceContext = {
   prisma: prisma as unknown as ServiceContext["prisma"],
 };
 
-const entityRow = (over: Record<string, unknown>) => ({
-  id: "e1",
-  name: "Order",
-  description: "",
-  status: "ACTIVE",
-  domain: { name: "Payments" },
-  product: { name: "Checkout" },
-  fields: [],
-  metadata: {},
-  ...over,
-});
-
 describe("entry points export file sets", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -782,74 +770,12 @@ describe("entry points export file sets", () => {
     vi.mocked(prisma.gitConfig.update).mockResolvedValue({} as never);
   });
 
-  const orderMetadata = { schemaVersions: closureVersions() };
-
-  it("exportAll gives every entity its own full folder, same-named ones of different products side by side", async () => {
-    vi.mocked(prisma.entity.findMany).mockResolvedValue([
-      entityRow({
-        id: "e-order",
-        product: { name: "Checkout" },
-        metadata: { schemaVersions: { avro: [published("avro", 1, [file("avro", "Order.avsc.json", "O1", "e-order"), file("avro", "Address.avsc.json", "A1", "e-address")])] } },
-      }),
-      entityRow({
-        id: "e-address",
-        name: "Address",
-        product: { name: "Checkout" },
-        metadata: { schemaVersions: { avro: [published("avro", 1, [file("avro", "Address.avsc.json", "A1", "e-address")])] } },
-      }),
-      entityRow({
-        id: "e-order-2",
-        product: { name: "Billing" },
-        metadata: { schemaVersions: { avro: [published("avro", 1, [file("avro", "Order.avsc.json", "O2", "e-order-2")])] } },
-      }),
-    ] as never);
-
-    const result = await exportAll(adminCtx);
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.success).toBe(true);
-      // Order (Checkout): JSON + Order.avsc + Address.avsc; Address: JSON + Address.avsc; Order (Billing): JSON + Order.avsc.
-      expect(result.data.filesExported).toBe(3 + 2 + 2);
-      expect(result.data.warnings).toBeUndefined();
-    }
-    const query = vi.mocked(prisma.entity.findMany).mock.calls[0][0];
-    expect(query).toMatchObject({ include: { domain: true, product: true } });
-    // A fixed order, so two runs write the same files.
-    expect(query).toMatchObject({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  it("requires a pinned deployment workflow for bulk export", async () => {
+    expect(await exportAll(adminCtx)).toMatchObject({ success: false, error: { code: "WORKFLOW_REQUIRED" } });
+    expect(prisma.gitConfig.update).not.toHaveBeenCalled();
   });
-
-  it("exportWithReview (direct push) exports the file set too", async () => {
-    vi.mocked(prisma.entity.findUnique).mockResolvedValue(entityRow({ id: "e-order", metadata: orderMetadata }) as never);
-    const result = await exportWithReview("e-order", "v-1", { isBreaking: false, changeType: "non-breaking", summary: "x", changeRecord: null }, adminCtx);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.pr).toBeUndefined();
-      expect(result.data.filesExported).toBe(1 + 10);
-    }
-  });
-
-  it("exportWithReview (PR) exports the file set too, and the PR body lists the targets it adds", async () => {
-    vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue({
-      id: "gc-1",
-      basePath: "schemas/",
-      enabled: true,
-      prReviewMode: "ALWAYS",
-      repositoryUrl: "https://example.com/org/repo",
-    } as never);
-    vi.mocked(prisma.entity.findUnique).mockResolvedValue(entityRow({ id: "e-order", metadata: orderMetadata }) as never);
-    vi.mocked(prisma.gitPullRequest.create).mockResolvedValue({ prUrl: "https://example.com/pull/1", prNumber: 1, branchName: "schema/order/v1" } as never);
-    const result = await exportWithReview("e-order", "v-1", { isBreaking: true, changeType: "breaking", summary: "x", changeRecord: null }, adminCtx);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.pr).toBeDefined();
-      expect(result.data.filesExported).toBe(1 + 10);
-      const body = (result.data as { prBody?: string }).prBody ?? "";
-      expect(body).toContain("| Target | Version | Status | Files | Details |");
-      expect(body).toContain("| Avro Schema | v1 | published | 2 | - |");
-      expect(body).toContain("| Protobuf (TypeSpec) | v1 | published | 2 | - |");
-      expect(body).not.toContain("No emission targets configured.");
-      expect(body).not.toContain("Invalid");
-    }
+  it("requires a pinned deployment workflow for reviewed export", async () => {
+    expect(await exportWithReview("e-order", "v-1", { isBreaking: false, changeType: "non-breaking", summary: "x", changeRecord: null }, adminCtx)).toMatchObject({ success: false, error: { code: "WORKFLOW_REQUIRED" } });
+    expect(prisma.gitPullRequest.create).not.toHaveBeenCalled();
   });
 });

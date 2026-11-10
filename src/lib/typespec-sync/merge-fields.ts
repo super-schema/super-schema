@@ -1,3 +1,4 @@
+import { normalizeFieldDocumentation } from "@/lib/field-attributes";
 /**
  * TypeSpec source -> field rows: the pure part of the sync (Task 16).
  *
@@ -174,15 +175,17 @@ const VALIDATION_KEYS = ["minLength", "maxLength", "minValue", "maxValue", "minV
 
 /** Owned subkeys of each `typespec.*` bucket; `visibility` and `extensions.openapi` are owned whole. */
 const OWNED: Record<string, readonly string[]> = {
-  identity: ["secret", "format"],
+  identity: ["secret", "format", "discriminator"],
   validation: VALIDATION_KEYS,
-  wireFormat: ["encode", "encodeSubType"],
-  documentation: ["summary", "deprecated"],
+  wireFormat: ["encode", "encodeSubType", "encodedNames"],
+  documentation: ["summary", "deprecated", "externalDocsUrl", "externalDocsDescription"],
+  versioning: ["added", "removed", "madeOptional", "madeRequired", "renamedFrom", "typeChangedFrom"],
 };
 
 function derivedBuckets(d: Rec): Record<string, Rec> {
   const identity: Rec = {};
   if (d.secret) identity.secret = true;
+  if (typeof d.entityDiscriminator === "boolean") identity.discriminator = d.entityDiscriminator;
   if (d.format) identity.format = d.format;
   const validation: Rec = {};
   for (const key of VALIDATION_KEYS) {
@@ -191,11 +194,14 @@ function derivedBuckets(d: Rec): Record<string, Rec> {
   const wireFormat: Rec = {};
   if (d.encode) wireFormat.encode = d.encode;
   if (d.encodeSubType) wireFormat.encodeSubType = d.encodeSubType;
+  if (d.encodedNames) wireFormat.encodedNames = d.encodedNames;
   const documentation: Rec = {};
   if (d.summary) documentation.summary = d.summary;
   if (d.deprecated) documentation.deprecated = d.deprecated;
-  const out: Record<string, Rec> = { identity, validation, wireFormat, documentation };
-  if (d.visibility && Array.isArray(d.visibility)) out.visibility = { phases: d.visibility };
+  if (d.externalDocsUrl) documentation.externalDocsUrl = d.externalDocsUrl;
+  if (d.externalDocsDescription) documentation.externalDocsDescription = d.externalDocsDescription;
+  const out: Record<string, Rec> = { identity, validation, wireFormat, documentation, versioning: isRec(d.versioning) ? d.versioning : {} };
+  if (d.visibility && Array.isArray(d.visibility)) out.visibility = { phases: d.visibility, ...(d.invisible ? { invisible: true } : {}), ...(d.removeVisibility ? { removeVisibility: true } : {}) };
   return out;
 }
 
@@ -391,7 +397,7 @@ export function mergeSyncedField(existing: SyncExistingField | null, textSource:
   // --- typespec.* buckets: overwrite the owned keys, keep the rest ---
   const typespec: Rec = isRec(out.typespec) ? out.typespec : {};
   const derived = derivedBuckets(source.decorators);
-  for (const bucket of ["identity", "validation", "wireFormat", "documentation"]) {
+  for (const bucket of ["identity", "validation", "wireFormat", "documentation", "versioning"]) {
     const next: Rec = isRec(typespec[bucket]) ? (typespec[bucket] as Rec) : {};
     for (const key of OWNED[bucket]) {
       // An enum keeps its symbols in `validation.pattern` (the generator does not emit @pattern for it): the stored value is the truth.
@@ -402,6 +408,7 @@ export function mergeSyncedField(existing: SyncExistingField | null, textSource:
       delete next[key];
     }
     Object.assign(next, derived[bucket]);
+    if (bucket === "documentation" && !has(derived.documentation, "deprecated") && isRec(out.evolution) && out.evolution.deprecated === true) next.deprecated = null;
     // `identity.key` mirrors Field.isKey: keep it only while the field is a key.
     if (bucket === "identity" && !source.isKey) delete next.key;
     if (Object.keys(next).length > 0) typespec[bucket] = next;
@@ -520,14 +527,15 @@ export function mergeSyncedField(existing: SyncExistingField | null, textSource:
     decorators = writeFieldReference(out, { ...opts.reference.ref, ...(pin ? { pinnedVersion: pin } : {}) });
   }
 
+  const normalized = normalizeFieldDocumentation({ decorators }, typeof doc === "string" ? doc : existing?.description?.trim() ? existing.description : (typeof source.decorators.summary === "string" ? source.decorators.summary : ""));
   return {
     type: mapped.type,
     // The column may be NULL when the property may be absent (`?`) or its value may be null (`| null`).
     nullable: source.isOptional || nullableType,
     isKey: source.isKey,
-    description: (doc as string | undefined) ?? existing?.description ?? "",
+    description: normalized.description,
     classification,
-    decorators,
+    decorators: normalized.decorators,
   };
 }
 

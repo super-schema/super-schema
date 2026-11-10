@@ -79,6 +79,7 @@
 
 /* ---------- Light theme (default) ---------- */
 :root {
+  --classification-sensitive-foreground: #865a0a;
   /* Primary Palette */
   --background: #f8f8fa;
   --foreground: #1a1a2e;
@@ -152,6 +153,7 @@
 
 /* ---------- Dark theme ---------- */
 .dark {
+  --classification-sensitive-foreground: #e5a93b;
   --background: #14141C;
   --foreground: #e3e1e4;
   --card: #1c1c26;
@@ -250,7 +252,7 @@
 
 .badge-sensitive {
   background: rgba(229, 169, 59, 0.15);
-  color: #e5a93b;
+  color: var(--classification-sensitive-foreground);
 }
 
 .badge-internal {

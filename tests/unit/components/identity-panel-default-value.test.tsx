@@ -87,7 +87,7 @@ describe("IdentityPanel default value", () => {
     fireEvent.change(input, { target: { value: "abc" } });
     expect(screen.getByText('Default value "abc" is not a number.')).toBeTruthy();
     fireEvent.change(input, { target: { value: "" } });
-    expect(screen.queryByText(/Default value/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("stores text as text, and an emptied input as null", () => {
@@ -110,6 +110,6 @@ describe("IdentityPanel default value", () => {
     expect(screen.getByText(/Default value "2024-05-06T12:20:00Z" is not a utcDateTime value/)).toBeTruthy();
     fireEvent.change(input, { target: { value: "utcDateTime.now()" } });
     expect(onIdentityChange).toHaveBeenLastCalledWith(expect.objectContaining({ defaultValue: "utcDateTime.now()" }));
-    expect(screen.queryByText(/Default value/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

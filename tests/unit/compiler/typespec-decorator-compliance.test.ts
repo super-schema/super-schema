@@ -782,7 +782,7 @@ describe("TypeSpec Decorator Compliance — Generator Emission", () => {
       ],
     });
     const source = generateTypeSpec(model);
-    expect(source).toContain('@encode("unixTimestamp", "int32")');
+    expect(source).toContain('@encode("unixTimestamp", int32)');
   });
 
   it("emits @example on field", () => {

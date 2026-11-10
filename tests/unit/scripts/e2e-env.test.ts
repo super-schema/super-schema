@@ -62,6 +62,7 @@ describe("the groups", () => {
         "AUTH_REDIRECT_PROXY_URL", "AUTH_SECRET_1", "AUTH_SECRET_2", "AUTH_SECRET_3",
         "BOOTSTRAP_ADMIN_EMAIL", "BOOTSTRAP_ADMIN_PASSWORD",
         "DIRECT_URL",
+        "DEPLOYMENT_GIT_HOSTS", "DEPLOYMENT_EVENT_REPOSITORIES", "DEPLOYMENT_EVENT_TOOLKIT", "DEPLOYMENT_WORKER_TOKEN", "DEPLOYMENT_WORKER_URL",
         "OLLAMA_HOST", "OPENAI_BASE_URL",
         "AUTH_PROVIDERS", ...providerEnvNames(),
         "HEALTH_DB_DEGRADED_MS", "HEALTH_DB_TIMEOUT_MS",
@@ -452,7 +453,7 @@ describe("the app does not read a name that no group accounts for", () => {
 
   it("finds the names it is meant to find (the scan itself is not empty)", () => {
     const all = new Set(files.flatMap((file) => namesRead(readFileSync(file, "utf8"))));
-    for (const name of ["DATABASE_URL", "AUTH_PROVIDERS", "AI_PROVIDER", "AI_API_KEY", "OLLAMA_HOST", "API_KEY", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_CLASSIFICATION_VALUE_MAP", "ASYNCAPI_PARSER_WORKER", "ASYNCAPI_PARSER_PARSE_TIMEOUT_MS", "NEXT_PUBLIC_APP_URL"]) {
+    for (const name of ["DATABASE_URL", "AUTH_PROVIDERS", "AI_PROVIDER", "AI_API_KEY", "OLLAMA_HOST", "API_KEY", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_CLASSIFICATION_VALUE_MAP", "ASYNCAPI_PARSER_WORKER", "ASYNCAPI_PARSER_PARSE_TIMEOUT_MS", "DEPLOYMENT_WORKER_TOKEN"]) {
       expect(all.has(name), name).toBe(true);
     }
   }, 60_000);

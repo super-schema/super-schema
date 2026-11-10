@@ -109,12 +109,12 @@ describe("FieldQuickEditPanel", () => {
     // Should have reorganized accordion section labels
     expect(screen.getByText("Properties")).toBeDefined();
     expect(screen.getByText("Validation")).toBeDefined();
-    expect(screen.getByText("Constraints")).toBeDefined();
+    expect(screen.getByText("Storage Hints")).toBeDefined();
     expect(screen.getByText("Serialization")).toBeDefined();
-    expect(screen.getByText("Access Control")).toBeDefined();
+    expect(screen.getByText("Lifecycle Visibility")).toBeDefined();
     expect(screen.getByText("Extensions")).toBeDefined();
     expect(screen.getByText("Data Governance")).toBeDefined();
-    expect(screen.getByText("Version History")).toBeDefined();
+    expect(screen.getByText("Schema Evolution")).toBeDefined();
   });
 
   it("has the data-testid for quick edit panel", () => {

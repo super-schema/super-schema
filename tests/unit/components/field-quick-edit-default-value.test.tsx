@@ -68,8 +68,7 @@ describe("FieldQuickEditPanel default value", () => {
 
   it("keeps a stored number a number when an unrelated edit is saved", async () => {
     const onUpdateField = renderPanel(fieldWith("int32", 5));
-    fireEvent.click(screen.getByText("How many"));
-    fireEvent.change(screen.getByLabelText("Field description"), { target: { value: "How many orders" } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "How many orders" } });
     fireEvent.click(screen.getByTestId("field-save-btn"));
     await waitFor(() => expect(onUpdateField).toHaveBeenCalledTimes(1));
     expect(savedDefault(onUpdateField)).toBe(5);
@@ -103,7 +102,7 @@ describe("FieldQuickEditPanel default value", () => {
     const onUpdateField = renderPanel(fieldWith("int32", 5));
     fireEvent.change(screen.getByLabelText("Default value"), { target: { value: "abc" } });
     fireEvent.click(screen.getByTestId("field-save-btn"));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain('Default value "abc" is not a number.'));
+    await waitFor(() => expect(screen.getAllByRole("alert").some((node) => node.textContent?.includes('Default value "abc" is not a number.'))).toBe(true));
     expect(onUpdateField).not.toHaveBeenCalled();
   });
 
@@ -117,18 +116,16 @@ describe("FieldQuickEditPanel default value", () => {
 
   it("keeps a stored default that no longer fits its type, unchanged, when an unrelated edit is saved", async () => {
     const onUpdateField = renderPanel(fieldWith("int32", 1.5));
-    fireEvent.click(screen.getByText("How many"));
-    fireEvent.change(screen.getByLabelText("Field description"), { target: { value: "How many orders" } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "How many orders" } });
     fireEvent.click(screen.getByTestId("field-save-btn"));
     await waitFor(() => expect(onUpdateField).toHaveBeenCalledTimes(1));
     expect(savedDefault(onUpdateField)).toBe(1.5);
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByTestId("field-save-btn")).toBeNull();
   });
 
   it("keeps stored text that does not fit a numeric field, unchanged, when an unrelated edit is saved", async () => {
     const onUpdateField = renderPanel(fieldWith("int32", "abc"));
-    fireEvent.click(screen.getByText("How many"));
-    fireEvent.change(screen.getByLabelText("Field description"), { target: { value: "How many orders" } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "How many orders" } });
     fireEvent.click(screen.getByTestId("field-save-btn"));
     await waitFor(() => expect(onUpdateField).toHaveBeenCalledTimes(1));
     expect(savedDefault(onUpdateField)).toBe("abc");

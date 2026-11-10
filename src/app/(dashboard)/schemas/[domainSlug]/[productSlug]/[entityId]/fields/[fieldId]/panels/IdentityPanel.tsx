@@ -1,242 +1,210 @@
 "use client";
-
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import type { Identity } from "@/types/schemas/typespec-decorator.schema";
-import { defaultInput, storedDefaultText } from "@/lib/compiler/typed-value-literal";
+import { FieldGroup, FieldDescription } from "@/components/ui/field";
+import {
+  AttributeControl,
+  SELECT_CLASS,
+} from "@/components/custom/FieldAttributes/AttributeControl";
+import {
+  defaultInput,
+  storedDefaultText,
+} from "@/lib/compiler/typed-value-literal";
+import { valueConstraintErrors } from "@/lib/field-attributes";
+import type {
+  Identity,
+  ValidationConstraints,
+} from "@/types/schemas/typespec-decorator.schema";
 
-const STRING_FORMATS = [
-  "uuid",
-  "uri",
-  "email",
-  "password",
-  "date-time",
-  "date",
-  "time",
-  "duration",
-  "ip-address",
-  "ip-v4-address",
-  "ip-v6-address",
-  "uri-template",
-  "json-pointer",
-  "relative-json-pointer",
-  "regex",
-];
-
-const INTEGER_FORMATS = [
-  "int8",
-  "int16",
-  "int32",
-  "int64",
-  "uint8",
-  "uint16",
-  "uint32",
-  "uint64",
-  "safeint",
-];
-
-function getFormatsForType(fieldType: string): string[] {
-  const stringTypes = ["string", "url"];
-  const integerTypes = [
-    "integer",
-    "int8",
-    "int16",
-    "int32",
-    "int64",
-    "safeint",
-    "uint8",
-    "uint16",
-    "uint32",
-    "uint64",
-  ];
-
-  if (stringTypes.includes(fieldType)) return STRING_FORMATS;
-  if (integerTypes.includes(fieldType)) return INTEGER_FORMATS;
-  return [];
-}
-
-interface IdentityPanelProps {
+interface Props {
+  validation?: ValidationConstraints;
   identity: Identity;
   fieldType: string;
   isOptional: boolean;
-  onIdentityChange: (identity: Identity) => void;
-  onOptionalChange: (optional: boolean) => void;
+  allowNull?: boolean;
+  onIdentityChange: (value: Identity) => void;
+  onOptionalChange: (value: boolean) => void;
+  onAllowNullChange?: (value: boolean) => void;
 }
-
 export function IdentityPanel({
   identity,
   fieldType,
+  validation,
   isOptional,
+  allowNull = false,
   onIdentityChange,
   onOptionalChange,
-}: IdentityPanelProps) {
-  // The text the Default Value input holds, kept while the stored value is still what that text reads as: "5." and "5.0" stay as typed
-  // although the stored value is the number 5. A stored value that changed since is shown as stored.
-  const [typedDefault, setTypedDefault] = useState<{ stored: unknown; text: string } | null>(null);
-  const storedDefault = identity.defaultValue ?? null;
-  const shownDefault =
-    typedDefault && typedDefault.stored === storedDefault ? typedDefault.text : storedDefaultText(storedDefault, fieldType);
-  const defaultCheck = defaultInput(shownDefault, fieldType);
-
-  function update(partial: Partial<Identity>) {
-    onIdentityChange({ ...identity, ...partial });
+  onAllowNullChange,
+}: Props) {
+  const [typedDefault, setTypedDefault] = useState<{
+    stored: unknown;
+    text: string;
+  } | null>(null);
+  const stored = identity.defaultValue ?? null;
+  const text =
+    typedDefault?.stored === stored
+      ? typedDefault.text
+      : storedDefaultText(stored, fieldType);
+  const check = defaultInput(text, fieldType);
+  function update(value: Partial<Identity>) {
+    onIdentityChange({ ...identity, ...value });
   }
-
-  const formats = getFormatsForType(fieldType);
-  const isKey = identity.key ?? false;
-  const isDiscriminator = identity.discriminator ?? false;
-  const isSecret = identity.secret ?? false;
-
+  const isKey = identity.key === true;
+  const formats = ["string", "url"].includes(fieldType)
+    ? [
+        "uuid",
+        "uri",
+        "email",
+        "password",
+        "date-time",
+        "date",
+        "time",
+        "duration",
+        "ipv4",
+        "ipv6",
+        "uri-template",
+        "json-pointer",
+        "regex",
+      ]
+    : [];
   return (
-    <div className="space-y-space-4 pb-space-2">
-      {/* Optionality toggle */}
-      <div className="flex items-center gap-space-4">
-        <label className="flex items-center gap-2 text-body-small text-muted-foreground cursor-pointer">
+    <FieldGroup>
+      <fieldset className="flex min-w-0 flex-col gap-3">
+        <legend className="mb-2 text-sm font-medium">Presence and value</legend>
+        <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"
-            checked={isOptional}
-            onChange={(e) => onOptionalChange(e.target.checked)}
-            className="accent-primary"
+            checked={!isOptional}
             disabled={isKey}
+            onChange={(e) => onOptionalChange(!e.target.checked)}
+            className="mt-1 accent-primary"
           />
-          Optional (?)
-          {isKey && (
-            <span className="text-[10px] text-muted-foreground/50">
-              (key fields are required)
+          <span>
+            Required
+            <span className="block text-xs text-muted-foreground">
+              The property must be present.
+              {isKey ? " Key fields are required." : ""}
             </span>
-          )}
+          </span>
         </label>
-      </div>
-
-      {/* Default Value */}
-      <div>
-        <label className="text-caption text-muted-foreground mb-1 block">
-          Default Value
-        </label>
-        {fieldType === "boolean" ? (
-          <label className="flex items-center gap-2 text-body-small cursor-pointer">
+        {onAllowNullChange && (
+          <label className="flex items-start gap-2 text-sm">
             <input
               type="checkbox"
-              checked={!!identity.defaultValue}
-              onChange={(e) => update({ defaultValue: e.target.checked })}
-              className="accent-primary"
+              checked={allowNull}
+              disabled={isKey}
+              onChange={(e) => onAllowNullChange(e.target.checked)}
+              className="mt-1 accent-primary"
             />
-            {identity.defaultValue ? "true" : "false"}
+            <span>
+              Allow null
+              <span className="block text-xs text-muted-foreground">
+                The value may be null, independently of whether the property is
+                required.
+              </span>
+            </span>
           </label>
+        )}
+      </fieldset>
+      <AttributeControl
+        label="Default value"
+        help="A schema default is a contract annotation; runtime use depends on the consumer."
+        error={
+          check.status === "rejected"
+            ? `Default value ${check.reason}.`
+            : valueConstraintErrors(
+                identity.defaultValue,
+                fieldType,
+                validation,
+              ).join(" ") || undefined
+        }
+      >
+        {fieldType === "boolean" ? (
+          <select
+            data-testid="field-default-value"
+            className={SELECT_CLASS}
+            value={
+              identity.defaultValue == null ? "" : String(identity.defaultValue)
+            }
+            onChange={(e) =>
+              update({
+                defaultValue:
+                  e.target.value === "" ? null : e.target.value === "true",
+              })
+            }
+          >
+            <option value="">No default</option>
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
         ) : (
-          <>
-            <Input
-              value={shownDefault}
-              onChange={(e) => {
-                const text = e.target.value;
-                const input = defaultInput(text, fieldType);
-                // Stored as the quick editor stores the same text: the value the field's type takes, nothing when cleared, and the text itself
-                // when it does not fit (the generator withholds it, and the reason is shown below the input).
-                const stored = input.status === "cleared" ? null : input.status === "value" ? input.value : text;
-                setTypedDefault({ stored, text });
-                update({ defaultValue: stored });
-              }}
-              data-testid="field-default-value"
-              placeholder="No default"
-              className="h-7 text-body-small font-mono w-48"
-            />
-            {defaultCheck.status === "rejected" && (
-              <p className="mt-1 text-[11px] text-destructive">Default value {defaultCheck.reason}.</p>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* @key and @discriminator — mutually exclusive */}
-      <div className="flex items-center gap-space-6">
-        <label className="flex items-center gap-2 text-body-small text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={isKey}
+          <Input
+            data-testid="field-default-value"
+            value={text}
+            spellCheck={false}
+            placeholder="No default"
             onChange={(e) => {
-              const checked = e.target.checked;
-              const updates: Partial<Identity> = { key: checked };
-              if (checked) {
-                updates.discriminator = false;
-                onOptionalChange(false);
-              }
-              update(updates);
+              const input = defaultInput(e.target.value, fieldType);
+              const value =
+                input.status === "cleared"
+                  ? null
+                  : input.status === "value"
+                    ? input.value
+                    : e.target.value;
+              setTypedDefault({ stored: value, text: e.target.value });
+              update({ defaultValue: value });
             }}
-            className="accent-primary"
-            disabled={isDiscriminator}
           />
-          @key
-          {isDiscriminator && (
-            <span className="text-[10px] text-muted-foreground/50">
-              Cannot be both key and discriminator
-            </span>
-          )}
-        </label>
-
-        <label className="flex items-center gap-2 text-body-small text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={isDiscriminator}
-            onChange={(e) => {
-              const checked = e.target.checked;
-              const updates: Partial<Identity> = { discriminator: checked };
-              if (checked) {
-                updates.key = false;
-              }
-              update(updates);
-            }}
-            className="accent-primary"
-            disabled={isKey}
-          />
-          @discriminator
-          {isKey && (
-            <span className="text-[10px] text-muted-foreground/50">
-              Cannot be both key and discriminator
-            </span>
-          )}
-        </label>
-
-        {(isKey || isDiscriminator) && (
-          <Badge variant="outline" className="text-[10px]">
-            mutex
-          </Badge>
         )}
-      </div>
-
-      {/* @secret */}
-      <label className="flex items-center gap-2 text-body-small text-muted-foreground cursor-pointer">
+      </AttributeControl>
+      <label className="flex items-start gap-2 text-sm">
         <input
           type="checkbox"
-          checked={isSecret}
-          onChange={(e) => update({ secret: e.target.checked })}
-          className="accent-primary"
-        />
-        @secret — marks field value as sensitive
-      </label>
-
-      {/* @format dropdown */}
-      {formats.length > 0 && (
-        <div>
-          <label className="text-caption text-muted-foreground mb-1 block">
-            @format
-          </label>
-          <select
-            value={identity.format ?? ""}
-            onChange={(e) =>
-              update({ format: e.target.value || null })
+          checked={isKey}
+          onChange={(e) => {
+            if (e.target.checked) {
+              onOptionalChange(false);
+              onAllowNullChange?.(false);
             }
-            className="h-7 rounded border border-border bg-background px-2 text-body-small text-foreground w-48"
-          >
-            <option value="">None</option>
-            {formats.map((f) => (
-              <option key={f} value={f}>
-                {f}
-              </option>
-            ))}
-          </select>
-        </div>
+            update({ key: e.target.checked });
+          }}
+          className="mt-1 accent-primary"
+        />
+        <span>
+          Key
+          <span className="block text-xs text-muted-foreground">
+            Identifies an entity instance. Composite keys are configured at
+            entity level.
+          </span>
+        </span>
+      </label>
+      {formats.length > 0 && (
+        <AttributeControl
+          label="Format"
+          help="A semantic format annotation. Validation support varies by target and consumer."
+        >
+          <Input
+            list="field-string-formats"
+            value={identity.format ?? ""}
+            onChange={(e) => update({ format: e.target.value || null })}
+            placeholder="No format"
+            spellCheck={false}
+          />
+        </AttributeControl>
       )}
-    </div>
+      {formats.length > 0 && (
+        <datalist id="field-string-formats">
+          {formats.map((format) => (
+            <option key={format} value={format} />
+          ))}
+        </datalist>
+      )}
+      {identity.discriminator && (
+        <FieldDescription>
+          This field is selected as the entity discriminator. Manage the
+          selection under Schema Evolution.
+        </FieldDescription>
+      )}
+    </FieldGroup>
   );
 }

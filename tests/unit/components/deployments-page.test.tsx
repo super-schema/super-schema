@@ -53,6 +53,13 @@ afterEach(() => {
 });
 
 describe("DeploymentsPage loading", () => {
+  it("shows delivery receipts separately from recorded environments", async () => {
+    h.getDeploymentOverviewAction.mockResolvedValue({ ...page(1, 1), data: { ...page(1, 1).data, deliveries: [{ id: "run-1", entityName: "Order", href: "/schemas/payments/checkout/order?tab=deployments", method: "git", format: "avro", artifactVersion: 2, environment: "staging", status: "SUCCEEDED", createdAt: "2026-11-07", outcome: "pr-opened", url: "https://github.com/acme/contracts/pull/1" }] } });
+    render(<DeploymentsPage />);
+    expect((await screen.findByRole("link", { name: "pr-opened" })).getAttribute("href")).toBe("https://github.com/acme/contracts/pull/1");
+    expect(screen.getByRole("heading", { name: "Recent deliveries" })).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Recorded environments" })).toBeDefined();
+  });
   it("a rejected overview call leaves the loading state, enables refresh and shows the error", async () => {
     h.getDeploymentOverviewAction.mockRejectedValueOnce(new Error("Failed to fetch"));
     render(<DeploymentsPage />);

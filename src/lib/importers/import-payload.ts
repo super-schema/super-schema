@@ -10,6 +10,7 @@ import type {
   BulkImportPayload,
   CreateFieldInput,
 } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
+import { normalizeFieldDocumentation } from "@/lib/field-attributes";
 import { buildDecoratorsFromParsedField } from "./decorator-builder";
 import { sanitizeImportedText } from "./text-safety";
 import { scalarRowFromParsed } from "./scalar-asset";
@@ -38,15 +39,16 @@ export function decimalFacts(parsed: ParsedField | undefined, currentType: strin
 }
 
 export function parsedFieldToCreateFieldInput(field: ParsedField): CreateFieldInput {
+  const documentation = normalizeFieldDocumentation({ description: sanitizeImportedText(field.description ?? ""), decorators: buildDecoratorsFromParsedField(field) });
   return {
     name: field.name,
     type: field.type,
     nullable: field.nullable,
     isKey: field.isKey ?? false,
-    description: sanitizeImportedText(field.description ?? ""),
+    description: documentation.description,
     classification: field.classification ?? null,
     ...decimalFacts(field, field.type),
-    decorators: buildDecoratorsFromParsedField(field),
+    decorators: documentation.decorators,
     // An enum field's symbols travel verbatim as its aliases, which the generator prefers; the `A|B` copy in the pattern slot (kept for
     // rows written before) cannot carry an empty symbol or one that contains `|`.
     ...(field.type === "enum" && field.enumValues?.length ? { aliases: [...field.enumValues] } : {}),

@@ -13,6 +13,7 @@ import type { FieldCompletenessPolicy } from "@/types/schemas/field-completeness
 import { TypePicker } from "@/components/custom/TypePicker";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo, isComplexType, formatComplexTypeDisplay } from "@/lib/data-types";
+import { fieldDescription, fieldDeprecation } from "@/lib/field-attributes";
 import { fieldProtection } from "@/lib/compliance/field-protection";
 import { getFieldCompleteness } from "@/lib/validation/field-completeness";
 import { applyReferencePick, holdsEntityReference, readFieldReference, type PickableEntity } from "@/lib/references/entity-reference";
@@ -47,8 +48,7 @@ function getDecoratorSummary(decorators: Record<string, unknown>): string[] {
   if (protection.retention) tags.push(`retention: ${protection.retention}`);
   if (protection.anonymization) tags.push(`anon: ${protection.anonymization}`);
   if (protection.encryption) tags.push(`encrypt: ${protection.encryption}`);
-  const evolution = (decorators.evolution || {}) as Record<string, unknown>;
-  if (evolution.deprecated) tags.push("deprecated");
+  if (fieldDeprecation(decorators) !== null) tags.push("deprecated");
   const ts = (decorators.typespec || {}) as Record<string, Record<string, unknown>>;
   if (ts.identity?.key) tags.push("@key");
   if (ts.identity?.secret) tags.push("@secret");
@@ -150,12 +150,13 @@ export const FieldCard = memo(function FieldCard({
   referenceControls,
   completenessPolicy,
 }: FieldCardProps) {
+  const description = fieldDescription(field);
   const [editingField, setEditingField] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [descriptionOverflows, setDescriptionOverflows] = useState(false);
   const descriptionId = useId();
   const measureDescription = useCallback((node: HTMLParagraphElement | null) => {
-    if (!node || !field.description) return;
+    if (!node || !description) return;
     const measure = () => {
       const style = window.getComputedStyle(node);
       const lineHeight = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.5;
@@ -166,7 +167,7 @@ export const FieldCard = memo(function FieldCard({
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [field.description]);
+  }, [description]);
 
   const {
     attributes,
@@ -362,7 +363,7 @@ export const FieldCard = memo(function FieldCard({
           >
             <Settings2 className="w-3.5 h-3.5" />
           </button>
-          {!isReadOnly && !field.description && (
+          {!isReadOnly && !description && (
             <button
               onClick={() => onDeleteField(field.id)}
               className="p-1 text-muted-foreground/50 hover:text-destructive transition-colors rounded"
@@ -372,11 +373,11 @@ export const FieldCard = memo(function FieldCard({
             </button>
           )}
         </div>
-        {field.description && (
+        {description && (
           <div className="col-span-full flex min-w-0 items-start gap-space-2" onDoubleClick={(event) => event.stopPropagation()}>
             <div className="min-w-0 flex-1">
-              <p ref={measureDescription} id={descriptionId} className={`text-caption text-muted-foreground/60 [overflow-wrap:anywhere] ${descriptionExpanded ? "" : "line-clamp-2"}`} title={field.description}>
-                {field.description}
+              <p ref={measureDescription} id={descriptionId} className={`text-caption text-muted-foreground/60 [overflow-wrap:anywhere] ${descriptionExpanded ? "" : "line-clamp-2"}`} title={description}>
+                {description}
               </p>
               {descriptionOverflows && (
                 <Button

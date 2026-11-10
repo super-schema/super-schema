@@ -1,3 +1,4 @@
+import { fieldDescription } from "@/lib/field-attributes";
 import { getTypeInfo } from "@/lib/data-types";
 import type { FieldCompletenessPolicy, FieldRuleId, FieldRuleLevel } from "@/types/schemas/field-completeness-policy";
 
@@ -33,10 +34,7 @@ function validation(field: FieldInput): Record<string, unknown> {
 }
 
 function hasDescription(field: FieldInput): boolean {
-  if (field.description?.trim()) return true;
-  const typespec = field.decorators?.typespec as { documentation?: { summary?: unknown } } | undefined;
-  const summary = typespec?.documentation?.summary;
-  return typeof summary === "string" && Boolean(summary.trim());
+  return Boolean(fieldDescription(field).trim());
 }
 
 const nonnegativeInteger = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0;

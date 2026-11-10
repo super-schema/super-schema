@@ -1,3 +1,5 @@
+import type { Versioning } from "@/types/schemas/typespec-decorator.schema";
+import { LIFECYCLE_PHASES } from "@/lib/field-attributes";
 /**
  * TypeSpec source code parser.
  *
@@ -53,7 +55,14 @@ export interface ParsedTypeSpecDecorators {
   minItems?: number;
   maxItems?: number;
   visibility?: string[];
+  invisible?: boolean;
+  removeVisibility?: boolean;
+  versioning?: Versioning;
+  externalDocsUrl?: string;
+  externalDocsDescription?: string;
+  encodedNames?: Record<string, string>;
   discriminator?: string;
+  entityDiscriminator?: boolean;
   extensions?: Record<string, unknown>;
   error?: boolean;
   example?: string;
@@ -466,6 +475,7 @@ export function parseTypeSpecDocument(source: string): ParsedTypeSpecDocument {
       const extensions = collectModelExtensions(lines, i);
       const { body, endIdx } = extractBlock(lines, i);
       const { fields, spreadFrom } = parseModelBody(body);
+      for (const field of fields) if (discriminator && field.name === discriminator) field.decorators.entityDiscriminator = true;
 
       result.models.push({
         name: modelMatch[1],
@@ -745,6 +755,9 @@ function parseModelBody(bodyLines: string[]): { fields: ParsedTypeSpecField[]; s
           if (parsed.decorators?.extensions && pendingDecorators.extensions) {
             parsed.decorators.extensions = { ...pendingDecorators.extensions, ...parsed.decorators.extensions };
           }
+          for (const key of ["versioning", "encodedNames"] as const) {
+            if (parsed.decorators?.[key] && pendingDecorators[key]) Object.assign(parsed.decorators, { [key]: { ...pendingDecorators[key], ...parsed.decorators[key] } });
+          }
           Object.assign(pendingDecorators, parsed.decorators);
         }
       }
@@ -986,6 +999,29 @@ interface DecoratorParseResult {
 }
 
 function parseDecoratorLine(line: string): DecoratorParseResult | null {
+  // Canonical scalar encodings and lifecycle/evolution annotations.
+  if (line === "@encode(string)") return { decorators: { encode: "string" } };
+  if (/^@invisible\(Lifecycle\)$/.test(line)) return { decorators: { visibility: [], invisible: true } };
+  const remove = line.match(/^@removeVisibility\((.*)\)$/);
+  if (remove) {
+    const omitted = remove[1].split(",").map((v) => v.trim().replace(/^Lifecycle\./, ""));
+    return { decorators: { visibility: LIFECYCLE_PHASES.filter((v) => !omitted.includes(v)), removeVisibility: true } };
+  }
+  const evolution = line.match(/^@(?:TypeSpec\.Versioning\.)?(added|removed|madeOptional|madeRequired|renamedFrom|typeChangedFrom)\((.*)\)$/);
+  if (evolution) {
+    const args = evolution[2].match(/^(.*?\.(?:`(?:[^`\\]|\\.)*`|[\w]+))(?:\s*,\s*(.*))?$/);
+    const member = args?.[1].match(/\.(`(?:[^`\\]|\\.)*`|[^.]+)$/)?.[1];
+    if (member) {
+      const version = member.startsWith("`") ? leadingMemberName(member) : member;
+      const key = evolution[1];
+      if (key === "renamedFrom") return { decorators: { versioning: { renamedFrom: { version, oldName: unescapeString((args?.[2] ?? "").replace(/^"|"$/g, "")) } } } };
+      if (key === "typeChangedFrom") return { decorators: { versioning: { typeChangedFrom: { version, oldType: args?.[2] ?? "string" } } } };
+      return { decorators: { versioning: { [key]: version } } };
+    }
+  }
+  const externalDocs = line.match(/^@TypeSpec\.OpenAPI\.externalDocs\("((?:\\.|[^"])*)"(?:\s*,\s*"((?:\\.|[^"])*)")?\)$/);
+  if (externalDocs) return { decorators: { externalDocsUrl: unescapeString(externalDocs[1]), ...(externalDocs[2] ? { externalDocsDescription: unescapeString(externalDocs[2]) } : {}) } };
+
   // @key
   if (line === "@key") {
     return { isKey: true };
@@ -1155,7 +1191,7 @@ function parseDecoratorLine(line: string): DecoratorParseResult | null {
   // @encodedName("mimeType", "name")
   const encodedNameMatch = line.match(/^@encodedName\("([^"]+)"\s*,\s*"([^"]+)"\)$/);
   if (encodedNameMatch) {
-    return { decorators: { encodedName: { mimeType: encodedNameMatch[1], name: encodedNameMatch[2] } } };
+    return { decorators: { encodedName: { mimeType: encodedNameMatch[1], name: encodedNameMatch[2] }, encodedNames: { [encodedNameMatch[1]]: encodedNameMatch[2] } } };
   }
 
   // @friendlyName("...")

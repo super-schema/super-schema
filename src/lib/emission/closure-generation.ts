@@ -13,7 +13,7 @@ import type { ServiceError } from "@/types/result";
 import type { SchemaVersionResolution } from "@/types/schema-version";
 
 /** A target result that also carries the structured file list (closure targets only; every other target has no `files`). */
-export type ClosureTargetResult = OfficialTypeSpecTargetResult & { files?: EmittedFile[] };
+export type ClosureTargetResult = OfficialTypeSpecTargetResult & { files?: EmittedFile[]; primaryFile?: string };
 
 /** `domain / product / entity`: how a person reads a qualified name (the stored form is `domain/product/entity`). */
 const describeRef = (ref: EntityRef): string => describeEntityRef(ref);
@@ -136,5 +136,7 @@ export async function emitClosureTarget(closure: Closure, targetKey: TargetId, r
   const emitted = await emitClosure(closure, targetKey, run);
   if (!emitted.success) return resultFromEmissionError(emitted.error);
   const { files, warnings } = emitted.data;
-  return { output: bundleEmittedFiles(files), files, validationStatus: warnings.length > 0 ? "WARNING" : "VALID", warnings, errors: [] };
+  const rootId = closure.root?.entityId ?? closure.entities[0]?.entityId;
+  const primaryFile = rootId ? emitted.data.entityFiles?.[rootId]?.[0] : undefined;
+  return { output: bundleEmittedFiles(files), files, primaryFile, validationStatus: warnings.length > 0 ? "WARNING" : "VALID", warnings, errors: [] };
 }

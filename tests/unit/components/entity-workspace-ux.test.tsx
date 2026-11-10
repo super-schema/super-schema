@@ -46,8 +46,8 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/compone
 }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/AlertsTab", () => ({ AlertsTab: ({ onNavigateToField, onNavigateToTab }: { onNavigateToField: (id: string) => void; onNavigateToTab: (tab: string) => void }) => <><button onClick={() => onNavigateToField("field-1")}>Fix email field</button><button onClick={() => onNavigateToTab("schemas")}>Fix schema target</button></> }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/EntityVersionList", () => ({ EntityVersionList: () => <p>Published versions loaded</p> }));
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemasTab", () => ({ SchemasTab: () => <p>Generated schemas view</p> }));
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/EntityDeploymentsTab", () => ({ EntityDeploymentsTab: () => null }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemasTab", () => ({ SchemasTab: ({ onDeploy }: { onDeploy: (format: string, version: number) => void }) => <><p>Generated schemas view</p><button onClick={() => onDeploy("avro", 1)}>Deploy selected Avro</button></> }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/DeploymentWorkflowsTab", () => ({ DeploymentWorkflowsTab: ({ initialFormat, initialVersion }: { initialFormat: string; initialVersion: string }) => <p data-testid="pinned-deployment">{initialFormat}:{initialVersion}</p> }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/TypeSpecSourceTab", () => ({ TypeSpecSourceTab: ({ readOnly }: { readOnly?: boolean }) => <textarea aria-label="Entity source" readOnly={readOnly} /> }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/InlineEntityMeta", () => ({ InlineEntityMeta: () => null }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/ApiTab", () => ({ ApiTab: () => null }));
@@ -85,6 +85,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("entity workspace UX", () => {
+  it("persists the exact schema deployment selection in navigation and restores it on reload", async () => {
+    window.history.replaceState(null, "", "/schemas/payments/checkout/customer?tab=schemas");
+    mount(); fireEvent.click(screen.getByRole("button", { name: "Deploy selected Avro" }));
+    await waitFor(() => expect(screen.getByTestId("pinned-deployment")).toHaveTextContent("avro:1"));
+    const query = new URLSearchParams(window.location.search);
+    expect(query.get("tab")).toBe("deployments"); expect(query.get("schemaFormat")).toBe("avro"); expect(query.get("schemaVersion")).toBe("1");
+    cleanup(); mount();
+    expect(screen.getByTestId("pinned-deployment")).toHaveTextContent("avro:1");
+    expect(mocks.emit).not.toHaveBeenCalled();
+  });
   it("offers an explicit reference choice while Publish is blocked, then rechecks", async () => {
     const details = { field: "address", name: "Address", entityId: "ent-1", fieldId: "field-1", candidates: [{ entityId: "addr-1", domain: "d", product: "p", entity: "Address" }] };
     mocks.preview.mockResolvedValueOnce({ preview: { blockers: [{ kind: "CLOSURE_BLOCKED", code: "AMBIGUOUS_REFERENCE", message: "Choose which Address is referenced.", details }] } })

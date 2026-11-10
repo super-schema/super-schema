@@ -131,6 +131,12 @@ export const HERMETIC_BLANKED_NAMES = Object.freeze([
   // src/lib/webhook-transport.ts: the development opt-out that lets a webhook delivery reach http and private addresses. Blank = the production
   // policy (https to public addresses only): a developer's own opt-out must not loosen what the run checks
   "WEBHOOK_ALLOW_PRIVATE_TARGETS",
+  // Explicit schema delivery destinations and workers are disabled in the browser run; never inherit a developer's publishing setup.
+  "DEPLOYMENT_GIT_HOSTS",
+  "DEPLOYMENT_EVENT_REPOSITORIES",
+  "DEPLOYMENT_EVENT_TOOLKIT",
+  "DEPLOYMENT_WORKER_TOKEN",
+  "DEPLOYMENT_WORKER_URL",
   // src/services/ai-config.service.ts: the AI assistant (without a provider and a base URL there is no client). AI_API_KEY is its bearer key; OLLAMA_HOST
   // and OPENAI_BASE_URL are the standard names it falls back to when AI_BASE_URL is unset. A developer's own AI server must not configure the run
   "AI_PROVIDER",
@@ -195,7 +201,8 @@ export const HERMETIC_DROPPED_NAMES = Object.freeze({
 
 /** Read by the app and passed through from the shell on purpose. */
 export const HERMETIC_ALLOWED_NAMES = Object.freeze({
-  NEXT_PUBLIC_APP_URL: "baked into the build (git-pr.service.ts); part of the build fingerprint, so a different value is a different build",
+  NEXT_PUBLIC_APP_URL: "legacy build URL retained for existing runner callers; current Git delivery uses its recorded run identity",
+  PATH: "operator-installed Git, Make and Node tools for approved contract validation; inherited tool search path, never a workflow setting",
   NODE_OPTIONS: "the developer's Node flags (memory limits, proxies' CA); not an app setting",
 });
 

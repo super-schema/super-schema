@@ -1,3 +1,4 @@
+import { fieldPolicyContext } from "@/lib/field-policy-context";
 import { prisma } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
 import { FieldStudio } from "./field-studio";
@@ -105,6 +106,8 @@ export default async function FieldDetailPage({ params, searchParams }: Props) {
 
   return (
     <FieldStudio
+      policyContext={fieldPolicyContext(field.entity.metadata, domainPolicy, domain?.name)}
+      isReadOnly={!can(principal.assignments, "entity.write", { tenantId: entity.tenantId, domainId: entity.domainId ?? entity.product?.domainId ?? null, productId: entity.productId })}
       referenceTargets={referenceTargets}
       field={{
         id: field.id,

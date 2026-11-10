@@ -718,86 +718,8 @@ export async function testConnection(
 export async function exportAll(
   ctx: ServiceContext
 ): Promise<Result<GitExportResult>> {
-  if (!ctxCan(ctx, "git.manage")) {
-    return err({
-      code: "FORBIDDEN",
-      message: "Admin role required for bulk export",
-    });
-  }
-
-  const config = await prisma.gitConfig.findFirst({
-    where: { enabled: true },
-  });
-
-  if (!config) {
-    return err({
-      code: "NOT_CONFIGURED",
-      message: "Git export is not configured or not enabled",
-    });
-  }
-
-  try {
-    const entities = await prisma.entity.findMany({
-      // A fixed order, so two runs over the same data write the same files (the oldest entity keeps a contested path).
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      include: {
-        domain: true,
-        product: true,
-        fields: { orderBy: { sortOrder: "asc" } },
-      },
-    });
-
-    // One plan for the whole run: a file of a closure member goes once, under its owner's folder (see planGitExport).
-    const plan = planGitExport(
-      config.basePath,
-      entities.map((entity) => {
-        const metadata = (entity.metadata as Record<string, unknown>) ?? {};
-        return toExportEntityInput(entity, (metadata.currentVersion as number) ?? 1);
-      })
-    );
-    const totalFiles = plan.files.length;
-
-    const commitMessage = buildBulkCommitMessage(entities.length);
-
-    await withAudit({
-      action: "GIT_EXPORT_ALL",
-      entityType: "GitConfig",
-      entityId: config.id,
-      userId: ctx.userId,
-      fn: async () => {
-        await prisma.gitConfig.update({
-          where: { id: config.id },
-          data: {
-            lastSyncAt: new Date(),
-            lastSyncStatus: "SUCCESS",
-          },
-        });
-        return null;
-      },
-    });
-
-    return ok({
-      success: true,
-      filesExported: totalFiles,
-      commitSha: `sha-${Date.now()}`,
-      commitMessage,
-      ...(plan.warnings.length > 0 ? { warnings: plan.warnings } : {}),
-    } as GitExportResult);
-  } catch (e: unknown) {
-    await prisma.gitConfig.update({
-      where: { id: config.id },
-      data: {
-        lastSyncAt: new Date(),
-        lastSyncStatus: "FAILED",
-      },
-    });
-
-    return ok({
-      success: false,
-      filesExported: 0,
-      error: e instanceof Error ? e.message : "Bulk export failed",
-    });
-  }
+  if (!ctxCan(ctx, "git.manage")) return err({ code: "FORBIDDEN", message: "Platform administrator access is required" });
+  return err({ code: "WORKFLOW_REQUIRED", message: "Bulk export cannot choose deployment versions implicitly. Use an entity's Deployments > Git PR workflow for a validated, pinned artifact." });
 }
 
 /**

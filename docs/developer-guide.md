@@ -2,6 +2,8 @@
 
 How to set up Super Schema for local development.
 
+For schema publication, Git PR/API/registry delivery, connection setup and the independent deployment worker, see [Deployment workflows](deployment-workflows.md).
+
 ## Prerequisites
 
 - Node.js 22 (see `.nvmrc`; `package.json` accepts `>=20.9.0 <25`)

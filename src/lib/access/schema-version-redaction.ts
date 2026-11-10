@@ -87,6 +87,7 @@ function redactVersion(raw: unknown, targetKey: string, input: RedactionInput): 
   if (files !== undefined && kept !== undefined) {
     const changed = kept.length !== files.length;
     copy.files = kept as unknown as SchemaVersion["files"];
+    if (copy.primaryFile && !kept.some((file) => file.path === copy.primaryFile)) delete copy.primaryFile;
     if (changed) copy.output = bundleFileContents(kept.map((file) => ({ path: file.path, content: file.content })));
   }
   if (unreadable.length > 0) {

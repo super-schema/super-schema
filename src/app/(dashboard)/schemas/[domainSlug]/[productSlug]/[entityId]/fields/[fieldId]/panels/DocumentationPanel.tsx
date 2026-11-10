@@ -1,196 +1,205 @@
 "use client";
-
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { Documentation } from "@/types/schemas/typespec-decorator.schema";
-import { previewLiteral } from "@/lib/compiler/typed-value-literal";
+import { Button } from "@/components/ui/button";
+import { FieldGroup } from "@/components/ui/field";
+import { AttributeControl } from "@/components/custom/FieldAttributes/AttributeControl";
+import { Markdown } from "@/features/events/builder/template/markdown";
+import { getTypeInfo } from "@/lib/data-types";
+import { valueConstraintErrors } from "@/lib/field-attributes";
+import {
+  previewLiteral,
+  defaultInput,
+} from "@/lib/compiler/typed-value-literal";
+import type {
+  Documentation,
+  ValidationConstraints,
+} from "@/types/schemas/typespec-decorator.schema";
 
-/** The logical types whose values are text. */
-const TEXT_FIELD_TYPES = new Set(["string", "url"]);
-
-interface DocumentationPanelProps {
+interface Props {
+  validation?: ValidationConstraints;
   documentation: Documentation;
   fieldType: string;
-  onChange: (documentation: Documentation) => void;
+  onChange: (value: Documentation) => void;
+  description?: string;
+  onDescriptionChange?: (value: string) => void;
+  legacyDocumentation?: unknown;
 }
-
 export function DocumentationPanel({
   documentation,
   fieldType,
+  validation,
   onChange,
-}: DocumentationPanelProps) {
-  const [docMode, setDocMode] = useState<"edit" | "preview">("edit");
-
-  function update(partial: Partial<Documentation>) {
-    onChange({ ...documentation, ...partial });
+  description = "",
+  onDescriptionChange,
+  legacyDocumentation,
+}: Props) {
+  const [preview, setPreview] = useState(false);
+  const [typedExample, setTypedExample] = useState<{
+    stored: unknown;
+    text: string;
+  } | null>(null);
+  const example = documentation.example;
+  const exampleText =
+    typedExample && typedExample.stored === example
+      ? typedExample.text
+      : example == null
+        ? ""
+        : typeof example === "object"
+          ? JSON.stringify(example, null, 2)
+          : String(example);
+  const examplePreview =
+    example != null ? previewLiteral(example, fieldType) : undefined;
+  function update(value: Partial<Documentation>) {
+    onChange({ ...documentation, ...value });
   }
-
-  const isDeprecated = documentation.deprecated != null;
-  // The example as the generator writes it for this field's type (see previewLiteral); undefined when the panel cannot tell.
-  const examplePreview = documentation.example != null ? previewLiteral(documentation.example, fieldType) : undefined;
-
+  const history = Array.isArray(legacyDocumentation)
+    ? (legacyDocumentation.filter((v) => v && typeof v.text === "string") as {
+        source: string;
+        text: string;
+      }[])
+    : [];
   return (
-    <div className="space-y-space-4 pb-space-2">
-      {/* @doc — markdown textarea */}
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <label className="text-caption text-muted-foreground">
-            @doc (description)
-          </label>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setDocMode("edit")}
-              className={`text-[10px] px-2 py-0.5 rounded ${
-                docMode === "edit"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+    <FieldGroup>
+      {onDescriptionChange && (
+        <>
+          <AttributeControl
+            label="Description"
+            help="One description shared by both editors and generated schemas. Markdown is supported."
+          >
+            <Textarea
+              value={description}
+              onChange={(e) => onDescriptionChange(e.target.value)}
+              rows={4}
+            />
+          </AttributeControl>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-pressed={preview}
+            onClick={() => setPreview(!preview)}
+          >
+            {preview ? "Hide preview" : "Preview description"}
+          </Button>
+          {preview && (
+            <div
+              className="min-w-0 break-words rounded-md border border-border p-3"
+              aria-label="Description preview"
             >
-              Edit
-            </button>
-            <button
-              onClick={() => setDocMode("preview")}
-              className={`text-[10px] px-2 py-0.5 rounded ${
-                docMode === "preview"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Preview
-            </button>
-          </div>
-        </div>
-        {docMode === "edit" ? (
-          <Textarea
-            value={documentation.doc ?? ""}
-            onChange={(e) => update({ doc: e.target.value || undefined })}
-            placeholder="Describe this field using markdown…"
-            className="min-h-[80px] text-body-small font-mono"
-            rows={4}
-          />
-        ) : (
-          <div className="min-h-[80px] rounded border border-border p-space-2 text-body-small prose prose-sm dark:prose-invert max-w-none">
-            {documentation.doc ? (
-              <pre className="whitespace-pre-wrap font-sans text-foreground">
-                {documentation.doc}
-              </pre>
-            ) : (
-              <span className="text-muted-foreground/50 italic">
-                No description
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* @summary */}
-      <div>
-        <label className="text-caption text-muted-foreground mb-1 block">
-          @summary
-        </label>
-        <Input
-          value={documentation.summary ?? ""}
-          onChange={(e) => update({ summary: e.target.value || undefined })}
-          placeholder="Short summary for API docs"
-          className="h-7 text-body-small"
-        />
-      </div>
-
-      {/* @example */}
-      <div>
-        <label className="text-caption text-muted-foreground mb-1 block">
-          @example
-        </label>
-        <Input
-          value={
-            documentation.example != null
-              ? String(documentation.example)
-              : ""
-          }
+              <Markdown source={description || "No description"} />
+            </div>
+          )}
+        </>
+      )}
+      {history.length > 0 && (
+        <details className="min-w-0 text-xs">
+          <summary className="cursor-pointer text-muted-foreground">
+            Preserved previous documentation ({history.length})
+          </summary>
+          {history.map((entry, i) => (
+            <p className="whitespace-pre-wrap break-words py-2" key={i}>
+              {entry.text}
+            </p>
+          ))}
+        </details>
+      )}
+      <AttributeControl
+        label="Example"
+        help="An example documents a value; it does not supply a default."
+        error={
+          examplePreview && !examplePreview.ok
+            ? examplePreview.reason
+            : valueConstraintErrors(example, fieldType, validation).join(" ") ||
+              undefined
+        }
+      >
+        <Textarea
+          value={exampleText}
+          rows={typeof example === "object" && example != null ? 4 : 2}
+          spellCheck={false}
           onChange={(e) => {
-            const val = e.target.value;
-            if (val === "") {
-              update({ example: null });
-            } else if (TEXT_FIELD_TYPES.has(fieldType)) {
-              // A text field keeps the text as typed: JSON would turn `1.50` into 1.5 and `1e3` into 1000.
-              update({ example: val });
-            } else {
-              // Try to parse as JSON for complex types, otherwise use string
-              try {
-                const parsed = JSON.parse(val);
-                update({ example: parsed });
-              } catch {
-                update({ example: val });
+            const text = e.target.value;
+            let value: unknown = text || null;
+            if (text && !["string", "url", "enum"].includes(fieldType)) {
+              const numeric =
+                getTypeInfo(fieldType)?.category === "Number"
+                  ? defaultInput(text, fieldType)
+                  : undefined;
+              if (numeric?.status === "value") value = numeric.value;
+              else {
+                try {
+                  value = JSON.parse(text);
+                } catch {
+                  value = text;
+                }
               }
             }
+            setTypedExample({ stored: value, text });
+            update({ example: value });
           }}
-          placeholder={`Example ${fieldType} value`}
-          className="h-7 text-body-small font-mono"
         />
-        {documentation.example != null && (
-          <div className="mt-1 text-[10px] text-muted-foreground/60 font-mono">
-            {examplePreview === undefined
-              ? "Checked against the field's type when the source is generated; not previewed for this type."
-              : examplePreview.ok
-                ? `@example(${examplePreview.text})`
-                : <span className="text-destructive">Not written: {examplePreview.reason}.</span>}
-          </div>
-        )}
-      </div>
+      </AttributeControl>
+      {examplePreview?.ok && (
+        <code className="break-all text-xs text-muted-foreground">
+          {examplePreview.text}
+        </code>
+      )}
+      <AttributeControl label="External documentation URL">
+        <Input
+          type="url"
+          value={documentation.externalDocsUrl ?? ""}
+          onChange={(e) => update({ externalDocsUrl: e.target.value || null })}
+          placeholder="https://docs.example.com/field"
+        />
+      </AttributeControl>
+      <AttributeControl label="External documentation label">
+        <Input
+          value={documentation.externalDocsDescription ?? ""}
+          onChange={(e) =>
+            update({ externalDocsDescription: e.target.value || null })
+          }
+        />
+      </AttributeControl>
+    </FieldGroup>
+  );
+}
 
-      {/* @deprecated */}
-      <div>
-        <label className="flex items-center gap-2 text-body-small text-muted-foreground cursor-pointer mb-1">
-          <input
-            type="checkbox"
-            checked={isDeprecated}
-            onChange={(e) =>
-              update({
-                deprecated: e.target.checked ? "" : null,
-              })
-            }
-            className="accent-primary"
-          />
-          @deprecated
-        </label>
-        {isDeprecated && (
-          <Input
-            value={documentation.deprecated ?? ""}
-            onChange={(e) => update({ deprecated: e.target.value })}
-            placeholder="Reason and what to use instead"
-            className="h-7 text-body-small"
-            autoFocus
-          />
-        )}
-      </div>
-
-      {/* @externalDocs */}
-      <div>
-        <label className="text-caption text-muted-foreground mb-1 block">
-          @externalDocs
-        </label>
-        <div className="flex items-center gap-2">
-          <Input
-            value={documentation.externalDocsUrl ?? ""}
-            onChange={(e) =>
-              update({ externalDocsUrl: e.target.value || null })
-            }
-            placeholder="https://docs.example.com/..."
-            className="h-7 text-body-small flex-1"
-          />
-          <Input
-            value={documentation.externalDocsDescription ?? ""}
-            onChange={(e) =>
-              update({
-                externalDocsDescription: e.target.value || null,
-              })
-            }
-            placeholder="Description"
-            className="h-7 text-body-small w-48"
-          />
+export function DescriptionEditor({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [preview, setPreview] = useState(false);
+  return (
+    <FieldGroup>
+      <AttributeControl
+        label="Description"
+        help="Shared with generated schemas. Markdown is supported."
+      >
+        <Textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          rows={3}
+        />
+      </AttributeControl>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        aria-pressed={preview}
+        onClick={() => setPreview(!preview)}
+      >
+        {preview ? "Hide description preview" : "Preview description"}
+      </Button>
+      {preview && (
+        <div aria-label="Description preview" className="min-w-0 break-words">
+          <Markdown source={value || "No description"} />
         </div>
-      </div>
-    </div>
+      )}
+    </FieldGroup>
   );
 }
