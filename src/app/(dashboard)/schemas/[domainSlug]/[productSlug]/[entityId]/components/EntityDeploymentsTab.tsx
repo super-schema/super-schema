@@ -17,9 +17,12 @@ interface EntityDeploymentsTabProps {
   entityId: string;
   entityName: string;
   recordVersion?: { targetId: string; version: number };
+  environments?: string[];
+  publishedVersions?: { key: string; versions: number[] }[];
+  onRecorded?: () => Promise<void>;
 }
 
-export function EntityDeploymentsTab({ entityId, entityName, recordVersion }: EntityDeploymentsTabProps) {
+export function EntityDeploymentsTab({ entityId, entityName, recordVersion, environments = [], publishedVersions, onRecorded }: EntityDeploymentsTabProps) {
   const [statuses, setStatuses] = useState<DeploymentStatus[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   // The targets whose drift check is in flight: each check holds only its own button, and a check that fails releases it.
@@ -43,7 +46,8 @@ export function EntityDeploymentsTab({ entityId, entityName, recordVersion }: En
   }, [entityId]);
 
   useEffect(() => {
-    // Fetch once on mount; state updates occur after the async result resolves.
+    // Loading state begins here; the asynchronous response ends it on success and failure.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
@@ -55,7 +59,7 @@ export function EntityDeploymentsTab({ entityId, entityName, recordVersion }: En
         return;
       }
       toast.success(`Marked deployed to ${environment}`);
-      await load();
+      await Promise.all([load(), onRecorded?.()]);
     } catch (error) {
       toast.error(`Could not mark deployed to ${environment}: ${errorMessage(error)}`);
     }
@@ -120,6 +124,8 @@ export function EntityDeploymentsTab({ entityId, entityName, recordVersion }: En
         </div>
       ) : (
         <DeploymentPanel
+          publishedVersions={publishedVersions}
+          environments={environments}
           entityName={entityName}
           deploymentStatuses={statuses}
           onMarkDeployed={handleMarkDeployed}

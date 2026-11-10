@@ -6,13 +6,13 @@ import { X } from "lucide-react";
 interface MarkAsDeployedDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (environment: string) => void;
+  onConfirm: (environment: string, version?: string) => void;
+  versions?: number[];
   targetFormat: string;
   version: string;
   entityName: string;
+  environments?: string[];
 }
-
-const PREDEFINED_ENVIRONMENTS = ["production", "staging", "development"];
 
 export function MarkAsDeployedDialog({
   isOpen,
@@ -21,17 +21,18 @@ export function MarkAsDeployedDialog({
   targetFormat,
   version,
   entityName,
+  environments = [],
+  versions,
 }: MarkAsDeployedDialogProps) {
-  const [environment, setEnvironment] = useState("production");
-  const [customEnv, setCustomEnv] = useState("");
-  const [useCustom, setUseCustom] = useState(false);
+  const [selectedVersion, setSelectedVersion] = useState(version);
+  const [environment, setEnvironment] = useState(environments[0] ?? "");
 
   if (!isOpen) return null;
 
   function handleConfirm() {
-    const env = useCustom ? customEnv.trim() : environment;
-    if (!env) return;
-    onConfirm(env);
+    const env = environment;
+    if (!environments.includes(env)) return;
+    onConfirm(env, selectedVersion);
     onClose();
   }
 
@@ -62,7 +63,7 @@ export function MarkAsDeployedDialog({
               Mark{" "}
               <span className="text-foreground font-medium">{entityName}</span>{" "}
               version{" "}
-              <span className="font-mono text-foreground">{version}</span> as
+              <span className="font-mono text-foreground">{selectedVersion}</span> as
               deployed to{" "}
               <span className="text-foreground font-medium">
                 {targetFormat}
@@ -70,49 +71,17 @@ export function MarkAsDeployedDialog({
             </p>
           </div>
 
+          {versions && <div><label htmlFor="record-version" className="mb-1 block text-sm font-medium">Published artifact version</label><select id="record-version" value={selectedVersion} onChange={(e) => setSelectedVersion(e.target.value)} className="w-full rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground">{versions.map((v) => <option key={v} value={`v${v}`}>v{v}</option>)}</select></div>}
           {/* Environment selector */}
           <div>
-            <label className="text-caption text-muted-foreground block mb-1">
+            <label htmlFor="record-environment" className="text-caption text-muted-foreground block mb-1">
               Environment
             </label>
-            {!useCustom ? (
-              <div className="space-y-2">
-                <select
-                  data-testid="environment-selector"
-                  value={environment}
-                  onChange={(e) => setEnvironment(e.target.value)}
-                  className="w-full bg-muted rounded-lg px-space-3 py-1.5 text-body-small text-foreground outline-none border border-border focus:border-primary"
-                >
-                  {PREDEFINED_ENVIRONMENTS.map((env) => (
-                    <option key={env} value={env}>
-                      {env}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => setUseCustom(true)}
-                  className="text-caption text-primary hover:underline"
-                >
-                  Use custom environment name
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <input
-                  type="text"
-                  value={customEnv}
-                  onChange={(e) => setCustomEnv(e.target.value)}
-                  placeholder="e.g., qa, pre-prod, canary"
-                  className="w-full bg-muted rounded-lg px-space-3 py-1.5 text-body-small text-foreground placeholder:text-muted-foreground outline-none border border-border focus:border-primary"
-                />
-                <button
-                  onClick={() => setUseCustom(false)}
-                  className="text-caption text-primary hover:underline"
-                >
-                  Use predefined environment
-                </button>
-              </div>
-            )}
+            <select id="record-environment" data-testid="environment-selector" value={environment} onChange={(e) => setEnvironment(e.target.value)} className="w-full rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground">
+              {!environments.length && <option value="">Configure environments in settings</option>}
+              {environments.map((env) => <option key={env} value={env}>{env}</option>)}
+            </select>
+            <a href="/admin/settings/deployments" className="text-sm text-primary underline">Manage environments in settings</a>
           </div>
         </div>
 
@@ -127,7 +96,7 @@ export function MarkAsDeployedDialog({
           <button
             data-testid="confirm-deploy-button"
             onClick={handleConfirm}
-            disabled={useCustom && !customEnv.trim()}
+            disabled={!environments.includes(environment)}
             className="px-4 py-1.5 rounded-lg text-body-small bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Confirm

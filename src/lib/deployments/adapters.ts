@@ -7,9 +7,12 @@ import { GitHubClient } from "./github";
 import { RegistryClient } from "./registry";
 import { prepareEventContract } from "./event-contract";
 
+import { generatedGitPrTitle } from "./pr-title";
+
 export async function prepareDelivery(input: { id: string; method: DeploymentMethod; bundle: ArtifactBundle; config: ConnectionConfig; settings: WorkflowSettings; revision: number; environment: string }, credentials: Credentials): Promise<PreparedPlan> {
   const plan: PreparedPlan = { bundle: input.bundle, connectionConfig: input.config, settings: input.settings, workflowRevision: input.revision, environment: input.environment, validation: ["Published artifact and complete file manifest verified"] };
   if (input.method === "git") {
+    plan.settings = { ...plan.settings, title: plan.settings.title.trim() || generatedGitPrTitle({ schema: input.bundle.entity.schema, format: input.bundle.format, version: input.bundle.version, environment: input.environment, contractVersion: plan.settings.contractVersion }) };
     const client = new GitHubClient(input.config.url, credentials);
     await client.verify();
     plan.baseSha = await client.base(input.config.baseBranch);
@@ -41,6 +44,13 @@ export async function prepareDelivery(input: { id: string; method: DeploymentMet
         if (entry && (entry.path !== parent || entry.type !== "tree")) throw new DeliveryError("A planned directory collides with an existing repository entry");
       }
     }
+    const plannedPaths = new Set(plan.files.map((file) => file.path));
+    const existingPaths = new Set(existing.filter((file) => file.type === "blob" && plannedPaths.has(file.path)).map((file) => file.path));
+    const baseline = existingPaths.size ? await client.readFiles(plan.baseSha, (path) => existingPaths.has(path)) : [];
+    plan.fileChanges = plan.files.map((file) => {
+      const before = baseline.find((old) => old.path === file.path)?.content;
+      return { path: file.path, status: before === undefined ? "added" : before === file.content ? "unchanged" : "modified", ...(before === undefined ? {} : { before }) };
+    });
     plan.validation.push("Remote base commit pinned; no repository writes performed during preview");
   } else if (input.method === "registry") plan.validation.push(...await new RegistryClient(input.config.url, credentials).preview(input.bundle, input.settings));
   else {
@@ -55,8 +65,9 @@ export async function prepareDelivery(input: { id: string; method: DeploymentMet
 export async function deliverPrepared(id: string, method: DeploymentMethod, plan: PreparedPlan, credentials: Credentials, idempotencyKey: string) {
   if (method === "git") {
     if (!plan.baseSha || !plan.branch || !plan.files) throw new DeliveryError("The Git preview is incomplete");
+    if (plan.fileChanges?.every((file) => file.status === "unchanged")) throw new DeliveryError("The preview contains no file changes");
     return new GitHubClient(plan.connectionConfig.url, credentials).deliver({ baseBranch: plan.connectionConfig.baseBranch, baseSha: plan.baseSha, branch: plan.branch, files: plan.files,
-      title: plan.settings.title || `Publish ${plan.bundle.entity.schema} ${plan.settings.contractVersion}`,
+      title: plan.settings.title || generatedGitPrTitle({ schema: plan.bundle.entity.schema, format: plan.bundle.format, version: plan.bundle.version, environment: plan.environment, contractVersion: plan.settings.contractVersion }),
       body: `Schema artifact ${plan.bundle.format} v${plan.bundle.version}\n\nContract version: ${plan.settings.contractVersion}\n\nContent hash: ${plan.bundle.contentHash}\n\nEnvironment: ${plan.environment}\n\nValidation:\n${plan.validation.map((v) => `- ${v}`).join("\n")}\n\nSuper Schema run: ${id}`,
       marker: `SuperSchema-Delivery: ${id} ${plan.bundle.contentHash}` });
   }

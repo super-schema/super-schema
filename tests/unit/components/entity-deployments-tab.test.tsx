@@ -62,7 +62,7 @@ afterEach(() => {
 describe("EntityDeploymentsTab drift checks", () => {
   it("a drift check that rejects releases its own button, leaves the other targets enabled, and says it failed", async () => {
     h.checkTargetDriftAction.mockRejectedValueOnce(new Error("Failed to fetch"));
-    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" />);
+    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" environments={["production", "staging"]} />);
     await waitFor(() => expect(checkButtons()).toHaveLength(2));
 
     fireEvent.click(checkButtons()[0]);
@@ -73,7 +73,7 @@ describe("EntityDeploymentsTab drift checks", () => {
 
   it("while a drift check is in flight, only that target's button is disabled", async () => {
     h.checkTargetDriftAction.mockReturnValueOnce(new Promise(() => undefined));
-    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" />);
+    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" environments={["production", "staging"]} />);
     await waitFor(() => expect(checkButtons()).toHaveLength(2));
 
     fireEvent.click(checkButtons()[0]);
@@ -84,7 +84,7 @@ describe("EntityDeploymentsTab drift checks", () => {
 
   it("a drift check that succeeds shows its result and releases the button", async () => {
     h.checkTargetDriftAction.mockResolvedValueOnce({ success: true, data: TARGETS });
-    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" />);
+    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" environments={["production", "staging"]} />);
     await waitFor(() => expect(checkButtons()).toHaveLength(2));
 
     fireEvent.click(checkButtons()[1]);
@@ -99,7 +99,7 @@ describe("EntityDeploymentsTab overlapping checks", () => {
     const first = deferred<unknown>();
     const second = deferred<unknown>();
     h.checkTargetDriftAction.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" />);
+    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" environments={["production", "staging"]} />);
     await waitFor(() => expect(checkButtons()).toHaveLength(2));
 
     fireEvent.click(checkButtons()[0]);
@@ -122,7 +122,7 @@ describe("EntityDeploymentsTab overlapping checks", () => {
     const first = deferred<unknown>();
     const second = deferred<unknown>();
     h.checkTargetDriftAction.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" />);
+    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" environments={["production", "staging"]} />);
     await waitFor(() => expect(checkButtons()).toHaveLength(2));
 
     fireEvent.click(checkButtons()[0]);
@@ -150,7 +150,7 @@ describe("EntityDeploymentsTab marking", () => {
   it("a mark-as-deployed that rejects says so, and the drift checks stay usable", async () => {
     h.getEntityDeploymentStatusAction.mockResolvedValue({ success: true, data: TARGETS });
     h.markEntityDeployedAction.mockRejectedValueOnce(new Error("Failed to fetch"));
-    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" />);
+    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" environments={["production", "staging"]} />);
     await waitFor(() => expect(checkButtons()).toHaveLength(2));
 
     fireEvent.click(screen.getAllByTestId("deployment-mark-deployed")[0]);
@@ -177,7 +177,7 @@ describe("EntityDeploymentsTab version match", () => {
         },
       ],
     });
-    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" />);
+    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" environments={["production", "staging"]} />);
 
     expect((await screen.findByTestId("version-badge-2")).className).toContain("text-success");
     expect(screen.getByTestId("version-badge-1").className).toContain("text-warning");
@@ -187,7 +187,7 @@ describe("EntityDeploymentsTab version match", () => {
 describe("EntityDeploymentsTab load", () => {
   it("a load that rejects stops the loading state, enables refresh and says it failed", async () => {
     h.getEntityDeploymentStatusAction.mockRejectedValueOnce(new Error("Failed to fetch"));
-    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" />);
+    render(<EntityDeploymentsTab entityId="ent-1" entityName="Order" environments={["production", "staging"]} />);
 
     await waitFor(() => expect(h.toastError).toHaveBeenCalledTimes(1));
     expect(screen.queryByText(/Loading deployments/)).toBeNull();

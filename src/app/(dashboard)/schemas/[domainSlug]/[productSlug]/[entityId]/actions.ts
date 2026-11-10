@@ -2268,8 +2268,9 @@ export async function markEntityDeployedAction(
   try {
     const access = await guardSubject("deploy.run", { kind: "entity", id: entityId }, { label: "Entity" });
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
-    const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+    const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true, tenant: { select: { deploymentEnvironments: true } } } });
     if (!entity) return { error: "Entity not found" };
+    if (!entity.tenant.deploymentEnvironments.includes(environment.trim())) return { error: "Choose an environment configured in tenant settings" };
 
     // The target id is a second client-supplied id: it must be one of THIS entity's emission targets (`<entityId>:<target>`),
     // or the deployment record below would be written for another entity's target.

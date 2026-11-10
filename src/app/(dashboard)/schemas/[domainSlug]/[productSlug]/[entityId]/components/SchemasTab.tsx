@@ -409,6 +409,8 @@ export function SchemasTab({ entityId, entityName, fields, entity, onDeploy }: S
     setIsLoading(false);
   }, [entityId]);
 
+  // The asynchronous action updates the loaded version catalogue.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadVersions(); }, [loadVersions]);
 
   const catalogTargets = getSchemaTargetAvailabilities();
@@ -433,6 +435,8 @@ export function SchemasTab({ entityId, entityName, fields, entity, onDeploy }: S
   useEffect(() => {
     if (selectedTarget) return;
     const withVersions = allTargets.find((t) => t.hasVersions);
+    // Initialize selection only after the generated target catalogue is available.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (withVersions) { setSelectedTarget(withVersions.key); return; }
     if (allTargets.length > 0) setSelectedTarget(allTargets[0].key);
   }, [allTargets, selectedTarget]);
@@ -625,13 +629,13 @@ export function SchemasTab({ entityId, entityName, fields, entity, onDeploy }: S
             <>
               {/* Horizontal tabs + actions */}
               <div className="mb-space-3 flex flex-wrap items-center gap-2 border-b border-border/50">
-                <div className="flex min-w-0 max-w-full gap-1 overflow-x-auto">
+                <div data-testid="schema-content-tabs" className="flex min-w-0 max-w-full flex-wrap gap-1">
                   <button
                     type="button"
                     data-testid="schema-content-tab-schema"
                     aria-pressed={contentTab === "schema"}
                     onClick={() => setContentTab("schema")}
-                    className={`px-3 py-1.5 text-body-small font-medium border-b-2 -mb-px transition-colors ${
+                    className={`px-3 py-1.5 text-body-small font-medium border-b-2 transition-colors ${
                       contentTab === "schema" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
                     }`}
                   >
@@ -643,7 +647,7 @@ export function SchemasTab({ entityId, entityName, fields, entity, onDeploy }: S
                       data-testid="schema-content-tab-overrides"
                       aria-pressed={contentTab === "overrides"}
                       onClick={() => setContentTab("overrides")}
-                      className={`px-3 py-1.5 text-body-small font-medium border-b-2 -mb-px transition-colors ${
+                      className={`px-3 py-1.5 text-body-small font-medium border-b-2 transition-colors ${
                         contentTab === "overrides" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
                       }`}
                     >
@@ -655,7 +659,7 @@ export function SchemasTab({ entityId, entityName, fields, entity, onDeploy }: S
                     data-testid="schema-content-tab-matrix"
                     aria-pressed={contentTab === "matrix"}
                     onClick={() => setContentTab("matrix")}
-                    className={`px-3 py-1.5 text-body-small font-medium border-b-2 -mb-px transition-colors ${
+                    className={`px-3 py-1.5 text-body-small font-medium border-b-2 transition-colors ${
                       contentTab === "matrix" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
                     }`}
                   >

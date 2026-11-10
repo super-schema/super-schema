@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { TargetMethodMappings } from "./target-methods";
 
 export const METHODS = ["git", "http", "registry"] as const;
 export type DeploymentMethod = typeof METHODS[number];
@@ -55,11 +56,23 @@ export const WorkflowSettingsSchema = z.object({
 export type WorkflowSettings = z.infer<typeof WorkflowSettingsSchema>;
 export const SaveWorkflowSchema = z.object({
   id: identifier.optional(), name: z.string().trim().min(1).max(100), connectionId: identifier,
-  format: z.string().min(1).max(100), environment: z.string().trim().min(1).max(100),
+  format: z.string().min(1).max(100).optional(),
+  supportedTargets: z.array(z.string().min(1).max(100)).min(1).max(100).refine((targets) => new Set(targets).size === targets.length, "Supported targets must be unique").optional(),
+  environment: z.string().trim().min(1).max(100),
   settings: WorkflowSettingsSchema, active: z.boolean().default(true),
-}).strict();
+}).strict().superRefine((input, ctx) => {
+  if (!input.supportedTargets?.length && !input.format) ctx.addIssue({ code: "custom", message: "Select at least one supported target" });
+  if (input.format && input.supportedTargets && !input.supportedTargets.includes(input.format)) ctx.addIssue({ code: "custom", message: "The primary target must be included in supported targets" });
+}).transform((input) => {
+  const supportedTargets = input.supportedTargets ?? [input.format!];
+  return { ...input, format: input.format ?? supportedTargets[0], supportedTargets };
+});
 export type SaveWorkflow = z.input<typeof SaveWorkflowSchema>;
-export const PreviewSchema = z.object({ workflowId: identifier, version: z.number().int().positive(), idempotencyKey: z.string().uuid() }).strict();
+export const EnvironmentListSchema = z.array(z.string().trim().min(1).max(100)).min(1).max(50)
+  .refine((names) => new Set(names).size === names.length, "Environment names must be unique");
+// Only deployment variables may override a centrally defined workflow.
+export const WorkflowVariablesSchema = WorkflowSettingsSchema.pick({ contractVersion: true, title: true, metadata: true, example: true, topicConfig: true, subject: true, referenceSubjects: true, expectedPayloadHash: true }).partial();
+export const PreviewSchema = z.object({ workflowId: identifier, format: z.string().min(1).max(100).optional(), version: z.number().int().positive(), idempotencyKey: z.string().uuid(), environment: z.string().min(1).max(100).optional(), connectionId: identifier.optional(), variables: WorkflowVariablesSchema.optional() }).strict();
 export const ExecuteSchema = z.object({ runId: identifier, planHash: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict();
 
 export interface ArtifactFile { path: string; content: string; entityId?: string; }
@@ -79,25 +92,47 @@ export interface PreparedPlan {
   bundle: ArtifactBundle; settings: WorkflowSettings; workflowRevision: number;
   connectionConfig: ConnectionConfig; environment: string;
   baseSha?: string; branch?: string; files?: ArtifactFile[];
+  fileChanges?: { path: string; status: "added" | "modified" | "unchanged"; before?: string }[];
   validation: string[];
+  requestHash?: string;
 }
 export interface ConnectionView {
   id: string; name: string; method: DeploymentMethod; config: ConnectionConfig; revision: number; active: boolean;
 }
 export interface WorkflowView {
-  id: string; name: string; format: string; environment: string; connectionId: string;
+  id: string; name: string; format: string; supportedTargets?: string[]; environment: string; connectionId: string;
   settings: WorkflowSettings; revision: number; active: boolean;
+  scope?: "product" | "schema";
+}
+/** Empty arrays on legacy callers are normalized to the original single target. */
+export function workflowTargets(workflow: { format: string; supportedTargets?: readonly string[] }): readonly string[] {
+  return workflow.supportedTargets?.length ? workflow.supportedTargets : [workflow.format];
 }
 export interface RunView {
   id: string; workflowId: string; method: DeploymentMethod; format: string; artifactVersion: number;
   environment: string; status: string; createdAt: string; attemptCount: number; error: string | null;
   receipt: DeliveryReceipt | null; planHash: string; expiresAt: string;
 }
+export interface DeploymentConfiguration {
+  targetMethods: TargetMethodMappings;
+  legacyGit?: { id: string; name: string }[];
+  environments: string[];
+  connections: ConnectionView[];
+}
+export interface ProductDeploymentConfiguration extends DeploymentConfiguration {
+  workflows: WorkflowView[];
+  canManage: boolean;
+}
 export interface DeploymentWorkspace {
+  entitySlug?: string;
   legacyGit?: { id: string; name: string }[];
   legacyMarkers?: { format: string; version: number; deployedAt?: string }[];
   connections: ConnectionView[]; workflows: WorkflowView[]; runs: RunView[];
-  formats: { key: string; versions: number[] }[]; canConfigure: boolean; canRun: boolean;
+  formats: { key: string; versions: number[]; sourceVersions?: Record<string, number> }[]; canConfigure: boolean; canRun: boolean;
+  environments: string[];
+  targetMethods: TargetMethodMappings;
+  productWorkflowsHref: string | null;
+  recorded: { target: string; environment: string; version: number; sourceVersion: number | null }[];
 }
 export interface DeploymentSummary {
   id: string; entityName: string; href: string; method: string; format: string; artifactVersion: number;

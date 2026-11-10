@@ -1,6 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
+import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -53,6 +54,7 @@ vi.mock("@/app/(dashboard)/schemas/actions", () => ({ deleteDomainAction: vi.fn(
 // The New Event dialog imports a server-action module that pulls in NextAuth; so does the Edit contacts dialog.
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({ createEventAction: eventActions.createEventAction }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/product-actions", () => ({ updateProductAction: vi.fn() }));
+vi.mock("@/components/custom/deployments/ProductDeploymentWorkflows", () => ({ ProductDeploymentWorkflows: ({ productId }: { productId: string }) => <p>Workflows for {productId}</p> }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/components/custom/TypePicker", () => ({ TypePicker: () => <select /> }));
 vi.mock("@/components/custom/ClassificationPicker", () => ({ ClassificationPicker: () => null }));
@@ -704,10 +706,10 @@ describe("product tab bar accessibility", () => {
     renderWorkspace();
     const list = screen.getByRole("tablist", { name: "Checkout sections" });
     const tabs = within(list).getAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["Entities", "Events", "APIs", "Data Types"]);
+    expect(tabs.map((t) => t.textContent)).toEqual(["Entities", "Events", "APIs", "Data Types", "Workflows"]);
     const selected = tabs.filter((t) => t.getAttribute("aria-selected") === "true");
     expect(selected.map((t) => t.textContent)).toEqual(["APIs"]);
-    expect(tabs.map((t) => t.getAttribute("tabindex"))).toEqual(["-1", "-1", "0", "-1"]);
+    expect(tabs.map((t) => t.getAttribute("tabindex"))).toEqual(["-1", "-1", "0", "-1", "-1"]);
 
     const panel = screen.getByRole("tabpanel");
     expect(panel.id).toBe("product-tabpanel");
@@ -729,14 +731,14 @@ describe("product tab bar accessibility", () => {
 
     fireEvent.keyDown(screen.getByRole("tab", { name: "Events" }), { key: "ArrowLeft" });
     fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "ArrowLeft" });
-    expect(selectedLabel()).toBe("Data Types");
-    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=data-types");
+    expect(selectedLabel()).toBe("Workflows");
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=workflows");
 
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Data Types" }), { key: "Home" });
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Workflows" }), { key: "Home" });
     expect(selectedLabel()).toBe("Entities");
     fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "End" });
-    expect(selectedLabel()).toBe("Data Types");
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Data Types" }), { key: "ArrowRight" });
+    expect(selectedLabel()).toBe("Workflows");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Workflows" }), { key: "ArrowRight" });
     expect(selectedLabel()).toBe("Entities");
 
     // Other keys leave the selection alone.
@@ -751,4 +753,15 @@ describe("product tab bar accessibility", () => {
     expect(document.getElementById("product-tab-events")?.getAttribute("aria-selected")).toBe("true");
     expect(document.getElementById("product-tab-entities")?.getAttribute("aria-selected")).toBe("false");
   });
+});
+
+it("opens the rightmost Workflows tab and keeps the URL in sync", async () => {
+  nav.search = "tab=entities";
+  render(<QueryClientProvider client={new QueryClient()}><DomainWorkspace {...BASE_PROPS} /></QueryClientProvider>);
+  const tabs = screen.getAllByRole("tab");
+  expect(tabs[tabs.length - 1]).toHaveTextContent("Workflows");
+  fireEvent.click(screen.getByRole("tab", { name: "Workflows" }));
+  expect(await screen.findByText("Workflows for prod-1")).toBeInTheDocument();
+  expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=workflows");
+  expect(normalizeWorkspaceTab("workflows")).toBe("workflows");
 });

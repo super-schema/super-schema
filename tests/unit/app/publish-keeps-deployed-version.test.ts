@@ -94,7 +94,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   records = [];
   h.prisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
-  h.prisma.entity.findUnique.mockImplementation(async () => ({ id: "ent-1", tenantId: "tenant-1", metadata: stored }));
+  h.prisma.entity.findUnique.mockImplementation(async () => ({ id: "ent-1", tenantId: "tenant-1", metadata: stored, tenant: { deploymentEnvironments: ["development", "staging", "production"] } }));
   h.prisma.entity.update.mockImplementation(async ({ data }: { data: { metadata: Record<string, unknown> } }) => {
     stored = data.metadata;
     return { id: "ent-1" };

@@ -2,6 +2,8 @@
 
 import { useState, useMemo, useEffect, useSyncExternalStore, type KeyboardEvent } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
+import WorkflowIcon from "lucide-react/icons/workflow";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ChevronRight,
@@ -37,7 +39,9 @@ import { assetHref } from "@/lib/navigation/asset-href";
 import { formatDateOnly } from "@/lib/date-format";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 
-export type DomainTab = "entities" | "data-types" | "apis" | "events";
+const ProductDeploymentWorkflows = dynamic(() => import("@/components/custom/deployments/ProductDeploymentWorkflows").then((module) => module.ProductDeploymentWorkflows), { loading: () => <p role="status" className="text-sm text-muted-foreground">Loading workflows…</p> });
+
+export type DomainTab = "entities" | "data-types" | "apis" | "events" | "workflows";
 
 /**
  * Normalize the `?tab=` query value to a workspace tab. The legacy `types`
@@ -48,7 +52,7 @@ export type DomainTab = "entities" | "data-types" | "apis" | "events";
 export function normalizeWorkspaceTab(raw: string | null): DomainTab {
   if (raw === "types") return "data-types";
   if (raw === "traits") return "events";
-  if (raw === "data-types" || raw === "apis" || raw === "entities" || raw === "events") return raw;
+  if (raw === "data-types" || raw === "apis" || raw === "entities" || raw === "events" || raw === "workflows") return raw;
   return "entities";
 }
 
@@ -60,6 +64,7 @@ const domainTabs: { icon: React.ComponentType<{ className?: string }>; label: st
   { icon: EventIcon, label: "Events", id: "events" },
   { icon: ApiIcon, label: "APIs", id: "apis" },
   { icon: DataTypeIcon, label: "Data Types", id: "data-types" },
+  { icon: WorkflowIcon, label: "Workflows", id: "workflows" },
 ];
 
 interface EntityData {
@@ -155,6 +160,8 @@ export function DomainWorkspace({
 
   // Follow external URL changes (sidebar leaf links, back/forward).
   useEffect(() => {
+    // Browser history changes synchronize the local roving tab selection.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setActiveTab(normalizeWorkspaceTab(tabParam));
   }, [tabParam]);
 
@@ -164,6 +171,7 @@ export function DomainWorkspace({
   const [contactsOpen, setContactsOpen] = useState(false);
 
   function tabHref(tab: DomainTab) {
+    if (tab === "workflows") return assetHref({ kind: "product", domainSlug, productSlug }, { query: { tab: "workflows" } });
     if (tab === "data-types") return assetHref({ kind: "dataTypes", domainSlug, productSlug });
     if (tab === "apis") return assetHref({ kind: "apis", domainSlug, productSlug });
     if (tab === "events") return assetHref({ kind: "events", domainSlug, productSlug });
@@ -383,7 +391,7 @@ export function DomainWorkspace({
       </div>
 
       {/* Domain tabs */}
-      <div role="tablist" aria-label={`${productName} sections`} className="flex items-center gap-space-1 border-b border-border mb-space-6">
+      <div role="tablist" aria-label={`${productName} sections`} className="flex flex-wrap items-center gap-space-1 border-b border-border mb-space-6">
         {domainTabs.map((tab, index) => (
           <button
             key={tab.id}
@@ -408,6 +416,7 @@ export function DomainWorkspace({
       </div>
 
       <div role="tabpanel" id={PANEL_DOM_ID} aria-labelledby={tabDomId(activeTab)}>
+      {activeTab === "workflows" && <ProductDeploymentWorkflows productId={productId} />}
       {/* Data Types tab */}
       {activeTab === "data-types" && (
         <DomainTypesTab

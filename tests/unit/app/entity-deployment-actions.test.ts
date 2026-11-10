@@ -90,7 +90,7 @@ import {
 const ENTITY_ID = "entity-1";
 
 function metadataWith(schemaVersions: Record<string, unknown>) {
-  return { metadata: { schemaVersions }, tenantId: "tenant-1" };
+  return { metadata: { schemaVersions }, tenantId: "tenant-1", tenant: { deploymentEnvironments: ["development", "staging", "production"] } };
 }
 function version(v: number, status: string, output: string) {
   return { version: v, status, output, generatedAt: "2026-01-01T00:00:00.000Z", entityVersion: 1 };

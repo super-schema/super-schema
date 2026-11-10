@@ -10,6 +10,8 @@ import { formatDateOnly } from "@/lib/date-format";
 
 interface DeploymentPanelProps {
   entityName: string;
+  environments?: string[];
+  publishedVersions?: { key: string; versions: number[] }[];
   deploymentStatuses: DeploymentStatus[];
   onCheckDrift?: (targetId: string) => void;
   onMarkDeployed?: (targetId: string, environment: string, version: number) => void;
@@ -20,6 +22,8 @@ interface DeploymentPanelProps {
 
 export function DeploymentPanel({
   entityName,
+  environments = [],
+  publishedVersions,
   deploymentStatuses,
   onCheckDrift,
   onMarkDeployed,
@@ -80,12 +84,12 @@ export function DeploymentPanel({
               )}
               {onMarkDeployed && (
                 <button
-                  disabled={recordVersion !== undefined && recordVersion.targetId !== target.targetId}
+                  disabled={(recordVersion !== undefined && recordVersion.targetId !== target.targetId) || (publishedVersions !== undefined && !publishedVersions.find((f) => target.targetId.endsWith(`:${f.key}`))?.versions.length)}
                   onClick={() =>
                     setDeployDialog({
                       targetId: target.targetId,
                       targetFormat: target.targetFormat,
-                      version: recordVersion?.targetId === target.targetId ? `v${recordVersion.version}` : target.emittedVersion || "v0",
+                      version: recordVersion?.targetId === target.targetId ? `v${recordVersion.version}` : publishedVersions ? `v${publishedVersions.find((f) => target.targetId.endsWith(`:${f.key}`))?.versions[0] ?? 0}` : target.emittedVersion || "v0",
                     })
                   }
                   className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
@@ -143,10 +147,12 @@ export function DeploymentPanel({
         <MarkAsDeployedDialog
           isOpen={true}
           onClose={() => setDeployDialog(null)}
-          onConfirm={(environment) => {
-            onMarkDeployed?.(deployDialog.targetId, environment, Number(deployDialog.version.replace(/^v/, "")));
+          onConfirm={(environment, version) => {
+            onMarkDeployed?.(deployDialog.targetId, environment, Number((version ?? deployDialog.version).replace(/^v/, "")));
             setDeployDialog(null);
           }}
+          versions={publishedVersions?.find((f) => deployDialog.targetId.endsWith(`:${f.key}`))?.versions}
+          environments={environments}
           targetFormat={deployDialog.targetFormat}
           version={deployDialog.version}
           entityName={entityName}

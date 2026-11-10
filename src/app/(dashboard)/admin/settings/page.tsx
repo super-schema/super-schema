@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { SettingsPanel } from "@/components/custom/SettingsPanel/SettingsPanel";
 import { useTranslations } from "@/lib/i18n";
 
@@ -19,6 +20,7 @@ export default function SettingsPage() {
           Manage your personal preferences.
         </p>
       </div>
+      <Link href="/admin/settings/deployments" className="inline-flex text-sm text-primary underline">Deployment environments and connections</Link>
       <SettingsPanel />
     </div>
   );

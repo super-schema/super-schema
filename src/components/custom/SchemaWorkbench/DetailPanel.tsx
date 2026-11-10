@@ -8,6 +8,7 @@ import { HighlightedTextarea } from "./HighlightedTextarea";
 
 interface DetailPanelProps {
   value: string;
+  label?: string;
   onChange: (value: string) => void;
   /** When set, lines that differ from this text are highlighted in red. */
   baseline?: string;
@@ -36,7 +37,7 @@ export function boundedDiff(baseline: string, value: string): LineDiff | "skippe
  * textarea over a coloured layer. With a `baseline` the changed lines get a red background so imported schemas show what the user
  * touched. The diff is computed from a deferred copy of the text, so typing is never blocked by it.
  */
-export function DetailPanel({ value, onChange, baseline, readOnly, placeholder, format }: DetailPanelProps) {
+export function DetailPanel({ value, onChange, baseline, readOnly, placeholder, format, label = "Detail Panel" }: DetailPanelProps) {
   const deferred = useDeferredValue(value);
   const result = useMemo(
     () => (baseline !== undefined ? boundedDiff(baseline, deferred) : null),
@@ -57,7 +58,7 @@ export function DetailPanel({ value, onChange, baseline, readOnly, placeholder, 
     <div className="flex flex-col gap-space-1" data-testid="detail-panel">
       <div className="flex items-center justify-between">
         <span className="text-caption text-muted-foreground uppercase tracking-wider">
-          Detail Panel
+          {label}
         </span>
         {diff && (changed > 0 || removed > 0) ? (
           <span data-testid="detail-panel-changes" className="text-caption text-destructive">
@@ -70,7 +71,7 @@ export function DetailPanel({ value, onChange, baseline, readOnly, placeholder, 
           </span>
         ) : (
           <span className="text-caption text-muted-foreground">
-            {baseline !== undefined ? "Unchanged" : "Live preview"}
+            {baseline !== undefined ? "Unchanged" : readOnly ? "Read-only" : "Live preview"}
           </span>
         )}
       </div>

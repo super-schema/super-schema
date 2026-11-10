@@ -9,7 +9,7 @@ import { DeliveryError, type PreparedPlan } from "@/lib/deployments/contracts";
 const h = vi.hoisted(() => ({ db: null as unknown as PrismaClient, prepare: vi.fn(), deliver: vi.fn() }));
 vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get(_target, property) { const value = Reflect.get(h.db, property); return typeof value === "function" ? value.bind(h.db) : value; } }) }));
 vi.mock("@/lib/deployments/adapters", () => ({ prepareDelivery: h.prepare, deliverPrepared: h.deliver }));
-import { getDeploymentWorkspace, previewDeployment, processDeploymentRun, processDueDeployments, queueDeployment, saveDeploymentConnection, saveDeploymentWorkflow } from "@/services/deployment-workflow.service";
+import { getDeploymentWorkspace, previewDeployment, processDeploymentRun, processDueDeployments, queueDeployment, saveDeploymentConnection, saveDeploymentWorkflow, saveProductDeploymentWorkflow, getProductDeploymentConfiguration, saveDeploymentEnvironments, getTenantDeploymentConfiguration, saveDeploymentTargetMethods } from "@/services/deployment-workflow.service";
 
 let pg: PGlite;
 const originalSecretKey = process.env.SECRETS_ENCRYPTION_KEY;
@@ -31,7 +31,7 @@ beforeEach(async () => {
   for (const remove of clear) await remove();
   // Audit entries are immutable and retain their actor, so preserve the actor across cases.
   await h.db.user.upsert({ where: { id: "actor" }, update: { disabledAt: null }, create: { id: "actor", email: "actor@example.test" } });
-  await h.db.tenant.create({ data: { id: "tenant", name: "PayPal", slug: "paypal" } });
+  await h.db.tenant.create({ data: { id: "tenant", name: "PayPal", slug: "paypal", deploymentTargetMethods: { avro: ["git", "http", "registry"] } } });
   await h.db.domain.create({ data: { id: "domain", tenantId: "tenant", name: "Identity", slug: "identity" } });
   await h.db.product.create({ data: { id: "product", domainId: "domain", name: "Accounts", slug: "accounts" } });
   await h.db.entity.create({ data: { id: "root", name: "Account", slug: "account", tenantId: "tenant", domainId: "domain", productId: "product", ownerId: "actor", metadata: { schemaVersions: { avro: [artifact()] } } } });
@@ -147,5 +147,114 @@ describe("durable deployment workflow on migrated PostgreSQL/PGlite tables", () 
     await h.db.entity.update({ where: { id: "root" }, data: { metadata: { schemaVersions: { avro: [artifact(1, "draft")] } } } });
     await expect(preview()).rejects.toThrow(/Publish this schema/);
     expect(h.prepare).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("shared deployment configuration", () => {
+  const define = async () => (await saveProductDeploymentWorkflow("product", { name: "Reusable API", connectionId, format: "avro", environment: "staging", settings: {} }, ctx())).id;
+  it("reuses one product workflow for multiple schemas and freezes variables without changing its definition", async () => {
+    const shared = await define();
+    await h.db.entity.create({ data: { id: "second", name: "Second", slug: "second", tenantId: "tenant", domainId: "domain", productId: "product", ownerId: "actor", metadata: { schemaVersions: { avro: [artifact()] } } } });
+    expect((await getDeploymentWorkspace("second", ctx())).workflows.map((w) => w.id)).toEqual([shared]);
+    const result = await previewDeployment("second", { workflowId: shared, version: 1, environment: "production", variables: { title: "Second schema" }, idempotencyKey: crypto.randomUUID() }, ctx());
+    expect(result.plan).toMatchObject({ environment: "production", settings: { title: "Second schema" } });
+    const definition = await h.db.deploymentWorkflow.findUniqueOrThrow({ where: { id: shared } });
+    expect(definition).toMatchObject({ entityId: null, productId: "product", environment: "staging", revision: 1, settings: { title: "" } });
+    await queueDeployment("second", { runId: result.run.id, planHash: result.run.planHash }, ctx());
+    await processDeploymentRun(result.run.id);
+    expect(h.deliver).toHaveBeenCalledOnce();
+    expect((await h.db.deploymentRun.findUniqueOrThrow({ where: { id: result.run.id } })).status).toBe("SUCCEEDED");
+  });
+  it("blocks workflows from another product and invalidates a queued delivery if a schema moves", async () => {
+    const shared = await define();
+    const result = await previewDeployment("root", { workflowId: shared, version: 1, idempotencyKey: crypto.randomUUID() }, ctx());
+    await queue(result.run);
+    await h.db.product.create({ data: { id: "elsewhere", domainId: "domain", name: "Elsewhere", slug: "elsewhere" } });
+    await h.db.entity.update({ where: { id: "root" }, data: { productId: "elsewhere" } });
+    await expect(previewDeployment("root", { workflowId: shared, version: 1, idempotencyKey: crypto.randomUUID() }, ctx())).rejects.toThrow(/not found/);
+    await processDeploymentRun(result.run.id);
+    expect(h.deliver).not.toHaveBeenCalled();
+    expect((await h.db.deploymentRun.findUniqueOrThrow({ where: { id: result.run.id } })).status).toBe("FAILED");
+  });
+  it("validates the tenant environment enum and protects names in active workflows", async () => {
+    await saveDeploymentEnvironments("tenant", ["staging", "qa"], ctx());
+    expect((await getTenantDeploymentConfiguration("tenant", ctx())).environments).toEqual(["staging", "qa"]);
+    await expect(previewDeployment("root", { workflowId, version: 1, environment: "invented", idempotencyKey: crypto.randomUUID() }, ctx())).rejects.toThrow(/configured in tenant settings/);
+    await expect(saveDeploymentEnvironments("tenant", ["qa"], ctx())).rejects.toThrow(/Update or disable/);
+    await expect(saveDeploymentEnvironments("tenant", ["qa", "qa"], ctx())).rejects.toThrow(/unique/);
+    const scoped = { ...ctx(), assignments: [{ role: "STEWARD" as const, scope: { kind: "PRODUCT" as const, tenantId: "tenant", domainId: "domain", productId: "product" } }] };
+    await expect(saveDeploymentEnvironments("tenant", ["staging"], scoped)).rejects.toThrow(/access denied/);
+    expect((await getProductDeploymentConfiguration("product", scoped)).canManage).toBe(true);
+  });
+  it("pins a selected tenant connection and rejects a changed idempotent intent or structural override", async () => {
+    const other = await saveDeploymentConnection("root", { name: "Production API", method: "http", config: { url: "https://production.example/schema" }, credentials: { authType: "none" } }, ctx());
+    const key = crypto.randomUUID();
+    const input = { workflowId, version: 1, environment: "production", connectionId: other.id, idempotencyKey: key };
+    const result = await previewDeployment("root", input, ctx());
+    expect(result.plan.connectionConfig.url).toBe("https://production.example/schema");
+    expect((await previewDeployment("root", input, ctx())).run.id).toBe(result.run.id);
+    await expect(previewDeployment("root", { ...input, connectionId }, ctx())).rejects.toThrow(/another request/);
+    await expect(previewDeployment("root", { ...input, idempotencyKey: crypto.randomUUID(), variables: { eventContract: true } }, ctx())).rejects.toThrow();
+    await h.db.deploymentConnection.update({ where: { id: other.id }, data: { revision: { increment: 1 } } });
+    await expect(queue(result.run)).rejects.toThrow(/changed/);
+  });
+  it("reads target-local artifact versions and shared source versions in recorded state", async () => {
+    await h.db.deploymentRecord.create({ data: { entityId: "root:avro", target: "root:avro", environment: "staging", version: 1 } });
+    expect((await getDeploymentWorkspace("root", ctx())).recorded).toEqual([{ target: "avro", environment: "staging", version: 1, sourceVersion: 1 }]);
+  });
+});
+
+it("enforces configured target methods at preview and execution, including settings changes after queueing", async () => {
+  await expect(saveDeploymentTargetMethods("tenant", { avro: ["git", "registry"] }, ctx())).rejects.toThrow(/Update or disable/);
+  await expect(saveDeploymentTargetMethods("tenant", { bigquery: ["registry"] }, ctx())).rejects.toThrow(/Avro, JSON Schema or Protobuf/);
+  const result = await preview(); await queue(result.run);
+  await h.db.tenant.update({ where: { id: "tenant" }, data: { deploymentTargetMethods: {} } });
+  await expect(preview()).rejects.toThrow(/not enabled for the selected target/);
+  await processDeploymentRun(result.run.id);
+  expect(h.deliver).not.toHaveBeenCalled();
+  expect((await h.db.deploymentRun.findUniqueOrThrow({ where: { id: result.run.id } })).status).toBe("FAILED");
+});
+
+it("manages a legacy schema workflow from its product without broadening its ownership", async () => {
+  const configuration = await getProductDeploymentConfiguration("product", ctx());
+  expect(configuration.workflows.find((w) => w.id === workflowId)?.scope).toBe("schema");
+  await saveProductDeploymentWorkflow("product", { id: workflowId, name: "Legacy disabled", connectionId, format: "avro", environment: "staging", settings: {}, active: false }, ctx());
+  expect(await h.db.deploymentWorkflow.findUniqueOrThrow({ where: { id: workflowId } })).toMatchObject({ entityId: "root", productId: null, active: false });
+  await saveDeploymentTargetMethods("tenant", { avro: ["git", "registry"] }, ctx());
+});
+
+
+describe("multi-target workflows and inherited Git destinations", () => {
+  async function gitConnection(name = "Contracts") { return saveDeploymentConnection("root", { name, method: "git", config: { url: `https://github.com/acme/${name.toLowerCase()}` }, credentials: { authType: "bearer", token: "test-token" } }, ctx()); }
+  it("uses one workflow for Avro and JSON Schema while each run pins its exact target and version", async () => {
+    const connection = await gitConnection();
+    const shared = await saveProductDeploymentWorkflow("product", { name: "Multi target", connectionId: connection.id, supportedTargets: ["avro", "json-schema"], environment: "staging", settings: {} }, ctx());
+    await h.db.entity.update({ where: { id: "root" }, data: { metadata: { schemaVersions: { avro: [artifact()], "json-schema": [artifact(2, "published", '{"type":"object","properties":{}}')] } } } });
+    const workspace = await getDeploymentWorkspace("root", ctx());
+    expect(workspace.workflows.find((w) => w.id === shared.id)?.supportedTargets).toEqual(["avro", "json-schema"]);
+    const first = await previewDeployment("root", { workflowId: shared.id, format: "avro", version: 1, idempotencyKey: crypto.randomUUID() }, ctx());
+    const second = await previewDeployment("root", { workflowId: shared.id, format: "json-schema", version: 2, idempotencyKey: crypto.randomUUID() }, ctx());
+    expect(first.run).toMatchObject({ format: "avro", artifactVersion: 1 });
+    expect(second.run).toMatchObject({ format: "json-schema", artifactVersion: 2 });
+    await expect(previewDeployment("root", { workflowId: shared.id, version: 1, idempotencyKey: crypto.randomUUID() }, ctx())).rejects.toThrow(/exact target/);
+    await expect(previewDeployment("root", { workflowId: shared.id, format: "bigquery", version: 1, idempotencyKey: crypto.randomUUID() }, ctx())).rejects.toThrow(/does not support/);
+    await expect(saveDeploymentTargetMethods("tenant", { avro: ["git", "http", "registry"], "json-schema": ["registry"] }, ctx())).rejects.toThrow(/Update or disable/);
+  });
+  it("refuses a client-selected alternate Git repository", async () => {
+    const first = await gitConnection("First"), alternate = await gitConnection("Other");
+    const saved = await saveProductDeploymentWorkflow("product", { name: "Pinned Git", connectionId: first.id, supportedTargets: ["avro"], environment: "staging", settings: {} }, ctx());
+    await expect(previewDeployment("root", { workflowId: saved.id, format: "avro", version: 1, connectionId: alternate.id, idempotencyKey: crypto.randomUUID() }, ctx())).rejects.toThrow(/defined by the saved workflow/);
+    expect(h.prepare).not.toHaveBeenCalled();
+    const result = await previewDeployment("root", { workflowId: saved.id, format: "avro", version: 1, idempotencyKey: crypto.randomUUID() }, ctx());
+    expect(result.plan.connectionConfig.url).toBe(first.config.url);
+  });
+  it("rejects a queued target removed from a workflow", async () => {
+    const saved = await saveProductDeploymentWorkflow("product", { name: "Target guard", connectionId, supportedTargets: ["avro"], environment: "staging", settings: {} }, ctx());
+    const result = await previewDeployment("root", { workflowId: saved.id, format: "avro", version: 1, idempotencyKey: crypto.randomUUID() }, ctx());
+    await queue(result.run);
+    await h.db.deploymentWorkflow.update({ where: { id: saved.id }, data: { supportedTargets: ["json-schema"] } });
+    await processDeploymentRun(result.run.id);
+    expect(h.deliver).not.toHaveBeenCalled();
   });
 });

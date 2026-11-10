@@ -1,6 +1,6 @@
 # Schema publication and deployment workflows
 
-Implemented 2026-11-07. This is the operating guide for the schema deployment workflow. The earlier [tab plan](plans/2026-11-07-schema-versioning-and-deployment-workflows.md) and [Git assessment](plans/2026-11-07-git-deployment-repository-profiles.md) explain the original gaps.
+Implemented 2026-11-07; shared deployment configuration and target-driven methods added 2026-11-10. This is the operating guide for the schema deployment workflow. The earlier [tab plan](plans/2026-11-07-schema-versioning-and-deployment-workflows.md) and [Git assessment](plans/2026-11-07-git-deployment-repository-profiles.md) explain the original gaps.
 
 ## Use the two tabs
 
@@ -8,7 +8,13 @@ Implemented 2026-11-07. This is the operating guide for the schema deployment wo
 
 Select a published version and click **Deploy…** to open **Deployments** with that exact format and version. This only navigates, using `tab=deployments&schemaFormat=<format>&schemaVersion=<number>`. Draft delivery is blocked on the server. An unavailable explicit selection is never silently replaced by the latest version.
 
-**Deployments** has **Git PR**, **API endpoint**, and **Schema registry** tabs. Create a connection, save a named workflow, choose a published artifact, validate and review the preview, then execute explicitly. Workflow edits invalidate the preview. The preview expires after 30 minutes; changing a connection or workflow requires a new preview.
+**Deployments** has independent **Git PR**, **API endpoint**, and **Schema registry** flows. Configure shared connections and environment names at **Settings → Deployment environments and connections** (`/admin/settings/deployments`). Tenant administrators manage both. Environment inputs are selections from that tenant's configured list; active workflows must be updated or disabled before their environment can be removed.
+
+Define reusable workflows from the rightmost **Product → Workflows** tab (`/schemas/<domain>/<product>?tab=workflows`). Existing `/workflows` links redirect to that tab. The list shows each saved workflow, delivery method/destination, supported targets, environment and enabled state; **Edit** opens its saved values. Product stewards can define a workflow with multiple supported datastores/formats, a default environment, a tenant connection, packaging behavior and default variables. Every selected target must support that delivery method in tenant settings. Existing schema-owned workflows remain available only to their original schema and can be edited or disabled from their product workflow page; the migration does not promote schema-specific subjects or metadata into product-wide defaults.
+
+From a schema's **Deployments** tab, select a target, exact published version and saved workflow. Choose an environment, then supply only the workflow variables (for example PR title/contract version or registry subject). Git workflows inherit their repository and base branch; they are read-only on the deployment form and enforced on the server. API and registry flows can select another active tenant connection of the same method. **New workflow** opens the product Workflows tab. Connection credentials are edited only in tenant settings. The target selector sits above the workflow tabs. Avro, JSON Schema and Protobuf default to Git + schema registry; database and other targets default to Git + API. Tenant administrators can change the allowed methods per target and the fallback for other targets under **Target deployment methods** in deployment settings. Registry delivery remains limited to supported schema formats and the implemented Confluent-compatible protocol; native Pulsar admin/schema APIs require an adapter. Existing workflow methods are preserved as explicit mappings during migration. Active workflows must be updated or disabled before their method can be removed. Each available method shows its own variables, preview, execution action and history. Validate, review, then execute explicitly. Any selection or variable change clears the preview, as do method changes and Refresh. The preview expires after 30 minutes; changed connection/workflow revisions require a new preview.
+
+The **Target versions** matrix compares recorded artifact versions across targets and environments. Artifact numbers are local to a target; the source entity version shown below a recorded artifact is the common identity for comparing generated outputs. An empty cell means no recorded deployment, not a failed delivery. Manual recording lets the user choose an exact published version of each target and a configured environment.
 
 Artifact versions, source entity versions, destination contract SemVer, and registry subject versions are separate identities. Deployment never regenerates or rewrites the selected schema. A full file manifest and root file are frozen with a content hash. Partial/redacted bundles and references generated from unpublished entities cannot be delivered.
 
@@ -24,7 +30,7 @@ Receipts do not assert that an application is running the schema. No method merg
 
 ## Install and run
 
-The application uses the new `DeploymentConnection`, `DeploymentWorkflow`, `DeploymentRun`, and `DeploymentAttempt` tables. Generate the client and apply migrations to the configured database before using the feature:
+The application uses `DeploymentConnection`, `DeploymentWorkflow`, `DeploymentRun`, and `DeploymentAttempt` tables. Migration `20261111000000_workflow_supported_targets` adds a supported-target array and backfills each existing workflow from its original format. The legacy primary format remains for compatibility; multi-target preview requests select one explicit format, and runs retain their exact format/version. Migration `20261110000000_shared_deployment_configuration` adds tenant environments and optional product ownership for workflow definitions, preserving existing schema workflows and recorded custom environments. Generate the client and apply migrations to the configured database before using the feature:
 
 ```bash
 npm run db:generate
@@ -73,9 +79,11 @@ schemas/<tenant-slug>/<domain-slug>/<product-slug>/<schema-slug>/<contractVersio
 
 The format directory prevents independent outputs from colliding at the same contract version. Identity comes from saved Super Schema slugs. The entity must belong to a tenant/domain/product; destination segments must be lowercase kebab-case. Choose destination SemVer explicitly, such as `1.0.0_snapshot`. Source artifact `v4` does not imply destination `4.0.0`. Each format/version directory is immutable in generic exports; different bytes require a new destination version.
 
-Preview reads the actual base commit, validates the complete file set, rejects unsafe paths, collisions, symlinks and oversized/incomplete trees, and performs no Git writes. Execution verifies the base is unchanged, creates a tree based on that commit, commits only the reviewed files, creates a deterministic feature branch, then opens a real PR. Recovery checks the branch parent, complete unrelated base content, intended file bytes and delivery marker before reusing it. It never force-pushes. A moved base or conflicting branch requires a new preview.
+The deployment form generates `Publish <schema>: <format> v<artifact-version> → <environment> (<contract-version>)`. Users can edit the PR title or use **Reset to generated**. The reviewed title is the title submitted to GitHub.
 
-Platform administrators can import an existing legacy token/App configuration through **Manage Git PR connections**. It becomes a tenant connection. SSH credentials require a new token/App connection. Legacy bulk exports and fake status synchronization return `WORKFLOW_REQUIRED`; they cannot report fabricated commits or PRs.
+Preview reads the actual base commit, validates the complete file set, rejects unsafe paths, collisions, symlinks and oversized/incomplete trees, and performs no Git writes. Its file browser lists every prepared path, including companion files/manifests, and classifies added, modified and unchanged files against that pinned base. **Content** shows the exact proposed file with read-only syntax highlighting; **Changes** shows added/deleted lines. Large diffs are explicitly bounded while Content/Copy retain the complete proposed file. A preview with no changed files cannot create a PR. The before-content, proposed files, title, branch and base commit are part of the frozen reviewed plan. Execution verifies the base is unchanged, creates a tree based on that commit, commits only the reviewed files, creates a deterministic feature branch, then opens a real PR. Recovery checks the branch parent, complete unrelated base content, intended file bytes and delivery marker before reusing it. It never force-pushes. A moved base or conflicting branch requires a new preview.
+
+Platform administrators can import an existing legacy token/App configuration through the **Git PR** connection tab in tenant deployment settings. It becomes a tenant connection. SSH credentials require a new token/App connection. Legacy bulk exports and fake status synchronization return `WORKFLOW_REQUIRED`; they cannot report fabricated commits or PRs.
 
 ## Event Schema Central contract bundles
 
@@ -124,7 +132,7 @@ The request carries `Idempotency-Key`. With signing enabled, `X-Webhook-Signatur
 
 ## Confluent-compatible schema registry
 
-Configure its HTTPS API base and bearer or basic credentials. Provide the root subject; map dependent file paths to their own subjects when the artifact has external references. The adapter supports Avro, JSON Schema and Protobuf, discovers reachable dependencies, rejects missing mappings/cycles, and registers dependencies before the root. Self-contained schemas do not require a subject for every redundant helper file.
+Configure its HTTPS API base and bearer or basic credentials once in tenant deployment settings. Choose that registry when defining or running a product workflow. Supply the root subject as a workflow variable; map dependent file paths to their own subjects when the artifact has external references. The adapter supports Avro, JSON Schema and Protobuf, discovers reachable dependencies, rejects missing mappings/cycles, and registers dependencies before the root. Self-contained schemas do not require a subject for every redundant helper file.
 
 Preview performs applicable compatibility checks. Execution checks each referenced schema with its resolved subject/version references, registers it or finds the identical existing schema, and records the registry's actual ID and subject version. Registration retries reconcile by schema lookup. A partial or lost response remains recoverable; already registered dependencies are reused. Registry registration does not create Kafka topics, promote Event Schema Central snapshots, or update producers and consumers.
 
@@ -135,3 +143,19 @@ See the [verification record](testing/deployment-workflows-verification.md) for 
 The automated coverage includes byte/hash preservation, JSONB round trips, older-version selection, draft and closure access refusals, tenant isolation, credential sealing and audit redaction, revision/expiry checks, concurrent claims, lease recovery, retry behavior, GitHub REST tree/commit/PR reconciliation, HMAC/HTTP handoff with a real local receiver, registry references/compatibility/lookup protocol, and worker token authentication. Database tests apply the actual migration SQL. Chromium checks cover the real components at 1512, 760 and 390 pixels in light and dark themes.
 
 Live credentials, a compatible remote contract base, the independent worker, and a real registry endpoint are operator configuration. Hosted GitHub PR and live registry acceptance are not claimed by the controlled protocol tests. The rollout retains all old manual environment history; it does not backfill invented external results.
+
+### Shared deployment settings verification (2026-11-10)
+
+- 62 focused tests passed across nine files, covering target method defaults/overrides, product and legacy workflow scope, tenant authorization, preview invalidation, credential handling, exact-version recording and migration preservation.
+- TypeScript, scoped ESLint and `git diff --check` passed. The webpack production build used Node 22.22.2 with an isolated PostgreSQL configuration so build workers never opened local PGlite data.
+- Chromium checked isolated renders of the real components with mocked server actions at 1512×861 and 390×844, including light/dark themes, target-driven tabs, registry selection, variable changes, tenant settings and product workflow creation. The checks reported no page errors or document overflow. These checks do not exercise authenticated server actions or external destinations.
+- The local migration was validated on a stopped-database copy before applying it. Counts remained 90 entities, one connection, zero workflows, zero runs and zero recorded environments. The untouched backup is `data/backups/pglite-before-shared-deployment-settings-20261110T210407Z/original/`.
+- The app was restarted at `http://127.0.0.1:3000`; its health endpoint confirmed the database, compiler and all eight emitter packages healthy. Current app launch metadata/logs are in `data/deployment-activation/shared-settings-app.json` and `shared-settings-app.log`.
+
+### Workflow usability verification (2026-11-10)
+
+- Implemented wrapping schema content controls, inherited Git repositories, the product Workflows tab with list/editor, multiple supported targets, generated editable PR titles, and the exact-file Git preview.
+- Combined regression pass: 227 tests passed across 23 files, including schema history, product tab keyboard/URL behavior, workflow editing, target/tenant guards, additive migration preservation, PR title overrides, preview invalidation and exact preview-to-delivery files.
+- TypeScript, scoped ESLint, webpack production build and `git diff --check` passed. The build used Node 22.22.2 with an isolated database configuration.
+- Chromium checked the real product navigation, schema toolbar, workflow editor and Git preview at 2313×1322, 1512×861 and 390×844, with controlled data/server-action responses. The checks covered light/dark rendering, file content/diffs, multiple targets, inherited repository, generated/edited/reset titles, workflow list/edit, URL state and no document overflow. Authenticated live-page coverage was unavailable; no external PR was created.
+- The additive migration was tested on a stopped-database copy, then applied locally. Counts and content hashes remained equal: 90 entities, zero workflows/runs/recorded deployments. The untouched backup is `data/backups/pglite-before-multi-target-workflows-20261110T220524Z/original/`. The restarted app's health endpoint reported the database, compiler and all eight emitter packages healthy.

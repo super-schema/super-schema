@@ -115,6 +115,8 @@ model Tenant {
   traits         Trait[]
   eventSpecs     EventSpec[]
   webhookEndpoints WebhookEndpoint[]
+  deploymentEnvironments String[] @default(["development", "staging", "production"])
+  deploymentTargetMethods Json @default("{}")
   deploymentConnections DeploymentConnection[]
   deploymentWorkflows DeploymentWorkflow[]
   deploymentRuns DeploymentRun[]
@@ -185,6 +187,7 @@ model Product {
   domain          Domain              @relation(fields: [domainId], references: [id], onDelete: Cascade)
   tier            ProductTier?        @relation(fields: [tierId], references: [id])
   entities        Entity[]
+  deploymentWorkflows DeploymentWorkflow[]
   userRoles       UserRole[]
   sharedEnums     SharedEnum[]
   customScalars   CustomScalar[]
@@ -1045,10 +1048,12 @@ model DeploymentConnection {
 model DeploymentWorkflow {
   id           String   @id @default(cuid())
   tenantId     String
-  entityId     String
+  entityId     String?
+  productId    String?
   connectionId String
   name         String
-  format       String
+  format       String // Legacy primary target; retained for old clients and runs.
+  supportedTargets String[] @default([])
   environment  String
   settings     Json
   revision     Int      @default(1)
@@ -1057,11 +1062,14 @@ model DeploymentWorkflow {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  entity       Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  entity       Entity?  @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  product      Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
   connection   DeploymentConnection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
   runs         DeploymentRun[]
 
   @@unique([entityId, name])
+  @@unique([productId, name])
+  @@index([tenantId, productId])
   @@index([tenantId, entityId])
   @@map("deployment_workflows")
 }
