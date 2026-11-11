@@ -6,6 +6,7 @@
 // check and the write under the tenant's advisory lock — so a built-in trait can never take a name something else in the tenant's line
 // holds. It is NOT audited: the audit log needs a user, and installing a built-in is a system provisioning step with no actor
 // (tenant creation, `npm run dev`'s database step, the demo seed).
+import { contentStorage } from "@/lib/gitops/mode";
 import type { PrismaClient, Prisma } from "@/generated/prisma/client";
 import { BUNDLED_TRAITS, bundledMarker, type BundledTrait } from "@/lib/events/bundled-traits";
 import { createInScope } from "@/services/scoped-create.service";
@@ -48,6 +49,7 @@ async function holderIsBuiltIn(prisma: PrismaClient, tenantId: string, def: Bund
  * `NOT_FOUND`, a database failure `DB_ERROR`.
  */
 export async function ensureBundledTraits(prisma: PrismaClient, tenantId: string): Promise<Result<EnsureBundledTraitsResult>> {
+  if(contentStorage()==="git")return ok({created:[],skipped:[]});
   return guardRead(async () => {
     const levelTraits = await prisma.trait.findMany({ where: { tenantId, domainId: null, productId: null }, select: { spec: true } });
     const present = new Set(levelTraits.flatMap((t) => bundledMarker(t.spec) ?? []));

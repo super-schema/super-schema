@@ -26,6 +26,7 @@ export type Credentials = z.infer<typeof CredentialsSchema>;
 export const ConnectionConfigSchema = z.object({
   url: z.string().url().max(2000),
   baseBranch: z.string().min(1).max(200).default("main"),
+  gitRoot: z.string().max(400).refine((s) => !s.startsWith("/") && !s.endsWith("/") && !s.includes("\\") && s.split("/").every((p) => p !== "." && p !== ".." && (p !== "" || s === "")), "Use a safe repository root").optional(),
   supportsIdempotency: z.boolean().default(false),
 }).strict();
 export type ConnectionConfig = z.infer<typeof ConnectionConfigSchema>;
@@ -89,6 +90,7 @@ export interface DeliveryReceipt {
   registrations?: { path: string; subject: string; id: number; version: number }[];
 }
 export interface PreparedPlan {
+  gitOpsRevision?: number;
   bundle: ArtifactBundle; settings: WorkflowSettings; workflowRevision: number;
   connectionConfig: ConnectionConfig; environment: string;
   baseSha?: string; branch?: string; files?: ArtifactFile[];

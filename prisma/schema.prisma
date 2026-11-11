@@ -1310,3 +1310,194 @@ model InterfaceDefinition {
   @@unique([name, domainId])
   @@map("interface_definitions")
 }
+
+// GitOps metadata. Content in GitCanonicalDocument and the existing content tables is a disposable Git projection.
+model GitProviderApp {
+  id String @id @default("github")
+  appId String
+  privateKey String
+  webhookSecret String
+  clientId String
+  clientSecret String
+  baseUrl String @default("https://github.com")
+  revision Int @default(1)
+  updatedAt DateTime @default(now()) @updatedAt
+  @@map("git_provider_apps")
+}
+model TenantGitBinding {
+  id String @id @default(cuid())
+  tenantId String
+  productId String? @unique
+  repositoryUrl String
+  installationId String
+  branch String @default("main")
+  basePath String @default("superschema")
+  indexedSha String?
+  lastSyncAt DateTime?
+  nextSyncAt DateTime @default(now())
+  lastSyncStatus String @default("PENDING")
+  lastError String?
+  revision Int @default(1)
+  enabled Boolean @default(true)
+  connectionId String?
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  @@map("tenant_git_bindings")
+}
+model ProductGitSettings {
+  productId String @id
+  tenantId String
+  bindingId String
+  repositoryUrl String?
+  installationId String?
+  branch String?
+  basePath String?
+  stages Json @default("[]")
+  targets Json @default("[]")
+  owners String[] @default([])
+  workflowId String?
+  sourceSha String?
+  revision Int @default(1)
+  updatedAt DateTime @default(now()) @updatedAt
+  @@index([tenantId])
+  @@map("product_git_settings")
+}
+model GitUserLink {
+  userId String @id
+  githubId String @unique
+  login String
+  accessToken String
+  refreshToken String?
+  expiresAt DateTime?
+  refreshExpiresAt DateTime?
+  appRevision Int
+  updatedAt DateTime @default(now()) @updatedAt
+  @@map("git_user_links")
+}
+model GitOpsOAuthState {
+  hash String @id
+  verifier String
+  userId String
+  expiresAt DateTime
+  @@map("gitops_oauth_states")
+}
+model ChangeSet {
+  id String @id @default(cuid())
+  tenantId String
+  productId String
+  authorId String
+  kind String @default("EDIT")
+  state String @default("DRAFT")
+  openKey String? @unique
+  title String @default("")
+  description String @default("")
+  branch String?
+  baseSha String?
+  headSha String?
+  prNumber Int?
+  prUrl String?
+  review Json @default("{}")
+  checks Json @default("{}")
+  mergeable Boolean?
+  revision Int @default(1)
+  leaseToken String?
+  leasedUntil DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  @@index([tenantId, productId, state])
+  @@map("change_sets")
+}
+model ChangeSetItem {
+  id String @id @default(cuid())
+  changeSetId String
+  objectKey String
+  objectKind String
+  objectId String
+  operation String
+  path String
+  oldPath String?
+  baseBlobSha String?
+  baseDocument Json?
+  submittedDocument Json?
+  contentOverride String?
+  document Json?
+  outOfDate Boolean @default(false)
+  conflicts Json @default("[]")
+  @@unique([changeSetId, objectKey])
+  @@map("change_set_items")
+}
+model GitCanonicalDocument {
+  id String @id @default(cuid())
+  bindingId String
+  tenantId String
+  productId String?
+  objectId String
+  kind String
+  version String @default("")
+  stage String?
+  path String
+  blobSha String
+  content String
+  commitSha String
+  document Json
+  @@unique([bindingId, path])
+  @@unique([bindingId, kind, objectId, version])
+  @@index([tenantId, productId])
+  @@map("git_canonical_documents")
+}
+model IndexError {
+  id String @id @default(cuid())
+  bindingId String
+  path String
+  sha String
+  message String
+  createdAt DateTime @default(now())
+  @@unique([bindingId, path])
+  @@map("git_index_errors")
+}
+model GitOpsJob {
+  id String @id @default(cuid())
+  dedupeKey String @unique
+  kind String
+  bindingId String
+  payload Json @default("{}")
+  state String @default("PENDING")
+  attempts Int @default(0)
+  dueAt DateTime @default(now())
+  leaseToken String?
+  leasedUntil DateTime?
+  lastError String?
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([state, dueAt])
+  @@map("gitops_jobs")
+}
+model DeliveryPullRequest {
+  id String @id @default(cuid())
+  deliveryKey String @unique
+  productId String
+  bindingId String
+  kind String
+  target String
+  installationId String?
+  repositoryUrl String
+  baseBranch String
+  branch String
+  prNumber Int?
+  prUrl String?
+  headSha String?
+  sourceSha String
+  state String @default("PENDING")
+  versions Json @default("[]")
+  lastError String?
+  updatedAt DateTime @default(now()) @updatedAt
+  @@index([productId, state])
+  @@map("delivery_pull_requests")
+}
+model GitWebhookDelivery {
+  id String @id
+  event String
+  receivedAt DateTime @default(now())
+  @@map("git_webhook_deliveries")
+}

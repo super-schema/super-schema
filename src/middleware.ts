@@ -33,7 +33,7 @@ const PUBLIC_API_PREFIXES = ["/api/auth", "/api/v1", "/api/asyncapi-preview"];
 const isUnder = (pathname: string, prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
 
 // This exact endpoint authenticates a worker bearer token itself; no sibling route inherits the exemption.
-const isPublicApi = (pathname: string) => pathname === "/api/deployments/process" || PUBLIC_API_PREFIXES.some((prefix) => isUnder(pathname, prefix));
+const isPublicApi = (pathname: string) => ["/api/deployments/process", "/api/gitops/process", "/api/gitops/webhook"].includes(pathname) || PUBLIC_API_PREFIXES.some((prefix) => isUnder(pathname, prefix));
 
 export async function middleware(req: NextRequest) {
   if (isPublicAssetRequest(req)) return NextResponse.next();

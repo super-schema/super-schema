@@ -1,0 +1,20 @@
+name: Validate Super Schema GitOps content
+description: Validate canonical documents, pinned references and released-version immutability.
+inputs:
+  root:
+    description: Repository-relative storage root; empty means the whole repository.
+    required: false
+    default: ''
+  base-ref:
+    description: Base commit used to detect changes to released content. The checkout must include this commit.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        INPUT_ROOT: ${{ inputs.root }}
+        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        VALIDATOR_PATH: ${{ github.action_path }}/validate.cjs
+      run: node "$VALIDATOR_PATH"

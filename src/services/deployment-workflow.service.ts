@@ -1,3 +1,4 @@
+import { gitOpsWorkflowPolicy, assertGitOpsWorkflowRevision } from "@/lib/gitops/workflow-policy";
 import { randomUUID } from "node:crypto";
 import { Prisma, type DeploymentConnection } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
@@ -275,9 +276,11 @@ export async function previewDeployment(entityId: string, raw: unknown, ctx: Ser
   if (!connection) return asError("Choose an active tenant connection for this deployment method");
   validateTargetMethod(format, methodOf(connection), entity.tenant.deploymentTargetMethods);
   const environment = input.environment ?? workflow.environment;
-  validateEnvironment(entity.tenant.deploymentEnvironments, environment);
+  const gitOps=await gitOpsWorkflowPolicy(workflow.id,environment);
+  validateEnvironment(gitOps?.environments ?? entity.tenant.deploymentEnvironments, environment);
   const settings = WorkflowSettingsSchema.parse({ ...WorkflowSettingsSchema.parse(workflow.settings), ...input.variables });
-  const plan = await prepareDelivery({ id, method: methodOf(connection), bundle, config: destination(connection.config, methodOf(connection)), settings, revision: workflow.revision, environment }, credentialsOf(connection));
+  const plan = await prepareDelivery({ id, method: methodOf(connection), bundle, config: {...destination(connection.config, methodOf(connection)),...(gitOps ? {url:gitOps.url,baseBranch:gitOps.baseBranch,gitRoot:gitOps.gitRoot}: {})}, settings, revision: workflow.revision, environment }, credentialsOf(connection));
+  if(gitOps)plan.gitOpsRevision=gitOps.revision;
   plan.requestHash = requestHash;
   const row = await prisma.deploymentRun.create({ data: { id, tenantId: entity.tenantId, entityId, workflowId: workflow.id, connectionId: connection.id, connectionRevision: connection.revision, method: connection.method, format, artifactVersion: version.version, environment, snapshot: json(plan), planHash: digest(plan), idempotencyKey: input.idempotencyKey, createdBy: ctx.userId, expiresAt: new Date(Date.now() + 30 * 60 * 1000) } });
   return { run: runView(row), plan };
@@ -292,7 +295,9 @@ export async function queueDeployment(entityId: string, raw: unknown, ctx: Servi
   if (run.method === "git" && run.connectionId !== run.workflow.connectionId) return asError("The Git repository is defined by the saved workflow");
   if (run.method === "git" && (run.snapshot as unknown as PreparedPlan).fileChanges?.every((f) => f.status === "unchanged")) return asError("The preview contains no file changes");
   validateTargetMethod(run.format, methodOf(run), entity.tenant.deploymentTargetMethods);
-  validateEnvironment(entity.tenant.deploymentEnvironments, run.environment);
+  const gitOps=await gitOpsWorkflowPolicy(run.workflowId,run.environment);
+  validateEnvironment(gitOps?.environments ?? entity.tenant.deploymentEnvironments, run.environment);
+  await assertGitOpsWorkflowRevision(run.workflowId,run.environment,(run.snapshot as unknown as PreparedPlan).gitOpsRevision);
   await readableBundle((run.snapshot as unknown as PreparedPlan).bundle, ctx, entity.tenantId);
   if (!run.workflow.active || !run.connection.active || run.workflow.revision !== (run.snapshot as unknown as PreparedPlan).workflowRevision || run.connection.revision !== run.connectionRevision) asError("Workflow or connection changed; create a new preview");
   if (run.status === "PREVIEWED" && run.expiresAt < new Date()) asError("This preview expired; create a new validated preview");
@@ -334,7 +339,9 @@ export async function processDeploymentRun(id: string): Promise<void> {
     if (!principal || !entity || !can(principal.assignments, "deploy.run", entity)) asError("Deployment permission was revoked");
     if (!run.connection.active || !run.workflow.active || run.connection.tenantId !== run.tenantId || run.workflow.tenantId !== run.tenantId || (!workflowApplies(run.workflow, entity!) || !workflowTargets(run.workflow).includes(run.format)) || (run.method === "git" && run.connectionId !== run.workflow.connectionId)) asError("The workflow or connection is no longer available");
     validateTargetMethod(run.format, methodOf(run), entity!.tenant.deploymentTargetMethods);
-    validateEnvironment(entity!.tenant.deploymentEnvironments, run.environment);
+    const gitOps=await gitOpsWorkflowPolicy(run.workflowId,run.environment);
+    validateEnvironment(gitOps?.environments ?? entity!.tenant.deploymentEnvironments, run.environment);
+    await assertGitOpsWorkflowRevision(run.workflowId,run.environment,(run.snapshot as unknown as PreparedPlan).gitOpsRevision);
     const plan = run.snapshot as unknown as PreparedPlan;
     if (digest(plan) !== run.planHash || run.connection.revision !== run.connectionRevision || run.workflow.revision !== plan.workflowRevision) asError("Workflow or connection changed; create a new preview");
     await readableBundle(plan.bundle, principal!, run.tenantId);

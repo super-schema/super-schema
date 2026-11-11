@@ -19,12 +19,13 @@ export async function prepareDelivery(input: { id: string; method: DeploymentMet
     plan.branch = `superschema/${input.bundle.entity.schema}-v${input.bundle.version}-${input.id}`;
     const existing = await client.tree(plan.baseSha);
     if (input.settings.eventContract) {
+      if (input.config.gitRoot) throw new DeliveryError("The Event Schema Central adapter requires its own repository root; use a generic Git workflow for a scoped GitOps folder");
       const prepared = await prepareEventContract(client, plan);
       plan.files = prepared.files; plan.validation.push(...prepared.validation);
     } else {
-      plan.files = hierarchyFiles(input.bundle, input.settings.contractVersion);
+      plan.files = hierarchyFiles(input.bundle, input.settings.contractVersion).map((f) => ({ ...f, path: [input.config.gitRoot, f.path].filter(Boolean).join("/") }));
       const e = input.bundle.entity;
-      const prefix = `schemas/${e.tenant}/${e.domain}/${e.product}/${e.schema}/${input.settings.contractVersion}/${input.bundle.format}/`;
+      const prefix = `${input.config.gitRoot ? `${input.config.gitRoot}/` : ""}schemas/${e.tenant}/${e.domain}/${e.product}/${e.schema}/${input.settings.contractVersion}/${input.bundle.format}/`;
       if (existing.some((f) => f.path.startsWith(prefix))) {
         // Generic Git exports are immutable at a named destination version too. Use a new explicit version.
         const current = await client.readFiles(plan.baseSha, (p) => p.startsWith(prefix));

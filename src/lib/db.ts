@@ -15,14 +15,20 @@
 import { PrismaClient } from "@/generated/prisma/client";
 
 import { createDbAdapter } from "./db-adapter";
+import { assertContentWrite } from "./gitops/mode";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-export const prisma =
-  globalForPrisma.prisma ?? new PrismaClient({ adapter: createDbAdapter() });
+const rawPrisma = globalForPrisma.prisma ?? new PrismaClient({ adapter: createDbAdapter() });
+export const prisma = rawPrisma.$extends({
+  query: { $allModels: { async $allOperations({ model, operation, args, query }) {
+    assertContentWrite(model, operation, args);
+    return query(args);
+  } } },
+}) as unknown as PrismaClient;
 
 if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
+  globalForPrisma.prisma = rawPrisma;
 }

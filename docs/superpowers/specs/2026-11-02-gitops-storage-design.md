@@ -2,6 +2,8 @@
 
 Status: approved · Date: 2026-11-02
 
+Implemented behavior and activation: [GitOps storage guide](../../gitops-storage.md), [verification record](../../testing/gitops-storage-verification.md). The implementation reads immutable Git objects through the provider API instead of maintaining disk clones. Product settings additionally define the default same-repository environment lifecycle; the root can be the whole repository or one folder.
+
 ## 1. Intent
 
 Super Schema stores all schema content in Postgres/PGlite today. Some organizations want **Git as the system of record (SoR)** for

@@ -21,6 +21,7 @@ export default function SettingsPage() {
         </p>
       </div>
       <Link href="/admin/settings/deployments" className="inline-flex text-sm text-primary underline">Deployment environments and connections</Link>
+      <Link href="/gitops" className="inline-flex text-sm text-primary underline">GitOps storage and product workflows</Link>
       <SettingsPanel />
     </div>
   );
