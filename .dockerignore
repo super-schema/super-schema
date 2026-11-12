@@ -4,6 +4,9 @@ node_modules
 .env
 .env.local
 .env.*.local
+gitops.config.yaml
+gitops.config.yml
+*.pem
 *.md
 tests
 # Test-runner configs. playwright.config.ts imports tests/, and next build type-checks every tsconfig file (**/*.ts), so in the context it

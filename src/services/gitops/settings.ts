@@ -398,9 +398,12 @@ export async function saveProductSettings(
       ctx,
     );
   }
-  const override = [data.repositoryUrl, data.branch, data.basePath].some(
-    (v) => v !== undefined,
-  );
+  const override = [
+    data.repositoryUrl,
+    data.installationId,
+    data.branch,
+    data.basePath,
+  ].some((v) => v !== undefined);
   let binding = root;
   if (override) {
     const repositoryUrl = data.repositoryUrl ?? root.repositoryUrl;

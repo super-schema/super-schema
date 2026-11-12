@@ -1,0 +1,84 @@
+# Copy to gitops.config.yaml (gitignored). All settings below are editable.
+# Runtime settings load on restart; existing environment variables take precedence.
+# No repository, organization, account, or credential is assumed.
+version: 1
+
+application:
+  url: http://localhost:3000
+  # Keep database until the bootstrap PR has merged. Then set git and restart.
+  contentStorage: database
+
+database:
+  provider: pglite # pglite | postgresql
+  dataDirectory: ./data/pglite # relative to this configuration file
+  connectionStringEnv: DATABASE_URL # required for postgresql; value stays in the environment
+
+security:
+  # Optional existing encryption key. Preserve it when credentials already exist.
+  encryptionKeyEnv: SECRETS_ENCRYPTION_KEY
+
+github:
+  baseUrl: https://github.com
+  allowedHosts: [github.com]
+  app:
+    name: super-schema-gitops # suggestion for registration, not an existing App
+    # Fill both IDs to configure an App, or leave both empty to reuse one saved in the UI.
+    appId: ""
+    clientId: ""
+    privateKeyEnv: GITOPS_GITHUB_PRIVATE_KEY
+    privateKeyFile: "" # optional PEM path, relative to this file; takes precedence over privateKeyEnv
+    clientSecretEnv: GITOPS_GITHUB_CLIENT_SECRET
+    webhookSecretEnv: GITOPS_GITHUB_WEBHOOK_SECRET
+
+repository:
+  url: "" # REQUIRED: https://github.com/<organization>/<repository>
+  installationId: "" # REQUIRED: installation authorized for this repository
+  sourceBranch: gitops/development
+  root: superschema # empty string means repository root
+  enabled: true
+
+scope:
+  tenantId: "" # REQUIRED: existing application tenant ID
+  operatorEmail: "" # REQUIRED: existing enabled user; actual RBAC assignments are checked
+  productIds: [] # empty means all existing products in this tenant; supply IDs to limit scope
+
+workflow:
+  owners: [] # optional GitHub handles or teams, e.g. @organization/schema-team
+  stages: # ordered; all branches must already exist
+    - name: development
+      branch: gitops/development
+      path: environments
+    - name: staging
+      branch: gitops/staging
+      path: environments
+    - name: qa
+      branch: gitops/qa
+      path: environments
+    - name: production
+      branch: gitops/production
+      path: environments
+  targets: [] # empty uses enabled schema formats on this same repository
+
+# Optional product overrides; IDs must belong to scope.tenantId and the selected products.
+products: []
+# - productId: <existing-product-id>
+#   owners: ["@organization/schema-team"]
+#   repositoryUrl: https://github.com/<organization>/<another-repository>
+#   installationId: "<installation-id>"
+#   branch: gitops/development
+#   basePath: superschema # supports "" for repository-root mode
+#   stages: [...] # same shape as workflow.stages
+#   targets:       # optional artifact repository override
+#     - target: json-schema
+#       repositoryUrl: https://github.com/<organization>/<artifact-repository>
+#       installationId: "<installation-id>"
+#       branch: main
+#       pathTemplate: artifacts/{product}/{object}/{version}/{target}
+#       enabled: true
+
+worker:
+  url: "" # derived from application.url + /api/gitops/process; may be overridden
+  tokenEnv: GITOPS_WORKER_TOKEN # server-only secret of at least 32 characters
+  intervalMs: 5000 # time between worker drains
+  pollIntervalMs: 300000 # GitHub reconciliation interval
+  batchSize: 5 # jobs per drain; 1–20

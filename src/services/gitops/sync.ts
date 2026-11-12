@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { getGitOpsWorkerSettings } from "@/lib/gitops/config.mjs";
 import { prisma } from "@/lib/db";
 import type { Prisma, TenantGitBinding } from "@/generated/prisma/client";
 import { openSecret } from "@/lib/crypto/secret-box";
@@ -521,6 +522,7 @@ export async function receiveWebhook(
 }
 export async function pollBindings(): Promise<void> {
   const now = new Date();
+  const {pollIntervalMs}=getGitOpsWorkerSettings();
   for (const binding of await prisma.tenantGitBinding.findMany({
     where: { enabled: true, nextSyncAt: { lte: now } },
     take: 100,
@@ -530,14 +532,14 @@ export async function pollBindings(): Promise<void> {
         (
           await tx.tenantGitBinding.updateMany({
             where: { id: binding.id, nextSyncAt: { lte: now } },
-            data: { nextSyncAt: new Date(Date.now() + 5 * 60000) },
+            data: { nextSyncAt: new Date(Date.now() + pollIntervalMs) },
           })
         ).count
       )
         await enqueueJob(
           binding.id,
           "SYNC",
-          `poll:${binding.id}:${Math.floor(Date.now() / 300000)}`,
+          `poll:${binding.id}:${Math.floor(Date.now() / pollIntervalMs)}`,
           {},
           tx,
         );

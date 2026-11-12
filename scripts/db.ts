@@ -13,13 +13,15 @@
 // step as best effort: a failure is logged and never fails the start. `deploy` fails when it fails:
 // an app that starts without its built-in traits is the failure the step exists to prevent.
 
-import "dotenv/config";
+import { config as loadDotenv } from "dotenv";
 
 import { installBuiltInTraits } from "../src/lib/db-built-in-traits";
 import { getDbProvider, getPgliteDataDir } from "../src/lib/db-provider";
 import { applyPgliteMigrations } from "../src/lib/pglite-migrate";
 import { openPglite } from "../src/lib/pglite-open";
 
+loadDotenv({ path: ".env.local", quiet: true });
+loadDotenv({ quiet: true });
 const mode = process.argv[2] === "deploy" ? "deploy" : "ensure";
 
 async function runPglite(): Promise<void> {

@@ -1,7 +1,11 @@
 import { loadEnvFile } from "./prisma/load-env-file";
+import { resolve } from "node:path";
 import { defineConfig } from "prisma/config";
+import { initializeGitOpsEnvironment } from "./src/lib/gitops/config.mjs";
 
+loadEnvFile(resolve(process.cwd(), ".env.local"));
 loadEnvFile();
+initializeGitOpsEnvironment();
 
 // Note: `datasource.url` is consumed by Prisma CLI commands that connect over a
 // wire protocol (migrate dev/deploy, studio, db pull) when DB_PROVIDER=postgresql.

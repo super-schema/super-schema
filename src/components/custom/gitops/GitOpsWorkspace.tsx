@@ -830,7 +830,7 @@ function BindingSettings({
               id="gitops-repository"
               value={repositoryUrl}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://github.com/OnePayPal/event-schema-central"
+              placeholder="https://github.com/your-organization/your-repository"
             />
           </Field>
           <Field id="gitops-installation" label="GitHub App installation ID">

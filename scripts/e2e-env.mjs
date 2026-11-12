@@ -57,6 +57,11 @@ export function setValues(run) {
     // browser suite's few hundred calls a minute would all share 100 a minute. The run lifts it far above that; the default is unit-tested (rate-limit.test.ts).
     API_RATE_LIMIT_PER_MINUTE: "100000",
     DB_PROVIDER: "postgresql",
+    // Release tests exercise database authoring and never inherit a deployment's GitOps mode or worker tuning.
+    CONTENT_STORAGE: "database",
+    GITOPS_WORKER_INTERVAL_MS: "5000",
+    GITOPS_BINDING_POLL_INTERVAL_MS: "300000",
+    GITOPS_WORKER_BATCH_SIZE: "5",
     DATABASE_URL: run.databaseUrl,
     E2E_DATABASE_URL: run.databaseUrl,
     PGLITE_DATA_DIR: run.pgliteDir, // a mistake must not reach ./data/pglite
@@ -137,6 +142,13 @@ export const HERMETIC_BLANKED_NAMES = Object.freeze([
   "DEPLOYMENT_EVENT_TOOLKIT",
   "DEPLOYMENT_WORKER_TOKEN",
   "DEPLOYMENT_WORKER_URL",
+  // Disable local YAML discovery and all GitOps credentials; the release run owns its database and has no GitHub installation.
+  "GITOPS_CONFIG_FILE",
+  "GITOPS_WORKER_TOKEN",
+  "GITOPS_WORKER_URL",
+  "GITOPS_GITHUB_PRIVATE_KEY",
+  "GITOPS_GITHUB_CLIENT_SECRET",
+  "GITOPS_GITHUB_WEBHOOK_SECRET",
   // src/services/ai-config.service.ts: the AI assistant (without a provider and a base URL there is no client). AI_API_KEY is its bearer key; OLLAMA_HOST
   // and OPENAI_BASE_URL are the standard names it falls back to when AI_BASE_URL is unset. A developer's own AI server must not configure the run
   "AI_PROVIDER",

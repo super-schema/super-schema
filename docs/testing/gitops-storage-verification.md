@@ -43,6 +43,13 @@ Only this run's temporary branches were removed. Cleanup was verified; the repos
 
 The hosted proof validates real Git operations and the default workflow, not registration of a production GitHub App. Production installation-token exchange, the human OAuth browser callback, signed webhook ingress and organizational branch-protection policy require the operator's App registration and reachable deployment. HMAC validation, private draft/RBAC boundaries and API middleware isolation have automated coverage. The installed application's database/configuration was not changed or activated by these checks.
 
+## Portable configuration follow-up (2026-11-11)
+
+- `gitops.config.example.yaml` and `.env.example` contain no organization/account-specific values. The sample validates through the actual `npm run gitops:config -- validate --config gitops.config.example.yaml` command without opening a database.
+- 184 targeted tests across 13 files passed, covering configuration defaults/overrides, secret redaction, offline CLI validation, repository-root and product overrides, actual permission checks, branch verification before configuration writes, Git-owned settings remaining drafts, startup/auth checks, migration tooling, Docker context and isolated release environments.
+- Prisma generation, TypeScript, scoped ESLint, `git diff --check` and the production webpack build passed on Node 22.22.2. The build used an isolated PostgreSQL URL and disabled local configuration discovery.
+- Configuration application was exercised through real settings services against migrated in-memory PGlite with a stateful Git provider fixture. No deployment configuration was applied to the live database or hosted repository.
+
 ## Maintenance
 
 Rebuild `.github/actions/gitops-validate/validate.cjs` with `npm run gitops:build-validator` after changing the canonical validator. The smoke script is opt-in and refuses a repository other than the authorized test repository; it creates and cleans only its own uniquely named test branches. Read `scripts/gitops-hosted-smoke.ts` before rerunning it because it creates real PRs.

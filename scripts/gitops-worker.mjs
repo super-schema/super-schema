@@ -1,6 +1,12 @@
 import { config } from "dotenv";
+import {
+  initializeGitOpsEnvironment,
+  getGitOpsWorkerSettings,
+} from "../src/lib/gitops/config.mjs";
 config({ path: ".env.local", quiet: true });
 config({ quiet: true });
+initializeGitOpsEnvironment();
+const settings = getGitOpsWorkerSettings();
 const token = process.env.GITOPS_WORKER_TOKEN,
   url = new URL(
     process.env.GITOPS_WORKER_URL ?? "http://localhost:3000/api/gitops/process",
@@ -50,5 +56,5 @@ do {
     if (process.argv.includes("--once")) process.exitCode = 1;
   }
   if (process.argv.includes("--once") || stopping) break;
-  await new Promise((resolve) => setTimeout(resolve, 5000));
+  await new Promise((resolve) => setTimeout(resolve, settings.intervalMs));
 } while (!stopping);

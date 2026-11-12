@@ -1,6 +1,7 @@
 import {
   beforeAll,
   afterAll,
+  afterEach,
   beforeEach,
   describe,
   it,
@@ -45,6 +46,60 @@ import {
 } from "@/services/gitops/sync";
 import { promoteEnvironment } from "@/services/gitops/delivery";
 import { getGitOpsWorkspace } from "@/services/gitops/workspace";
+import { applyGitOpsConfiguration } from "@/services/gitops/configuration";
+import { GitOpsConfigSchema } from "@/lib/gitops/config.mjs";
+import { sealSecret } from "@/lib/crypto/secret-box";
+
+afterEach(() => vi.unstubAllEnvs());
+async function configurationApp() {
+  vi.stubEnv("SECRETS_ENCRYPTION_KEY", Buffer.alloc(32, 1).toString("base64"));
+  const app = {
+    appId: "1",
+    clientId: "fixture-client",
+    baseUrl: "https://github.com",
+    privateKey: sealSecret("fixture-private-key", "GitProviderApp.privateKey"),
+    clientSecret: sealSecret(
+      "fixture-client-secret",
+      "GitProviderApp.clientSecret",
+    ),
+    webhookSecret: sealSecret(
+      "fixture-webhook-secret-long-enough",
+      "GitProviderApp.webhookSecret",
+    ),
+  };
+  await h.db.gitProviderApp.upsert({
+    where: { id: "github" },
+    create: { id: "github", ...app },
+    update: app,
+  });
+}
+function configuration(overrides: Record<string, unknown> = {}) {
+  return {
+    directory: process.cwd(),
+    filePath: "fixture.yaml",
+    config: GitOpsConfigSchema.parse({
+      repository: {
+        url: "https://github.com/owner/repo",
+        installationId: "1",
+        sourceBranch: "main",
+        root: "",
+      },
+      scope: { tenantId: "tenant", operatorEmail: "author@example.test" },
+      workflow: {
+        owners: ["@schema-owner"],
+        stages: [
+          { name: "development", branch: "main" },
+          { name: "staging", branch: "staging" },
+        ],
+      },
+      ...overrides,
+    }),
+  };
+}
+const configurationContext = (): ServiceContext => ({
+  ...ctx(),
+  assignments: [{ role: "ADMIN", scope: { kind: "GLOBAL" } }],
+});
 
 class Repository implements GitProvider {
   repository = {
@@ -282,6 +337,188 @@ async function entityDoc() {
 }
 
 describe("GitOps on actual migrated PGlite tables", () => {
+  it.each([{ basePath: "" }, { installationId: "2" }])(
+    "applies and preserves a product source override %j",
+    async (override) => {
+      await configurationApp();
+      const repository = {
+        url: "https://github.com/owner/repo",
+        installationId: "1",
+        sourceBranch: "main",
+        root: "tenant-catalog",
+      };
+      const loaded = configuration({
+        repository,
+        products: [{ productId: "product", ...override }],
+      });
+      await applyGitOpsConfiguration(
+        loaded,
+        configurationContext(),
+        async () => repo,
+      );
+      const tenant = await h.db.tenantGitBinding.findFirstOrThrow({
+          where: { tenantId: "tenant", productId: null },
+        }),
+        product = await h.db.tenantGitBinding.findUniqueOrThrow({
+          where: { productId: "product" },
+        });
+      expect(tenant.basePath).toBe("tenant-catalog");
+      expect(product.basePath).toBe(
+        "basePath" in override ? override.basePath : "tenant-catalog",
+      );
+      expect(product.installationId).toBe(
+        "installationId" in override ? override.installationId : "1",
+      );
+      expect(
+        (
+          await h.db.productGitSettings.findUniqueOrThrow({
+            where: { productId: "product" },
+          })
+        ).bindingId,
+      ).toBe(product.id);
+      await applyGitOpsConfiguration(
+        configuration({ repository }),
+        configurationContext(),
+        async () => repo,
+      );
+      const preserved = await h.db.tenantGitBinding.findUniqueOrThrow({
+        where: { productId: "product" },
+      });
+      expect(preserved.id).toBe(product.id);
+      expect(preserved.basePath).toBe(product.basePath);
+      expect(preserved.installationId).toBe(product.installationId);
+    },
+  );
+  it("applies portable repository and product workflow settings through the real services", async () => {
+    await configurationApp();
+    const revision = (
+      await h.db.gitProviderApp.findUniqueOrThrow({ where: { id: "github" } })
+    ).revision;
+    const result = await applyGitOpsConfiguration(
+      configuration(),
+      configurationContext(),
+      async () => repo,
+    );
+    const binding = await h.db.tenantGitBinding.findUniqueOrThrow({
+        where: { id: result.bindingId },
+      }),
+      settings = await h.db.productGitSettings.findUniqueOrThrow({
+        where: { productId: "product" },
+      });
+    expect(binding.basePath).toBe("");
+    expect(binding.branch).toBe("main");
+    expect(settings.owners).toEqual(["@schema-owner"]);
+    expect(settings.stages).toMatchObject([
+      { name: "development", branch: "main" },
+      { name: "staging", branch: "staging" },
+    ]);
+    expect(settings.workflowId).toBeTruthy();
+    expect(
+      (await h.db.gitProviderApp.findUniqueOrThrow({ where: { id: "github" } }))
+        .revision,
+    ).toBe(revision);
+    expect(await h.db.gitCanonicalDocument.count()).toBe(0);
+    expect(repo.prs.size).toBe(0);
+  });
+  it("checks configured branch access before changing the App or binding", async () => {
+    await configurationApp();
+    vi.stubEnv("GITOPS_GITHUB_PRIVATE_KEY", "new-private-key");
+    vi.stubEnv("GITOPS_GITHUB_CLIENT_SECRET", "new-client-secret");
+    vi.stubEnv(
+      "GITOPS_GITHUB_WEBHOOK_SECRET",
+      "new-webhook-secret-long-enough",
+    );
+    const loaded = configuration({
+      github: { app: { appId: "2", clientId: "new-client" } },
+      workflow: {
+        stages: [
+          { name: "development", branch: "main" },
+          { name: "staging", branch: "missing" },
+        ],
+      },
+    });
+    await expect(
+      applyGitOpsConfiguration(
+        loaded,
+        configurationContext(),
+        async () => repo,
+      ),
+    ).rejects.toThrow("unknown branch");
+    expect(
+      (await h.db.gitProviderApp.findUniqueOrThrow({ where: { id: "github" } }))
+        .appId,
+    ).toBe("1");
+    expect(
+      (
+        await h.db.tenantGitBinding.findUniqueOrThrow({
+          where: { id: "binding" },
+        })
+      ).basePath,
+    ).toBe("storage/contracts");
+  });
+  it("refuses configuration imports without permission or outside the product scope", async () => {
+    const before = await h.db.tenantGitBinding.findUniqueOrThrow({
+      where: { id: "binding" },
+    });
+    await expect(
+      applyGitOpsConfiguration(
+        configuration(),
+        ctx("author", "VIEWER"),
+        async () => repo,
+      ),
+    ).rejects.toThrow("denied");
+    await expect(
+      applyGitOpsConfiguration(
+        configuration({
+          scope: {
+            tenantId: "tenant",
+            operatorEmail: "author@example.test",
+            productIds: ["foreign-product"],
+          },
+        }),
+        configurationContext(),
+        async () => repo,
+      ),
+    ).rejects.toThrow("does not belong");
+    expect(
+      await h.db.tenantGitBinding.findUniqueOrThrow({
+        where: { id: "binding" },
+      }),
+    ).toEqual(before);
+  });
+  it("keeps imported Git-owned workflow changes in a private draft until review", async () => {
+    await configurationApp();
+    await bootstrap();
+    vi.stubEnv("CONTENT_STORAGE", "git");
+    const loaded = configuration({
+      repository: {
+        url: "https://github.com/owner/repo",
+        installationId: "1",
+        sourceBranch: "main",
+        root: "storage/contracts",
+      },
+    });
+    const result = await applyGitOpsConfiguration(
+      loaded,
+      configurationContext(),
+      async () => repo,
+    );
+    expect(result.products[0]).toHaveProperty("changeSetId");
+    expect(
+      (
+        await h.db.productGitSettings.findUniqueOrThrow({
+          where: { productId: "product" },
+        })
+      ).owners,
+    ).toEqual([]);
+    const draft = await h.db.changeSetItem.findFirstOrThrow({
+      where: {
+        changeSetId: (result.products[0] as { changeSetId: string })
+          .changeSetId,
+      },
+    });
+    expect(validateDocument(draft.document).owners).toEqual(["@schema-owner"]);
+  });
   it("exports a bootstrap PR under the configured folder and indexes only after merge", async () => {
     const cs = await store.bootstrap("product", ctx());
     expect(await h.db.gitCanonicalDocument.count()).toBe(0);

@@ -49,6 +49,7 @@
     "db:studio": "prisma studio",
     "gen:asyncapi-templates": "tsx scripts/generate-asyncapi-templates.ts",
     "gitops:worker": "node scripts/gitops-worker.mjs",
+    "gitops:config": "esbuild scripts/gitops-config.ts --bundle --platform=node --format=esm --packages=external --alias:server-only=./scripts/stubs/server-only.cjs --outfile=node_modules/.cache/gitops-config.mjs --log-level=warning && node node_modules/.cache/gitops-config.mjs",
     "gitops:build-validator": "esbuild scripts/gitops-validate.ts --bundle --platform=node --format=cjs --outfile=.github/actions/gitops-validate/validate.cjs --log-level=warning",
     "gitops:validate": "node .github/actions/gitops-validate/validate.cjs"
   },

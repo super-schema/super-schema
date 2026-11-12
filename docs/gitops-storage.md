@@ -4,6 +4,36 @@ GitOps storage is available at **Admin → Settings → GitOps storage**, or `/g
 
 Authors use the GitOps workspace's canonical YAML editor. **Save private draft → Submit PR → GitHub review/merge → synchronization** is the content lifecycle. Saving an entry already in review updates the same PR. Existing direct database content writers are blocked in Git mode; the dashboard banner links to GitOps authoring.
 
+## Copyable configuration
+
+Copy the organization-neutral template and edit its blank installation-specific fields:
+
+```bash
+cp gitops.config.example.yaml gitops.config.yaml
+npm run gitops:config -- validate
+```
+
+`gitops.config.yaml` is gitignored. The application, database tools and GitOps worker read it on startup; use `GITOPS_CONFIG_FILE` for another path. Restart processes after changing runtime values. Existing environment variables, including values loaded from `.env.local`/`.env`, take precedence over the YAML runtime settings. With no file, existing behavior is unchanged. Set `GITOPS_CONFIG_FILE=""` to disable automatic discovery for an isolated process. Local YAML files and PEM keys are excluded from Docker build contexts; mount the configuration at runtime when using an image. Do not switch `application.contentStorage` to `git` until the bootstrap PR has merged.
+
+The file controls the application origin and storage mode, database provider/location, GitHub host/App references, repository/root/source branch, tenant/product selection, owners, ordered environment mappings, artifact targets, product overrides and worker intervals/batch size. `github.app.name` is a registration suggestion; App creation, installation and human authorization still happen on GitHub. Callback and worker URLs derive from the effective application origin; an explicit worker URL can override that default.
+
+Required before applying: `repository.url`, `repository.installationId`, `scope.tenantId` and `scope.operatorEmail` (an existing enabled application account). `scope.productIds: []` selects existing products in that tenant; list IDs to limit the product workflows receiving the shared defaults. The tenant binding also makes the default workflow available to its other products. Product-specific owners, stages, targets and repository overrides can be set in `products`. Existing product source bindings are preserved when no source override is provided.
+
+An App must already be configured in the UI, or supply both App IDs and the referenced secret environment variables. `github.app.privateKeyFile` accepts a PEM file relative to the YAML file; otherwise `github.app.privateKeyEnv` names the environment variable containing the PEM. Client/webhook secrets and the worker token are also environment references; secret values are not stored in YAML or printed by validation. Keep an existing encryption key unchanged when credentials already exist.
+
+Validation is offline and opens no database. Applying is explicit:
+
+```bash
+# Migrate first. For PGlite, stop the web application before either maintenance command.
+npm run db:deploy
+npm run gitops:config -- apply
+# For another configuration path:
+npm run gitops:config -- validate --config ./deployment/gitops.yaml
+GITOPS_CONFIG_FILE=./deployment/gitops.yaml npm run gitops:config -- apply
+```
+
+`apply` loads the configured operator's actual RBAC assignments and verifies branches/destinations before saving settings through the existing services. It creates no repositories, branches, bootstrap PRs or content exports. In Git mode, product workflow edits become private change sets requiring the normal PR review/merge. Indexed repository/root/source-branch changes continue to require an explicit migration. The file's binding, App and workflow settings are applied by this command; editing those fields alone does not overwrite the stored settings on startup. UI changes remain effective until another explicit apply.
+
 ## Activate
 
 Use the supported Node version (`>=22.22.2 <25`) and the normal TypeSpec sibling-package build prerequisites in [developer-guide.md](developer-guide.md).

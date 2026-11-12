@@ -8,6 +8,8 @@
 // Both speak the same PostgreSQL dialect, so a single Prisma schema and a single
 // migration history serve both. One provider per deployment.
 
+import { initializeGitOpsEnvironment } from "./gitops/config.mjs";
+
 export type DbProvider = "pglite" | "postgresql";
 
 /**
@@ -15,6 +17,7 @@ export type DbProvider = "pglite" | "postgresql";
  * when `DB_PROVIDER` is unset, so a fresh checkout runs with no configuration.
  */
 export function getDbProvider(): DbProvider {
+  initializeGitOpsEnvironment();
   const raw = (process.env.DB_PROVIDER ?? "pglite").trim().toLowerCase();
   if (raw === "pglite") return "pglite";
   if (raw === "postgres" || raw === "postgresql") return "postgresql";
@@ -28,5 +31,6 @@ export function getDbProvider(): DbProvider {
  * `DB_PROVIDER=pglite`. Defaults to `./data/pglite` (gitignored).
  */
 export function getPgliteDataDir(): string {
+  initializeGitOpsEnvironment();
   return process.env.PGLITE_DATA_DIR?.trim() || "./data/pglite";
 }
