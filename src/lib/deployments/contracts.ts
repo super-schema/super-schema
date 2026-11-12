@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { TargetMethodMappings } from "./target-methods";
+import { branch as gitBranch } from "@/lib/gitops/contracts";
 
 export const METHODS = ["git", "http", "registry"] as const;
 export type DeploymentMethod = typeof METHODS[number];
@@ -42,7 +43,7 @@ export type SaveConnection = z.input<typeof SaveConnectionSchema>;
 
 export const WorkflowSettingsSchema = z.object({
   contractVersion: contractVersion.default("1.0.0_snapshot"),
-  // Packaging is optional; hierarchy is always schemas/tenant/domain/product/schema/version.
+  // Packaging is optional; generic Git layout is always <root>/domain/product/schema/version.
   eventContract: z.boolean().default(false),
   contractKind: z.enum(["Topic", "Entity"]).default("Topic"),
   change: z.enum(["create", "new-version", "update-snapshot"]).default("create"),
@@ -71,9 +72,32 @@ export const SaveWorkflowSchema = z.object({
 export type SaveWorkflow = z.input<typeof SaveWorkflowSchema>;
 export const EnvironmentListSchema = z.array(z.string().trim().min(1).max(100)).min(1).max(50)
   .refine((names) => new Set(names).size === names.length, "Environment names must be unique");
+/** One stage of the tenant's promotion order. `branch` overrides the default Git base branch (the environment name). */
+export const EnvironmentDefinitionSchema = z.object({
+  name: z.string().trim().min(1, "Name every environment").max(100),
+  description: z.string().trim().max(500).default(""),
+  branch: z.union([z.literal(""), gitBranch]).optional(),
+}).strict();
+export type EnvironmentDefinition = z.infer<typeof EnvironmentDefinitionSchema>;
+export const EnvironmentDefinitionsSchema = z.array(EnvironmentDefinitionSchema).min(1, "Define at least one environment").max(50)
+  .refine((list) => new Set(list.map((e) => e.name.toLowerCase())).size === list.length, "Environment names must be unique");
+export type EnvironmentDetails = Record<string, { description?: string; branch?: string }>;
+/** Active workflows that deliver to an environment, so renames and removals can carry them along. */
+export interface EnvironmentWorkflowUsage { id: string; name: string; scope: string; href: string | null }
+/**
+ * Saving environments: the ordered definitions, plus what happens to active workflows of environments that disappear.
+ * `renames` maps an old name to its new name; `reassign` maps a removed name to another environment, or null to disable its workflows.
+ */
+export const SaveEnvironmentsSchema = z.object({
+  environments: EnvironmentDefinitionsSchema,
+  renames: z.record(z.string(), z.string()).default({}),
+  reassign: z.record(z.string(), z.string().nullable()).default({}),
+}).strict();
+export type SaveEnvironments = z.input<typeof SaveEnvironmentsSchema>;
+export const EnvironmentDetailsSchema = z.record(z.string(), z.object({ description: z.string().optional(), branch: z.string().optional() }).passthrough()).catch({});
 // Only deployment variables may override a centrally defined workflow.
 export const WorkflowVariablesSchema = WorkflowSettingsSchema.pick({ contractVersion: true, title: true, metadata: true, example: true, topicConfig: true, subject: true, referenceSubjects: true, expectedPayloadHash: true }).partial();
-export const PreviewSchema = z.object({ workflowId: identifier, format: z.string().min(1).max(100).optional(), version: z.number().int().positive(), idempotencyKey: z.string().uuid(), environment: z.string().min(1).max(100).optional(), connectionId: identifier.optional(), variables: WorkflowVariablesSchema.optional() }).strict();
+export const PreviewSchema = z.object({ workflowId: identifier, format: z.string().min(1).max(100).optional(), version: z.number().int().positive(), idempotencyKey: z.string().uuid(), environment: z.string().min(1).max(100).optional(), connectionId: identifier.optional(), baseBranch: gitBranch.optional(), variables: WorkflowVariablesSchema.optional() }).strict();
 export const ExecuteSchema = z.object({ runId: identifier, planHash: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict();
 
 export interface ArtifactFile { path: string; content: string; entityId?: string; }
@@ -117,6 +141,8 @@ export interface RunView {
 }
 export interface DeploymentConfiguration {
   targetMethods: TargetMethodMappings;
+  environmentDetails?: EnvironmentDetails;
+  environmentUsage?: Record<string, EnvironmentWorkflowUsage[]>;
   legacyGit?: { id: string; name: string }[];
   environments: string[];
   connections: ConnectionView[];
@@ -132,9 +158,16 @@ export interface DeploymentWorkspace {
   connections: ConnectionView[]; workflows: WorkflowView[]; runs: RunView[];
   formats: { key: string; versions: number[]; sourceVersions?: Record<string, number> }[]; canConfigure: boolean; canRun: boolean;
   environments: string[];
+  environmentDetails?: EnvironmentDetails;
   targetMethods: TargetMethodMappings;
   productWorkflowsHref: string | null;
+  /** Server-resolved Git destination per workflow and environment (GitOps stages or connection mapping). */
+  gitDestinations?: Record<string, Record<string, GitDestinationView>>;
   recorded: { target: string; environment: string; version: number; sourceVersion: number | null }[];
+}
+export interface GitDestinationView {
+  url: string; branch: string; gitRoot?: string;
+  source: "gitops-stage" | "environment-override" | "environment-name";
 }
 export interface DeploymentSummary {
   id: string; entityName: string; href: string; method: string; format: string; artifactVersion: number;

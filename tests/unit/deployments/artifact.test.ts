@@ -6,14 +6,16 @@ const entity = { id: "entity-1", name: "Account", tenant: "paypal", domain: "ide
 const version = (extra: Partial<SchemaVersion> = {}): SchemaVersion => ({ version: 4, status: "published", output: '{"type":"record","name":"Account","fields":[]}', generatedAt: "2026-11-07", entityVersion: 2, ...extra });
 
 describe("immutable deployment artifacts", () => {
-  it("uses the selected artifact with a fixed tenant/domain/product/schema/version hierarchy", () => {
+  it("writes <root>/<domain>/<product>/<schema>/<version>/<file> without tenant or format directories", () => {
     const bundle = freezeArtifact(entity, "avro", version());
     const files = hierarchyFiles(bundle, "1.0.0_snapshot");
-    expect(files[0].path).toBe("schemas/paypal/identity/accounts/account/1.0.0_snapshot/avro/account.schema.avsc");
+    expect(files[0].path).toBe("identity/accounts/account/1.0.0_snapshot/account.schema.avsc");
+    expect(files[1].path).toBe("identity/accounts/account/1.0.0_snapshot/.superschema/avro.manifest.json");
+    expect(hierarchyFiles(bundle, "1.0.0_snapshot", "contracts/schemas")[0].path).toBe("contracts/schemas/identity/accounts/account/1.0.0_snapshot/account.schema.avsc");
     expect(files[0].content).toBe(version().output);
     expect(JSON.parse(files[1].content)).toMatchObject({ artifactVersion: 4, sourceEntityVersion: 2, contentHash: bundle.contentHash });
   });
-  it("keeps independent artifact formats in separate directories at the same contract version", () => {
+  it("keeps independent artifact formats side by side at the same contract version", () => {
     const avro = hierarchyFiles(freezeArtifact(entity, "avro", version()), "1.0.0_snapshot");
     const json = hierarchyFiles(freezeArtifact(entity, "json-schema", version({ output: "{}" })), "1.0.0_snapshot");
     expect(new Set([...avro, ...json].map((f) => f.path)).size).toBe(avro.length + json.length);

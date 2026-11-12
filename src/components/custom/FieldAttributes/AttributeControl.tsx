@@ -9,6 +9,7 @@ import {
 
 export function AttributeControl({
   label,
+  hint,
   help,
   error,
   children,
@@ -16,6 +17,8 @@ export function AttributeControl({
 }: {
   group?: boolean;
   label: string;
+  /** Small monospace note after the label, for example the TypeSpec decorator a control writes. */
+  hint?: string;
   help?: ReactNode;
   error?: string;
   children: ReactElement<Record<string, unknown>>;
@@ -25,6 +28,11 @@ export function AttributeControl({
     <Field data-invalid={Boolean(error) || undefined}>
       <FieldLabel id={`${id}-label`} htmlFor={group ? undefined : id}>
         {label}
+        {hint && (
+          <code className="ml-2 font-mono text-xs font-normal text-muted-foreground">
+            {hint}
+          </code>
+        )}
       </FieldLabel>
       {group ? (
         <div role="group" aria-labelledby={`${id}-label`}>

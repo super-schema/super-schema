@@ -52,6 +52,8 @@ export type AdminCapabilities = {
   classifications: boolean;
   /** AI provider settings (`ai.manage`: a platform administrator). */
   ai: boolean;
+  /** Deployment environments, connections, target routing and GitOps (`deploy.configure` over the tenant in view). */
+  workflows: boolean;
   /** Git configuration and export (`git.manage`; no tab is mounted for it yet). */
   git: boolean;
   /** Tenants (`tenant.create`; creating a tenant is a platform task, `npm run tenant:create`, and no tab is mounted for it yet). */
@@ -67,6 +69,7 @@ export const NO_ADMIN_CAPABILITIES: AdminCapabilities = Object.freeze({
   health: false,
   classifications: false,
   ai: false,
+  workflows: false,
   git: false,
   tenants: false,
 });
@@ -87,9 +90,10 @@ export function adminCapabilities(assignments: Assignment[], tenantId: string | 
   const health = can(assignments, "platform.admin", NO_PLACE);
   const classifications = can(assignments, "classification.manage", NO_PLACE);
   const ai = can(assignments, "ai.manage", NO_PLACE);
+  const workflows = can(assignments, "deploy.configure", tenant);
   const git = can(assignments, "git.manage", NO_PLACE);
   const tenants = can(assignments, "tenant.create", NO_PLACE);
-  return { area: users || domains || emitters || health || classifications || ai || git || tenants, users, domains, emitters, health, classifications, ai, git, tenants };
+  return { area: users || domains || emitters || health || classifications || ai || workflows || git || tenants, users, domains, emitters, health, classifications, ai, workflows, git, tenants };
 }
 
 /** The capabilities `assignments` give over the entity at `resource` (its tenant, domain and product). */

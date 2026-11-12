@@ -23,7 +23,7 @@ export function GitPrPreview({ plan }: { plan: PreparedPlan }) {
   const diff = useMemo(() => selected && change ? fileDiff(change.before ?? "", selected.content) : null, [selected, change]);
   const count = plan.fileChanges?.filter((file) => file.status !== "unchanged").length;
   return <div className="flex min-w-0 flex-col gap-4" data-testid="git-pr-preview">
-    <div className="flex min-w-0 flex-col gap-2"><h3 className="text-base font-semibold">Review Git PR</h3><p className="break-words text-sm font-medium" data-testid="git-preview-title">{plan.settings.title}</p><p className="break-all text-sm text-muted-foreground">{plan.connectionConfig.url}</p>
+    <div className="flex min-w-0 flex-col gap-2"><p className="break-words text-sm font-medium" data-testid="git-preview-title">{plan.settings.title}</p><p className="break-all text-sm text-muted-foreground">{plan.connectionConfig.url}</p>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><Badge variant="outline">{plan.connectionConfig.baseBranch}</Badge><span>←</span><span className="break-all font-mono">{plan.branch}</span><span>Base {plan.baseSha?.slice(0, 12)}</span><span>{files.length} files{count !== undefined ? ` · ${count} changed` : ""}</span></div>
     </div>
     {!files.length ? <p role="alert" className="text-sm text-destructive">The Git preview has no prepared files. Validate the workflow again.</p> : <div className="grid min-w-0 overflow-hidden rounded-lg border border-border lg:grid-cols-[minmax(14rem,0.35fr)_minmax(0,1fr)]">

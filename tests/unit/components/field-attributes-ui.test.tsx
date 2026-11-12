@@ -289,3 +289,25 @@ describe("example precision and imported schema metadata", () => {
     });
   });
 });
+
+describe("enum values and validation in the field studio", () => {
+  it("edits enum values as one ordered list instead of a row per value", () => {
+    mount("full", { type: "enum", aliases: ["ACTIVE", "CLOSED"] });
+    expect(screen.getByText("2 values")).toBeDefined();
+    expect(screen.queryByLabelText("Enum value 1")).toBeNull();
+    const input = screen.getByLabelText("New value");
+    fireEvent.change(input, { target: { value: "PENDING," } });
+    expect(screen.getByRole("button", { name: "Remove PENDING" })).toBeDefined();
+    expect(screen.getByText("3 values")).toBeDefined();
+  });
+
+  it("does not present an enum's legacy pattern as a validation constraint", () => {
+    mount("full", {
+      type: "enum",
+      aliases: [],
+      decorators: { typespec: { validation: { pattern: "A|B|C" } } },
+    });
+    expect(screen.queryByText("Configured")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear stored @pattern value" })).toBeNull();
+  });
+});

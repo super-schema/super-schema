@@ -1,9 +1,10 @@
 "use client";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldGroup } from "@/components/ui/field";
 import { AttributeControl } from "@/components/custom/FieldAttributes/AttributeControl";
+import { EnumValuesEditor } from "@/components/custom/FieldAttributes/EnumValuesEditor";
+import { legacyEnumSymbols } from "@/lib/field-attributes";
 import {
   referencePickChangesNothing,
   applyReferencePick,
@@ -37,10 +38,7 @@ export function TypeDetailsPanel({
   const ts = (decorators.typespec ?? {}) as {
     validation?: { pattern?: string };
   };
-  const legacyValues =
-    ts.validation?.pattern && !/[\[\]()^$?*+{}]/.test(ts.validation.pattern)
-      ? ts.validation.pattern.split("|")
-      : [];
+  const legacyValues = legacyEnumSymbols(ts.validation?.pattern);
   const enumValues =
     type === "enum"
       ? aliases.length
@@ -150,45 +148,13 @@ export function TypeDetailsPanel({
         [decorators.arrayElementType, decorators.mapValueType].includes(
           "enum",
         )) ? (
-        <fieldset className="flex min-w-0 flex-col gap-2">
-          <legend className="mb-2 text-sm font-medium">Enum values</legend>
-          {enumValues.map((value, i) => (
-            <div key={i} className="flex min-w-0 items-center gap-2">
-              <AttributeControl label={`Enum value ${i + 1}`}>
-                <Input
-                  value={value}
-                  spellCheck={false}
-                  onChange={(e) =>
-                    setEnumValues(
-                      enumValues.map((v, idx) =>
-                        idx === i ? e.target.value : v,
-                      ),
-                    )
-                  }
-                />
-              </AttributeControl>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                aria-label={`Remove enum value ${i + 1}`}
-                onClick={() =>
-                  setEnumValues(enumValues.filter((_, idx) => idx !== i))
-                }
-              >
-                Remove
-              </Button>
-            </div>
-          ))}
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => setEnumValues([...enumValues, ""])}
-          >
-            Add enum value
-          </Button>
-        </fieldset>
+        <EnumValuesEditor
+          label="Enum values"
+          itemLabel="value"
+          values={enumValues}
+          onChange={setEnumValues}
+          help="Order is the generated symbol order. Press Enter or type a comma to add; paste a list to add several. Click a value to edit it, or use Alt+Left and Alt+Right to move it."
+        />
       ) : (
         <details>
           <summary className="cursor-pointer text-sm font-medium">

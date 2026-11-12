@@ -116,6 +116,8 @@ model Tenant {
   eventSpecs     EventSpec[]
   webhookEndpoints WebhookEndpoint[]
   deploymentEnvironments String[] @default(["development", "staging", "production"])
+  /// Environment name → { description?, branch? }. Order lives in deploymentEnvironments.
+  deploymentEnvironmentDetails Json @default("{}")
   deploymentTargetMethods Json @default("{}")
   deploymentConnections DeploymentConnection[]
   deploymentWorkflows DeploymentWorkflow[]

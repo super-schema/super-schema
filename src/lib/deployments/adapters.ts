@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { requestExternal, WebhookTargetError } from "@/lib/webhook-transport";
-import { hierarchyFiles, validateFiles } from "./artifact";
+import { gitArtifactRoot, gitManifestPath, hierarchyFiles, validateFiles } from "./artifact";
+import { branchDate, deliveryBranchName } from "./git-branch";
 import { DeliveryError, type ArtifactBundle, type ConnectionConfig, type Credentials, type DeploymentMethod, type PreparedPlan, type WorkflowSettings } from "./contracts";
 import { authHeaders, retryDelay } from "./http";
 import { GitHubClient } from "./github";
@@ -16,22 +17,28 @@ export async function prepareDelivery(input: { id: string; method: DeploymentMet
     const client = new GitHubClient(input.config.url, credentials);
     await client.verify();
     plan.baseSha = await client.base(input.config.baseBranch);
-    plan.branch = `superschema/${input.bundle.entity.schema}-v${input.bundle.version}-${input.id}`;
+    plan.branch = await availableBranch(client, { schema: input.bundle.entity.schema, contractVersion: plan.settings.contractVersion, date: branchDate() });
     const existing = await client.tree(plan.baseSha);
     if (input.settings.eventContract) {
       if (input.config.gitRoot) throw new DeliveryError("The Event Schema Central adapter requires its own repository root; use a generic Git workflow for a scoped GitOps folder");
       const prepared = await prepareEventContract(client, plan);
       plan.files = prepared.files; plan.validation.push(...prepared.validation);
     } else {
-      plan.files = hierarchyFiles(input.bundle, input.settings.contractVersion).map((f) => ({ ...f, path: [input.config.gitRoot, f.path].filter(Boolean).join("/") }));
-      const e = input.bundle.entity;
-      const prefix = `${input.config.gitRoot ? `${input.config.gitRoot}/` : ""}schemas/${e.tenant}/${e.domain}/${e.product}/${e.schema}/${input.settings.contractVersion}/${input.bundle.format}/`;
-      if (existing.some((f) => f.path.startsWith(prefix))) {
-        // Generic Git exports are immutable at a named destination version too. Use a new explicit version.
-        const current = await client.readFiles(plan.baseSha, (p) => p.startsWith(prefix));
+      plan.files = hierarchyFiles(input.bundle, input.settings.contractVersion, input.config.gitRoot);
+      const root = gitArtifactRoot(input.bundle.entity, input.settings.contractVersion, input.config.gitRoot);
+      // A destination version is immutable per target format: once this format's manifest exists there,
+      // only an identical file set may be re-delivered. Other formats may share the version directory.
+      const ownPaths = new Set(plan.files.map((f) => f.path));
+      const manifest = gitManifestPath(root, input.bundle.format);
+      if (existing.some((f) => f.path === manifest)) {
+        const current = await client.readFiles(plan.baseSha, (p) => ownPaths.has(p));
         if (current.length !== plan.files.length || current.some((f) => !plan.files!.some((planned) => planned.path === f.path && planned.content === f.content))) throw new DeliveryError("This destination version already contains different artifacts; choose a new contract version");
+      } else if (existing.some((f) => f.type === "blob" && ownPaths.has(f.path))) {
+        // No manifest for this format, yet a planned file exists: e.g. bigquery and postgresql both write `<schema>.sql`.
+        const current = await client.readFiles(plan.baseSha, (p) => ownPaths.has(p));
+        if (current.some((f) => plan.files!.find((planned) => planned.path === f.path)?.content !== f.content)) throw new DeliveryError(`Another target already wrote a different file at ${root}; choose a new contract version`);
       }
-      plan.validation.push("Fixed tenant/domain/product/schema/version hierarchy validated");
+      plan.validation.push("Domain/product/schema/version layout validated under the repository root");
     }
     validateFiles(plan.files);
     const lower = new Map(existing.map((f) => [f.path.toLowerCase(), f]));
@@ -86,4 +93,13 @@ export async function deliverPrepared(id: string, method: DeploymentMethod, plan
   }
   // Do not retain arbitrary response bodies, which may echo credentials or sensitive content.
   return { outcome: response.status === 202 ? "accepted" as const : "delivered" as const, httpStatus: response.status };
+}
+
+/** First unused `<schema>-<version>-<date>[-n]` branch, so a second delivery the same day never reuses another run's branch. */
+async function availableBranch(client: GitHubClient, input: { schema: string; contractVersion: string; date: string }): Promise<string> {
+  for (let attempt = 1; attempt <= 50; attempt++) {
+    const name = deliveryBranchName({ ...input, attempt });
+    if (!await client.branchExists(name)) return name;
+  }
+  throw new DeliveryError("Too many delivery branches for this schema version today; merge or delete older ones");
 }

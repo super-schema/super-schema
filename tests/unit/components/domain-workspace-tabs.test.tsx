@@ -78,7 +78,7 @@ const BASE_PROPS = {
   productId: "prod-1",
   productSlug: "checkout",
   productName: "Checkout",
-  domainDescription: "",
+  productDescription: "",
   domainPolicy: null,
   entities: [ENTITY],
   sharedEnums: [],

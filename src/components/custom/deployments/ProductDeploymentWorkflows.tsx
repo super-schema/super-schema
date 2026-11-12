@@ -38,7 +38,7 @@ export function ProductDeploymentWorkflows({ productId }: { productId: string })
   return <div className="flex min-w-0 flex-col gap-4" data-testid="product-deployment-workflows">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0 flex-1"><h2 className="text-base font-semibold">Deployment workflows</h2><p className="text-sm text-muted-foreground">Reusable delivery settings for this product. Select a workflow to view or edit its configuration.</p></div>
-      <div className="flex flex-wrap items-center gap-3"><Link href="/admin/settings/deployments" className="text-sm text-primary underline">Tenant connections and environments</Link><Button disabled={!data?.canManage} onClick={() => open()}>New workflow</Button></div>
+      <div className="flex flex-wrap items-center gap-3"><Link href="/admin/workflows/connections" className="text-sm text-primary underline">Tenant connections and environments</Link><Button disabled={!data?.canManage} onClick={() => open()}>New workflow</Button></div>
     </div>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {!data ? <Button variant="outline" className="self-start" onClick={() => void load().catch((e: Error) => setError(e.message))}>Reload workflows</Button> : <div className={cn("grid min-w-0 gap-5", editing && "xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]")}>

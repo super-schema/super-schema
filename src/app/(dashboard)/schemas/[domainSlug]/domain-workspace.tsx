@@ -86,7 +86,7 @@ interface DomainWorkspaceProps {
   productId: string;
   productSlug: string;
   productName: string;
-  domainDescription: string;
+  productDescription: string;
   domainPolicy: Record<string, unknown> | null;
   entities: EntityData[];
   /** Product-level data types (managed here). */
@@ -141,7 +141,7 @@ export function DomainWorkspace({
   productId,
   productSlug,
   productName,
-  domainDescription,
+  productDescription,
   entities,
   sharedEnums,
   customScalars,
@@ -344,9 +344,9 @@ export function DomainWorkspace({
       {/* Header */}
       <div className="flex items-center justify-between mb-space-4">
         <div>
-          <h1 className="text-display text-foreground">{domainName}</h1>
-          {domainDescription && (
-            <p className="text-body text-muted-foreground mt-space-1">{domainDescription}</p>
+          <h1 className="text-display text-foreground">{productName}</h1>
+          {productDescription && (
+            <p className="text-body text-muted-foreground mt-space-1">{productDescription}</p>
           )}
         </div>
         <div className="flex items-center gap-space-2">

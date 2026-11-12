@@ -65,6 +65,7 @@ export function assertContentWrite(
     Object.keys(data?.data ?? {}).every((key) =>
       [
         "deploymentEnvironments",
+        "deploymentEnvironmentDetails",
         "deploymentTargetMethods",
         "updatedAt",
       ].includes(key),

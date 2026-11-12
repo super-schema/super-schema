@@ -13,7 +13,7 @@ const T = "tenant-1";
 const OTHER = "tenant-2";
 
 const caps = (assignments: Assignment[], tenantId: string | null = T) => adminCapabilities(assignments, tenantId);
-const ALL = { area: true, users: true, domains: true, emitters: true, health: true, classifications: true, ai: true, git: true, tenants: true };
+const ALL = { area: true, users: true, domains: true, emitters: true, health: true, classifications: true, ai: true, workflows: true, git: true, tenants: true };
 
 describe("adminCapabilities", () => {
   it("a platform administrator may use every tab, for any tenant in view", () => {
@@ -26,7 +26,7 @@ describe("adminCapabilities", () => {
   });
 
   it("a tenant administrator of the tenant in view gets the tenant tabs and none of the platform ones", () => {
-    expect(caps([assign.tenant("ADMIN", T)])).toEqual({ area: true, users: true, domains: true, emitters: false, health: false, classifications: false, ai: false, git: false, tenants: false });
+    expect(caps([assign.tenant("ADMIN", T)])).toEqual({ area: true, users: true, domains: true, emitters: false, health: false, classifications: false, ai: false, workflows: true, git: false, tenants: false });
   });
 
   it("a tenant administrator of ANOTHER tenant has nothing in this one", () => {

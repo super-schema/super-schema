@@ -50,11 +50,23 @@ export function freezeArtifact(entity: ArtifactBundle["entity"], format: string,
   return { entity, format, version: version.version, sourceEntityVersion: version.entityVersion, generatedAt: version.generatedAt, files: ordered, primaryFile: primary.path, contentHash: digest(ordered.map(({ path, content }) => ({ path, content }))), referenceEntityIds: [...new Set([...(version.resolution?.entities.map((r) => r.ref.entityId) ?? []), ...files.flatMap((f) => f.entityId ? [f.entityId] : [])])].filter((id): id is string => typeof id === "string" && id !== entity.id) };
 }
 
-export function hierarchyFiles(bundle: ArtifactBundle, version: string): ArtifactFile[] {
+/**
+ * Generic Git layout: `<gitRoot>/<domain>/<product>/<schema>/<contractVersion>/<file>`.
+ * The tenant is implied by the tenant-level repository root and the target format by the file
+ * extension, so neither is a directory. Each format keeps its own manifest so independent targets
+ * at one contract version never overwrite each other's bookkeeping.
+ */
+export function gitArtifactRoot(entity: ArtifactBundle["entity"], version: string, gitRoot?: string): string {
+  for (const name of ["domain", "product", "schema"] as const) segment.parse(entity[name]);
+  return [gitRoot, entity.domain, entity.product, entity.schema, version].filter(Boolean).join("/");
+}
+export const gitManifestPath = (root: string, format: string) => `${root}/.superschema/${segment.parse(format)}.manifest.json`;
+
+export function hierarchyFiles(bundle: ArtifactBundle, version: string, gitRoot?: string): ArtifactFile[] {
   const e = bundle.entity;
-  const root = `schemas/${e.tenant}/${e.domain}/${e.product}/${e.schema}/${version}/${segment.parse(bundle.format)}`;
+  const root = gitArtifactRoot(e, version, gitRoot);
   const files = bundle.files.map((file) => ({ ...file, path: `${root}/${file.path}` }));
-  files.push({ path: `${root}/superschema-manifest.json`, content: JSON.stringify({ entityId: e.id, format: bundle.format, artifactVersion: bundle.version, sourceEntityVersion: bundle.sourceEntityVersion, contentHash: bundle.contentHash, primaryFile: bundle.primaryFile, files: bundle.files.map((f) => ({ path: f.path, hash: payloadHash(f.content) })) }, null, 2) + "\n" });
+  files.push({ path: gitManifestPath(root, bundle.format), content: JSON.stringify({ entityId: e.id, format: bundle.format, artifactVersion: bundle.version, sourceEntityVersion: bundle.sourceEntityVersion, contentHash: bundle.contentHash, primaryFile: bundle.primaryFile, files: bundle.files.map((f) => ({ path: f.path, hash: payloadHash(f.content) })) }, null, 2) + "\n" });
   validateFiles(files);
   return files;
 }

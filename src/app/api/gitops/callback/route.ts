@@ -14,7 +14,7 @@ export async function GET(request: Request) {
       u.searchParams.get("code") ?? "",
     );
     return NextResponse.redirect(
-      new URL("/gitops?connected=github", callbackUrl()),
+      new URL("/admin/workflows/gitops?connected=github", callbackUrl()),
     );
   } catch {
     return NextResponse.json(

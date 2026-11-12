@@ -81,7 +81,7 @@ export function MarkAsDeployedDialog({
               {!environments.length && <option value="">Configure environments in settings</option>}
               {environments.map((env) => <option key={env} value={env}>{env}</option>)}
             </select>
-            <a href="/admin/settings/deployments" className="text-sm text-primary underline">Manage environments in settings</a>
+            <a href="/admin/workflows/environments" className="text-sm text-primary underline">Manage environments in settings</a>
           </div>
         </div>
 

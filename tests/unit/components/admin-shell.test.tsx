@@ -19,8 +19,8 @@ import { AdminShell, allowedTabs, tabOfPath } from "@/components/custom/admin/Ad
 
 const T = "tenant-1";
 const PERSONAS: Array<[string, Assignment[], string[]]> = [
-  ["a platform administrator", [assign.global()], ["settings", "users", "domains", "emitters", "health", "classifications", "ai"]],
-  ["a tenant administrator of the tenant in view", [assign.tenant("ADMIN", T)], ["settings", "users", "domains"]],
+  ["a platform administrator", [assign.global()], ["settings", "users", "domains", "workflows", "emitters", "health", "classifications", "ai"]],
+  ["a tenant administrator of the tenant in view", [assign.tenant("ADMIN", T)], ["settings", "users", "domains", "workflows"]],
   ["a domain-scoped administrator", [assign.domain("ADMIN", T, "dom-a")], ["settings"]],
   ["an AUTHOR", [assign.tenant("AUTHOR", T)], ["settings"]],
   ["a person with no role", [], ["settings"]],
@@ -95,11 +95,12 @@ describe("tab bookkeeping", () => {
     expect(tabOfPath("/admin")).toBe("users");
     expect(tabOfPath("/admin/health")).toBe("health");
     expect(tabOfPath("/admin/domains/anything")).toBe("domains");
+    expect(tabOfPath("/admin/workflows/gitops")).toBe("workflows");
     expect(tabOfPath("/admin/nope")).toBe("users");
   });
 
   it("allowedTabs follows the capabilities and keeps the order of the tab bar", () => {
-    expect(allowedTabs(adminCapabilities([assign.global()], T)).map((tab) => tab.id)).toEqual(["settings", "users", "domains", "emitters", "health", "classifications", "ai"]);
+    expect(allowedTabs(adminCapabilities([assign.global()], T)).map((tab) => tab.id)).toEqual(["settings", "users", "domains", "workflows", "emitters", "health", "classifications", "ai"]);
     expect(allowedTabs(adminCapabilities([], T)).map((tab) => tab.id)).toEqual(["settings"]);
   });
 });

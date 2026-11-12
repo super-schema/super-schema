@@ -32,7 +32,7 @@ const BASE_PROPS = {
   productId: "prod-1",
   productSlug: "checkout",
   productName: "Checkout",
-  domainDescription: "",
+  productDescription: "",
   domainPolicy: null,
   entities: [],
   sharedEnums: [],
@@ -67,6 +67,14 @@ beforeEach(() => {
   });
 });
 afterEach(() => cleanup());
+
+describe("product page title", () => {
+  it("titles the page with the product name and description, not the domain's", () => {
+    renderWorkspace({ productDescription: "Checkout flows" });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Checkout");
+    expect(screen.getByText("Checkout flows")).toBeDefined();
+  });
+});
 
 describe("product page header contacts", () => {
   it("shows the lead, manager and team addresses as mailto links when the product has them", () => {

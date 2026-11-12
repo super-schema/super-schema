@@ -1,4 +1,5 @@
-import { gitOpsWorkflowPolicy, assertGitOpsWorkflowRevision } from "@/lib/gitops/workflow-policy";
+import { gitOpsWorkflowPolicy, assertGitOpsWorkflowRevision, gitOpsStageDestinations } from "@/lib/gitops/workflow-policy";
+import { gitBranchForEnvironment } from "@/lib/deployments/git-branch";
 import { randomUUID } from "node:crypto";
 import { Prisma, type DeploymentConnection } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
@@ -16,10 +17,11 @@ import { deploymentMethodsFor, TargetMethodMappingsSchema, registryTarget } from
 import { getSchemaTargetCatalog, getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { privateTargetsAllowed, requestExternal } from "@/lib/webhook-transport";
 import {
-  ConnectionConfigSchema, CredentialsSchema, DeliveryError, EnvironmentListSchema, ExecuteSchema, PreviewSchema, SaveConnectionSchema, SaveWorkflowSchema, WorkflowSettingsSchema, workflowTargets,
-  type ArtifactBundle, type ConnectionView, type Credentials, type DeploymentMethod, type DeploymentWorkspace, type DeliveryReceipt, type PreparedPlan, type RunView,
+  ConnectionConfigSchema, CredentialsSchema, DeliveryError, EnvironmentDefinitionsSchema, EnvironmentDetailsSchema, EnvironmentListSchema, SaveEnvironmentsSchema, ExecuteSchema, PreviewSchema, SaveConnectionSchema, SaveWorkflowSchema, WorkflowSettingsSchema, workflowTargets,
+  type ArtifactBundle, type ConnectionConfig, type ConnectionView, type EnvironmentDetails, type EnvironmentWorkflowUsage, type Credentials, type GitDestinationView, type DeploymentMethod, type DeploymentWorkspace, type DeliveryReceipt, type PreparedPlan, type RunView,
 } from "@/lib/deployments/contracts";
 import type { ServiceContext } from "@/types/service-context";
+import { assetHref } from "@/lib/navigation/asset-href";
 import type { SchemaVersionsMap } from "@/types/schema-version";
 
 const secretField = "DeploymentConnection.credentials" as const;
@@ -59,6 +61,16 @@ function destination(config: unknown, method: DeploymentMethod) {
   return parsed;
 }
 
+type StageDestination = Awaited<ReturnType<typeof gitOpsStageDestinations>> extends Map<string, infer V> ? V : never;
+/** Where a Git workflow delivers for one environment: GitOps stage branch, then the environment's branch override, then a branch named after the environment. */
+function gitDestinationFor(config: ConnectionConfig, environment: string, details: EnvironmentDetails, stage?: StageDestination): GitDestinationView {
+  const stageBranch = stage?.branches[environment];
+  if (stage && stageBranch) return { url: stage.url, branch: stageBranch, gitRoot: stage.gitRoot, source: "gitops-stage" };
+  const resolved = gitBranchForEnvironment(details, environment);
+  return { url: config.url, branch: resolved.branch, gitRoot: config.gitRoot, source: resolved.overridden ? "environment-override" : "environment-name" };
+}
+const environmentDetails = (raw: unknown): EnvironmentDetails => EnvironmentDetailsSchema.parse(raw ?? {});
+
 export async function getDeploymentWorkspace(entityId: string, ctx: ServiceContext): Promise<DeploymentWorkspace> {
   const entity = await entityFor(entityId, ctx, "deploy.read");
   const [connections, workflows, runs, records] = await Promise.all([
@@ -69,11 +81,15 @@ export async function getDeploymentWorkspace(entityId: string, ctx: ServiceConte
   ]);
   const versions = ((entity.metadata as Record<string, unknown> | null)?.schemaVersions ?? {}) as SchemaVersionsMap;
   const legacyGit = ctxCan(ctx, "git.manage") ? (await prisma.gitConfig.findMany({ select: { id: true } })).map((c, i) => ({ id: c.id, name: `Legacy Git configuration ${i + 1}` })) : [];
+  const gitConnections = new Map(connections.filter((c) => methodOf(c) === "git").map((c) => [c.id, ConnectionConfigSchema.parse(c.config)]));
+  const gitWorkflows = workflows.filter((w) => gitConnections.has(w.connectionId));
+  const stages = await gitOpsStageDestinations(gitWorkflows.map((w) => w.id));
+  const gitDestinations = Object.fromEntries(gitWorkflows.map((w) => [w.id, Object.fromEntries(entity.tenant.deploymentEnvironments.map((env) => [env, gitDestinationFor(gitConnections.get(w.connectionId)!, env, environmentDetails(entity.tenant.deploymentEnvironmentDetails), stages.get(w.id))]))]));
   const legacyMarkers = Object.entries(versions).flatMap(([format, entries]) => entries.filter((v) => v.status === "deployed").map((v) => ({ format, version: v.version, deployedAt: v.deployedAt })));
-  return { entitySlug: entity.slug, targetMethods: TargetMethodMappingsSchema.parse(entity.tenant.deploymentTargetMethods), environments: entity.tenant.deploymentEnvironments,
+  return { entitySlug: entity.slug, targetMethods: TargetMethodMappingsSchema.parse(entity.tenant.deploymentTargetMethods), environments: entity.tenant.deploymentEnvironments, environmentDetails: environmentDetails(entity.tenant.deploymentEnvironmentDetails),
     productWorkflowsHref: entity.domain && entity.product ? `/schemas/${encodeURIComponent(entity.domain.slug)}/${encodeURIComponent(entity.product.slug)}?tab=workflows` : null,
     recorded: records.map((r) => { const target = r.target.slice(entityId.length + 1); return { target, environment: r.environment, version: r.version, sourceVersion: versions[target]?.find((v) => v.version === r.version)?.entityVersion ?? null }; }),
-    legacyGit, legacyMarkers, connections: connections.map(connectionView), workflows: workflows.map((w) => ({ id: w.id, name: w.name, format: w.format, supportedTargets: [...workflowTargets(w)], environment: w.environment, connectionId: w.connectionId, settings: WorkflowSettingsSchema.parse(w.settings), revision: w.revision, active: w.active, scope: w.productId ? "product" as const : "schema" as const })), runs: runs.map(runView),
+    gitDestinations, legacyGit, legacyMarkers, connections: connections.map(connectionView), workflows: workflows.map((w) => ({ id: w.id, name: w.name, format: w.format, supportedTargets: [...workflowTargets(w)], environment: w.environment, connectionId: w.connectionId, settings: WorkflowSettingsSchema.parse(w.settings), revision: w.revision, active: w.active, scope: w.productId ? "product" as const : "schema" as const })), runs: runs.map(runView),
     formats: Object.entries(versions).map(([key, entries]) => ({ key, sourceVersions: Object.fromEntries(entries.map((v) => [String(v.version), v.entityVersion])), versions: entries.filter((v) => v.status === "published" || v.status === "deployed").map((v) => v.version).sort((a, b) => b - a) })).filter((f) => f.key),
     canConfigure: ctxCan(ctx, "deploy.configure", { tenantId: entity.tenantId }), canRun: ctxCan(ctx, "deploy.run", { tenantId: entity.tenantId, domainId: entity.domainId, productId: entity.productId }) };
 }
@@ -190,21 +206,64 @@ function workflowApplies(workflow: { entityId: string | null; productId: string 
 export async function getTenantDeploymentConfiguration(tenantId: string, ctx: ServiceContext) {
   if (!ctxCan(ctx, "deploy.configure", { tenantId })) return asError("Deployment configuration access denied");
   const [tenant, connections] = await Promise.all([
-    prisma.tenant.findUnique({ where: { id: tenantId }, select: { deploymentEnvironments: true, deploymentTargetMethods: true } }),
+    prisma.tenant.findUnique({ where: { id: tenantId }, select: { deploymentEnvironments: true, deploymentEnvironmentDetails: true, deploymentTargetMethods: true } }),
     prisma.deploymentConnection.findMany({ where: { tenantId }, select: CONNECTION_VIEW_SELECT, orderBy: { name: "asc" } }),
   ]);
   if (!tenant) return asError("Tenant not found");
   const legacyGit = ctxCan(ctx, "git.manage") ? (await prisma.gitConfig.findMany({ select: { id: true } })).map((c, i) => ({ id: c.id, name: `Legacy Git configuration ${i + 1}` })) : [];
-  return { targetMethods: TargetMethodMappingsSchema.parse(tenant.deploymentTargetMethods), environments: tenant.deploymentEnvironments, connections: connections.map(connectionView), legacyGit };
+  return { targetMethods: TargetMethodMappingsSchema.parse(tenant.deploymentTargetMethods), environments: tenant.deploymentEnvironments, environmentDetails: environmentDetails(tenant.deploymentEnvironmentDetails), environmentUsage: await environmentUsage(tenantId), connections: connections.map(connectionView), legacyGit };
+}
+
+/** Active workflows per environment, with where each one is defined. */
+async function environmentUsage(tenantId: string): Promise<Record<string, EnvironmentWorkflowUsage[]>> {
+  const rows = await prisma.deploymentWorkflow.findMany({
+    where: { tenantId, active: true },
+    select: { id: true, name: true, environment: true, product: { select: { name: true, slug: true, domain: { select: { slug: true } } } }, entity: { select: { name: true, slug: true, domain: { select: { slug: true } }, product: { select: { slug: true } } } } },
+    orderBy: { name: "asc" },
+  });
+  const usage: Record<string, EnvironmentWorkflowUsage[]> = {};
+  for (const w of rows) {
+    const view: EnvironmentWorkflowUsage = w.product
+      ? { id: w.id, name: w.name, scope: `Product ${w.product.name}`, href: assetHref({ kind: "product", domainSlug: w.product.domain.slug, productSlug: w.product.slug }, { query: { tab: "workflows" } }) }
+      : w.entity
+        ? { id: w.id, name: w.name, scope: `Schema ${w.entity.name}`, href: assetHref({ kind: "entity", slug: w.entity.slug, domainSlug: w.entity.domain?.slug ?? null, productSlug: w.entity.product?.slug ?? null }, { query: { tab: "deployments" } }) }
+        : { id: w.id, name: w.name, scope: "Tenant", href: null };
+    (usage[w.environment] ??= []).push(view);
+  }
+  return usage;
 }
 
 export async function saveDeploymentEnvironments(tenantId: string, raw: unknown, ctx: ServiceContext) {
   if (!ctxCan(ctx, "deploy.configure", { tenantId })) return asError("Deployment configuration access denied");
-  const environments = EnvironmentListSchema.parse(raw);
-  if (await prisma.deploymentWorkflow.count({ where: { tenantId, active: true, environment: { notIn: environments } } })) asError("Update or disable workflows that use an environment before removing it");
+  // Never refuses over workflows: renamed environments carry them, removed ones move as chosen or are disabled.
+  // Accepts { environments, renames, reassign }, bare ordered definitions, or a plain ordered name list (details are then kept).
+  const legacyNames = Array.isArray(raw) && raw.every((v) => typeof v === "string");
+  const input = legacyNames ? null : SaveEnvironmentsSchema.parse(Array.isArray(raw) ? { environments: raw } : raw);
+  const definitions = input?.environments ?? null;
+  const environments = definitions ? definitions.map((e) => e.name) : EnvironmentListSchema.parse(raw);
+  const renames = input?.renames ?? {};
+  const reassign = input?.reassign ?? {};
+  for (const [from, to] of [...Object.entries(renames), ...Object.entries(reassign)]) {
+    if (to !== null && !environments.includes(to)) asError(`"${from}" can only move to an environment in the new list`);
+  }
+  const affected = await prisma.deploymentWorkflow.findMany({ where: { tenantId, active: true, environment: { notIn: environments } }, select: { id: true, name: true, environment: true } });
   return withAudit({ action: "UPDATE", entityType: "Tenant", entityId: tenantId, tenantId, userId: ctx.userId, fn: async () => {
-    await prisma.tenant.update({ where: { id: tenantId }, data: { deploymentEnvironments: environments } });
-    return { environments };
+    const previous = environmentDetails((await prisma.tenant.findUnique({ where: { id: tenantId }, select: { deploymentEnvironmentDetails: true } }))?.deploymentEnvironmentDetails);
+    const details: EnvironmentDetails = definitions
+      ? Object.fromEntries(definitions.map((e) => [e.name, { ...(e.description ? { description: e.description } : {}), ...(e.branch ? { branch: e.branch } : {}) }]))
+      : Object.fromEntries(Object.entries(previous).filter(([name]) => environments.includes(name)));
+    const moved: { workflow: string; from: string; to: string | null }[] = [];
+    await prisma.$transaction(async (tx) => {
+      for (const w of affected) {
+        // No choice given (older callers): disable rather than deliver somewhere the admin did not pick.
+        const to = w.environment in renames ? renames[w.environment] : w.environment in reassign ? reassign[w.environment] : null;
+        // A revision bump invalidates previews prepared against the old environment.
+        await tx.deploymentWorkflow.update({ where: { id: w.id }, data: to === null ? { active: false, revision: { increment: 1 } } : { environment: to, revision: { increment: 1 } } });
+        moved.push({ workflow: w.name, from: w.environment, to });
+      }
+      await tx.tenant.update({ where: { id: tenantId }, data: { deploymentEnvironments: environments, deploymentEnvironmentDetails: json(details) } });
+    });
+    return { environments, environmentDetails: details, moved };
   } });
 }
 
@@ -221,7 +280,7 @@ export async function getProductDeploymentConfiguration(productId: string, ctx: 
     prisma.deploymentConnection.findMany({ where: { tenantId }, select: CONNECTION_VIEW_SELECT, orderBy: { name: "asc" } }),
     prisma.deploymentWorkflow.findMany({ where: { tenantId, OR: [{ productId, entityId: null }, { entity: { productId } }] }, orderBy: { name: "asc" } }),
   ]);
-  return { targetMethods: TargetMethodMappingsSchema.parse(product.domain.tenant.deploymentTargetMethods), environments: product.domain.tenant.deploymentEnvironments, connections: connections.map(connectionView),
+  return { targetMethods: TargetMethodMappingsSchema.parse(product.domain.tenant.deploymentTargetMethods), environments: product.domain.tenant.deploymentEnvironments, environmentDetails: environmentDetails(product.domain.tenant.deploymentEnvironmentDetails), connections: connections.map(connectionView),
     workflows: workflows.map((w) => ({ ...w, supportedTargets: [...workflowTargets(w)], settings: WorkflowSettingsSchema.parse(w.settings), scope: w.entityId ? "schema" as const : "product" as const })),
     canManage: ctxCan(ctx, "deploy.run", { tenantId, domainId: product.domainId, productId }) };
 }
@@ -279,7 +338,17 @@ export async function previewDeployment(entityId: string, raw: unknown, ctx: Ser
   const gitOps=await gitOpsWorkflowPolicy(workflow.id,environment);
   validateEnvironment(gitOps?.environments ?? entity.tenant.deploymentEnvironments, environment);
   const settings = WorkflowSettingsSchema.parse({ ...WorkflowSettingsSchema.parse(workflow.settings), ...input.variables });
-  const plan = await prepareDelivery({ id, method: methodOf(connection), bundle, config: {...destination(connection.config, methodOf(connection)),...(gitOps ? {url:gitOps.url,baseBranch:gitOps.baseBranch,gitRoot:gitOps.gitRoot}: {})}, settings, revision: workflow.revision, environment }, credentialsOf(connection));
+  const baseConfig = destination(connection.config, methodOf(connection));
+  let config: ConnectionConfig = baseConfig;
+  if (gitOps) {
+    if (input.baseBranch && input.baseBranch !== gitOps.baseBranch) return asError(`GitOps delivers ${environment} to its stage branch ${gitOps.baseBranch}`);
+    config = { ...baseConfig, url: gitOps.url, baseBranch: gitOps.baseBranch, gitRoot: gitOps.gitRoot };
+  } else if (methodOf(connection) === "git") {
+    const target = gitDestinationFor(baseConfig, environment, environmentDetails(entity.tenant.deploymentEnvironmentDetails), (await gitOpsStageDestinations([workflow.id])).get(workflow.id));
+    // The deployer may target another base branch for this PR; the PR itself is still reviewed in the repository.
+    config = { ...baseConfig, url: target.url, baseBranch: input.baseBranch ?? target.branch, gitRoot: target.gitRoot };
+  } else if (input.baseBranch) return asError("A base branch applies only to Git deployments");
+  const plan = await prepareDelivery({ id, method: methodOf(connection), bundle, config, settings, revision: workflow.revision, environment }, credentialsOf(connection));
   if(gitOps)plan.gitOpsRevision=gitOps.revision;
   plan.requestHash = requestHash;
   const row = await prisma.deploymentRun.create({ data: { id, tenantId: entity.tenantId, entityId, workflowId: workflow.id, connectionId: connection.id, connectionRevision: connection.revision, method: connection.method, format, artifactVersion: version.version, environment, snapshot: json(plan), planHash: digest(plan), idempotencyKey: input.idempotencyKey, createdBy: ctx.userId, expiresAt: new Date(Date.now() + 30 * 60 * 1000) } });

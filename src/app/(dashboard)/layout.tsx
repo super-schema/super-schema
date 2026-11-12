@@ -40,5 +40,5 @@ export default async function DashboardLayout({
   const principal = await getPrincipal();
   const adminArea = principal ? adminCapabilities(principal.assignments, tenantId).area : false;
 
-  return <DashboardClientShell adminArea={adminArea}>{process.env.CONTENT_STORAGE === "git" && <a href="/gitops" className="mb-4 block rounded-md border border-border px-3 py-2 text-sm text-primary">GitOps storage · browse repository entries and author changes through GitHub PRs</a>}{children}</DashboardClientShell>;
+  return <DashboardClientShell adminArea={adminArea}>{process.env.CONTENT_STORAGE === "git" && <a href="/admin/workflows/gitops" className="mb-4 block rounded-md border border-border px-3 py-2 text-sm text-primary">GitOps storage · browse repository entries and author changes through GitHub PRs</a>}{children}</DashboardClientShell>;
 }

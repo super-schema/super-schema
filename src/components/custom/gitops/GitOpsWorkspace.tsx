@@ -178,7 +178,7 @@ export function GitOpsWorkspace({ initial }: { initial: Workspace }) {
     <div className="flex min-w-0 flex-col gap-6" data-testid="gitops-workspace">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <h1 className="text-heading-2">GitOps storage</h1>
+          <h2 className="text-heading-3">GitOps storage</h2>
           <p className="text-sm text-muted-foreground">
             Browse contracts, author private drafts, and follow their GitHub
             review and environment history.
@@ -229,7 +229,7 @@ export function GitOpsWorkspace({ initial }: { initial: Workspace }) {
               label: `${p.domainSlug} / ${p.name}`,
             }))}
             onChange={(value) =>
-              router.push(`/gitops?productId=${encodeURIComponent(value)}`)
+              router.push(`/admin/workflows/gitops?productId=${encodeURIComponent(value)}`)
             }
           />
         </Field>

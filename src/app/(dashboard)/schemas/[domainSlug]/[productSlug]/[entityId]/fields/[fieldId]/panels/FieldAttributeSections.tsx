@@ -9,11 +9,12 @@ import {
 } from "@/components/ui/accordion";
 import {
   FIELD_ATTRIBUTE_SECTIONS,
+  activeValidationKeys,
   evolutionVersions,
   fieldAttributeErrors,
   fieldDeprecation,
+  legacyEnumSymbols,
 } from "@/lib/field-attributes";
-import { getTypeInfo } from "@/lib/data-types";
 import type {
   Identity,
   TypeSpecDecorators,
@@ -24,10 +25,10 @@ import { DocumentationPanel } from "./DocumentationPanel";
 import { ValidationPanel } from "./ValidationPanel";
 import {
   GovernancePanel,
-  QualityPanel,
   StorageHintsPanel,
   type PolicyContext,
 } from "./GovernancePanel";
+import { QualityPanel } from "./QualityPanel";
 import { VisibilityPanel } from "./VisibilityPanel";
 import { WireFormatPanel } from "./WireFormatPanel";
 import { ExtensionsPanel } from "./ExtensionsPanel";
@@ -88,12 +89,9 @@ export function FieldAttributeSections(p: Props) {
       .filter(Boolean)
       .join(" · "),
     ts.documentation?.example != null ? "Example" : "",
-    Object.values(ts.validation ?? {}).filter((v) => v != null && v !== "")
-      .length
-      ? "Configured"
-      : "",
+    activeValidationKeys(ts.validation, p.fieldType).length ? "Configured" : "",
     governance.qualityRules?.length
-      ? `${governance.qualityRules.length} rules`
+      ? `${governance.qualityRules.length} ${governance.qualityRules.length === 1 ? "rule" : "rules"}`
       : "",
     [p.classification, p.identity.secret ? "Secret" : undefined]
       .filter(Boolean)
@@ -149,7 +147,11 @@ export function FieldAttributeSections(p: Props) {
       key="validation"
       validation={ts.validation ?? {}}
       fieldType={p.fieldType}
-      typeCategory={getTypeInfo(p.fieldType)?.category ?? "String"}
+      enumSymbolsInPattern={
+        p.fieldType === "enum" &&
+        p.extras.aliases.length === 0 &&
+        legacyEnumSymbols(ts.validation?.pattern).length > 0
+      }
       onChange={(v) => change("validation", v)}
     />,
     <QualityPanel

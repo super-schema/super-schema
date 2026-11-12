@@ -29,7 +29,7 @@ async function call<T>(
     const tenantId = access.resource.tenantId!,
       ctx = { ...contextOf(access.principal), tenantId };
     const data = await run(tenantId, ctx);
-    revalidatePath("/gitops");
+    revalidatePath("/admin/workflows/gitops");
     return { data };
   } catch (e) {
     if (e instanceof GitOpsError || e instanceof SecretBoxError)

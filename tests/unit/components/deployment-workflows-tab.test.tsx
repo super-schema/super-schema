@@ -56,7 +56,7 @@ describe("deployment workflow review", () => {
     render(<DeploymentWorkflowsTab entityId="account" entityName="Account" initialVersion="1" />);
     await selectWorkflow();
     fireEvent.click(screen.getByRole("button", { name: "Validate and preview" }));
-    await screen.findByTestId("deployment-preview");
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Validate and preview" })).toBeEnabled());
     fireEvent.click(screen.getByLabelText("Environment"));
     const option = await screen.findByRole("option", { name: "production" });
@@ -96,7 +96,7 @@ it("links new workflow to the product and keeps credentials and definition editi
   render(<DeploymentWorkflowsTab entityId="account" entityName="Account" />);
   await selectWorkflow();
   expect(screen.getByRole("link", { name: "New workflow" })).toHaveAttribute("href", "/schemas/identity/accounts?tab=workflows");
-  expect(screen.getByRole("link", { name: "Deployment settings" })).toHaveAttribute("href", "/admin/settings/deployments");
+  expect(screen.getByRole("link", { name: "Deployment settings" })).toHaveAttribute("href", "/admin/workflows/connections");
   expect(screen.queryByRole("heading", { name: "Deployments" })).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Workflow name")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Token")).not.toBeInTheDocument();
@@ -156,4 +156,40 @@ it("preserves manual PR titles while variables change and can restore the genera
   expect(screen.getByLabelText("PR title")).toHaveValue("Review account activation");
   fireEvent.click(screen.getByRole("button", { name: "Reset to generated" }));
   expect(screen.getByLabelText("PR title")).toHaveValue("Publish account: avro v1 → staging (2.0.0_snapshot)");
+});
+it("prefills the base branch from the environment and sends a per-PR override", async () => {
+  const data = { ...workspace(), environmentDetails: { production: { branch: "main" } }, gitDestinations: { workflow: { staging: { url: "https://github.com/acme/contracts", branch: "staging", gitRoot: "event-schemas", source: "environment-name" }, production: { url: "https://github.com/acme/contracts", branch: "main", source: "environment-override" } } } };
+  h.load.mockResolvedValue({ success: true, data });
+  render(<DeploymentWorkflowsTab entityId="account" entityName="Account" initialFormat="avro" initialVersion="1" />);
+  await selectWorkflow();
+  expect(screen.getByLabelText("Base branch")).toHaveValue("staging");
+  expect(screen.getByTestId("git-branch-source")).toHaveTextContent("Named after staging");
+  expect(screen.getByTestId("inherited-git-repository")).toHaveTextContent("event-schemas/");
+  fireEvent.click(screen.getByLabelText("Environment"));
+  const option = await screen.findByRole("option", { name: "production" });
+  fireEvent.pointerDown(option, { pointerType: "mouse", button: 0 }); fireEvent.click(option);
+  await waitFor(() => expect(screen.getByLabelText("Base branch")).toHaveValue("main"));
+  fireEvent.change(screen.getByLabelText("Base branch"), { target: { value: "hotfix/accounts" } });
+  expect(screen.getByTestId("git-branch-source")).toHaveTextContent("Overrides main for this PR only");
+  fireEvent.click(screen.getByRole("button", { name: "Validate and preview" }));
+  await waitFor(() => expect(h.preview).toHaveBeenCalled());
+  expect(h.preview.mock.calls[0][1]).toMatchObject({ environment: "production", baseBranch: "hotfix/accounts" });
+});
+it("does not send a base branch when the resolved environment branch is unchanged", async () => {
+  render(<DeploymentWorkflowsTab entityId="account" entityName="Account" initialFormat="avro" initialVersion="1" />);
+  await selectWorkflow();
+  expect(screen.getByLabelText("Base branch")).toHaveValue("staging");
+  fireEvent.click(screen.getByRole("button", { name: "Validate and preview" }));
+  await waitFor(() => expect(h.preview).toHaveBeenCalled());
+  expect(h.preview.mock.calls[0][1]).not.toHaveProperty("baseBranch");
+});
+it("reviews the validated preview in a modal dialog that can be cancelled without sending", async () => {
+  render(<DeploymentWorkflowsTab entityId="account" entityName="Account" initialFormat="avro" initialVersion="1" />);
+  await selectWorkflow();
+  fireEvent.click(screen.getByRole("button", { name: "Validate and preview" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toHaveTextContent("Review Git PR");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(h.execute).not.toHaveBeenCalled();
 });

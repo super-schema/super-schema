@@ -216,7 +216,7 @@ export default async function ProductWorkspacePage({
       productId={product.id}
       productSlug={productSlug}
       productName={product.name}
-      domainDescription={domain.description}
+      productDescription={product.description}
       domainPolicy={domainPolicy as Record<string, unknown> | null}
       entities={entities}
       sharedEnums={sharedEnums}

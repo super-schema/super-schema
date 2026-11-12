@@ -1,4 +1,8 @@
 import { getTypeInfo } from "@/lib/data-types";
+import {
+  constraintAppliesTo,
+  type ConstraintKind,
+} from "@/lib/compiler/constraint-targets";
 /** Shared field authoring semantics. No database or framework dependencies. */
 import type {
   TypeSpecDecorators,
@@ -311,4 +315,76 @@ export function valueConstraintErrors(
       errors.push(`Value must contain at most ${validation.maxItems} items.`);
   }
   return errors;
+}
+
+/** The TypeSpec decorator each stored validator is written as. The keys are the ValidationConstraints keys. */
+export const VALIDATION_DECORATORS: Readonly<Record<ConstraintKind, string>> = {
+  minValue: "@minValue",
+  maxValue: "@maxValue",
+  minValueExclusive: "@minValueExclusive",
+  maxValueExclusive: "@maxValueExclusive",
+  minLength: "@minLength",
+  maxLength: "@maxLength",
+  pattern: "@pattern",
+  minItems: "@minItems",
+  maxItems: "@maxItems",
+};
+
+/** Validators TypeSpec accepts for `fieldType` and the emitter writes (the same rule the TypeSpec generator uses). */
+export function applicableValidationKeys(fieldType: string): ConstraintKind[] {
+  return (Object.keys(VALIDATION_DECORATORS) as ConstraintKind[]).filter((kind) =>
+    constraintAppliesTo(fieldType, kind),
+  );
+}
+
+function storedValidationKeys(validation: ValidationConstraints | null | undefined): ConstraintKind[] {
+  const stored = (validation ?? {}) as Record<string, unknown>;
+  return (Object.keys(VALIDATION_DECORATORS) as ConstraintKind[]).filter(
+    (kind) => stored[kind] != null && stored[kind] !== "",
+  );
+}
+
+/** Stored validators that apply to `fieldType`. This is what the Validation summary counts. */
+export function activeValidationKeys(
+  validation: ValidationConstraints | null | undefined,
+  fieldType: string,
+): ConstraintKind[] {
+  const applicable = new Set(applicableValidationKeys(fieldType));
+  return storedValidationKeys(validation).filter((kind) => applicable.has(kind));
+}
+
+/** Stored validators that do not apply to `fieldType`. They stay in the data but TypeSpec never writes them. */
+export function staleValidationKeys(
+  validation: ValidationConstraints | null | undefined,
+  fieldType: string,
+): ConstraintKind[] {
+  const applicable = new Set(applicableValidationKeys(fieldType));
+  return storedValidationKeys(validation).filter((kind) => !applicable.has(kind));
+}
+
+/** One line explaining why no validator applies to `fieldType`. */
+export function validationNotApplicableReason(fieldType: string): string {
+  const category = getTypeInfo(fieldType)?.category;
+  if (fieldType === "enum")
+    return "Enum fields have no TypeSpec validators. Their allowed values are the enum values under Properties.";
+  if (fieldType === "boolean") return "Boolean fields have no TypeSpec validators.";
+  if (fieldType === "bytes")
+    return "Bytes fields have no validators here. TypeSpec accepts @pattern on bytes, but this editor does not write it.";
+  if (category === "Date & Time")
+    return "Date and time bounds are not offered yet. TypeSpec accepts @minValue and @maxValue on these types, but this editor does not write them.";
+  if (fieldType === "object")
+    return "Object fields have no TypeSpec validators. Constrain their properties instead.";
+  if (fieldType === "map") return "Map fields have no TypeSpec validators here.";
+  if (fieldType === "reference") return "Reference fields have no validators here.";
+  return "No TypeSpec validators apply to this type.";
+}
+
+/**
+ * The enum symbols a legacy `pattern` holds (`A|B|C`) when it is a symbol list rather than a regular expression. The
+ * TypeSpec generator reads them when an enum has no aliases; keep REGEX_CONSTRUCT in sync with typespec-generator.ts.
+ */
+const LEGACY_ENUM_REGEX_CONSTRUCT = /^\^|\$$|\\[dDwWsSbB]|[[\]()]|\.[*+]|\{\d/;
+export function legacyEnumSymbols(pattern: string | null | undefined): string[] {
+  if (!pattern || LEGACY_ENUM_REGEX_CONSTRUCT.test(pattern)) return [];
+  return pattern.split("|").filter(Boolean);
 }

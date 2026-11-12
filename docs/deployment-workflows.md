@@ -69,19 +69,27 @@ Use an HTTPS repository URL (GitHub-style `git@host:owner/repo.git` URLs are nor
 DEPLOYMENT_GIT_HOSTS=github.com,github.company.example
 ```
 
-The generic artifact layout is opinionated and has no configurable identity/path mapping:
+The generic artifact layout is opinionated:
 
 ```text
-schemas/<tenant-slug>/<domain-slug>/<product-slug>/<schema-slug>/<contractVersion>/<format>/
-  <original artifact files and their relative directories>
-  superschema-manifest.json
+<repository-root>/<domain-slug>/<product-slug>/<schema-slug>/<contractVersion>/
+  <original artifact files, e.g. <schema>.schema.avsc, <schema>.sql>
+  .superschema/<format>.manifest.json
 ```
 
-The format directory prevents independent outputs from colliding at the same contract version. Identity comes from saved Super Schema slugs. The entity must belong to a tenant/domain/product; destination segments must be lowercase kebab-case. Choose destination SemVer explicitly, such as `1.0.0_snapshot`. Source artifact `v4` does not imply destination `4.0.0`. Each format/version directory is immutable in generic exports; different bytes require a new destination version.
+`<repository-root>` is the tenant-level **Repository root path** of the Git connection (or the GitOps binding's base path for GitOps-managed workflows); empty means the repository root. The tenant is implied by that root and the format by the file extension, so neither is a directory. Each target keeps its own manifest under `.superschema/`. Targets that share an extension (for example BigQuery and PostgreSQL DDL both write `<schema>.sql`) cannot both be delivered to one contract version: preview refuses a different file at the same path. Identity comes from saved Super Schema slugs. The entity must belong to a domain/product; destination segments must be lowercase kebab-case. Choose destination SemVer explicitly, such as `1.0.0_snapshot`. Source artifact `v4` does not imply destination `4.0.0`. A target's files at a version are immutable in generic exports; different bytes require a new destination version.
+
+### Environments and base branches
+
+Tenant deployment settings define environments as an ordered promotion pipeline (first stage → production), each with an optional description and Git branch. Reorder by dragging or with the arrow buttons. Order lives in `Tenant.deploymentEnvironments`; descriptions and branches in `Tenant.deploymentEnvironmentDetails`.
+
+Git connections have no base branch setting. A PR's base branch is the GitOps product stage branch for GitOps-managed workflows; otherwise the environment's configured branch, or a branch named after the environment (`Pre Prod` → `pre-prod`). The deployer can override it for a single PR in the deployment form (not for GitOps stages, whose promotion order is enforced).
+
+The delivery branch is `<schema>-<contractVersion>-<YYYY-MM-DD>` (UTC), with `-2`, `-3`… when that day's name already exists.
 
 The deployment form generates `Publish <schema>: <format> v<artifact-version> → <environment> (<contract-version>)`. Users can edit the PR title or use **Reset to generated**. The reviewed title is the title submitted to GitHub.
 
-Preview reads the actual base commit, validates the complete file set, rejects unsafe paths, collisions, symlinks and oversized/incomplete trees, and performs no Git writes. Its file browser lists every prepared path, including companion files/manifests, and classifies added, modified and unchanged files against that pinned base. **Content** shows the exact proposed file with read-only syntax highlighting; **Changes** shows added/deleted lines. Large diffs are explicitly bounded while Content/Copy retain the complete proposed file. A preview with no changed files cannot create a PR. The before-content, proposed files, title, branch and base commit are part of the frozen reviewed plan. Execution verifies the base is unchanged, creates a tree based on that commit, commits only the reviewed files, creates a deterministic feature branch, then opens a real PR. Recovery checks the branch parent, complete unrelated base content, intended file bytes and delivery marker before reusing it. It never force-pushes. A moved base or conflicting branch requires a new preview.
+Preview reads the actual base commit, validates the complete file set, rejects unsafe paths, collisions, symlinks and oversized/incomplete trees, and performs no Git writes. Its file browser lists every prepared path, including companion files/manifests, and classifies added, modified and unchanged files against that pinned base. **Content** shows the exact proposed file with read-only syntax highlighting; **Changes** shows added/deleted lines. Large diffs are explicitly bounded while Content/Copy retain the complete proposed file. A preview with no changed files cannot create a PR. The before-content, proposed files, title, branch and base commit are part of the frozen reviewed plan. Execution verifies the base is unchanged, creates a tree based on that commit, commits only the reviewed files, creates the reviewed delivery branch, then opens a real PR. Recovery checks the branch parent, complete unrelated base content, intended file bytes and delivery marker before reusing it. It never force-pushes. A moved base or conflicting branch requires a new preview.
 
 Platform administrators can import an existing legacy token/App configuration through the **Git PR** connection tab in tenant deployment settings. It becomes a tenant connection. SSH credentials require a new token/App connection. Legacy bulk exports and fake status synchronization return `WORKFLOW_REQUIRED`; they cannot report fabricated commits or PRs.
 

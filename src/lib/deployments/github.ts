@@ -44,6 +44,9 @@ export class GitHubClient {
     if (!result?.permissions?.push) throw new DeliveryError("The connection cannot create branches in this repository");
     return { repository: this.repository.web, writable: true };
   }
+  async branchExists(branch: string): Promise<boolean> {
+    return !!(await this.request<{ object: { sha: string } }>("GET", `/git/ref/heads/${encodeURIComponent(branch)}`, undefined, true));
+  }
   async base(branch: string): Promise<string> {
     if (!branch || /[\x00-\x20~^:?*\[\\]/.test(branch) || branch.includes("..") || branch.startsWith("-") || branch.endsWith("/")) throw new DeliveryError("Invalid Git base branch");
     const result = await this.request<{ object: { sha: string } }>("GET", `/git/ref/heads/${encodeURIComponent(branch)}`);

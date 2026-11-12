@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Users, Globe, Zap, Activity, Tags, Settings, ShieldOff, Sparkles } from "lucide-react";
+import { Users, Globe, Zap, Activity, Tags, Settings, ShieldOff, Sparkles, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AdminCapabilities } from "@/lib/access/capabilities";
 
-type TabId = "settings" | "users" | "domains" | "emitters" | "health" | "classifications" | "ai";
+type TabId = "settings" | "users" | "domains" | "workflows" | "emitters" | "health" | "classifications" | "ai";
 
 /**
  * The tabs of the Admin area, each with the capability that lets a person use it (`null`: every signed-in person, personal settings). The capabilities are
@@ -16,6 +16,7 @@ const ADMIN_TABS: ReadonlyArray<{ id: TabId; label: string; icon: typeof Users; 
   { id: "settings", label: "Settings", icon: Settings, href: "/admin/settings", needs: null },
   { id: "users", label: "Users", icon: Users, href: "/admin", needs: "users" },
   { id: "domains", label: "Domains", icon: Globe, href: "/admin/domains", needs: "domains" },
+  { id: "workflows", label: "Workflows", icon: Workflow, href: "/admin/workflows", needs: "workflows" },
   { id: "emitters", label: "Emitters", icon: Zap, href: "/admin/emitters", needs: "emitters" },
   { id: "health", label: "Health", icon: Activity, href: "/admin/health", needs: "health" },
   { id: "classifications", label: "Classifications", icon: Tags, href: "/admin/classifications", needs: "classifications" },

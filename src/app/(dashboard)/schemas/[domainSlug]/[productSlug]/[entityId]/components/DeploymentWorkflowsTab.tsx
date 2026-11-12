@@ -10,9 +10,12 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FieldGroup } from "@/components/ui/field";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { deploymentMethodsFor } from "@/lib/deployments/target-methods";
 import { generatedGitPrTitle } from "@/lib/deployments/pr-title";
+import { gitBranchForEnvironment } from "@/lib/deployments/git-branch";
+import { Input } from "@/components/ui/input";
 import { GitPrPreview } from "@/components/custom/deployments/GitPrPreview";
 import { WorkflowSettingsSchema, workflowTargets, type DeploymentMethod, type DeploymentWorkspace, type PreparedPlan, type RunView, type WorkflowSettings } from "@/lib/deployments/contracts";
 import { DeploymentField as Field, DeploymentChoice as Choice, DEPLOYMENT_METHODS, targetOptions, deploymentVariables, WorkflowVariablesFields } from "@/components/custom/deployments/DeploymentFields";
@@ -44,7 +47,7 @@ function DeploymentWorkflowEditor({ entityId, entityName, initialFormat = "", in
   const method = allowedMethods.includes(preferredMethod) ? preferredMethod : allowedMethods[0];
   const versions = data?.formats.find((f) => f.key === format)?.versions ?? [];
   return <div className="flex min-w-0 flex-col gap-5" data-testid="deployment-workflows-tab">
-    <div className="flex items-start justify-between gap-3"><p className="min-w-0 flex-1 text-sm text-muted-foreground">Choose a published target and a product workflow to deliver this schema.</p><div className="flex shrink-0 flex-wrap justify-end gap-2">{data?.canConfigure && <Link href="/admin/settings/deployments" className="self-center text-sm text-primary underline">Deployment settings</Link>}<Button size="sm" variant="outline" disabled={busy} onClick={() => { setBusy(true); setRefresh((n) => n + 1); void load().catch((e: Error) => setError(e.message)).finally(() => setBusy(false)); }}><RefreshCw data-icon="inline-start" />Refresh</Button></div></div>
+    <div className="flex items-start justify-between gap-3"><p className="min-w-0 flex-1 text-sm text-muted-foreground">Choose a published target and a product workflow to deliver this schema.</p><div className="flex shrink-0 flex-wrap justify-end gap-2">{data?.canConfigure && <Link href="/admin/workflows/connections" className="self-center text-sm text-primary underline">Deployment settings</Link>}<Button size="sm" variant="outline" disabled={busy} onClick={() => { setBusy(true); setRefresh((n) => n + 1); void load().catch((e: Error) => setError(e.message)).finally(() => setBusy(false)); }}><RefreshCw data-icon="inline-start" />Refresh</Button></div></div>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {!data ? (error ? null : <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading workflows…</p>) : <>
       <TargetVersionMatrix data={data} />
@@ -67,6 +70,7 @@ function MethodDeployment({ entityId, method, format, version, data, load }: { e
   const [environment, setEnvironment] = useState(data.environments[0] ?? "");
   const [settings, setSettings] = useState<WorkflowSettings>(() => WorkflowSettingsSchema.parse({}));
   const [titleEdited, setTitleEdited] = useState(false);
+  const [baseBranchOverride, setBaseBranchOverride] = useState("");
   const [referenceJson, setReferenceJson] = useState("{}");
   const [preview, setPreview] = useState<{ run: RunView; plan: PreparedPlan } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +85,7 @@ function MethodDeployment({ entityId, method, format, version, data, load }: { e
   const selectedAvailable = availableVersions.includes(Number(version));
   const runs = data.runs.filter((r) => r.method === method);
   function chooseWorkflow(id: string) {
-    invalidate(); setWorkflowId(id);
+    invalidate(); setWorkflowId(id); setBaseBranchOverride("");
     const w = workflows.find((w) => w.id === id);
     setTitleEdited(!!w?.settings.title.trim());
     setConnectionId(w?.connectionId ?? ""); setEnvironment(w?.environment ?? data.environments[0] ?? ""); setSettings(w?.settings ?? WorkflowSettingsSchema.parse({})); setReferenceJson(JSON.stringify(w?.settings.referenceSubjects ?? {}, null, 2));
@@ -90,10 +94,12 @@ function MethodDeployment({ entityId, method, format, version, data, load }: { e
   const generatedTitle = generatedGitPrTitle({ schema: data.entitySlug ?? entityId, format, version, environment, contractVersion: settings.contractVersion });
   const effectiveSettings = method === "git" && !titleEdited ? { ...settings, title: generatedTitle } : settings;
   const selectedConnection = data.connections.find((c) => c.id === (method === "git" ? workflow?.connectionId : connectionId));
+  const gitTarget = method === "git" && workflow ? data.gitDestinations?.[workflow.id]?.[environment] ?? (selectedConnection ? (() => { const r = gitBranchForEnvironment(data.environmentDetails, environment); return { url: selectedConnection.config.url, branch: r.branch, gitRoot: selectedConnection.config.gitRoot, source: r.overridden ? "environment-override" as const : "environment-name" as const }; })() : undefined) : undefined;
+  const effectiveBaseBranch = baseBranchOverride.trim() || gitTarget?.branch || "";
   async function prepare() {
     const ticket = ++revision.current;
     const variables = deploymentVariables({ ...effectiveSettings, referenceSubjects: JSON.parse(referenceJson) });
-    const r = await previewDeploymentAction(entityId, { workflowId, format, version: Number(version), environment, ...(method === "git" ? {} : { connectionId }), variables, idempotencyKey: crypto.randomUUID() });
+    const r = await previewDeploymentAction(entityId, { workflowId, format, version: Number(version), environment, ...(method === "git" ? (baseBranchOverride.trim() && baseBranchOverride.trim() !== gitTarget?.branch ? { baseBranch: baseBranchOverride.trim() } : {}) : { connectionId }), variables, idempotencyKey: crypto.randomUUID() });
     if (ticket !== revision.current) return;
     if ("error" in r) throw new Error(r.error);
     setPreview(r.data); await load();
@@ -111,20 +117,33 @@ function MethodDeployment({ entityId, method, format, version, data, load }: { e
       {!selectedAvailable && <p className="text-sm text-muted-foreground">Publish this target version in Schemas before delivery. An unavailable selected version is never replaced silently.</p>}
       <FieldGroup className="grid sm:grid-cols-[1fr_auto]"><Field id="deployment-workflow" label="Saved workflow"><Choice id="deployment-workflow" value={workflowId} options={workflows.map((w) => ({ value: w.id, label: w.name + (w.scope === "schema" ? " (schema workflow)" : "") }))} onChange={chooseWorkflow} placeholder="Select a product workflow" /></Field>{data.productWorkflowsHref && <Link href={data.productWorkflowsHref} className="self-end rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-accent">New workflow</Link>}</FieldGroup>
       {!workflows.length && <p className="text-sm text-muted-foreground">No active {DEPLOYMENT_METHODS.find((m) => m.value === method)?.label} workflows for this target. Define one at product level, then refresh this page.</p>}
-      <FieldGroup className="grid sm:grid-cols-2"><Field id="workflow-environment" label="Environment"><Choice id="workflow-environment" value={environment} options={data.environments.map((value) => ({ value, label: value }))} onChange={(v) => { invalidate(); setEnvironment(v); }} /></Field>{method === "git" ? <div className="flex min-w-0 flex-col gap-1.5" data-testid="inherited-git-repository"><span className="text-sm font-medium">Git repository</span><div className="min-w-0 rounded-md border border-border bg-muted/15 px-3 py-2"><p className="text-sm">{selectedConnection?.name ?? "Inherited from the selected workflow"}</p>{selectedConnection && <p className="break-all text-xs text-muted-foreground">{selectedConnection.config.url} · {selectedConnection.config.baseBranch}</p>}</div></div> : <Field id="workflow-connection" label={method === "registry" ? "Schema registry" : "API endpoint"}><Choice id="workflow-connection" value={connectionId} options={connections.map((c) => ({ value: c.id, label: c.name }))} onChange={(v) => { invalidate(); setConnectionId(v); }} /></Field>}</FieldGroup>
+      <FieldGroup className="grid sm:grid-cols-2"><Field id="workflow-environment" label="Environment"><Choice id="workflow-environment" value={environment} options={data.environments.map((value) => ({ value, label: value }))} onChange={(v) => { invalidate(); setEnvironment(v); setBaseBranchOverride(""); }} /></Field>{method === "git" ? <div className="flex min-w-0 flex-col gap-1.5" data-testid="inherited-git-repository"><span className="text-sm font-medium">Git repository</span><div className="flex min-w-0 flex-col gap-1 rounded-md border border-border bg-muted/15 px-3 py-2"><p className="text-sm">{selectedConnection?.name ?? "Inherited from the selected workflow"}</p>{gitTarget && <><p className="break-all text-xs text-muted-foreground">{gitTarget.url}</p>{gitTarget.gitRoot && <p className="break-all text-xs text-muted-foreground">Root <span className="font-mono">{gitTarget.gitRoot}/</span></p>}</>}</div></div> : <Field id="workflow-connection" label={method === "registry" ? "Schema registry" : "API endpoint"}><Choice id="workflow-connection" value={connectionId} options={connections.map((c) => ({ value: c.id, label: c.name }))} onChange={(v) => { invalidate(); setConnectionId(v); }} /></Field>}</FieldGroup>
+      {method === "git" && gitTarget && <FieldGroup className="grid sm:grid-cols-2"><div className="flex min-w-0 flex-col gap-1.5"><label htmlFor="deployment-base-branch" className="text-sm font-medium">Base branch</label><div className="flex min-w-0 gap-2"><Input id="deployment-base-branch" className="font-mono" spellCheck={false} value={effectiveBaseBranch} disabled={gitTarget.source === "gitops-stage"} onChange={(e) => { invalidate(); setBaseBranchOverride(e.target.value); }} />{baseBranchOverride.trim() && baseBranchOverride.trim() !== gitTarget.branch && <Button type="button" variant="ghost" size="sm" onClick={() => { invalidate(); setBaseBranchOverride(""); }}>Reset</Button>}</div><p className="text-xs text-muted-foreground" data-testid="git-branch-source">{gitTarget.source === "gitops-stage" ? `GitOps stage branch for ${environment}.` : baseBranchOverride.trim() && baseBranchOverride.trim() !== gitTarget.branch ? `Overrides ${gitTarget.branch} for this PR only.` : gitTarget.source === "environment-override" ? `Configured branch for ${environment}.` : `Named after ${environment}. Set another branch in deployment settings.`}</p></div></FieldGroup>}
       {workflow && <fieldset className="flex min-w-0 flex-col gap-4 rounded-lg border border-border p-4"><legend className="px-1 text-sm font-medium">Workflow variables</legend><WorkflowVariablesFields method={method} settings={effectiveSettings} generatedTitle={method === "git" ? generatedTitle : undefined} onResetTitle={() => { invalidate(); setTitleEdited(false); }} onChange={(s) => { invalidate(); if (s.title !== effectiveSettings.title) setTitleEdited(!!s.title.trim()); setSettings(s); }} referenceJson={referenceJson} onReferenceChange={(s) => { invalidate(); setReferenceJson(s); }} /></fieldset>}
       <Button className="self-end" disabled={!workflow || !selectedAvailable || !connections.some((c) => c.id === connectionId) || !data.environments.includes(environment) || !deploymentMethodsFor(format, data.targetMethods).includes(method)} onClick={() => void action("preview", prepare)}>{busy === "preview" && <Loader2 className="animate-spin" data-icon="inline-start" />}Validate and preview</Button>
     </fieldset>
-      {preview && <section className="flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4" aria-label="Validated delivery preview" data-testid="deployment-preview">
-        {preview.run.method === "git" ? <GitPrPreview key={preview.run.id} plan={preview.plan} /> : <>
-        <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">Review {preview.plan.bundle.format} v{preview.plan.bundle.version}</h3><Badge variant="info">{preview.run.environment}</Badge></div>
-        <p className="break-all text-xs text-muted-foreground">{preview.plan.bundle.contentHash}</p>
-        <p className="break-all text-sm">Destination: {preview.plan.connectionConfig.url}</p>
-        <ul className="list-inside list-disc text-sm text-muted-foreground">{preview.plan.validation.map((v) => <li key={v}>{v}</li>)}</ul>
-        <div className="max-h-96 overflow-auto rounded-md bg-muted/30 p-3"><pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify(preview.plan.files ?? { destination: preview.plan.connectionConfig.url, artifact: preview.plan.bundle }, null, 2)}</pre></div>
-        </>}
-        <Button className="self-end" disabled={!!busy || !data.canRun || (preview.run.method === "git" && preview.plan.fileChanges?.every((file) => file.status === "unchanged"))} data-testid="deployment-execute" onClick={() => void action("execute", () => execute(preview.run))}><Send data-icon="inline-start" />{preview.run.method === "git" ? "Create Git PR" : preview.run.method === "registry" ? "Register schema" : "Send to API"}</Button>
-      </section>}
+      <Dialog open={!!preview} onOpenChange={(open) => { if (!open && !busy) setPreview(null); }}>
+        {preview && <DialogContent className="sm:max-w-5xl max-h-[90vh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden" data-testid="deployment-preview">
+          <DialogHeader>
+            <DialogTitle className="flex flex-wrap items-center gap-2">Review {preview.run.method === "git" ? "Git PR" : preview.run.method === "registry" ? "schema registration" : "API delivery"}<Badge variant="info">{preview.run.environment}</Badge></DialogTitle>
+            <DialogDescription>Validated against the pinned destination. Nothing is written until you confirm.</DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 min-w-0 overflow-y-auto">
+            {error && <p role="alert" className="mb-3 text-sm text-destructive">{error}</p>}
+            {preview.run.method === "git" ? <GitPrPreview key={preview.run.id} plan={preview.plan} /> : <div className="flex min-w-0 flex-col gap-3">
+              <h3 className="text-sm font-semibold">{preview.plan.bundle.format} v{preview.plan.bundle.version}</h3>
+              <p className="break-all text-xs text-muted-foreground">{preview.plan.bundle.contentHash}</p>
+              <p className="break-all text-sm">Destination: {preview.plan.connectionConfig.url}</p>
+              <ul className="list-inside list-disc text-sm text-muted-foreground">{preview.plan.validation.map((v) => <li key={v}>{v}</li>)}</ul>
+              <div className="max-h-96 overflow-auto rounded-md bg-muted/30 p-3"><pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify(preview.plan.files ?? { destination: preview.plan.connectionConfig.url, artifact: preview.plan.bundle }, null, 2)}</pre></div>
+            </div>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={!!busy} onClick={() => setPreview(null)}>Cancel</Button>
+            <Button disabled={!!busy || !data.canRun || (preview.run.method === "git" && preview.plan.fileChanges?.every((file) => file.status === "unchanged"))} data-testid="deployment-execute" onClick={() => void action("execute", () => execute(preview.run))}>{busy === "execute" ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Send data-icon="inline-start" />}{preview.run.method === "git" ? "Create Git PR" : preview.run.method === "registry" ? "Register schema" : "Send to API"}</Button>
+          </DialogFooter>
+        </DialogContent>}
+      </Dialog>
       <section className="flex min-w-0 flex-col gap-3" aria-label="Delivery history"><h3 className="text-sm font-semibold">Delivery history</h3>
         {!runs.length && <p className="text-sm text-muted-foreground">No delivery runs yet. Select a product workflow, validate it, then execute the preview.</p>}
         <div className="flex flex-col gap-2">{runs.map((run) => <div key={run.id} className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-border p-3" data-testid="deployment-run">

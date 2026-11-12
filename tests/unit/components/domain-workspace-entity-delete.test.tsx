@@ -111,7 +111,7 @@ const BASE_PROPS = {
   productId: "prod-1",
   productSlug: "default",
   productName: "Default",
-  domainDescription: "Order domain",
+  productDescription: "Order product",
   domainPolicy: null,
   entities: [],
   sharedEnums: [],

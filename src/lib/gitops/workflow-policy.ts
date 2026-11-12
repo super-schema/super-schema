@@ -60,3 +60,35 @@ export async function assertGitOpsWorkflowRevision(
       "GitOps product configuration changed; create a new preview",
     );
 }
+/**
+ * Repository, root path and per-environment branches of GitOps-managed workflows, read from the
+ * product's stages whatever the content storage mode, so a deployment always targets the branch of
+ * the selected environment. Promotion order and index freshness are enforced only by
+ * {@link gitOpsWorkflowPolicy} in Git storage mode.
+ */
+export async function gitOpsStageDestinations(workflowIds: string[]) {
+  const result = new Map<string, { url: string; gitRoot?: string; branches: Record<string, string> }>();
+  if (!workflowIds.length) return result;
+  const settings = await prisma.productGitSettings.findMany({
+    where: { workflowId: { in: workflowIds } },
+  });
+  if (!settings.length) return result;
+  const bindings = new Map(
+    (
+      await prisma.tenantGitBinding.findMany({
+        where: { id: { in: settings.map((s) => s.bindingId) } },
+      })
+    ).map((b) => [b.id, b]),
+  );
+  for (const s of settings) {
+    const binding = bindings.get(s.bindingId);
+    const stages = ProductSettingsSchema.shape.stages.safeParse(s.stages);
+    if (!s.workflowId || !binding?.enabled || !stages.success) continue;
+    result.set(s.workflowId, {
+      url: binding.repositoryUrl,
+      gitRoot: binding.basePath || undefined,
+      branches: Object.fromEntries(stages.data.map((st) => [st.name, st.branch])),
+    });
+  }
+  return result;
+}

@@ -1,14 +1,12 @@
 "use client";
-import { useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
 import { FieldGroup, FieldDescription } from "@/components/ui/field";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import {
   AttributeControl,
   SELECT_CLASS,
 } from "@/components/custom/FieldAttributes/AttributeControl";
+import { JsonObjectControl } from "@/components/custom/FieldAttributes/JsonObjectControl";
 import type { Governance } from "@/types/schemas/typespec-decorator.schema";
 
 export interface PolicyContext {
@@ -230,102 +228,6 @@ export function GovernancePanel({
     </FieldGroup>
   );
 }
-export function QualityPanel({
-  governance: g,
-  onChange,
-}: Pick<Props, "governance" | "onChange">) {
-  const rules = g.qualityRules ?? [];
-  return (
-    <FieldGroup>
-      <FieldDescription>
-        Dataset and business assertions for external quality tools. These do not
-        automatically run against production data. Use Validation for payload
-        bounds and patterns.
-      </FieldDescription>
-      {rules.map((rule, i) => (
-        <fieldset
-          key={i}
-          className="flex min-w-0 flex-col gap-3 rounded-md border border-border p-3"
-        >
-          <legend className="px-1 text-sm">Rule {i + 1}</legend>
-          <AttributeControl label={`Quality rule ${i + 1} type`}>
-            <select
-              className={SELECT_CLASS}
-              value={rule.type}
-              onChange={(e) =>
-                onChange({
-                  ...g,
-                  qualityRules: rules.map((r, idx) =>
-                    idx === i ? { ...r, type: e.target.value } : r,
-                  ),
-                })
-              }
-            >
-              {["unique", "not-null", "range", "regex", "enum", "custom"].map(
-                (v) => (
-                  <option key={v}>{v}</option>
-                ),
-              )}
-            </select>
-          </AttributeControl>
-          <RuleParameters
-            value={rule.params}
-            onChange={(params) =>
-              onChange({
-                ...g,
-                qualityRules: rules.map((r, idx) =>
-                  idx === i ? { ...r, params } : r,
-                ),
-              })
-            }
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-label={`Remove quality rule ${i + 1}`}
-            onClick={() =>
-              onChange({
-                ...g,
-                qualityRules: rules.filter((_, idx) => idx !== i),
-              })
-            }
-          >
-            Remove rule
-          </Button>
-        </fieldset>
-      ))}
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={() =>
-          onChange({
-            ...g,
-            qualityRules: [...rules, { type: "unique", params: {} }],
-          })
-        }
-      >
-        Add quality rule
-      </Button>
-    </FieldGroup>
-  );
-}
-function RuleParameters({
-  value,
-  onChange,
-}: {
-  value: Record<string, unknown>;
-  onChange: (v: Record<string, unknown>) => void;
-}) {
-  return (
-    <JsonObjectControl
-      label="Rule parameters"
-      value={value}
-      onChange={onChange}
-    />
-  );
-}
 export function StorageHintsPanel({
   governance: g,
   onChange,
@@ -364,68 +266,6 @@ export function StorageHintsPanel({
           </span>
         </label>
       ))}
-    </FieldGroup>
-  );
-}
-
-function JsonObjectControl({
-  label,
-  value,
-  stringsOnly = false,
-  onChange,
-}: {
-  label: string;
-  value: Record<string, unknown>;
-  stringsOnly?: boolean;
-  onChange: (v: Record<string, unknown>) => void;
-}) {
-  const [draft, setDraft] = useState<{ original: string; text: string } | null>(
-    null,
-  );
-  const stored = JSON.stringify(value, null, 2);
-  const text = draft?.original === stored ? draft.text : stored;
-  let error: string | undefined;
-  try {
-    const parsed = JSON.parse(text);
-    if (
-      !parsed ||
-      Array.isArray(parsed) ||
-      typeof parsed !== "object" ||
-      (stringsOnly &&
-        !Object.values(parsed).every((v) => typeof v === "string"))
-    )
-      error = stringsOnly
-        ? "Enter an object with string values."
-        : "Enter a JSON object.";
-  } catch {
-    error = "Enter valid JSON.";
-  }
-  return (
-    <FieldGroup>
-      <AttributeControl
-        label={label}
-        help="Edit the JSON, then apply it to the field draft."
-        error={error}
-      >
-        <Textarea
-          value={text}
-          rows={3}
-          spellCheck={false}
-          onChange={(e) => setDraft({ original: stored, text: e.target.value })}
-        />
-      </AttributeControl>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        disabled={Boolean(error) || text === stored}
-        onClick={() => {
-          onChange(JSON.parse(text));
-          setDraft(null);
-        }}
-      >
-        Apply {label.toLowerCase()}
-      </Button>
     </FieldGroup>
   );
 }

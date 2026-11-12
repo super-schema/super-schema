@@ -181,11 +181,36 @@ describe("shared deployment configuration", () => {
     await saveDeploymentEnvironments("tenant", ["staging", "qa"], ctx());
     expect((await getTenantDeploymentConfiguration("tenant", ctx())).environments).toEqual(["staging", "qa"]);
     await expect(previewDeployment("root", { workflowId, version: 1, environment: "invented", idempotencyKey: crypto.randomUUID() }, ctx())).rejects.toThrow(/configured in tenant settings/);
-    await expect(saveDeploymentEnvironments("tenant", ["qa"], ctx())).rejects.toThrow(/Update or disable/);
     await expect(saveDeploymentEnvironments("tenant", ["qa", "qa"], ctx())).rejects.toThrow(/unique/);
     const scoped = { ...ctx(), assignments: [{ role: "STEWARD" as const, scope: { kind: "PRODUCT" as const, tenantId: "tenant", domainId: "domain", productId: "product" } }] };
     await expect(saveDeploymentEnvironments("tenant", ["staging"], scoped)).rejects.toThrow(/access denied/);
     expect((await getProductDeploymentConfiguration("product", scoped)).canManage).toBe(true);
+  });
+  it("carries workflows through a rename, moves or disables those of a removed environment, and lists usage", async () => {
+    const shared = await define();
+    await saveDeploymentEnvironments("tenant", ["staging", "qa", "production"], ctx());
+    const usage = (await getTenantDeploymentConfiguration("tenant", ctx())).environmentUsage!;
+    expect(usage.staging.map((w) => w.name).sort()).toEqual(["Reusable API", "Staging"]);
+    expect(usage.staging.find((w) => w.id === shared)).toMatchObject({ scope: expect.stringMatching(/^Product /), href: expect.stringContaining("tab=workflows") });
+    await saveDeploymentEnvironments("tenant", { environments: [{ name: "pre-release" }, { name: "qa" }, { name: "production" }], renames: { staging: "pre-release" } }, ctx());
+    expect(await h.db.deploymentWorkflow.findUniqueOrThrow({ where: { id: shared } })).toMatchObject({ environment: "pre-release", active: true, revision: 2 });
+    await saveDeploymentEnvironments("tenant", { environments: [{ name: "qa" }, { name: "production" }], reassign: { "pre-release": "qa" } }, ctx());
+    expect(await h.db.deploymentWorkflow.findUniqueOrThrow({ where: { id: shared } })).toMatchObject({ environment: "qa", active: true });
+    await saveDeploymentEnvironments("tenant", ["production"], ctx());
+    expect(await h.db.deploymentWorkflow.findUniqueOrThrow({ where: { id: shared } })).toMatchObject({ environment: "qa", active: false });
+    await expect(saveDeploymentEnvironments("tenant", { environments: [{ name: "production" }], reassign: { production: "nowhere" } }, ctx())).rejects.toThrow(/new list/);
+  });
+  it("stores ordered environments with descriptions and branch overrides, and keeps details when only names are saved", async () => {
+    await saveDeploymentEnvironments("tenant", [{ name: "staging", description: "Pre-release checks", branch: "release/staging" }, { name: "qa", description: "" }], ctx());
+    let config = await getTenantDeploymentConfiguration("tenant", ctx());
+    expect(config.environments).toEqual(["staging", "qa"]);
+    expect(config.environmentDetails).toEqual({ staging: { description: "Pre-release checks", branch: "release/staging" }, qa: {} });
+    await saveDeploymentEnvironments("tenant", ["qa", "staging"], ctx());
+    config = await getTenantDeploymentConfiguration("tenant", ctx());
+    expect(config.environments).toEqual(["qa", "staging"]);
+    expect(config.environmentDetails?.staging).toEqual({ description: "Pre-release checks", branch: "release/staging" });
+    await expect(saveDeploymentEnvironments("tenant", [{ name: "qa", branch: "bad..branch" }, { name: "staging" }], ctx())).rejects.toThrow();
+    await saveDeploymentEnvironments("tenant", ["staging", "qa"], ctx());
   });
   it("pins a selected tenant connection and rejects a changed idempotent intent or structural override", async () => {
     const other = await saveDeploymentConnection("root", { name: "Production API", method: "http", config: { url: "https://production.example/schema" }, credentials: { authType: "none" } }, ctx());
