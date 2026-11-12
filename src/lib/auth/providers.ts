@@ -66,6 +66,10 @@ export type ProviderDescriptor = {
 
 const linking = (s: ProviderFactorySettings) => ({ allowDangerousEmailAccountLinking: s.linkExistingUsers });
 
+// Keep all three checks explicit, including for the generic issuer. Each factory gets its own array:
+// Auth.js may normalize provider options while preparing an authorization request.
+const oidcChecks = () => ({ checks: ["pkce", "state", "nonce"] as Array<"pkce" | "state" | "nonce"> });
+
 /**
  * The table. Order is the order of the keys in documentation and in the unit tests. `verifiedEmailGuaranteed` is true only for GitHub, and only
  * because `githubVerifiedPrimaryEmailProfile` replaces Auth.js's own e-mail look-up (which takes a public or unverified e-mail too) with the
@@ -80,7 +84,7 @@ export const PROVIDER_DESCRIPTORS = {
     needsLabel: false,
     verifiedEmailGuaranteed: false,
     verifiedEmailClaim: "email_verified",
-    factory: (s) => Google({ clientId: s.clientId, clientSecret: s.clientSecret, name: s.label, ...linking(s) }),
+    factory: (s) => Google({ ...oidcChecks(), clientId: s.clientId, clientSecret: s.clientSecret, name: s.label, ...linking(s) }),
   },
   github: {
     key: "github",
@@ -99,7 +103,7 @@ export const PROVIDER_DESCRIPTORS = {
     needsLabel: false,
     verifiedEmailGuaranteed: false,
     verifiedEmailClaim: "xms_edov",
-    factory: (s) => MicrosoftEntraID({ clientId: s.clientId, clientSecret: s.clientSecret, issuer: s.issuer, name: s.label, ...linking(s) }),
+    factory: (s) => MicrosoftEntraID({ ...oidcChecks(), clientId: s.clientId, clientSecret: s.clientSecret, issuer: s.issuer, name: s.label, ...linking(s) }),
   },
   okta: {
     key: "okta",
@@ -108,7 +112,7 @@ export const PROVIDER_DESCRIPTORS = {
     needsLabel: false,
     verifiedEmailGuaranteed: false,
     verifiedEmailClaim: "email_verified",
-    factory: (s) => Okta({ clientId: s.clientId, clientSecret: s.clientSecret, issuer: s.issuer, name: s.label, ...linking(s) }),
+    factory: (s) => Okta({ ...oidcChecks(), clientId: s.clientId, clientSecret: s.clientSecret, issuer: s.issuer, name: s.label, ...linking(s) }),
   },
   keycloak: {
     key: "keycloak",
@@ -117,7 +121,7 @@ export const PROVIDER_DESCRIPTORS = {
     needsLabel: false,
     verifiedEmailGuaranteed: false,
     verifiedEmailClaim: "email_verified",
-    factory: (s) => Keycloak({ clientId: s.clientId, clientSecret: s.clientSecret, issuer: s.issuer, name: s.label, ...linking(s) }),
+    factory: (s) => Keycloak({ ...oidcChecks(), clientId: s.clientId, clientSecret: s.clientSecret, issuer: s.issuer, name: s.label, ...linking(s) }),
   },
   oidc: {
     key: "oidc",
@@ -130,6 +134,7 @@ export const PROVIDER_DESCRIPTORS = {
       id: "oidc",
       name: s.label,
       type: "oidc",
+      ...oidcChecks(),
       issuer: s.issuer,
       clientId: s.clientId,
       clientSecret: s.clientSecret,
@@ -190,7 +195,7 @@ function parseDomains(raw: string | undefined, name: string, problems: string[])
   return entries.length === 0 || bad.length > 0 ? [] : entries;
 }
 
-function issuerProblem(raw: string, env: Env): string | null {
+function issuerProblem(raw: string, env: Env, provider: string): string | null {
   let url: URL;
   try {
     url = new URL(raw);
@@ -198,7 +203,17 @@ function issuerProblem(raw: string, env: Env): string | null {
     return "is not an absolute URL";
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return "must be an http(s) URL";
-  if (env.NODE_ENV === "production" && url.protocol !== "https:") return "must be an https URL in production";
+  if (url.username || url.password || raw.includes("?") || raw.includes("#")) return "must not contain credentials, a query, or a fragment";
+  if (url.protocol === "http:") {
+    if (env.NODE_ENV === "production") return "must be an https URL in production";
+    if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) return "must use https except for a loopback development issuer";
+  }
+  if (provider === "microsoft-entra-id") {
+    const tenant = /^\/([a-zA-Z0-9.-]+)\/v2\.0\/?$/.exec(url.pathname)?.[1];
+    if (!tenant || ["common", "organizations", "consumers"].includes(tenant.toLowerCase())) {
+      return "must name a specific tenant: https://login.microsoftonline.com/<tenant-id>/v2.0 (shared tenants are not allowed)";
+    }
+  }
   return null;
 }
 
@@ -248,8 +263,8 @@ export function resolveProviderRegistry(env: Env = process.env): ProviderRegistr
     if (descriptor.needsIssuer) {
       if (issuer === undefined) missing("ISSUER");
       else {
-        const problem = issuerProblem(issuer, env);
-        if (problem) own.push(`${providerEnvName(name, "ISSUER")} ("${issuer}") ${problem} (provider "${name}").`);
+        const problem = issuerProblem(issuer, env, name);
+        if (problem) own.push(`${providerEnvName(name, "ISSUER")} ${problem} (provider "${name}").`);
       }
     }
 

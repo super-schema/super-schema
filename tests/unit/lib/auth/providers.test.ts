@@ -31,7 +31,7 @@ function fullSettings(key: string, extra: Record<string, string> = {}): Record<s
     AUTH_PROVIDERS: key,
     [providerEnvName(key, "CLIENT_ID")]: `${key}-client-id`,
     [providerEnvName(key, "CLIENT_SECRET")]: `${key}-client-secret`,
-    ...(descriptor.needsIssuer ? { [providerEnvName(key, "ISSUER")]: "https://idp.example.test/realms/acme" } : {}),
+    ...(descriptor.needsIssuer ? { [providerEnvName(key, "ISSUER")]: (key === "microsoft-entra-id" ? "https://login.microsoftonline.com/acme.onmicrosoft.com/v2.0" : "https://idp.example.test/realms/acme") } : {}),
     ...(descriptor.needsLabel ? { [providerEnvName(key, "LABEL")]: "Acme single sign-on" } : {}),
     ...extra,
   };
@@ -146,6 +146,29 @@ describe("each descriptor requires its settings", () => {
     expect(resolveProviderRegistry(env).enabled).toHaveLength(1);
     expect(resolveProviderRegistry({ ...env, NODE_ENV: "production" }).enabled).toEqual([]);
     expect(resolveProviderRegistry({ ...env, NODE_ENV: "production" }).problems[0]).toMatch(/https/);
+  });
+
+  it.each(["https://user:private-value@idp.example.test", "https://idp.example.test?private-value", "https://idp.example.test#private-value", "http://idp.example.test"])(
+    "refuses an unsafe issuer without echoing its value: %s", (issuer) => {
+      const result = resolveProviderRegistry(fullSettings("oidc", { AUTH_PROVIDER_OIDC_ISSUER: issuer }));
+      expect(result.enabled).toEqual([]);
+      expect(result.problems.join(" ")).not.toContain("private-value");
+    },
+  );
+
+  it.each(["localhost", "127.0.0.1", "[::1]"])("allows a loopback development issuer at %s", (host) => {
+    expect(resolveProviderRegistry(fullSettings("oidc", { AUTH_PROVIDER_OIDC_ISSUER: `http://${host}:8080/realms/acme` })).problems).toEqual([]);
+  });
+
+  it.each(["common", "organizations", "consumers", "COMMON", "%63ommon"])("refuses the shared Entra tenant %s", (tenant) => {
+    const result = resolveProviderRegistry(fullSettings("microsoft-entra-id", { AUTH_PROVIDER_MICROSOFT_ENTRA_ID_ISSUER: `https://login.microsoftonline.com/${tenant}/v2.0` }));
+    expect(result.enabled).toEqual([]);
+    expect(result.problems.join(" ")).toContain("specific tenant");
+  });
+
+  it.each(PROVIDER_KEYS.filter((key) => key !== "github"))("%s requests PKCE, state and nonce", (key) => {
+    const provider = resolveProviderRegistry(fullSettings(key)).enabled[0].provider as { checks?: string[]; options?: { checks?: string[] } };
+    expect(provider.options?.checks ?? provider.checks).toEqual(["pkce", "state", "nonce"]);
   });
 
   it("the display name of a provider defaults to its name and is changed by _LABEL", () => {

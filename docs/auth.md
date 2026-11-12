@@ -4,10 +4,35 @@
 [`auth-ops.md`](auth-ops.md)). On top of that an administrator can add **identity providers** that Auth.js already knows: Google, GitHub, Microsoft Entra ID, Okta, Keycloak and any
 OpenID Connect issuer. By default there are none: no provider is enabled, the login page has no provider button, and nothing in this file applies.
 
-> **UNTESTED against a real identity provider.** Nothing in this repository contacts one: the decision rules, the Auth.js callback, the adapter guard and the whole OAuth flow are tested
-> against stubs (`tests/unit/lib/auth/provider-*.test.ts`, `tests/integration/auth/provider-signin-pglite.test.ts`), and the browser suite runs with no provider at all. The
-> redirect URIs, issuer URLs and console steps below are from each provider's public documentation and from Auth.js's source, and have not been tried. Try yours on a test
-> tenant of the provider before relying on it, and read the log of the first sign-in.
+The automated OIDC suite runs the **real Auth.js authorization-code flow, discovery, PKCE, state, nonce, signed ID-token claims, Prisma account linking, secure session cookies and logout**
+against an isolated test issuer and a temporary migrated PGlite database (`tests/integration/auth/oidc-flow-pglite.test.ts`). It covers invalid issuer/audience/nonce/expiry, replay,
+unverified e-mails, disallowed domains, unprovisioned and disabled accounts, and stable subject identity after an e-mail change. No test contacts an external identity provider.
+A sign-in against your chosen tenant still requires its client registration and credentials; that deployment-specific acceptance check has not been performed.
+
+## Deployment setup
+
+1. Register a confidential web application with your identity provider using authorization-code flow, S256 PKCE and the `openid profile email` scopes.
+2. Merge [`.env.sso.example`](../.env.sso.example) into your server environment, replacing the issuer, domain and client settings. Generate `AUTH_SECRET` with `openssl rand -base64 32`.
+   Keep the client secret in your deployment secret store or an ignored environment file. For a built-in provider, use the key and setting names in the table below.
+3. Run `npm run auth:check -- --production` in the deployment environment. It loads environment files with Next.js precedence, reports missing or invalid configuration and prints
+   the exact callback URI to register. It exits with code 1 on a problem. The check is offline: it never connects to the issuer or database and never prints the client or session secret.
+   Omit `--production` for local development with a loopback HTTP app or issuer.
+4. Create or invite the user in Super Schema and assign their application roles. If the first sign-in should link by verified e-mail, enable that provider's `_LINK_EXISTING_USERS=1`
+   only after restricting allowed domains and verifying that you trust the issuer's e-mail ownership claims. Linking remains off by default.
+5. Restart the server. Use its provider button to sign in, verify the expected destination and roles, and sign out. Disable the account and confirm that a subsequent request is refused.
+
+Run the isolated protocol and regression checks with:
+
+```bash
+npm run test -- --run tests/unit/lib/auth tests/unit/app/provider-sign-in-action.test.ts tests/integration/auth/provider-signin-pglite.test.ts tests/integration/auth/oidc-flow-pglite.test.ts
+```
+
+SSO authenticates with the provider; authorization remains in Super Schema. Application logout clears its session cookie; signing out of every application at the identity provider
+or consuming provider back-channel logout events is not implemented. Identity-provider MFA and conditional-access policies are enforced by that provider.
+
+The existing library is retained: Auth.js `next-auth` 5.0.0-beta.32 with `@auth/core` 0.41.3. The upstream
+[provider-flow cookie binding advisory](https://github.com/nextauthjs/next-auth/security/advisories/GHSA-x445-f3h2-j279) identifies these as patched versions.
+OIDC configuration uses Auth.js's [built-in providers and standard issuer support](https://authjs.dev/guides/configuring-oauth-providers); PKCE, state and nonce checks are explicit.
 
 ## The one rule that matters: a provider signs in people who already have an account
 
@@ -53,7 +78,7 @@ Set these in the environment of the server (a `.env`, the compose file, your orc
 ### A mistake never switches anything on
 
 A provider listed in `AUTH_PROVIDERS` that has a problem is **not enabled**: an unknown name (`gogle`), a missing client id, secret, issuer or (for `oidc`) label, an issuer that is not an
-`https` URL in production, a domain entry that can never match, a `_LINK_EXISTING_USERS` that is not `0` or `1`. And a setting name that no provider has (`AUTH_PROVIDER_GOOGLE_ALLOWD_DOMAINS`,
+`https` URL in production (HTTP is allowed only for loopback development), credentials/query/fragment components in an issuer, a shared Entra tenant (`common`, `organizations`, `consumers`), a domain entry that can never match, a `_LINK_EXISTING_USERS` that is not `0` or `1`. And a setting name that no provider has (`AUTH_PROVIDER_GOOGLE_ALLOWD_DOMAINS`,
 a typo that would silently drop the domain rule) disables **every** provider, because a mistyped name cannot be attributed to the provider it was meant for.
 
 - **Development and test:** each problem is written to the log once (`[auth] sign-in provider configuration: ... It is ignored.`) and the server carries on; the local accounts always work.
@@ -168,7 +193,7 @@ For an identity provider with no row of its own (a company's SSO, Authentik, Aut
    AUTH_PROVIDER_OIDC_ALLOWED_DOMAINS=acme.example,.acme.example
    ```
 
-   The issuer's `/.well-known/openid-configuration` is read when somebody signs in (not at start-up, not by the tests). It must be an `https` URL in production.
+   The issuer's `/.well-known/openid-configuration` is read when somebody signs in (not at start-up; the isolated OIDC tests exercise discovery against their own transport). It must be an `https` URL in production.
 3. Restart; the login page shows an **Acme single sign-on** button. Accounts and linking are as in example 1.
 
 If the issuer does not send `email_verified` (some do not) every sign-in is refused (rule 3); there is no setting to waive it: ask the provider to send it, or do not use it.
