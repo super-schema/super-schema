@@ -32,6 +32,7 @@ import { QualityPanel } from "./QualityPanel";
 import { VisibilityPanel } from "./VisibilityPanel";
 import { WireFormatPanel } from "./WireFormatPanel";
 import { ExtensionsPanel } from "./ExtensionsPanel";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import { VersioningPanel } from "./VersioningPanel";
 
 export interface FieldAttributeExtras {
@@ -42,6 +43,8 @@ export interface FieldAttributeExtras {
 }
 interface Props {
   referenceTargets?: PickableEntity[];
+  /** The tenant's attribute dictionary (field targets); the Extensions panel offers these keys with typed editors. */
+  metadataAttributes?: MetadataAttributeDefinition[];
   fieldType: string;
   typespec: TypeSpecDecorators;
   identity: Identity;
@@ -190,6 +193,7 @@ export function FieldAttributeSections(p: Props) {
     <ExtensionsPanel
       key="extensions"
       extensions={ts.extensions ?? {}}
+      definitions={p.metadataAttributes}
       onChange={(v) => change("extensions", v)}
     />,
     <VersioningPanel

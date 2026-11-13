@@ -47,6 +47,7 @@ import {
   type ReferencePick,
 } from "@/lib/references/entity-reference";
 import type { TypeSpecDecorators } from "@/types/schemas/typespec-decorator.schema";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 
 interface FieldData {
   id: string;
@@ -85,6 +86,8 @@ interface FieldStudioProps {
    * for the target and the autosave writes it as a fully qualified reference. Without it `reference` is a plain type change.
    */
   referenceTargets?: PickableEntity[];
+  /** The tenant's attribute dictionary for the `field` target (typed editors in the Extensions panel). */
+  metadataAttributes?: MetadataAttributeDefinition[];
 }
 
 /**
@@ -145,6 +148,7 @@ export function FieldStudio({
   entity,
   domain,
   referenceTargets,
+  metadataAttributes,
   isReadOnly = false,
   policyContext,
   knownVersions,
@@ -674,6 +678,7 @@ export function FieldStudio({
       </fieldset>
       <FieldAttributeSections
         referenceTargets={referenceTargets}
+        metadataAttributes={metadataAttributes}
         fieldType={fieldType}
         typespec={typespec}
         identity={typespec.identity ?? {}}

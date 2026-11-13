@@ -13,6 +13,10 @@ import {
   SELECT_CLASS,
 } from "@/components/custom/FieldAttributes/AttributeControl";
 import type { Extensions } from "@/types/schemas/typespec-decorator.schema";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
+import { writeFieldAttribute } from "@/lib/metadata-attributes/values";
+import { AttributeKeyCombobox } from "@/components/custom/metadata/AttributeKeyCombobox";
+import { AttributeValueEditor } from "@/components/custom/metadata/AttributeValueEditor";
 
 type ValueKind = "string" | "number" | "boolean" | "null" | "json";
 function valueKind(v: unknown): ValueKind {
@@ -22,14 +26,42 @@ function valueKind(v: unknown): ValueKind {
       ? "json"
       : (typeof v as ValueKind);
 }
+/** What a freshly picked attribute starts as, so its editor has something to show. */
+function initialValue(def: MetadataAttributeDefinition): unknown {
+  switch (def.valueSchema.type) {
+    case "object":
+      return {};
+    case "array":
+      return [];
+    case "boolean":
+      return false;
+    case "string":
+      return "";
+    default:
+      return def.valueSchema.minimum ?? 0;
+  }
+}
+
 export function ExtensionsPanel({
   extensions,
   onChange,
+  definitions,
 }: {
   extensions: Extensions;
   showXml?: boolean;
   onChange: (v: Extensions) => void;
+  /** The tenant's attribute dictionary for fields. Without any, the panel is the raw extension editor alone. */
+  definitions?: MetadataAttributeDefinition[];
 }) {
+  const defs = (definitions ?? []).filter((d) => d.targets.includes("field"));
+  const defined = new Set(defs.map((d) => d.key));
+  /** Set (or with undefined remove) one dictionary value, through the same writer the save path reads. */
+  function setAttribute(attrKey: string, value: unknown) {
+    const next = writeFieldAttribute({ typespec: { extensions } }, attrKey, value) as {
+      typespec?: { extensions?: Extensions };
+    };
+    onChange(next.typespec?.extensions ?? {});
+  }
   const [key, setKey] = useState("");
   const [text, setText] = useState("");
   const [kind, setKind] = useState<ValueKind>("string");
@@ -90,7 +122,53 @@ export function ExtensionsPanel({
         Advanced schema metadata. Names use an x- prefix. JSON Schema and
         OpenAPI preserve these extensions; other targets may ignore them.
       </FieldDescription>
-      {Object.entries(extensions.openapi ?? {}).map(([name, value]) => (
+      {defs.length > 0 && (
+        <>
+          {defs
+            .filter((d) => Object.hasOwn(extensions.openapi ?? {}, d.key))
+            .map((d) => (
+              <div key={d.key} className="flex min-w-0 flex-col gap-2 rounded-md border border-border p-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="text-sm font-medium">{d.label}</span>{" "}
+                    <code className="break-all text-xs text-muted-foreground">{d.key}</code>
+                    {d.description && <FieldDescription>{d.description}</FieldDescription>}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    aria-label={`Remove ${d.label}`}
+                    onClick={() => setAttribute(d.key, undefined)}
+                  >
+                    Remove
+                  </Button>
+                </div>
+                <AttributeValueEditor
+                  schema={d.valueSchema}
+                  value={extensions.openapi?.[d.key]}
+                  derivedKeys={Object.keys(d.derive ?? {})}
+                  label={d.label}
+                  onChange={(v) => setAttribute(d.key, v)}
+                />
+              </div>
+            ))}
+          <AttributeKeyCombobox
+            definitions={defs}
+            existingKeys={Object.keys(extensions.openapi ?? {})}
+            onPick={(picked, def) => {
+              if (def) setAttribute(picked, initialValue(def));
+              else {
+                setKey(picked);
+                setEditing(null);
+              }
+            }}
+          />
+        </>
+      )}
+      {Object.entries(extensions.openapi ?? {})
+        .filter(([name]) => !defined.has(name))
+        .map(([name, value]) => (
         <div
           key={name}
           className="flex min-w-0 flex-wrap items-start gap-2 rounded-md border border-border p-2"
