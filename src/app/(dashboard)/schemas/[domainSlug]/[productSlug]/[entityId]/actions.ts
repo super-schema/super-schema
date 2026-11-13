@@ -31,6 +31,9 @@ import {
   storedReferenceNames,
   type SourceReference,
 } from "@/lib/references/source-reference";
+import { dictionaryEntryFromField } from "@/lib/field-dictionary/from-field";
+import { createFieldDictionaryEntry, listFieldDictionary, updateFieldDictionaryEntry } from "@/services/field-dictionary.service";
+import { listMetadataAttributes } from "@/services/metadata-attribute.service";
 import type { PublishNeedsReference } from "@/lib/entity-versioning/publish-plan";
 import { TYPESPEC_STD_TYPE_NAMES, sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import type { ParsedTypeSpecModel } from "@/lib/compiler/typespec-parser";
@@ -945,6 +948,51 @@ export async function deleteFieldAction(fieldId: string) {
     return { success: true };
   } catch (e: unknown) {
     return { ...unexpectedFailure("deleteFieldAction", e) };
+  }
+}
+
+/**
+ * Saves a field to its tenant's field dictionary and links the field to the entry. The tenant is the guarded field's own, never the client's.
+ * A name or alias that already exists answers `needsConfirmation` (nothing written); the same call with `overwrite: true` updates that entry.
+ */
+export async function saveFieldToDictionaryAction(fieldId: string, options?: { overwrite?: boolean }) {
+  const fieldIdCheck = requireId(fieldId, "Field id");
+  if (!fieldIdCheck.success) return { error: fieldIdCheck.error.message, code: fieldIdCheck.error.code };
+
+  try {
+    const access = await guardSubject("entity.write", { kind: "field", id: fieldId }, { label: "Field" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const tenantId = access.resource.tenantId;
+    const field = await prisma.field.findUnique({ where: { id: fieldId } });
+    if (!field) return { ...notFoundFailure("Field") };
+
+    const defs = await listMetadataAttributes(tenantId, "field");
+    if (!defs.success) return { error: defs.error.message, code: defs.error.code };
+    const input = dictionaryEntryFromField(field, defs.data);
+
+    let saved: Result<{ id: string }>;
+    let updated = false;
+    if (options?.overwrite === true) {
+      const entries = await listFieldDictionary(tenantId);
+      if (!entries.success) return { error: entries.error.message, code: entries.error.code };
+      const key = field.name.toLowerCase();
+      const target = entries.data.find((e) => e.name === field.name) ?? entries.data.find((e) => e.aliases.some((a) => a.toLowerCase() === key));
+      if (!target) return { ...notFoundFailure("Dictionary entry") };
+      saved = await updateFieldDictionaryEntry(tenantId, target.id, input);
+      updated = true;
+    } else {
+      saved = await createFieldDictionaryEntry(tenantId, input);
+      if (!saved.success && (saved.error.code === "DUPLICATE_NAME" || saved.error.code === "ALIAS_CONFLICT")) {
+        return { needsConfirmation: true as const, code: saved.error.code, error: saved.error.message };
+      }
+    }
+    if (!saved.success) return { error: saved.error.message, code: saved.error.code };
+
+    await prisma.field.update({ where: { id: fieldId }, data: { dictionaryEntryId: saved.data.id } });
+    revalidatePath("/schemas");
+    return { success: true as const, entryId: saved.data.id, updated };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("saveFieldToDictionaryAction", e) };
   }
 }
 
