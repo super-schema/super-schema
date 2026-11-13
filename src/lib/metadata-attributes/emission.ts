@@ -7,6 +7,7 @@
  *   JSON Schema / OpenAPI schema (`itemsTagsFor` + `moveTagsToItems`): TypeSpec can only put it on the property.
  * - Avro has no extension decorator: the `schema`-scope values are added to the emitted `.avsc` as custom properties
  *   (`addAvroProperties`).
+ * - Protobuf carries them as custom options (`protobuf-options.ts`).
  * - Targets that cannot carry them warn (`skippedAttributeWarning`).
  *
  * Every function is pure, never mutates its input, and returns its input unchanged (same reference / same string) when nothing applies.
@@ -22,7 +23,8 @@ import type { SuperSchemaField, SuperSchemaModel } from "@/types/super-schema-mo
 
 /** The tenant's dictionary as emission needs it. Absent (undefined) for a tenant without definitions: nothing changes then. */
 export interface MetadataEmissionContext {
-  definitions: MetadataAttributeDefinition[];
+  /** A stored row carries its `protobufOptionNumber` (the Protobuf custom option it is emitted as). */
+  definitions: Array<MetadataAttributeDefinition & { protobufOptionNumber?: number | null }>;
 }
 
 type Obj = Record<string, unknown>;
@@ -432,7 +434,7 @@ export function attributeKeysIn(models: readonly SuperSchemaModel[], defs: reado
   return [...found].sort();
 }
 
-/** The warning of a target that has no place for metadata attributes (Java POJO, the DDL targets, Protobuf for now). */
+/** The warning of a target that has no place for metadata attributes (Java POJO, the DDL targets). */
 export function skippedAttributeWarning(target: string, keys: readonly string[]): string {
   const name = getSchemaTargetDefinition(target)?.displayName ?? target;
   return `${name} has no place for metadata attributes; these were not emitted: ${keys.join(", ")}.`;

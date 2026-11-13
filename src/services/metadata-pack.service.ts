@@ -11,6 +11,7 @@ import { prisma } from "@/lib/db";
 import { getMetadataPack } from "@/lib/metadata-attributes/packs";
 import { MetadataAttributeDefinitionSchema } from "@/types/schemas/metadata-attribute";
 import { rederiveTenant } from "@/services/metadata-rederive.service";
+import { optionNumbersExhausted, ProtobufOptionNumbersExhausted, takeProtobufOptionNumber } from "@/services/metadata-attribute.service";
 import { err, ok } from "@/types/result";
 import type { Result } from "@/types/result";
 
@@ -46,11 +47,15 @@ export async function installMetadataPack(tenantId: string, packId: string): Pro
           requiredWhen: d.requiredWhen,
           pack: pack.id,
         };
-        await tx.metadataAttributeDefinition.upsert({
-          where: { tenantId_key: { tenantId, key: d.key } },
-          create: { tenantId, key: d.key, ...data },
-          update: data,
-        });
+        // A reinstall keeps the row's option number; a new row takes the next one from the tenant's counter (never reused).
+        const current = await tx.metadataAttributeDefinition.findUnique({ where: { tenantId_key: { tenantId, key: d.key } } });
+        if (current) {
+          const protobufOptionNumber = current.protobufOptionNumber ?? (await takeProtobufOptionNumber(tx, tenantId));
+          await tx.metadataAttributeDefinition.update({ where: { id: current.id }, data: { ...data, protobufOptionNumber } });
+        } else {
+          const protobufOptionNumber = await takeProtobufOptionNumber(tx, tenantId);
+          await tx.metadataAttributeDefinition.create({ data: { tenantId, key: d.key, ...data, protobufOptionNumber } });
+        }
       }
     });
   } catch (e) {
@@ -61,6 +66,7 @@ export async function installMetadataPack(tenantId: string, packId: string): Pro
         suggestedFix: "Rename or delete the tenant's own attribute, then install the pack.",
       });
     }
+    if (e instanceof ProtobufOptionNumbersExhausted) return optionNumbersExhausted();
     throw e;
   }
   await rederiveTenant(tenantId);

@@ -50,6 +50,7 @@ import {
   type AvroRecordName,
   type MetadataEmissionContext,
 } from "@/lib/metadata-attributes/emission";
+import { annotateProto, buildOptionsProto, METADATA_OPTIONS_PROTO_PATH } from "@/lib/metadata-attributes/protobuf-options";
 import {
   buildEmitterOptions,
   buildSourceForTarget,
@@ -284,19 +285,22 @@ async function emitClosureUnguarded(input: Closure, targetKey: TargetId, run: Em
   const entityFiles = Object.fromEntries(entities.map((e) => [e.entityId, [...(served.get(e.entityId) ?? [])].sort(compareCodeUnits)]));
   if (!run.metadata) return ok({ files: finalFiles, warnings: plan.warnings, entityFiles });
   const members = entities.map((e, i) => ({ entityId: e.entityId, model: models[i], avroRecord: plan.avroRecords?.get(e.entityId) }));
-  const projected = projectMetadataAttributes(key, finalFiles, members, run.metadata);
+  const projected = projectMetadataAttributes(key, finalFiles, members, run.metadata, entityFiles);
   return ok({ files: projected.files, warnings: [...plan.warnings, ...projected.warnings], entityFiles });
 }
 
 /**
  * The metadata attribute post-passes on the emitted files (paths never change): JSON Schema / OpenAPI move the `abc-primitive` keys of
- * primitive arrays onto `items`, Avro gets the `schema`-scope values as properties, Protobuf and Java POJO warn that they skip them.
+ * primitive arrays onto `items`, Avro gets the `schema`-scope values as properties, Protobuf gets them as custom options (each entity's
+ * `.proto` sets them, `superschema/metadata_options.proto` declares them; that file belongs to no entity, so it is not in `entityFiles`),
+ * Java POJO warns that it skips them.
  */
 function projectMetadataAttributes(
   key: string,
   files: EmittedFile[],
   members: Array<{ entityId: string; model: SuperSchemaModel; avroRecord?: AvroRecordName }>,
-  metadata: MetadataEmissionContext
+  metadata: MetadataEmissionContext,
+  entityFiles: Record<string, string[]>
 ): { files: EmittedFile[]; warnings: string[] } {
   const defs = metadata.definitions;
   switch (key) {
@@ -311,6 +315,25 @@ function projectMetadataAttributes(
     }
     case "avro":
       return { files: files.map((f) => members.reduce((file, m) => addAvroProperties(file, m.model, defs, m.avroRecord), f)), warnings: [] };
+    case "protobuf": {
+      if (files.some((f) => f.path === METADATA_OPTIONS_PROTO_PATH)) {
+        const keys = attributeKeysIn(members.map((m) => m.model), defs);
+        const clash = `The emitted set already has a file at ${METADATA_OPTIONS_PROTO_PATH}, so these metadata attributes were not emitted as Protobuf options: ${keys.join(", ")}.`;
+        return { files, warnings: keys.length > 0 ? [clash] : [] };
+      }
+      const warnings: string[] = [];
+      const used = new Set<string>();
+      // Each entity's values go on the file(s) that carry it (a cycle's shared package file carries several).
+      const annotated = files.map((f) =>
+        members.reduce((file, m) => ((entityFiles[m.entityId] ?? []).includes(f.path) ? annotateProto(file, m.model, defs, { warnings, used }) : file), f)
+      );
+      if (used.size > 0) {
+        const options = buildOptionsProto(defs, used, warnings);
+        annotated.push({ path: options.path, content: options.content, target: "protobuf" });
+        annotated.sort((a, b) => compareCodeUnits(a.path, b.path));
+      }
+      return { files: annotated, warnings: [...new Set(warnings)] };
+    }
     default: {
       const skipped = attributeKeysIn(members.map((m) => m.model), defs);
       return { files, warnings: skipped.length > 0 ? [skippedAttributeWarning(key, skipped)] : [] };

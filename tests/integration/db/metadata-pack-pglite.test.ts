@@ -102,4 +102,22 @@ describe("metadata packs on PGlite", () => {
     expect(await installedPacks(b.tenant.id)).toEqual([]);
     expect(await valueOf(b.pii.id)).toBeUndefined();
   });
+
+  it("pack rows take option numbers from the same per-tenant counter, keep theirs on reinstall, and never reuse one", async () => {
+    const { tenant } = await seed();
+    const own = await createMetadataAttribute(tenant.id, { key: "x-own", label: "Own", valueSchema: { type: "string" }, targets: ["field"] });
+    expect(own.success && own.data.protobufOptionNumber).toBe(50000);
+    await installMetadataPack(tenant.id, PACK);
+    const numberOf = async () =>
+      (await db().metadataAttributeDefinition.findUniqueOrThrow({ where: { tenantId_key: { tenantId: tenant.id, key: "x-securityClassification" } } }))
+        .protobufOptionNumber;
+    expect(await numberOf()).toBe(50001);
+    await installMetadataPack(tenant.id, PACK);
+    expect(await numberOf()).toBe(50001);
+    await uninstallMetadataPack(tenant.id, PACK);
+    await installMetadataPack(tenant.id, PACK);
+    expect(await numberOf()).toBe(50002);
+    const next = await createMetadataAttribute(tenant.id, { key: "x-next", label: "Next", valueSchema: { type: "string" }, targets: ["field"] });
+    expect(next.success && next.data.protobufOptionNumber).toBe(50003);
+  });
 });

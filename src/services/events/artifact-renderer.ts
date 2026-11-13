@@ -31,7 +31,7 @@ import type { FieldSnapshot } from "@/services/version-history/version.types";
 import { ok, err, type Result } from "@/types/result";
 import { createHash } from "node:crypto";
 import { compileEntity, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
-import { addAvroProperties, itemsTagsFor, moveTagsToItems, type MetadataEmissionContext } from "@/lib/metadata-attributes/emission";
+import { addAvroProperties, attributeKeysIn, itemsTagsFor, moveTagsToItems, type MetadataEmissionContext } from "@/lib/metadata-attributes/emission";
 import { MetadataStripError, modelExtensionsInSource, stripExtensionDecorators } from "@/lib/metadata-attributes/source-attributes";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { loadMetadataEmission } from "@/services/metadata-emission.service";
@@ -504,6 +504,8 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
 
   /** The emitted files with the `abc-primitive` keys of primitive arrays on `items` (JSON Schema) or the attribute values as Avro properties. */
   async function withMetadataAttributes(format: PayloadFormat, files: EmittedFile[], parts: ProgramPart[], metadata: MetadataEmissionContext): Promise<EmittedFile[]> {
+    // A payload `.proto` must stay one self-contained file (a registry / consumer has no `superschema/metadata_options.proto`): no options.
+    // `protobufSkippedNote` says so.
     if (format === "protobuf") return files;
     const models = await Promise.all(parts.map(async (part) => ({ part, model: await partModel(part) })));
     return files.map((file) => {
@@ -519,6 +521,17 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
       const added = models.reduce((f, { part, model }) => (model ? addAvroProperties(f, model, metadata.definitions, { namespace, name: part.rootModel }) : f), asAvro);
       return added === asAvro ? file : { ...file, content: added.content };
     });
+  }
+
+  /** The note of a Protobuf payload whose parts hold `schema`-scope attribute values: they are not emitted (no custom options in a payload). */
+  async function protobufSkippedNote(parts: ProgramPart[], metadata: MetadataEmissionContext): Promise<{ code: string; message: string } | undefined> {
+    const models = (await Promise.all(parts.map(partModel))).filter((m): m is SuperSchemaModel => m !== undefined);
+    const keys = attributeKeysIn(models, metadata.definitions);
+    if (keys.length === 0) return undefined;
+    return {
+      code: "METADATA_ATTRIBUTES_NOT_EMITTED",
+      message: `An event payload .proto must be self-contained, so its metadata attributes are not emitted as Protobuf options: ${keys.join(", ")}.`,
+    };
   }
 
   async function renderUncached(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader, run?: RenderRun, metadata?: MetadataEmissionContext): Promise<Result<RenderedArtifact>> {
@@ -587,6 +600,8 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
     const artifact = pickEmittedArtifact(format, emitted, program.data.root.rootModel);
     if (!artifact.success) return artifact;
     const notes = (avro?.warnings ?? []).map((message) => ({ code: "AVRO_ENUM_SYMBOL_RENAMED", message }));
+    const skipped = metadata && format === "protobuf" ? await protobufSkippedNote(parts, metadata) : undefined;
+    if (skipped) notes.push(skipped);
     return ok({ artifact: artifact.data, warnings: combined.data.warnings, ...(notes.length > 0 && { notes }) });
   }
 

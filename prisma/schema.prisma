@@ -115,6 +115,7 @@ model Tenant {
   customScalars  CustomScalar[]
   metadataAttributes MetadataAttributeDefinition[]
   fieldDictionary    FieldDictionaryEntry[]
+  metadataAttributeCounter MetadataAttributeCounter?
   unionTypes     UnionType[]
   services       ServiceDefinition[]
   traits         Trait[]
@@ -1541,6 +1542,16 @@ model MetadataAttributeDefinition {
   @@unique([tenantId, key])
   @@unique([tenantId, protobufOptionNumber])
   @@map("metadata_attribute_definitions")
+}
+
+/// Per-tenant high-water mark of the Protobuf option numbers handed to metadata attributes: a number is never handed out twice, not
+/// even after the attribute holding it (the highest one included) is deleted. Incremented in the transaction that inserts the attribute.
+model MetadataAttributeCounter {
+  tenantId           String @id
+  nextProtobufOption Int    @default(50000)
+  tenant             Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("metadata_attribute_counters")
 }
 
 /// Tenant field dictionary: a canonical field (name, aliases, type, classification, default x-* attribute values) offered by autocomplete.
