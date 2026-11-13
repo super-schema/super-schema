@@ -84,6 +84,8 @@ import { isDecimalType } from "@/lib/data-types";
 import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
 import { FOREIGN_REFERENCE_MESSAGE, referencedEntityAllowed } from "@/lib/references/foreign-reference-guard";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
+import { writeEntityAttribute } from "@/lib/metadata-attributes/values";
+import { METADATA_ATTRIBUTE_KEY_REGEX } from "@/types/schemas/metadata-attribute";
 import {
   markEntityDraftChanged,
   metadataChangesDraft,
@@ -2219,6 +2221,59 @@ export async function updateEntityMetadataAction(
     return { success: true };
   } catch (e: unknown) {
     return { ...unexpectedFailure("updateEntityMetadataAction", e) };
+  }
+}
+
+/**
+ * Set (or, with `undefined`, remove) ONE metadata attribute of an entity: one key of `metadata.custom.extensions`.
+ *
+ * `updateEntityMetadataAction` never stores an `extensions` the client sends: `custom.extensions` is the model's `@extension` entries, kept equal to the
+ * TypeSpec source by the source sync (SET_ENTITY_EXTENSIONS_SQL), and a whole-object write from a client would clobber them. This action is the narrow
+ * alternative: it touches exactly one `x-` key, under the row lock, over the extensions AS STORED. The keys the source keeps outside the generated
+ * source (ENTITY_STORED_ONLY_EXTENSION_KEYS: `$id`, `$schema`) are not `x-` keys, so the key rule refuses them. The edit marks the draft changed and
+ * the source stale, so the next regeneration writes the attribute into the source (the generator emits `custom.extensions`).
+ */
+export async function updateEntityAttributeAction(entityId: string, key: string, value: unknown | undefined) {
+  if (typeof key !== "string" || !METADATA_ATTRIBUTE_KEY_REGEX.test(key) || key.length > 64) {
+    return { error: "The attribute key must start with x- followed by letters, digits, _, . or -", code: "VALIDATION_ERROR" };
+  }
+  try {
+    const access = await guardSubject("entity.write", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+
+    const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+    if (!entity) return { ...notFoundFailure("Entity") };
+    const before = (entity.metadata as Record<string, unknown>) ?? {};
+
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Entity",
+      entityId,
+      userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
+      beforeState: { metadata: before } as unknown as object,
+      fn: () =>
+        prisma.$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT "id" FROM "entities" WHERE "id" = ${entityId} FOR UPDATE`;
+          const locked = await tx.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+          const storedMeta = (locked?.metadata as Record<string, unknown>) ?? {};
+          const mergedMeta = writeEntityAttribute(storedMeta, key, value);
+          const changesDraft = metadataChangesDraft(storedMeta, mergedMeta);
+          const updatedMeta = withSourceStale(storedMeta, mergedMeta, changesDraft);
+          return tx.entity.update({
+            where: { id: entityId },
+            data: {
+              metadata: updatedMeta as unknown as Prisma.InputJsonValue,
+              ...(changesDraft && { hasUnpublishedChanges: true }),
+            },
+          });
+        }),
+    });
+
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("updateEntityAttributeAction", e) };
   }
 }
 

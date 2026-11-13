@@ -51,7 +51,8 @@ import { usePublishEligibility } from "./components/usePublishEligibility";
 import { RightPanelRouter } from "./components/RightPanelRouter";
 import { InlineEntityMeta } from "./components/InlineEntityMeta";
 import { RetentionPolicyEditor } from "@/features/governance/RetentionPolicyEditor/RetentionPolicyEditor";
-import { updateEntityMetadataAction } from "./actions";
+import { updateEntityMetadataAction, updateEntityAttributeAction } from "./actions";
+import { EntityAttributesSection } from "./components/EntityAttributesSection";
 import { NO_ENTITY_CAPABILITIES, type EntityCapabilities } from "@/lib/access/capabilities";
 import type { RetentionPolicy } from "@/types/schemas/retention-policy.schema";
 import {
@@ -930,6 +931,18 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, metadataA
         onDirtyChange={metaDraft.onDirtyChange}
         saveRef={metaDraft.saveRef}
         discardRef={metaDraft.discardRef}
+      />
+
+      <EntityAttributesSection
+        metadata={entity.metadata}
+        definitions={metadataAttributes ?? []}
+        isReadOnly={readOnly_ || !capabilities.write}
+        onSave={async (key, value) => {
+          const res = await updateEntityAttributeAction(entity.id, key, value);
+          if (res?.error) return { error: res.error };
+          handleMetaSaved();
+          router.refresh();
+        }}
       />
 
       {/* Right panel router (renders nothing itself, pushes content via context) */}

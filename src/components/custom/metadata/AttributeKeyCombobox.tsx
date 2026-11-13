@@ -12,10 +12,12 @@ interface Props {
   existingKeys: string[];
   /** The definition is undefined for a free-typed key the dictionary does not define. */
   onPick: (key: string, definition?: MetadataAttributeDefinition) => void;
+  /** Offer a free-typed `x-…` key (default true). */
+  allowFreeKey?: boolean;
 }
 
 /** Suggests dictionary keys (label, key, description) as the user types; a free-typed `x-…` key is still allowed. */
-export function AttributeKeyCombobox({ definitions, existingKeys, onPick }: Props) {
+export function AttributeKeyCombobox({ definitions, existingKeys, onPick, allowFreeKey = true }: Props) {
   const [text, setText] = useState("");
   const query = text.trim().toLowerCase();
   const matches = query
@@ -25,7 +27,7 @@ export function AttributeKeyCombobox({ definitions, existingKeys, onPick }: Prop
     : [];
   const typed = text.trim();
   const freeKey =
-    METADATA_ATTRIBUTE_KEY_REGEX.test(typed) && !existingKeys.includes(typed) && !definitions.some((d) => d.key === typed) ? typed : null;
+    allowFreeKey && METADATA_ATTRIBUTE_KEY_REGEX.test(typed) && !existingKeys.includes(typed) && !definitions.some((d) => d.key === typed) ? typed : null;
 
   function pick(key: string, definition?: MetadataAttributeDefinition) {
     onPick(key, definition);
