@@ -607,6 +607,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
         ["license", clone(spec.info.license)],
         ["tags", clone(spec.info.tags)],
         ["externalDocs", clone(spec.info.externalDocs)],
+        ["x-cloudevents-source", spec.cloudEventsSource],
       ]),
     ],
     ["servers", nonEmpty(servers)],

@@ -42,7 +42,7 @@ const ENTITY_HREF = "/schemas/payments/checkout/ordercancelled";
 
 function pageData(over: Partial<EventPageData> = {}): EventPageData {
   return {
-    event: makeEvent(), productId: "p1", domainSlug: "payments", productSlug: "checkout", entityOptions: ENTITY_OPTIONS, libraryTraits: [],
+    event: makeEvent(), productId: "p1", domainId: "d1", tenantSlug: "acme", domainSlug: "payments", productSlug: "checkout", entityOptions: ENTITY_OPTIONS, libraryTraits: [],
     crumbs: [{ label: "Domains", href: "/schemas" }, { label: "Events", href: LIST_HREF }, { label: "orders" }],
     listHref: LIST_HREF, initialTab: "design", initialSection: "metadata", initialItem: null, initialVersion: null, ...over,
   };

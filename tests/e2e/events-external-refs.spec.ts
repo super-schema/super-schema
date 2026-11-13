@@ -22,7 +22,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, createProductInDomain, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
-import { centerPanel, createEventFromMenu, expectNoRawDbText } from "./helpers/event-builder";
+import { centerPanel, createEventFromMenu, expectNoRawDbText, pickEntity } from "./helpers/event-builder";
 
 /**
  * What a publish may take, from the click that opens its dialog to the dialog closing. The dialog first renders a preview of the publish
@@ -159,7 +159,7 @@ async function addMessage(page: Page, title: string, payloadEntityName: string, 
   await main.getByTestId(ID.messagePane("details")).click();
   await main.getByTestId(ID.messageTitle).fill(title);
   await main.getByTestId(ID.messagePane("payload")).click();
-  await main.getByTestId(ID.payloadPicker).getByLabel("Payload entity").selectOption({ label: payloadEntityName });
+  await pickEntity(main.getByTestId(ID.payloadPicker), "Payload", payloadEntityName);
   await main.getByTestId(ID.messagePane("channels")).click();
   await main.getByTestId(ID.messageChannelOption(channelKey)).check();
   await leaveForm(page);
@@ -329,6 +329,7 @@ test.describe("external event references end to end", () => {
       const code = page.getByTestId(ID.codePanel);
       if (!(await code.isVisible())) await main.getByTestId(ID.codeToggle).click();
       await expect(code.getByTestId(ID.codeStatus)).toHaveAttribute("data-state", "full", { timeout: 90_000 });
+      await code.getByTestId("code-format-yaml").click(); // the panel opens on the Visual overview
       // The editor draws only the lines in view, so look for what sits near the top of the document (the channels and their messages).
       await expect(code.getByTestId(ID.codeText)).toContainText(flow.channelRefKey, { timeout: 30_000 });
       await expect(code.getByTestId(ID.codeText)).toContainText(flow.messageRefKey, { timeout: 30_000 });

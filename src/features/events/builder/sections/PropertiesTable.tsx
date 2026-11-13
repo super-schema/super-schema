@@ -29,6 +29,7 @@ import {
   setDescription, setType, typeLabel, writeHeaders, type DisplayRow, type PropertyRow, type PropertyType,
 } from "../properties-schema";
 import type { PinnedHeaders } from "../traits";
+import type { PropertyValue } from "../cloudevents-values";
 
 export interface PropertiesTableProps {
   /** Prefix of every id and test id. */
@@ -47,6 +48,10 @@ export interface PropertiesTableProps {
   pinned?: PinnedHeaders;
   /** Disable every input of the editable table. */
   disabled?: boolean;
+  /** Read-only only: the value each property takes for the message the table is shown on (adds a Value column). */
+  values?: Readonly<Record<string, PropertyValue>>;
+  /** Called when an editable value (`PropertyValue.editable`) changes; "" restores its default. */
+  onValueChange?: (name: string, value: string) => void;
 }
 
 const HEAD = "px-space-2 py-space-1 text-left text-caption font-medium text-muted-foreground";
@@ -88,7 +93,39 @@ function AllowedChips({ id, allowed }: { id: string; allowed: DisplayRow["allowe
   );
 }
 
-function ReadOnlyTable({ idPrefix, rows, pinned }: { idPrefix: string; rows: DisplayRow[]; pinned?: PinnedHeaders }) {
+const VALUE_KIND_LABEL: Record<PropertyValue["kind"], string> = { fixed: "Fixed", derived: "From this event", example: "Example" };
+
+function ValueCell({ id, name, value, onValueChange }: { id: string; name: string; value?: PropertyValue; onValueChange?: (name: string, value: string) => void }) {
+  if (!value) return <td className={CELL}><span className="text-muted-foreground">—</span></td>;
+  if (value.editable && onValueChange) {
+    const custom = value.value !== value.editable.default;
+    return (
+      <td className={CELL} data-testid={id}>
+        <Input
+          aria-label={`${name} value`} data-testid={`${id}-input`} className="h-8 font-mono text-caption" spellCheck={false}
+          value={custom ? value.value : ""} placeholder={value.editable.default || "Set a value"}
+          onChange={(e) => onValueChange(name, e.target.value)}
+        />
+        <div className="mt-0.5 flex flex-wrap items-center gap-space-1">
+          <Badge variant="secondary" data-testid={`${id}-kind`}>{custom ? "Set for this event" : "Default"}</Badge>
+          {value.note && <span className="text-caption text-muted-foreground">{value.note}</span>}
+          {custom && <button type="button" className="text-caption text-primary hover:underline" onClick={() => onValueChange(name, "")}>Use default</button>}
+        </div>
+      </td>
+    );
+  }
+  return (
+    <td className={CELL} data-testid={id}>
+      <code className={`break-all font-mono text-caption ${value.kind === "example" ? "text-muted-foreground" : "text-foreground"}`}>{value.value}</code>
+      <div className="mt-0.5 flex flex-wrap items-center gap-space-1">
+        <Badge variant={value.kind === "example" ? "outline" : "secondary"} data-testid={`${id}-kind`}>{VALUE_KIND_LABEL[value.kind]}</Badge>
+        {value.note && <span className="text-caption text-muted-foreground">{value.note}</span>}
+      </div>
+    </td>
+  );
+}
+
+function ReadOnlyTable({ idPrefix, rows, pinned, values, onValueChange }: { idPrefix: string; rows: DisplayRow[]; pinned?: PinnedHeaders; values?: Readonly<Record<string, PropertyValue>>; onValueChange?: (name: string, value: string) => void }) {
   if (rows.length === 0 && pinned) return <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={PINNED_PROPERTIES_LEAD} className={EMPTY_NOTE} />;
   if (rows.length === 0) return <p data-testid={`${idPrefix}-empty`} className="text-body-small text-muted-foreground">No properties.</p>;
   return (
@@ -101,6 +138,7 @@ function ReadOnlyTable({ idPrefix, rows, pinned }: { idPrefix: string; rows: Dis
               <th scope="col" className={HEAD}>Name</th>
               <th scope="col" className={HEAD}>Type</th>
               <th scope="col" className={HEAD}>Required</th>
+              {values && <th scope="col" className={HEAD}>Value for this message</th>}
               <th scope="col" className={HEAD}>Description</th>
             </tr>
           </thead>
@@ -112,6 +150,7 @@ function ReadOnlyTable({ idPrefix, rows, pinned }: { idPrefix: string; rows: Dis
                 <td className={CELL} data-testid={`${idPrefix}-row-${row.name}-required`}>
                   {row.required ? <Badge variant="secondary">Required</Badge> : <span className="text-muted-foreground">Optional</span>}
                 </td>
+                {values && <ValueCell id={`${idPrefix}-row-${row.name}-value`} name={row.name} value={values[row.name]} onValueChange={onValueChange} />}
                 <td className={CELL}>
                   {row.description && <span data-testid={`${idPrefix}-row-${row.name}-description`}>{row.description}</span>}
                   <AllowedChips id={`${idPrefix}-row-${row.name}-allowed`} allowed={row.allowed} />
@@ -284,7 +323,7 @@ function EditableTable({ idPrefix, headers, onChange, disabled, pinned }: { idPr
   );
 }
 
-export function PropertiesTable({ idPrefix, headers, summary, onChange, readOnly, note, pinned, disabled }: PropertiesTableProps) {
+export function PropertiesTable({ idPrefix, headers, summary, onChange, readOnly, note, pinned, disabled, values, onValueChange }: PropertiesTableProps) {
   const editable = onChange !== undefined && !readOnly;
   return (
     <div data-testid={`${idPrefix}-properties`} className="space-y-space-2">
@@ -292,7 +331,7 @@ export function PropertiesTable({ idPrefix, headers, summary, onChange, readOnly
       {editable ? (
         <EditableTable idPrefix={idPrefix} headers={headers} onChange={onChange} disabled={disabled} pinned={pinned} />
       ) : (
-        <ReadOnlyTable idPrefix={idPrefix} rows={headers !== undefined || !summary ? displayRowsFromHeaders(headers) : displayRowsFromSummary(summary)} pinned={pinned} />
+        <ReadOnlyTable idPrefix={idPrefix} rows={headers !== undefined || !summary ? displayRowsFromHeaders(headers) : displayRowsFromSummary(summary)} pinned={pinned} values={values} onValueChange={onValueChange} />
       )}
     </div>
   );

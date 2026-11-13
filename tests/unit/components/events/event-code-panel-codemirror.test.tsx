@@ -35,6 +35,8 @@ const instantOf = (doc: EventDocument) => buildInstantAsyncApi(doc, { productSlu
 const SERVER_YAML = "asyncapi: 3.0.0\ninfo:\n  title: Orders\n  version: draft\n# real payload schemas below\n";
 
 beforeEach(() => {
+  // These tests read the code views; the panel opens on the view last chosen (Visual the first time).
+  localStorage.setItem("event-code-format", "yaml");
   // the server never answers unless a test says so, so only the instant code is on screen
   h.preview.mockReturnValue(new Promise(() => {}));
   h.writeText.mockResolvedValue(undefined);
@@ -42,6 +44,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.clearAllMocks();
   vi.restoreAllMocks();
 });

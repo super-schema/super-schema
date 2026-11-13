@@ -123,7 +123,7 @@ export async function addMessage(page: Page, title: string, payloadEntityName: s
   await main.getByTestId(BUILDER_ID.messagePane("details")).click();
   await main.getByTestId(BUILDER_ID.messageTitle).fill(title);
   await main.getByTestId(BUILDER_ID.messagePane("payload")).click();
-  await main.getByTestId(BUILDER_ID.payloadPicker).getByLabel("Payload entity").selectOption({ label: payloadEntityName });
+  await pickEntity(main.getByTestId(BUILDER_ID.payloadPicker), "Payload", payloadEntityName);
   await main.getByTestId(BUILDER_ID.messagePane("channels")).click();
   await main.getByTestId(BUILDER_ID.messageChannelOption(channelKey)).check();
   await leaveForm(page);
@@ -142,4 +142,16 @@ export async function addOperation(page: Page, key: string, channelKey: string, 
   await main.getByTestId(BUILDER_ID.operationActionSend).check();
   await main.getByTestId(BUILDER_ID.operationChannel).selectOption(channelKey);
   await main.getByTestId(BUILDER_ID.operationMessageOption(messageKey)).check();
+}
+
+/**
+ * Chooses an entity in a pin picker's searchable combobox (`<label> entity`): searches the whole tenant ("All") so the choice does not
+ * depend on which product the entity lives in, then clicks the matching option.
+ */
+export async function pickEntity(picker: Locator, label: string, entityName: string): Promise<void> {
+  await picker.getByLabel(`${label} entity`).click();
+  const all = picker.getByRole("radio", { name: /^All/ });
+  if (await all.count()) await all.click();
+  await picker.getByRole("searchbox").fill(entityName);
+  await picker.getByRole("option", { name: new RegExp(`^${entityName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`) }).first().click();
 }

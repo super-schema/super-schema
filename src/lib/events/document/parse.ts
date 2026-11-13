@@ -373,6 +373,7 @@ export function parseEventDocument(value: unknown): Result<EventDocument> {
     documentVersion: DOCUMENT_VERSION,
     info,
     defaultContentType: r.opt(value, "defaultContentType", ""),
+    cloudEventsSource: r.opt(value, "cloudEventsSource", ""),
     servers: servers.map((e) => e.value),
     channels: channels.map((e) => e.value),
     messages: messages.map((e) => e.value),

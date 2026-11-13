@@ -50,7 +50,7 @@ const LIBRARY_TRAITS: EventPageData["libraryTraits"] = [
 
 function pageData(over: Partial<EventPageData> = {}): EventPageData {
   return {
-    event: makeEvent(), productId: "p1", domainSlug: "payments", productSlug: "checkout", entityOptions: ENTITY_OPTIONS, libraryTraits: LIBRARY_TRAITS,
+    event: makeEvent(), productId: "p1", domainId: "d1", tenantSlug: "acme", domainSlug: "payments", productSlug: "checkout", entityOptions: ENTITY_OPTIONS, libraryTraits: LIBRARY_TRAITS,
     crumbs: [{ label: "Domains", href: "/schemas" }, { label: "Payments", href: "/schemas/payments" }, { label: "Events", href: LIST_HREF }, { label: "orders" }],
     listHref: LIST_HREF, initialTab: "design", initialSection: "metadata", initialItem: null, initialVersion: null, ...over,
   };
@@ -82,9 +82,11 @@ beforeEach(() => {
   h.remove.mockResolvedValue({ success: true, data: { id: "ev1" } });
   h.preview.mockResolvedValue({ success: true, data: EMISSION });
   window.history.replaceState(null, "", EVENT_URL);
+  localStorage.setItem("event-code-format", "yaml"); // these tests read the code text, not the Visual overview
 });
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -604,7 +606,11 @@ describe("EventPage: Docs", () => {
 });
 
 describe("EventPage: live code in the shell's right Detail Panel", () => {
-  beforeEach(() => vi.useFakeTimers());
+  beforeEach(() => {
+    vi.useFakeTimers();
+    localStorage.setItem("event-code-format", "yaml");
+  });
+  afterEach(() => localStorage.removeItem("event-code-format"));
   const flush = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
   const noop = () => {};
 

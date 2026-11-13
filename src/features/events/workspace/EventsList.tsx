@@ -48,7 +48,7 @@ function Payloads({ item }: { item: EventListItem }) {
 
 function Badges({ item }: { item: EventListItem }) {
   return (
-    <span className="flex shrink-0 items-center gap-space-1">
+    <span className="flex flex-wrap items-center gap-space-1">
       <Badge variant="secondary" data-testid={`event-row-${item.id}-spec`}>{specLabel(item.specType)}</Badge>
       <Badge variant="outline" data-testid={`event-row-${item.id}-version`}>{item.versionLabel ? `v${item.versionLabel}` : "Unpublished"}</Badge>
       {item.hasUnpublishedChanges && <Badge variant="warning" data-testid={`event-row-${item.id}-draft`}>Draft</Badge>}
@@ -97,8 +97,9 @@ export function EventsList({ productId, domainSlug, productSlug, items, viewMode
             <ul aria-label="Events" className="grid grid-cols-1 gap-space-4 md:grid-cols-2 xl:grid-cols-3">
               {items.map((item) => (
                 <li key={item.id} data-testid={`event-row-${item.id}`} className="surface-glass flex flex-col gap-space-3 rounded-xl border border-border p-space-4 transition-colors hover:bg-accent/30">
-                  <div className="flex items-start justify-between gap-space-2">
-                    <Link href={item.href} className="min-w-0 truncate text-heading-2 font-medium text-foreground hover:text-primary hover:underline">{item.name}</Link>
+                  {/* The full name first (wrapping, never cut off), the status badges on their own line under it. */}
+                  <div className="flex min-w-0 flex-col gap-space-2">
+                    <Link href={item.href} className="min-w-0 break-words text-heading-2 font-medium text-foreground hover:text-primary hover:underline">{item.name}</Link>
                     <Badges item={item} />
                   </div>
                   <p data-testid={`event-row-${item.id}-description`} className="line-clamp-2 min-h-[2.5em] text-body-small text-muted-foreground">{item.description || "No description"}</p>
@@ -113,7 +114,7 @@ export function EventsList({ productId, domainSlug, productSlug, items, viewMode
             <ul aria-label="Events" className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60">
               {items.map((item) => (
                 <li key={item.id} data-testid={`event-row-${item.id}`} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1fr)_auto] items-center gap-x-space-4 px-space-4 py-space-3 transition-colors hover:bg-accent/30">
-                  <Link href={item.href} className="truncate font-medium text-foreground hover:text-primary hover:underline">{item.name}</Link>
+                  <Link href={item.href} className="min-w-0 break-words font-medium text-foreground hover:text-primary hover:underline">{item.name}</Link>
                   <span data-testid={`event-row-${item.id}-description`} className="truncate text-body-small text-muted-foreground">{item.description}</span>
                   <Topic item={item} />
                   <Payloads item={item} />

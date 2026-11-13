@@ -999,3 +999,13 @@ describe("a $ref to a target that is not a component is read once per target, no
   });
 });
 
+
+describe("CloudEvents source", () => {
+  it("reads info.x-cloudevents-source back into the event without an unknown-key warning", () => {
+    const raw = tiny();
+    (raw.info as Record<string, unknown>)["x-cloudevents-source"] = "urn:app:accounts-service";
+    const { document, warnings } = mapRaw(raw);
+    expect(document.cloudEventsSource).toBe("urn:app:accounts-service");
+    expect(warnings.some((w) => w.pointer?.startsWith("/info") && JSON.stringify(w).includes("x-cloudevents-source"))).toBe(false);
+  });
+});

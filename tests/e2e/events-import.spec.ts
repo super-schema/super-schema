@@ -162,6 +162,8 @@ test.describe("importing an AsyncAPI document end to end", () => {
     await test.step("the Code panel shows the imported document", async () => {
       const toggle = main.getByTestId(ID.codeToggle);
       if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
+      // The panel opens on the Visual overview; the text lives in the YAML view.
+      await page.getByTestId("code-format-yaml").click();
       const code = page.getByTestId(ID.codePanel).locator(".cm-content");
       await expect(code).toContainText("Streetlights Kafka API", { timeout: 60_000 });
       await expect(code).toContainText("test.mykafkacluster.org:18092");

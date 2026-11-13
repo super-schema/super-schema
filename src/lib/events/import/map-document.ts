@@ -31,7 +31,7 @@ import { CHARS_PER_NODE } from "./limits";
 import type { ImportWarning, ImportWarningCode, MapContext, RawAsyncApi3 } from "./types";
 
 const ROOT_KEYS = new Set(["asyncapi", "info", "servers", "defaultContentType", "channels", "operations", "components"]);
-const INFO_KEYS = new Set(["title", "version", "description", "termsOfService", "contact", "license", "tags", "externalDocs"]);
+const INFO_KEYS = new Set(["title", "version", "description", "termsOfService", "contact", "license", "tags", "externalDocs", "x-cloudevents-source"]);
 const SERVER_KEYS = new Set(["host", "protocol", "protocolVersion", "pathname", "title", "summary", "description", "variables", "security", "tags", "externalDocs", "bindings"]);
 const CHANNEL_KEYS = new Set(["address", "messages", "title", "summary", "description", "servers", "parameters", "tags", "externalDocs", "bindings"]);
 const MESSAGE_KEYS = new Set(["headers", "payload", "correlationId", "contentType", "name", "title", "summary", "description", "tags", "externalDocs", "bindings", "examples", "traits", "deprecated"]);
@@ -638,6 +638,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   // ── the document, and proof that it is one ──
   const candidate = {
     documentVersion: 2, info, defaultContentType: field(raw, "defaultContentType", "", ax.str),
+    cloudEventsSource: field(rawInfo, "x-cloudevents-source", "/info", ax.str),
     servers, channels, messages, traits, operations, externalRefs: [],
     ...(nonEmptyRecord(documentComponents) && { components: documentComponents }),
   };

@@ -11,6 +11,7 @@ import { emptyEventDocument, type EventDocument } from "@/lib/events/document/ty
 import { bindingVersion, TEMPLATES } from "@/lib/events/templates";
 import { maximalDocument } from "../../lib/events/document/fixtures/maximal-document";
 import { ENTITY_OPTIONS, PIN, renderBuilder, renderSection, sampleDocument } from "./builder-harness";
+import { entityValue, pickEntity } from "./helpers/pick-entity";
 
 // The picker's default version loader is a server action: keep it out of the test process.
 const h = vi.hoisted(() => ({ listPinnableVersionsAction: vi.fn(), pinJsonSchemaAction: vi.fn(), toast: vi.fn(), toastDismiss: vi.fn() }));
@@ -147,7 +148,7 @@ describe("MessagesSection: list and selection", () => {
     expect(screen.getByTestId("message-row-RefundIssued").getAttribute("aria-current")).toBe("true");
     expect(screen.getByTestId("message-row-OrderCreated").hasAttribute("aria-current")).toBe(false);
     expect(text("message-key-value")).toBe("RefundIssued");
-    expect((field("Payload entity") as unknown as HTMLSelectElement).value).toBe("ent-2");
+    expect(entityValue("Payload")).toBe("ent-2");
   });
 
   it("opens the message named by the selected item and falls back to the first when it is gone", async () => {
@@ -194,7 +195,7 @@ describe("MessagesSection: add message", () => {
   it("asks for the payload entity: the new message has no payload yet and the picker shows why", async () => {
     await renderMessages();
     click("message-add");
-    expect((field("Payload entity") as unknown as HTMLSelectElement).value).toBe("");
+    expect(entityValue("Payload")).toBe("");
     expect(rowTitle("message-row-message")).toContain("No payload");
     const error = screen.getByTestId("payload-error");
     expect(error.textContent).toBe("entityId is required");
@@ -207,7 +208,7 @@ describe("MessagesSection: add message", () => {
     await settle();
     click("message-add");
     expect(probe.draft.problems.map((p) => p.pointer)).toContain("/messages/1/payload/entityId");
-    type(field("Payload entity"), "ent-1");
+    pickEntity("Payload", "ent-1");
     expect(probe.draft.problems).toEqual([]);
     await act(async () => { click("builder-save"); });
     expect(probe.saveDocument).toHaveBeenCalledTimes(1);
@@ -217,7 +218,7 @@ describe("MessagesSection: add message", () => {
 describe("MessagesSection: payload, headers and key pins", () => {
   it("picking another payload entity pins its latest version", async () => {
     const { probe } = await renderMessages();
-    type(field("Payload entity"), "ent-2");
+    pickEntity("Payload", "ent-2");
     expect(probe.draft.doc.messages[0].payload).toEqual({ entityId: "ent-2", entityVersionId: "ver-2" });
     expect(probe.draft.problems).toEqual([]);
   });
@@ -225,7 +226,7 @@ describe("MessagesSection: payload, headers and key pins", () => {
   it("choosing a first payload entity on a new message clears the payload error", async () => {
     const { probe } = await renderMessages();
     click("message-add");
-    type(field("Payload entity"), "ent-1");
+    pickEntity("Payload", "ent-1");
     expect(probe.draft.doc.messages[1].payload).toEqual({ entityId: "ent-1", entityVersionId: "ver-1" });
     expect(missing("payload-error")).toBe(true);
     expect(probe.draft.problems).toEqual([]);
@@ -255,13 +256,13 @@ describe("MessagesSection: payload, headers and key pins", () => {
     const { probe } = await renderMessages();
     expect("headers" in probe.draft.doc.messages[0]).toBe(false);
     showOptionalPins();
-    type(field("Headers entity"), "ent-2");
+    pickEntity("Headers", "ent-2");
     expect(probe.draft.doc.messages[0].headers).toEqual({ entityId: "ent-2", entityVersionId: "ver-2" });
-    type(field("Message key entity"), "ent-1");
+    pickEntity("Message key", "ent-1");
     expect(probe.draft.doc.messages[0].keyPin).toEqual({ entityId: "ent-1", entityVersionId: "ver-1" });
     expect(probe.draft.problems).toEqual([]);
-    type(field("Headers entity"), "");
-    type(field("Message key entity"), "");
+    pickEntity("Headers", "");
+    pickEntity("Message key", "");
     expect("headers" in probe.draft.doc.messages[0]).toBe(false);
     expect("keyPin" in probe.draft.doc.messages[0]).toBe(false);
     expect(probe.draft.doc.messages[0].payload).toEqual(PIN);
@@ -270,7 +271,7 @@ describe("MessagesSection: payload, headers and key pins", () => {
   it("each pin edits only the selected message", async () => {
     const { probe } = await renderMessages({ doc: docWithReply(), item: "RefundIssued" });
     showOptionalPins();
-    type(field("Headers entity"), "ent-1");
+    pickEntity("Headers", "ent-1");
     expect(probe.draft.doc.messages[1].headers).toEqual({ entityId: "ent-1", entityVersionId: "ver-1" });
     expect("headers" in probe.draft.doc.messages[0]).toBe(false);
   });
@@ -356,7 +357,7 @@ describe("MessagesSection: payload preview", () => {
       Promise.resolve({ success: true, data: { schema: { properties: pin.entityId === "ent-1" ? { orderId: { type: "string" } } : { reason: { type: "string" } } } } }));
     await renderMessages();
     await screen.findByText("orderId");
-    type(field("Payload entity"), "ent-2");
+    pickEntity("Payload", "ent-2");
     await screen.findByText("reason");
     expect(screen.queryByText("orderId")).toBeNull();
   });
@@ -423,8 +424,8 @@ describe("MessagesSection: optional pins", () => {
   it("keeps the picker on screen after the entity is cleared again, until the message changes", async () => {
     await renderMessages();
     click("headers-add");
-    type(field("Headers entity"), "ent-2");
-    type(field("Headers entity"), "");
+    pickEntity("Headers", "ent-2");
+    pickEntity("Headers", "");
     expect(screen.getByLabelText("Headers entity")).toBeDefined();
   });
 
@@ -536,9 +537,9 @@ describe("MessagesSection: payload representation", () => {
     it("follows the payload entity as soon as another one is chosen (never a stale answer)", async () => {
       await renderMessages({ doc: autoDocument("googlepubsub"), options: { entityOptions: entitiesWith({ "ent-2": "protobuf" }), libraryTraits: [] } });
       expect(text("message-representation-explanation")).toBe("Auto → JSON Schema (draft-07) — Google Pub/Sub channels default to JSON Schema");
-      type(field("Payload entity"), "ent-2");
+      pickEntity("Payload", "ent-2");
       expect(text("message-representation-explanation")).toBe("Auto → Protobuf — the entity OrderCancelled was imported from Protobuf");
-      type(field("Payload entity"), "ent-1");
+      pickEntity("Payload", "ent-1");
       expect(text("message-representation-explanation")).toBe("Auto → JSON Schema (draft-07) — Google Pub/Sub channels default to JSON Schema");
     });
 
@@ -1247,7 +1248,7 @@ describe("MessagesSection: nothing is lost, nothing empty is added", () => {
   it("a new message with only a payload gives a valid document with no empty extras", async () => {
     const { probe } = await renderMessages();
     click("message-add");
-    type(field("Payload entity"), "ent-2");
+    pickEntity("Payload", "ent-2");
     expect(probe.draft.doc.messages[1]).toEqual({ key: "message", payload: { entityId: "ent-2", entityVersionId: "ver-2" }, traitKeys: [] });
     expect(parseEventDocument(probe.draft.doc).success).toBe(true);
     expect(probe.draft.problems).toEqual([]);

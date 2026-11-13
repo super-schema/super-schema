@@ -21,7 +21,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
-import { centerPanel, createEventFromMenu, expectNoRawDbText, productUrlOf } from "./helpers/event-builder";
+import { centerPanel, createEventFromMenu, expectNoRawDbText, productUrlOf, pickEntity } from "./helpers/event-builder";
 
 const NOT_FOUND_COPY = "This page could not be found";
 
@@ -156,7 +156,7 @@ async function addMessage(page: Page, title: string, payloadEntityName: string, 
   const titleInput = main.getByTestId(ID.messageTitle);
   await titleInput.fill(title);
   await main.getByTestId(ID.messagePane("payload")).click();
-  await main.getByTestId(ID.payloadPicker).getByLabel("Payload entity").selectOption({ label: payloadEntityName });
+  await pickEntity(main.getByTestId(ID.payloadPicker), "Payload", payloadEntityName);
   await main.getByTestId(ID.messagePane("channels")).click();
   await main.getByTestId(ID.messageChannelOption(channelKey)).check();
   await leaveForm(page);
@@ -240,7 +240,7 @@ test.describe("event builder end to end", () => {
       await expect(main.getByTestId(ID.channelParameters)).toContainText("tenantId");
       await main.getByTestId(ID.outline("messages")).click();
       await expect(main.getByTestId(ID.messageTitle)).toHaveValue(flow.messageTitle);
-      await expect(main.getByTestId(ID.payloadPicker).getByLabel("Payload entity")).toHaveValue(f.productEntity.id);
+      await expect(main.getByTestId(ID.payloadPicker).getByLabel("Payload entity")).toHaveAttribute("data-value", f.productEntity.id);
       await main.getByTestId(ID.outline("operations")).click();
       await expect(main.getByTestId(ID.operationKeyValue)).toHaveText(flow.operationKey);
       await expect(main.getByTestId(ID.operationChannel)).toHaveValue(flow.channelKey);

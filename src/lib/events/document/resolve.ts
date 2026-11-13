@@ -332,6 +332,7 @@ export function resolveDocument(input: ResolveDocumentInput): Result<ResolvedEve
     components: clone(doc.components ?? {}) as EventSpecLocalComponents,
   };
   if (doc.defaultContentType !== undefined) spec.defaultContentType = doc.defaultContentType;
+  if (doc.cloudEventsSource !== undefined) spec.cloudEventsSource = doc.cloudEventsSource;
   if (emitAll) spec.emitAll = true;
   return ok(spec);
 }

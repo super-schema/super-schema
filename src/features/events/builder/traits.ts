@@ -4,7 +4,7 @@
 // called and how many properties it brings. A "set" is a document trait (`doc.traits[]`): internal names keep saying trait.
 import type { TraitKind } from "@/lib/event-specs/types";
 import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
-import { propertySummary } from "@/lib/events/bundled-traits";
+import { bundledMarker, propertySummary } from "@/lib/events/bundled-traits";
 import { isLibraryTrait, type DocTrait, type EventDocument } from "@/lib/events/document/types";
 import { suggestKey } from "@/lib/events/templates/keys";
 import type { EntityPin } from "@/lib/events/types";
@@ -177,4 +177,23 @@ export function pinnedHeaders(pin: EntityPin | null | undefined, entityOptions: 
   const entity = entityOptions.find((e) => e.id === pin.entityId);
   const versionLabel = entity && pin.entityVersionId !== null && pin.entityVersionId === entity.latestVersionId ? entity.latestVersionLabel : null;
   return { name: entity?.name ?? pin.entityId, versionLabel, href: entity?.href ?? null };
+}
+
+/** Marker of the built-in CloudEvents trait (`x-bundled`). */
+export const CLOUDEVENTS_MARKER = "cloudevents@1.0";
+
+/** The built-in CloudEvents message trait among the library options, when the host offers it. */
+export function cloudEventsOption(library: readonly LibraryTraitOption[]): LibraryTraitOption | undefined {
+  return library.find((o) => o.kind === "MESSAGE" && o.spec !== undefined && bundledMarker(o.spec) === CLOUDEVENTS_MARKER);
+}
+
+/**
+ * `doc` with a new message `key` (already present) carrying the CloudEvents attributes: every event message gets the CloudEvents
+ * envelope by default. Unchanged when the library does not offer the built-in trait; the user can still remove it afterwards.
+ */
+export function withDefaultMessageTraits(doc: EventDocument, messageKey: string, library: readonly LibraryTraitOption[]): EventDocument {
+  const option = cloudEventsOption(library);
+  if (!option) return doc;
+  const added = addLibraryTrait(doc, option);
+  return applyTrait(added.doc, { kind: "message", key: messageKey }, added.key);
 }

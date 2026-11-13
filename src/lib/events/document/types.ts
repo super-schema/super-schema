@@ -95,6 +95,8 @@ export interface DocExternalRef { key: string; eventVersionId: string; kind: "ch
 export interface DocComponents { correlationIds?: Record<string, JsonObject>; parameters?: Record<string, JsonObject>; securitySchemes?: Record<string, DocSecurityScheme> }
 export interface EventDocument {
   documentVersion: 2; info: EventSpecInfo; defaultContentType?: string;
+  /** CloudEvents `source` of every message (the producing app or context); absent = derived from tenant/domain/product. */
+  cloudEventsSource?: string;
   servers: DocServer[]; channels: DocChannel[]; messages: DocMessage[]; traits: DocTrait[];
   operations: DocOperation[]; externalRefs: DocExternalRef[]; components?: DocComponents;
 }

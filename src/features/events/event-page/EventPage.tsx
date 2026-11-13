@@ -54,7 +54,7 @@ export function EventPage({ data }: { data: EventPageData }) {
 }
 
 function EventPageBody({ data }: { data: EventPageData }) {
-  const { event, productId, domainSlug, productSlug, entityOptions, libraryTraits, crumbs, listHref } = data;
+  const { event, productId, domainId, tenantSlug, domainSlug, productSlug, entityOptions, libraryTraits, crumbs, listHref } = data;
   const router = useRouter();
   const invalidateDomainsTree = useInvalidateDomainsTree();
 
@@ -69,7 +69,7 @@ function EventPageBody({ data }: { data: EventPageData }) {
     router.refresh();
   }, [router]);
   const draft = useEventDraft({ event, productId, saveDocument: updateEventDocumentAction, onSaved });
-  const builderOptions = useMemo(() => ({ entityOptions, libraryTraits }), [entityOptions, libraryTraits]);
+  const builderOptions = useMemo(() => ({ entityOptions, libraryTraits, scope: { tenantSlug, domainId, domainSlug, productId, productSlug } }), [entityOptions, libraryTraits, tenantSlug, domainId, domainSlug, productId, productSlug]);
 
   // ----- leaving with unsaved edits -----
   // Stops guarding once the event is deleted: the page pushes `listHref` itself, and what is unsaved belongs to an event that is gone.

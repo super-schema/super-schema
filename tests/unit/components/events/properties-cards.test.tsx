@@ -128,11 +128,11 @@ describe("MessagePropertiesCard: the properties where they are used", () => {
     expect(text("message-prop-CloudEvents-row-specversion-allowed")).toBe("Always1.0");
   });
 
-  it("shows a built-in set locked: its panel has no input, select or button to edit it", async () => {
+  it("shows a built-in set locked: its panel has no control to edit the definition (only the event's CloudEvents source value)", async () => {
     const { probe } = await renderMessages();
     await addFromCard("message", "builtin-ce");
     const panel = screen.getByTestId("message-prop-panel-CloudEvents");
-    expect(panel.querySelectorAll("input, select, textarea, button")).toHaveLength(0);
+    expect(Array.from(panel.querySelectorAll("input, select, textarea, button")).map((el) => el.getAttribute("aria-label"))).toEqual(["source value"]);
     expect(probe.draft.dirty).toBe(true);
   });
 
@@ -484,4 +484,56 @@ describe("OperationPropertiesCard", () => {
     renderOperations({ doc, options: OPTIONS });
     expect(text("operation-prop-error")).toContain("Gone");
   });
+});
+
+describe("CloudEvents on every message", () => {
+  const SCOPED: BuilderOptions = { ...OPTIONS, scope: { tenantSlug: "acme", domainSlug: "payments", domainId: "d1", productSlug: "checkout", productId: "p1" } };
+  it("a new message carries the built-in CloudEvents attributes by default", async () => {
+    renderSection(MessagesSection, { doc: baseDoc(), options: OPTIONS, item: null });
+    await screen.findByLabelText("Payload entity");
+    click("message-add");
+    await act(async () => {});
+    fireEvent.click(screen.getByTestId("message-card-properties-toggle"));
+    expect(text("message-prop-toggle-CloudEvents")).toContain("CloudEvents");
+    expect(text("message-prop-lock-CloudEvents")).toBe("Built in");
+  });
+  it("shows each attribute's value for this message: fixed, derived from the event, or an example", async () => {
+    const doc = baseDoc();
+    doc.traits = [{ key: "CloudEvents", kind: "MESSAGE", libraryTraitId: "builtin-ce" }];
+    doc.messages[0] = { ...doc.messages[0], traitKeys: ["CloudEvents"], contentType: "application/json" };
+    renderSection(MessagesSection, { doc, options: SCOPED, item: null });
+    await screen.findByLabelText("Payload entity");
+    await act(async () => {});
+    fireEvent.click(screen.getByTestId("message-card-properties-toggle"));
+    click("message-prop-toggle-CloudEvents");
+    const value = (name: string) => text(`message-prop-CloudEvents-row-${name}-value`) ?? "";
+    expect(value("specversion")).toContain("1.0");
+    expect(text("message-prop-CloudEvents-row-specversion-value-kind")).toBe("Fixed");
+    expect(value("type")).toContain("acme.payments.checkout.ordercreated");
+    expect((screen.getByTestId("message-prop-CloudEvents-row-source-value-input") as HTMLInputElement).placeholder).toBe("/acme/payments/checkout");
+    expect(value("datacontenttype")).toContain("application/json");
+    expect(text("message-prop-CloudEvents-row-datacontenttype-value-kind")).toBe("From this event");
+    expect(value("dataschema")).toContain("/schemas/payments/checkout/ordercreated");
+    expect(text("message-prop-CloudEvents-row-id-value-kind")).toBe("Example");
+  });
+});
+
+it("lets the user set the CloudEvents source for the whole event, and go back to the default", async () => {
+  const doc = baseDoc();
+  doc.traits = [{ key: "CloudEvents", kind: "MESSAGE", libraryTraitId: "builtin-ce" }];
+  doc.messages[0] = { ...doc.messages[0], traitKeys: ["CloudEvents"] };
+  const SCOPED: BuilderOptions = { ...OPTIONS, scope: { tenantSlug: "acme", domainSlug: "payments", domainId: "d1", productSlug: "checkout", productId: "p1" } };
+  const { probe } = renderSection(MessagesSection, { doc, options: SCOPED, item: null });
+  const latest = () => probe.draft.doc;
+  await screen.findByLabelText("Payload entity");
+  await act(async () => {});
+  fireEvent.click(screen.getByTestId("message-card-properties-toggle"));
+  click("message-prop-toggle-CloudEvents");
+  const input = screen.getByLabelText("source value") as HTMLInputElement;
+  expect(text("message-prop-CloudEvents-row-source-value-kind")).toBe("Default");
+  fireEvent.change(input, { target: { value: "urn:app:accounts-service" } });
+  expect(latest().cloudEventsSource).toBe("urn:app:accounts-service");
+  expect(text("message-prop-CloudEvents-row-source-value-kind")).toBe("Set for this event");
+  fireEvent.click(screen.getByRole("button", { name: "Use default" }));
+  expect(latest()).not.toHaveProperty("cloudEventsSource");
 });

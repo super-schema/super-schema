@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TemplateFormContext } from "@/features/events/builder/template";
 import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
 import { field, renderField } from "./harness";
+import { entityOptionNames, entityValue, pickEntity } from "../helpers/pick-entity";
 
 const ENTITY_OPTIONS: EntityOption[] = [
   { id: "ent-1", name: "OrderCreated", ownerLabel: "Payments / Checkout", latestVersionId: "ver-1", latestVersionLabel: "v1.0" },
@@ -40,21 +41,21 @@ describe("entityPin control", () => {
     const group = screen.getByTestId("f-payload");
     expect(group.getAttribute("role")).toBe("group");
     expect(group.contains(screen.getByLabelText("Payload entity"))).toBe(true);
-    const entity = screen.getByLabelText("Payload entity") as HTMLSelectElement;
-    expect(Array.from(entity.options).map((o) => o.textContent)).toEqual(["Select an entity", "OrderCreated", "OrderCancelled"]);
+    expect(screen.getByLabelText("Payload entity").textContent).toBe("Select an entity");
+    expect(entityOptionNames("Payload")).toEqual(["OrderCreated", "OrderCancelled"]);
   });
 
   it("choosing an entity writes the pin (entity and its latest version)", async () => {
     const { probe } = renderField(PAYLOAD, { context: CONTEXT });
     await settle();
-    fireEvent.change(screen.getByLabelText("Payload entity"), { target: { value: "ent-2" } });
+    pickEntity("Payload", "ent-2");
     expect(probe.value).toEqual({ payload: { entityId: "ent-2", entityVersionId: "ver-2" } });
   });
 
   it("shows the pin it is given and lets the user pick a version", async () => {
     const { probe } = renderField(PAYLOAD, { context: CONTEXT, value: { payload: { entityId: "ent-1", entityVersionId: "ver-1" } } });
     await settle();
-    expect((screen.getByLabelText("Payload entity") as HTMLSelectElement).value).toBe("ent-1");
+    expect(entityValue("Payload")).toBe("ent-1");
     await act(async () => {});
     expect((screen.getByLabelText("Payload version") as HTMLSelectElement).value).toBe("ver-1");
     fireEvent.change(screen.getByLabelText("Payload version"), { target: { value: "ver-0" } });
@@ -64,17 +65,15 @@ describe("entityPin control", () => {
   it("an optional pin can be cleared, which removes the key", async () => {
     const { probe } = renderField(HEADERS, { context: CONTEXT, value: { headers: { entityId: "ent-1", entityVersionId: "ver-1" } }, defaultOpenMore: true });
     await settle("Headers");
-    const entity = screen.getByLabelText("Headers entity") as HTMLSelectElement;
-    expect(Array.from(entity.options)[0].textContent).toBe("— none —");
-    fireEvent.change(entity, { target: { value: "" } });
+    expect(entityOptionNames("Headers")[0]).toBe("— none —");
+    pickEntity("Headers", "");
     expect(probe.value).toEqual({});
   });
 
   it("a required pin has no 'none' choice once an entity is chosen", async () => {
     renderField(PAYLOAD, { context: CONTEXT, value: { payload: { entityId: "ent-1", entityVersionId: "ver-1" } } });
     await settle();
-    const entity = screen.getByLabelText("Payload entity") as HTMLSelectElement;
-    expect(Array.from(entity.options).map((o) => o.textContent)).toEqual(["OrderCreated", "OrderCancelled"]);
+    expect(entityOptionNames("Payload")).toEqual(["OrderCreated", "OrderCancelled"]);
   });
 
   it("uses the context's version loader instead of the server action", async () => {
@@ -98,12 +97,13 @@ describe("entityPin control", () => {
   it("copes with no entity options", async () => {
     renderField(PAYLOAD);
     await settle();
-    expect(Array.from((screen.getByLabelText("Payload entity") as HTMLSelectElement).options).map((o) => o.textContent)).toEqual(["Select an entity"]);
+    expect(screen.getByLabelText("Payload entity").textContent).toBe("Select an entity");
+    expect(entityOptionNames("Payload")).toEqual([]);
   });
 
   it("disables the picker with the form", async () => {
     renderField(PAYLOAD, { context: CONTEXT, disabled: true });
     await settle();
-    expect((screen.getByLabelText("Payload entity") as HTMLSelectElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Payload entity") as HTMLButtonElement).disabled).toBe(true);
   });
 });

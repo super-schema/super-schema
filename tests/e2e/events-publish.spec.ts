@@ -23,7 +23,7 @@ import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
 import { createPublishedEntity, type PublishedEntity } from "./helpers/entity-versions";
 import {
-  addChannel, addMessage, addOperation, addServer, BUILDER_ID, centerPanel, createEventFromMenu, expectNoRawDbText, productUrlOf,
+  addChannel, addMessage, addOperation, addServer, BUILDER_ID, centerPanel, createEventFromMenu, expectNoRawDbText, productUrlOf, pickEntity,
 } from "./helpers/event-builder";
 
 const PUBLISH_TIMEOUT = 120_000;
@@ -239,7 +239,7 @@ test.describe("event publish end to end", () => {
 
     await test.step("move the payload to another entity and Save", async () => {
       await main.getByTestId(BUILDER_ID.outline("messages")).click();
-      await picker.getByLabel("Payload entity").selectOption({ label: other.name });
+      await pickEntity(picker, "Payload", other.name);
       await save(page);
     });
 

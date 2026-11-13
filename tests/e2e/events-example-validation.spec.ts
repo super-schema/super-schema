@@ -19,7 +19,7 @@ import { randomBytes } from "node:crypto";
 import type { Locator, Page } from "@playwright/test";
 import { test, expect, unique } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, pg, type NavFixtures } from "./helpers/db";
-import { centerPanel, createEventFromMenu, productUrlOf } from "./helpers/event-builder";
+import { centerPanel, createEventFromMenu, productUrlOf, pickEntity } from "./helpers/event-builder";
 
 const ID = {
   outlineMessages: "outline-messages",
@@ -124,7 +124,7 @@ test.describe("message examples against their payload schema", () => {
       await main.getByTestId(ID.detailsPane).click();
       await main.getByTestId(ID.messageTitle).fill("Order created");
       await main.getByTestId(ID.payloadPane).click();
-      await main.getByTestId(ID.payloadPicker).getByLabel("Payload entity").selectOption({ label: entity.name });
+      await pickEntity(main.getByTestId(ID.payloadPicker), "Payload", entity.name);
     });
 
     await test.step("add an example: until the schema is known the button waits, then it is usable", async () => {

@@ -81,7 +81,9 @@ function readOutlineMode(): OutlineMode {
   }
 }
 
-export interface BuilderOptions { entityOptions: EntityOption[]; libraryTraits: LibraryTraitOption[] }
+/** Where the event lives: the entity picker starts on its product, and CloudEvents values are derived from it. */
+export interface BuilderScope { tenantSlug: string; domainId: string; domainSlug: string; productId: string; productSlug: string }
+export interface BuilderOptions { entityOptions: EntityOption[]; libraryTraits: LibraryTraitOption[]; scope?: BuilderScope }
 
 export interface SectionProps {
   draft: DraftState;

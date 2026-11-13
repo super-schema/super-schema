@@ -17,8 +17,9 @@ import type { JsonObject, PayloadFormat } from "@/lib/event-specs/types";
 import type { DocMessage, DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import { TEMPLATES, type ObjectTemplate } from "@/lib/events/templates";
 import type { EntityPin } from "@/lib/events/types";
-import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
+import type { EntityOption, PickerScope } from "@/features/events/shared/EntityPinPicker";
 import { autoRenameKey, leftForm, newKey } from "../auto-key";
+import { withDefaultMessageTraits } from "../traits";
 import type { SectionProps } from "../EventBuilder";
 import { IdentifierDisclosure } from "../Identifier";
 import { messagePropertiesTitle } from "../labels";
@@ -109,15 +110,15 @@ function templateFor(defaultContentType: string | undefined): ObjectTemplate {
 }
 
 /** An entity + version picker with its error underneath, linked to it with `aria-describedby` on the wrapping group. */
-function PinField({ id, label, hint, optional, entities, value, onChange, error, autoFocus }: {
-  id: string; label: string; hint?: string; optional?: boolean; entities: EntityOption[]; value: EntityPin | null;
+function PinField({ id, label, hint, optional, entities, scope, value, onChange, error, autoFocus }: {
+  id: string; label: string; hint?: string; optional?: boolean; entities: EntityOption[]; scope?: PickerScope; value: EntityPin | null;
   onChange: (pin: EntityPin | null) => void; error?: string; autoFocus?: boolean;
 }) {
   const errorId = `${id}-error`;
   return (
     <div role="group" data-testid={`${id}-group`} aria-describedby={error ? errorId : undefined} className="space-y-space-1">
       <Suspense fallback={<p data-testid={`${id}-loading`} className="text-caption text-muted-foreground">{label}: loading…</p>}>
-        <EntityPinPicker id={id} label={label} hint={hint} optional={optional} entities={entities} value={value} onChange={onChange} autoFocus={autoFocus} />
+        <EntityPinPicker id={id} label={label} hint={hint} optional={optional} entities={entities} scope={scope} value={value} onChange={onChange} autoFocus={autoFocus} />
       </Suspense>
       {error && <p id={errorId} data-testid={errorId} className="text-body-small text-destructive">{error}</p>}
     </div>
@@ -146,7 +147,8 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
   function addMessage() {
     // A placeholder key, named from the name or title once the user leaves the form.
     const key = newKey(doc, "message");
-    update((d) => ({ ...d, messages: [...d.messages, { key, payload: NO_PAYLOAD, traitKeys: [] }] }));
+    // Every new message carries the CloudEvents envelope by default (removable like any other set).
+    update((d) => withDefaultMessageTraits({ ...d, messages: [...d.messages, { key, payload: NO_PAYLOAD, traitKeys: [] }] }, key, options.libraryTraits));
     setAddedKey(key);
     pane.select("payload");
     onSelectItem(key);
@@ -327,7 +329,7 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
       <div data-testid="payload-row" className="flex flex-wrap items-start gap-x-space-4 gap-y-space-3">
         <div className="min-w-0 flex-1 basis-64">
           <PinField
-            id="payload" label="Payload" entities={options.entityOptions} error={errorAt("/payload")} autoFocus={autoFocusPayload}
+            id="payload" label="Payload" entities={options.entityOptions} scope={options.scope} error={errorAt("/payload")} autoFocus={autoFocusPayload}
             hint="Required. The entity this message carries."
             value={message.payload.entityId ? message.payload : null}
             onChange={(pin) => patch((m) => ({ ...m, payload: pin ?? NO_PAYLOAD }))}
@@ -345,13 +347,13 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
       />
       <OptionalPin id="headers" addLabel="Add headers" value={message.headers ?? null} error={errorAt("/headers")}>
         <PinField
-          id="headers" label="Headers" optional entities={options.entityOptions} error={errorAt("/headers")}
+          id="headers" label="Headers" optional entities={options.entityOptions} scope={options.scope} error={errorAt("/headers")}
           value={message.headers ?? null} onChange={(pin) => setOptionalPin("headers", pin)}
         />
       </OptionalPin>
       <OptionalPin id="key-pin" addLabel="Add message key" value={message.keyPin ?? null} error={errorAt("/keyPin")}>
         <PinField
-          id="key-pin" label="Message key" optional entities={options.entityOptions} error={errorAt("/keyPin")}
+          id="key-pin" label="Message key" optional entities={options.entityOptions} scope={options.scope} error={errorAt("/keyPin")}
           hint="Optional. The entity describing the record key, for example a Kafka key."
           value={message.keyPin ?? null} onChange={(pin) => setOptionalPin("keyPin", pin)}
         />

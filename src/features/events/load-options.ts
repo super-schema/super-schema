@@ -31,13 +31,14 @@ export async function loadEntityOptions(tenantId: string, readable: Prisma.Entit
     orderBy: { name: "asc" },
     select: {
       id: true, name: true, slug: true, latestVersionId: true, metadata: true, latestVersion: { select: { major: true, minor: true, patch: true, stage: true } },
+      domainId: true, productId: true,
       domain: { select: { name: true, slug: true } }, product: { select: { name: true, slug: true } },
     },
   });
   return rows.map((r) => {
     const sourceFormat = entitySourceFormat(r.metadata);
     return {
-      id: r.id, name: r.name, ownerLabel: ownerLabel(r), latestVersionId: r.latestVersionId,
+      id: r.id, name: r.name, ownerLabel: ownerLabel(r), latestVersionId: r.latestVersionId, domainId: r.domainId, productId: r.productId,
       latestVersionLabel: r.latestVersion ? formatVersionLabel(r.latestVersion, r.latestVersion.stage) : null,
       href: assetHref({ kind: "entity", slug: r.slug, domainSlug: r.domain?.slug ?? null, productSlug: r.product?.slug ?? null }),
       ...(sourceFormat && { sourceFormat }),

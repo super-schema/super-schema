@@ -48,6 +48,8 @@ const chip = () => screen.getByTestId("code-status");
 const click = (testId: string) => fireEvent.click(screen.getByTestId(testId));
 
 beforeEach(() => {
+  // These tests read the code views; the panel opens on the view last chosen (Visual the first time).
+  localStorage.setItem("event-code-format", "yaml");
   vi.useFakeTimers();
   vi.clearAllMocks();
   h.preview.mockResolvedValue(emission());
@@ -56,6 +58,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.useRealTimers();
 });
 
@@ -108,7 +111,7 @@ describe("EventCodePanel: the code", () => {
 });
 
 describe("EventCodePanel: YAML | JSON", () => {
-  it("starts on YAML and switches to the JSON of the same document and back", () => {
+  it("starts on the remembered YAML view and switches to the JSON of the same document and back", () => {
     const p = props();
     render(<EventCodePanel {...p} />);
     const instant = instantOf(p.doc);
@@ -393,5 +396,28 @@ describe("EventCodePanel: a draft with problems", () => {
     expect(chip().getAttribute("data-state")).toBe("rendering");
     await flush(CODE_DEBOUNCE_MS);
     expect(chip().getAttribute("data-state")).toBe("full");
+  });
+});
+
+describe("EventCodePanel: Visual", () => {
+  it("opens on Visual the first time, shows the flow, channels and messages, and hides what is not set", () => {
+    localStorage.clear();
+    const p = props();
+    render(<EventCodePanel {...p} />);
+    expect(screen.getByTestId("code-format-visual").getAttribute("aria-pressed")).toBe("true");
+    const visual = screen.getByTestId("asyncapi-visual");
+    expect(visual.textContent).toContain("Orders");
+    expect(screen.getByTestId("visual-channels")).toBeTruthy();
+    expect(screen.getByTestId("visual-messages")).toBeTruthy();
+    expect(screen.queryByTestId("visual-security")).toBeNull();
+    expect(screen.getByTestId("code-copy").textContent).toContain("Copy YAML");
+  });
+  it("remembers the chosen view", () => {
+    localStorage.clear();
+    const first = render(<EventCodePanel {...props()} />);
+    click("code-format-json");
+    first.unmount();
+    render(<EventCodePanel {...props()} />);
+    expect(screen.getByTestId("code-format-json").getAttribute("aria-pressed")).toBe("true");
   });
 });

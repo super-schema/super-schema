@@ -14,9 +14,15 @@ import { JsonEditor } from "@/features/events/builder/template/controls/JsonEdit
 import { DiagnosticsList } from "@/features/events/event-specs/DiagnosticsList";
 import { useEventCodeSource, type EventCodeSource } from "./event-code-source";
 import { useEventCode, type CodeStatus } from "./use-event-code";
+import { AsyncApiVisual } from "./AsyncApiVisual";
 
-type Format = "yaml" | "json";
-const FORMAT_LABEL: Record<Format, string> = { yaml: "YAML", json: "JSON" };
+type Format = "visual" | "yaml" | "json";
+const FORMAT_LABEL: Record<Format, string> = { visual: "Visual", yaml: "YAML", json: "JSON" };
+const FORMAT_KEY = "event-code-format";
+/** The view last chosen in this browser; Visual the first time. */
+function storedFormat(): Format {
+  try { const v = localStorage.getItem(FORMAT_KEY); return v === "yaml" || v === "json" || v === "visual" ? v : "visual"; } catch { return "visual"; }
+}
 
 const CHIP: Record<CodeStatus, { label: string; title: string; variant: "secondary" | "success" | "outline" }> = {
   draft: { label: "Draft preview", title: "Payload schemas are placeholders (Entity@version).", variant: "secondary" },
@@ -31,12 +37,15 @@ const CHIP: Record<CodeStatus, { label: string; title: string; variant: "seconda
  */
 export function EventCodePanel({ eventId, productId, productSlug, doc, problems, entityLabels, versionLabels, libraryTraits }: EventCodeSource) {
   const code = useEventCode({ eventId, productId, productSlug, doc, blocked: problems.length > 0, entityLabels, versionLabels, libraryTraits });
-  const [format, setFormat] = useState<Format>("yaml");
+  const [format, setFormatState] = useState<Format>(storedFormat);
+  const setFormat = (f: Format) => { setFormatState(f); try { localStorage.setItem(FORMAT_KEY, f); } catch { /* per-browser convenience only */ } };
+  // Visual has no text of its own: Copy copies the YAML.
+  const copyFormat: Exclude<Format, "visual"> = format === "json" ? "json" : "yaml";
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (copiedTimer.current !== null) clearTimeout(copiedTimer.current); }, []);
 
-  const text = format === "yaml" ? code.yaml : code.json;
+  const text = copyFormat === "yaml" ? code.yaml : code.json;
   const hasCode = code.document !== null && text !== "";
 
   async function copy() {
@@ -48,7 +57,7 @@ export function EventCodePanel({ eventId, productId, productSlug, doc, problems,
       toast.error("Could not copy the code");
       return;
     }
-    toast.success(`${FORMAT_LABEL[format]} copied`);
+    toast.success(`${FORMAT_LABEL[copyFormat]} copied`);
     setCopied(true);
     if (copiedTimer.current !== null) clearTimeout(copiedTimer.current);
     copiedTimer.current = setTimeout(() => setCopied(false), 2000);
@@ -75,7 +84,7 @@ export function EventCodePanel({ eventId, productId, productSlug, doc, problems,
         </div>
         <div className="flex items-center gap-space-2">
           <div role="group" aria-label="Code format" data-testid="code-format" className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
-            {(["yaml", "json"] as const).map((f) => (
+            {(["visual", "yaml", "json"] as const).map((f) => (
               <Button
                 key={f} type="button" size="xs" variant={format === f ? "secondary" : "ghost"} aria-pressed={format === f}
                 data-testid={`code-format-${f}`} onClick={() => setFormat(f)}
@@ -86,7 +95,7 @@ export function EventCodePanel({ eventId, productId, productSlug, doc, problems,
           </div>
           <Button type="button" size="xs" variant="outline" disabled={!hasCode} onClick={() => { void copy(); }} data-testid="code-copy" className="gap-1">
             {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-            {copied ? "Copied" : "Copy"}
+            {copied ? "Copied" : format === "visual" ? "Copy YAML" : "Copy"}
           </Button>
         </div>
       </div>
@@ -115,13 +124,17 @@ export function EventCodePanel({ eventId, productId, productSlug, doc, problems,
         )}
       </section>
 
-      {hasCode ? (
+      {hasCode && format === "visual" && code.document ? (
+        <div role="region" aria-label="AsyncAPI overview" className="min-h-0 flex-1 overflow-auto">
+          <AsyncApiVisual document={code.document} />
+        </div>
+      ) : hasCode ? (
         <div role="region" aria-label="AsyncAPI code" className="relative min-h-0 flex-1">
           {/* absolutely placed so the editor has a definite height to fill; it scrolls inside itself */}
           <div className="absolute inset-0 p-space-2">
             <JsonEditor
-              id="event-code-text" value={text} language={format} readOnly height="100%"
-              ariaLabel={`AsyncAPI document as ${FORMAT_LABEL[format]}`}
+              id="event-code-text" value={text} language={copyFormat} readOnly height="100%"
+              ariaLabel={`AsyncAPI document as ${FORMAT_LABEL[copyFormat]}`}
             />
           </div>
         </div>

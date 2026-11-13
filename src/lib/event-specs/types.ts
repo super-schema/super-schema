@@ -186,6 +186,8 @@ export type ResolvedEventSpec = {
   /** `version` is `MAJOR.MINOR` for a published version (spec §6.1). */
   info: EventSpecInfo & { version: string };
   defaultContentType?: string;
+  /** Emitted as `info.x-cloudevents-source`. */
+  cloudEventsSource?: string;
   servers: EventSpecServer[];
   operations: ResolvedOperation[];
   channels: ResolvedChannel[];

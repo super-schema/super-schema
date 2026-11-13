@@ -14,6 +14,9 @@ export interface EventPageData {
   event: EventDetail;
   /** The route's product (tenant-scoped): what every draft call passes as the owner. */
   productId: string;
+  /** The route's domain and tenant: the entity picker starts on this product and widens to the domain or tenant. */
+  domainId: string;
+  tenantSlug: string;
   domainSlug: string;
   productSlug: string;
   /** Every entity of the tenant, for the payload / headers / key pins. */
@@ -93,6 +96,8 @@ export async function loadEventPage(params: {
   return {
     event: detail.data,
     productId: route.product.id,
+    domainId: route.domain.id,
+    tenantSlug: route.tenantSlug,
     domainSlug: route.domain.slug,
     productSlug: route.product.slug,
     entityOptions,

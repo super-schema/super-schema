@@ -306,6 +306,10 @@ export function classifyEventBump(prev: EventBumpSide, next: EventBumpSide): Bum
   if ((prev.doc.defaultContentType ?? "") !== (next.doc.defaultContentType ?? "")) {
     c.major.push(`defaultContentType changed from "${prev.doc.defaultContentType ?? "(none)"}" to "${next.doc.defaultContentType ?? "(none)"}"`);
   }
+  // Consumers may route or filter on `source`: a different producer identity is a minor change.
+  if ((prev.doc.cloudEventsSource ?? "") !== (next.doc.cloudEventsSource ?? "")) {
+    c.minor.push(`CloudEvents source changed from "${prev.doc.cloudEventsSource ?? "(derived)"}" to "${next.doc.cloudEventsSource ?? "(derived)"}"`);
+  }
   compareShell(c);
   return decide(c.major, c.minor, c.patch);
 }

@@ -10,13 +10,16 @@
 //   - operation set                      -> its metadata (title, summary, description, tags, docs): read-only from the library, editable if local
 // Test ids (`p` = message | operation): `${p}-props`, `${p}-prop-add` (the chooser trigger), `${p}-prop-empty`, `${p}-prop-error`,
 // `${p}-prop-row-<key>`, `-toggle-<key>`, `-lock-<key>`, `-count-<key>`, `-remove-<key>`, `-panel-<key>`; the table inside is `${p}-prop-<key>-…`.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Lock, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { JsonObject, TraitKind } from "@/lib/event-specs/types";
 import { isLibraryTrait, type DocTrait, type DocumentProblem } from "@/lib/events/document/types";
 import { TEMPLATES } from "@/lib/events/templates";
+import { bundledMarker } from "@/lib/events/bundled-traits";
+import { cloudEventsValues } from "../cloudevents-values";
+import { CLOUDEVENTS_MARKER } from "../traits";
 import { leftForm } from "../auto-key";
 import type { BuilderOptions } from "../EventBuilder";
 import {
@@ -180,6 +183,21 @@ export function PropertiesCard({ kind, draft, options, target, traitKeys, proble
   }
 
   const itemWord = p === "message" ? "message" : "operation";
+  // The CloudEvents attributes as they apply to this message (fixed, derived from the event, or an example).
+  const message = p === "message" ? doc.messages.find((m) => m.key === target.key) : undefined;
+  const cloudEvents = useMemo(
+    () => (message ? cloudEventsValues({ doc, message, entityOptions: options.entityOptions, scope: options.scope, origin: typeof window === "undefined" ? undefined : window.location.origin }) : undefined),
+    [doc, message, options.entityOptions, options.scope],
+  );
+  // Only `source` is editable; it is one value for the whole event, and empty restores the derived default.
+  function setCloudEventsValue(name: string, value: string) {
+    if (name !== "source") return;
+    update((d) => {
+      const next = { ...d };
+      if (value.trim()) next.cloudEventsSource = value; else delete next.cloudEventsSource;
+      return next;
+    });
+  }
 
   return (
     <div data-testid={`${p}-props`} className="space-y-space-3">
@@ -258,6 +276,8 @@ export function PropertiesCard({ kind, draft, options, target, traitKeys, proble
                         </p>
                         <PropertiesTable
                           idPrefix={idPrefix} headers={traitHeaders(trait, library)} summary={option.properties} readOnly note={option.bundled ? BUILT_IN_NOTE : LIBRARY_NOTE}
+                          values={option.spec && bundledMarker(option.spec) === CLOUDEVENTS_MARKER ? cloudEvents : undefined}
+                          onValueChange={setCloudEventsValue}
                         />
                       </>
                     ) : (
