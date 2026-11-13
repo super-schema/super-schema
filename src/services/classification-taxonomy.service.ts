@@ -8,6 +8,7 @@
 
 import { ctxCan } from "@/lib/access";
 import { prisma } from "@/lib/db";
+import { rederiveForLevel } from "@/services/metadata-rederive.service";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -219,6 +220,11 @@ export async function updateClassification(
     where: { id: parsed.data.id },
     data,
   });
+
+  // A custom level's class moved: the derived attribute values of every field classified with it follow.
+  if (!existing.isSystem && updated.classNumber !== existing.classNumber) {
+    await rederiveForLevel(existing.name);
+  }
 
   return ok(toClassificationLevel(updated));
 }
