@@ -83,6 +83,9 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+const rederiveMock = vi.hoisted(() => vi.fn(async () => 0));
+vi.mock("@/services/metadata-rederive.service", () => ({ rederiveForLevel: rederiveMock }));
+
 import {
   getClassificationLevels,
   createClassification,
@@ -282,6 +285,33 @@ describe("Classification Taxonomy Service", () => {
 
     it("system defaults carry the fixed scale", () => {
       expect(Object.fromEntries(SYSTEM_CLASSIFICATION_DEFAULTS.map((d) => [d.name, d.classNumber]))).toEqual({ PII: 2, SENSITIVE: 3, INTERNAL: 4, PUBLIC: 5 });
+    });
+  });
+
+  describe("updateClassification rederive wiring", () => {
+    const mkCustom = async (classNumber: number) => {
+      const created = await createClassification(
+        { name: "financial", displayColor: "#111111", bgColor: "#11111120", textColor: "#111111", description: "", classNumber, sortOrder: 9 },
+        adminCtx
+      );
+      if (!created.success) throw new Error("setup failed");
+      rederiveMock.mockClear();
+      return created.data;
+    };
+
+    it("calls rederiveForLevel with the level name when a custom level's class changes", async () => {
+      const level = await mkCustom(3);
+      const r = await updateClassification({ id: level.id, classNumber: 2 }, adminCtx);
+      expect(r.success).toBe(true);
+      expect(rederiveMock).toHaveBeenCalledTimes(1);
+      expect(rederiveMock).toHaveBeenCalledWith("FINANCIAL");
+    });
+
+    it("does not call it when the class number is unchanged or absent from the patch", async () => {
+      const level = await mkCustom(3);
+      await updateClassification({ id: level.id, classNumber: 3 }, adminCtx);
+      await updateClassification({ id: level.id, description: "only text" }, adminCtx);
+      expect(rederiveMock).not.toHaveBeenCalled();
     });
   });
 

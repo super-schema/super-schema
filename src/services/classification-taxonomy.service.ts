@@ -216,13 +216,14 @@ export async function updateClassification(
   if (parsed.data.sortOrder !== undefined) data.sortOrder = parsed.data.sortOrder;
   if (parsed.data.classNumber !== undefined) data.classNumber = parsed.data.classNumber;
 
+  const previousClassNumber = existing.classNumber;
   const updated = await prisma.classificationLevel.update({
     where: { id: parsed.data.id },
     data,
   });
 
   // A custom level's class moved: the derived attribute values of every field classified with it follow.
-  if (!existing.isSystem && updated.classNumber !== existing.classNumber) {
+  if (!existing.isSystem && updated.classNumber !== previousClassNumber) {
     await rederiveForLevel(existing.name);
   }
 
