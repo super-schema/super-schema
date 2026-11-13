@@ -7,8 +7,11 @@ import { METADATA_PACKS, getMetadataPack } from "@/lib/metadata-attributes/packs
 import {
   createFieldDictionaryEntry,
   deleteFieldDictionaryEntry,
+  dictionaryUsage,
+  dictionaryUsageCounts,
   listFieldDictionary,
   updateFieldDictionaryEntry,
+  type DictionaryUsageRow,
 } from "@/services/field-dictionary.service";
 import {
   createMetadataAttribute,
@@ -25,6 +28,8 @@ import type { Result } from "@/types/result";
 /** What the admin page shows: both dictionaries and every pack with whether it is installed. */
 export interface DictionariesOverview {
   fields: DictionaryEntry[];
+  /** Linked-field count per field entry id (absent = 0). */
+  usage: Record<string, number>;
   attributes: MetadataAttributeRecord[];
   packs: { id: string; name: string; description: string; keys: string[]; installed: boolean }[];
 }
@@ -92,16 +97,18 @@ function refresh() {
 export async function dictionariesOverviewAction(): Promise<DictionaryActionResult<DictionariesOverview>> {
   const g = await gate();
   if (!g.ok) return fail(g.error);
-  const [fields, attributes, installed] = await Promise.all([
+  const [fields, attributes, installed, usage] = await Promise.all([
     listFieldDictionary(g.tenantId),
     listMetadataAttributes(g.tenantId),
     installedPacks(g.tenantId),
+    dictionaryUsageCounts(g.tenantId),
   ]);
   if (!fields.success) return fail(fields.error.message);
   if (!attributes.success) return fail(attributes.error.message);
   return {
     data: {
       fields: fields.data,
+      usage,
       attributes: attributes.data,
       packs: METADATA_PACKS.map((p) => ({
         id: p.id,
@@ -112,6 +119,15 @@ export async function dictionariesOverviewAction(): Promise<DictionaryActionResu
       })),
     },
   };
+}
+
+/** The fields linked to one entry, with how each differs from it. Read-only. */
+export async function fieldEntryUsageAction(id: string): Promise<DictionaryActionResult<DictionaryUsageRow[]>> {
+  const g = await gate();
+  if (!g.ok) return fail(g.error);
+  const usage = await dictionaryUsage(g.tenantId, id);
+  if (!usage.success) return fail(usage.error.message);
+  return { data: usage.data };
 }
 
 export async function createFieldEntryAction(input: unknown) {

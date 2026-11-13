@@ -1,12 +1,15 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { assetHref } from "@/lib/navigation/asset-href";
 import { checkValueSchema } from "@/lib/metadata-attributes/value-schema";
+import type { DictionaryUsageRow } from "@/services/field-dictionary.service";
 import { METADATA_ATTRIBUTE_TARGETS } from "@/types/schemas/metadata-attribute";
 import {
   createAttributeAction,
@@ -14,6 +17,7 @@ import {
   deleteAttributeAction,
   deleteFieldEntryAction,
   dictionariesOverviewAction,
+  fieldEntryUsageAction,
   installPackAction,
   uninstallPackAction,
   updateAttributeAction,
@@ -95,7 +99,7 @@ export function DictionariesAdmin({ initial }: { initial: DictionariesOverview }
           <TabsTrigger value="attributes">Metadata attributes</TabsTrigger>
         </TabsList>
         <TabsContent value="fields">
-          <FieldsTab entries={data.fields} busy={busy} run={run} />
+          <FieldsTab entries={data.fields} usage={data.usage ?? {}} busy={busy} run={run} />
         </TabsContent>
         <TabsContent value="attributes">
           <AttributesTab data={data} busy={busy} run={run} />
@@ -105,7 +109,78 @@ export function DictionariesAdmin({ initial }: { initial: DictionariesOverview }
   );
 }
 
-function FieldsTab({ entries, busy, run }: { entries: DictionariesOverview["fields"]; busy: boolean; run: (c: () => Promise<Answer>) => Promise<boolean> }) {
+/** The page of a field in the usage drawer: built by the shared link helper (an Enterprise entity has no domain / product). */
+function usageHref(u: DictionaryUsageRow): string {
+  return assetHref({ kind: "field", entitySlug: u.entitySlug, fieldId: u.fieldId, domainSlug: u.domainSlug, productSlug: u.productSlug });
+}
+
+/** Read-only: the fields linked to an entry and which of their properties differ from it. Nothing is synced from here. */
+function UsageDrawer({ entry, onClose }: { entry: DictionariesOverview["fields"][number] | null; onClose: () => void }) {
+  const [state, setState] = useState<{ id: string; rows?: DictionaryUsageRow[]; error?: string } | null>(null);
+  const entryId = entry?.id;
+  useEffect(() => {
+    if (!entryId) return;
+    let live = true;
+    fieldEntryUsageAction(entryId).then((a) => {
+      if (live) setState("error" in a ? { id: entryId, error: a.error } : { id: entryId, rows: a.data });
+    });
+    return () => {
+      live = false;
+    };
+  }, [entryId]);
+  const shown = state && state.id === entryId ? state : null;
+  return (
+    <Sheet open={!!entry} onOpenChange={(open) => !open && onClose()}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Usage of {entry?.name}</SheetTitle>
+          <SheetDescription>Fields linked to this dictionary entry, and what differs from it. Fields are never changed from here.</SheetDescription>
+        </SheetHeader>
+        <div className="space-y-2 overflow-y-auto p-4">
+          {!shown && <p className="text-body-small text-muted-foreground">Loading...</p>}
+          {shown?.error && (
+            <p role="alert" className="text-body-small text-destructive">
+              {shown.error}
+            </p>
+          )}
+          {shown?.rows?.length === 0 && <p className="text-body-small text-muted-foreground">No fields use this entry.</p>}
+          {shown?.rows && shown.rows.length > 0 && (
+            <ul className="divide-y divide-border rounded-lg border border-border">
+              {shown.rows.map((u) => (
+                <li key={u.fieldId} className="space-y-1 p-3">
+                  <a href={usageHref(u)} className="font-medium underline">
+                    {u.entityName}.{u.fieldName}
+                  </a>
+                  <p className="text-body-small text-muted-foreground">
+                    {u.domainSlug && u.productSlug ? `${u.domainSlug} / ${u.productSlug}` : "Enterprise"}
+                  </p>
+                  {u.drift.length === 0 ? (
+                    <Badge variant="secondary">In sync</Badge>
+                  ) : (
+                    <p className="text-body-small">Differs: {u.drift.join(", ")}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function FieldsTab({
+  entries,
+  usage,
+  busy,
+  run,
+}: {
+  entries: DictionariesOverview["fields"];
+  usage: Record<string, number>;
+  busy: boolean;
+  run: (c: () => Promise<Answer>) => Promise<boolean>;
+}) {
+  const [usageOf, setUsageOf] = useState<DictionariesOverview["fields"][number] | null>(null);
   const [form, setForm] = useState(EMPTY_FIELD);
   const [editing, setEditing] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -133,6 +208,7 @@ function FieldsTab({ entries, busy, run }: { entries: DictionariesOverview["fiel
 
   return (
     <section aria-label="Field dictionary" className="space-y-space-4">
+      <UsageDrawer entry={usageOf} onClose={() => setUsageOf(null)} />
       {entries.length === 0 ? (
         <p className="text-body-small text-muted-foreground">No dictionary fields yet.</p>
       ) : (
@@ -142,8 +218,14 @@ function FieldsTab({ entries, busy, run }: { entries: DictionariesOverview["fiel
               <div>
                 <span className="font-medium">{e.name}</span> <span className="text-muted-foreground">{e.type}</span>
                 {e.aliases.length > 0 && <span className="ml-2 text-body-small text-muted-foreground">aka {e.aliases.join(", ")}</span>}
+                <span className="ml-2 text-body-small text-muted-foreground">
+                  {usage[e.id] ?? 0} {(usage[e.id] ?? 0) === 1 ? "field" : "fields"}
+                </span>
               </div>
               <div className="flex gap-2">
+                <Button variant="outline" size="sm" aria-label={`Usage of ${e.name}`} onClick={() => setUsageOf(e)}>
+                  Usage
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"

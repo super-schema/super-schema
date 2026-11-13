@@ -7,6 +7,7 @@
 
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
+import { dictionaryEntryFromField } from "@/lib/field-dictionary/from-field";
 import { validateValue } from "@/lib/metadata-attributes/value-schema";
 import { listMetadataAttributes } from "@/services/metadata-attribute.service";
 import {
@@ -204,4 +205,91 @@ export async function deleteFieldDictionaryEntry(tenantId: string, id: string): 
   if (!row) return notFound();
   await prisma.fieldDictionaryEntry.delete({ where: { id } });
   return ok({ id });
+}
+
+/** How many fields are linked to each of the tenant's entries (entries with none are absent). */
+export async function dictionaryUsageCounts(tenantId: string): Promise<Record<string, number>> {
+  const groups = await prisma.field.groupBy({
+    by: ["dictionaryEntryId"],
+    where: { dictionaryEntryId: { not: null }, entity: { tenantId } },
+    _count: { _all: true },
+  });
+  return Object.fromEntries(groups.flatMap((g) => (g.dictionaryEntryId ? [[g.dictionaryEntryId, g._count._all]] : [])));
+}
+
+export type DictionaryDrift = "type" | "description" | "classification" | "attributes";
+
+export interface DictionaryUsageRow {
+  fieldId: string;
+  fieldName: string;
+  entityId: string;
+  entityName: string;
+  entitySlug: string;
+  /** Slugs of the entity's domain and product; null for a tenant-level (Enterprise) entity. */
+  domainSlug: string | null;
+  productSlug: string | null;
+  /** Which properties of the field differ from the entry (the entry is the reference). Empty when the field matches. */
+  drift: DictionaryDrift[];
+}
+
+/** Key-order-independent JSON, so two attribute maps compare by content. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
+/**
+ * The fields linked to an entry (`Field.dictionaryEntryId`), each with the properties that differ from the entry. Read-only: nothing is synced.
+ * Both sides go through `dictionaryEntryFromField`, so attributes compare the way "save to dictionary" builds them (schema-scope values, derived
+ * members removed): a derived member that differs is not drift.
+ */
+export async function dictionaryUsage(tenantId: string, entryId: string): Promise<Result<DictionaryUsageRow[]>> {
+  const entry = await prisma.fieldDictionaryEntry.findFirst({ where: { id: entryId, tenantId } });
+  if (!entry) return notFound();
+  const listed = await listMetadataAttributes(tenantId, "field");
+  if (!listed.success) return listed;
+  const defs = listed.data;
+  const ref = toEntry(entry);
+  const refShape = dictionaryEntryFromField(
+    {
+      name: ref.name,
+      type: ref.type,
+      description: ref.description,
+      classification: ref.classification,
+      decorators: { typespec: { extensions: { openapi: ref.attributes } } },
+    },
+    defs,
+  );
+  const rows = await prisma.field.findMany({
+    where: { dictionaryEntryId: entryId, entity: { tenantId } },
+    include: { entity: { select: { id: true, name: true, slug: true, domain: { select: { slug: true } }, product: { select: { slug: true } } } } },
+    orderBy: [{ entity: { name: "asc" } }, { name: "asc" }],
+  });
+  return ok(
+    rows.map((f) => {
+      const shape = dictionaryEntryFromField(f, defs);
+      const drift: DictionaryDrift[] = [];
+      if (shape.type !== refShape.type) drift.push("type");
+      if (shape.description !== refShape.description) drift.push("description");
+      if (shape.classification !== refShape.classification) drift.push("classification");
+      if (canonical(shape.attributes) !== canonical(refShape.attributes)) drift.push("attributes");
+      return {
+        fieldId: f.id,
+        fieldName: f.name,
+        entityId: f.entity.id,
+        entityName: f.entity.name,
+        entitySlug: f.entity.slug,
+        domainSlug: f.entity.domain?.slug ?? null,
+        productSlug: f.entity.product?.slug ?? null,
+        drift,
+      };
+    }),
+  );
 }

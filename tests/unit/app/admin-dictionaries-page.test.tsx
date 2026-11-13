@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   install: vi.fn(),
   uninstall: vi.fn(),
   createAttr: vi.fn(),
+  usage: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
@@ -30,6 +31,7 @@ vi.mock("@/app/(dashboard)/admin/settings/dictionaries/actions", () => ({
   createFieldEntryAction: vi.fn(),
   updateFieldEntryAction: vi.fn(),
   deleteFieldEntryAction: vi.fn(),
+  fieldEntryUsageAction: h.usage,
 }));
 
 import DictionariesPage from "@/app/(dashboard)/admin/settings/dictionaries/page";
@@ -85,6 +87,27 @@ describe("the dictionaries admin page", () => {
     expect(screen.getByText(/Read-only/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Edit x-securityClassification/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Delete x-securityClassification/ })).toBeNull();
+  });
+
+  it("shows a usage count per field entry and a drawer listing the fields with their drift, linked to the field page", async () => {
+    signInAs(tenantMember("ADMIN", "tenant-1"));
+    const entry = { id: "d1", tenantId: "tenant-1", name: "email", aliases: [], type: "string", description: "", classification: null, attributes: {}, conceptId: null, createdAt: new Date(), updatedAt: new Date() };
+    h.overview.mockResolvedValue({ data: { fields: [entry], usage: { d1: 2 }, attributes: [], packs: [] } });
+    h.usage.mockResolvedValue({
+      data: [
+        { fieldId: "f1", fieldName: "email", entityId: "e1", entityName: "Customer", entitySlug: "customer", domainSlug: "pay", productSlug: "core", drift: ["description", "attributes"] },
+        { fieldId: "f2", fieldName: "email", entityId: "e2", entityName: "Order", entitySlug: "order", domainSlug: null, productSlug: null, drift: [] },
+      ],
+    });
+    render(await DictionariesPage());
+    expect(screen.getByText("2 fields")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Usage of email" }));
+    await waitFor(() => expect(h.usage).toHaveBeenCalledWith("d1"));
+    const link = await screen.findByRole("link", { name: /Customer/ });
+    expect(link).toHaveAttribute("href", "/schemas/pay/core/customer/fields/f1");
+    expect(screen.getByText(/description, attributes/)).toBeInTheDocument();
+    expect(screen.getByText("In sync")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Order/ })).toHaveAttribute("href", "/schemas/enterprise/entities/order/fields/f2");
   });
 
   it("shows value-schema errors inline and blocks saving", async () => {
