@@ -63,6 +63,7 @@ import {
   generateTargetDriftAlerts,
 } from "@/lib/validation/entity-alerts";
 import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-versions";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
 import { AlertsTab } from "./components/AlertsTab";
 import { ApiTab, type ApiOperationData } from "./components/ApiTab";
@@ -161,6 +162,8 @@ export interface EntityWorkspaceProps {
   };
   fields: FieldData[];
   domainPolicy: Record<string, unknown> | null;
+  /** The tenant's metadata attribute definitions (feeds the attribute alerts); optional so loaders and tests that predate it still compile. */
+  metadataAttributes?: MetadataAttributeDefinition[];
   apiServiceId: string | null;
   /** The entity's API service (name, base path); optional so loaders and tests that predate it still compile. */
   apiService?: ApiServiceInfo | null;
@@ -187,7 +190,7 @@ export interface EntityWorkspaceProps {
   capabilities?: EntityCapabilities;
 }
 
-export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiService = null, apiOperations, replacementEntity, referenceStaleness, referenceTargets, capabilities = NO_ENTITY_CAPABILITIES }: EntityWorkspaceProps) {
+export function EntityWorkspace({ level, entity, fields, domainPolicy, metadataAttributes, apiServiceId, apiService = null, apiOperations, replacementEntity, referenceStaleness, referenceTargets, capabilities = NO_ENTITY_CAPABILITIES }: EntityWorkspaceProps) {
   const readOnly_ = isReadOnly(entity.status as EntityStatus);
 
   // Track recent entity access for command palette
@@ -495,11 +498,11 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   const entityAlerts = useMemo(() => {
     const completenessReqs = (domainPolicy?.completenessRequirements as CompletenessRequirements) ?? undefined;
     return [
-      ...generateEntityAlerts(entity, fields, completenessReqs),
+      ...generateEntityAlerts(entity, fields, completenessReqs, metadataAttributes),
       ...generateReferenceStalenessAlerts(referenceStaleness ?? []),
       ...generateTargetDriftAlerts(entity, fields),
     ];
-  }, [entity, fields, domainPolicy, referenceStaleness]);
+  }, [entity, fields, domainPolicy, referenceStaleness, metadataAttributes]);
 
   const alertCount = entityAlerts.length;
 

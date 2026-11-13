@@ -13,6 +13,8 @@ import {
   toFieldOverridePolicies,
 } from "@/lib/schema-targets/field-type-overrides";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
+import { metadataAttributeAlerts } from "@/lib/metadata-attributes/alerts";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-versions";
 
 // ---------------------------------------------------------------------------
@@ -96,7 +98,8 @@ export function unresolvedReferences(fields: ReadonlyArray<Pick<AlertFieldInput,
 export function generateEntityAlerts(
   entity: AlertEntityInput,
   fields: AlertFieldInput[],
-  template?: CompletenessRequirements | null
+  template?: CompletenessRequirements | null,
+  definitions?: MetadataAttributeDefinition[]
 ): EntityAlert[] {
   const requirements = template ?? DEFAULT_COMPLETENESS_REQUIREMENTS;
   const alerts: EntityAlert[] = [];
@@ -221,6 +224,8 @@ export function generateEntityAlerts(
       }
     }
   }
+
+  if (definitions && definitions.length > 0) alerts.push(...metadataAttributeAlerts(entity, fields, definitions));
 
   return alerts;
 }
