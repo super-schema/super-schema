@@ -44,6 +44,27 @@ export default function SettingsPage() {
           Manage tenant storage
         </Button>
       </section>
+      <section
+        className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border p-5"
+        aria-labelledby="tenant-dictionaries-heading"
+      >
+        <div className="flex flex-col gap-1">
+          <h3 id="tenant-dictionaries-heading" className="text-heading-3">
+            Dictionaries
+          </h3>
+          <p className="text-body-small text-muted-foreground">
+            Define reusable fields and metadata attributes for this tenant, and
+            install attribute packs. Managed by tenant administrators.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          nativeButton={false}
+          render={<Link href="/admin/settings/dictionaries" />}
+        >
+          Manage dictionaries
+        </Button>
+      </section>
     </div>
   );
 }
