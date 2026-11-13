@@ -17,11 +17,23 @@ export interface DerivationContext {
 }
 
 /** The tenant's field-target definitions and the custom class map, loaded once per action; null when there are no definitions (skip all work). */
-export async function loadDerivationContext(tenantId: string | undefined): Promise<DerivationContext | null> {
+export async function loadDerivationContext(
+  tenantId: string | null | undefined,
+  db: Pick<Prisma.TransactionClient, "metadataAttributeDefinition" | "classificationLevel"> = prisma,
+): Promise<DerivationContext | null> {
   if (!tenantId) return null;
-  const listed = await listMetadataAttributes(tenantId, "field");
+  const listed = await listMetadataAttributes(tenantId, "field", db);
   if (!listed.success || listed.data.length === 0) return null;
-  return { defs: listed.data, custom: await loadCustomClassMap() };
+  return { defs: listed.data, custom: await loadCustomClassMap(db) };
+}
+
+/** The same context for the tenant that owns `domainId` (for writers that know a domain, not a tenant); null when there is none. */
+export async function loadDerivationContextForDomain(
+  domainId: string,
+  db: Pick<Prisma.TransactionClient, "metadataAttributeDefinition" | "classificationLevel" | "domain">,
+): Promise<DerivationContext | null> {
+  const domain = await db.domain.findUnique({ where: { id: domainId }, select: { tenantId: true } });
+  return loadDerivationContext(domain?.tenantId, db);
 }
 
 /** The field's decorators with derived members applied; the input decorators untouched when there is no context. */

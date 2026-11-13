@@ -62,6 +62,7 @@ vi.mock("@/lib/db", () => ({
   prisma: mockPrisma,
 }));
 
+vi.mock("@/services/metadata-rederive.service", async () => (await import("../../helpers/no-derivation")).noDerivationModule);
 vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
 }));

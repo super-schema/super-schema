@@ -224,7 +224,17 @@ export async function updateClassification(
 
   // A custom level's class moved: the derived attribute values of every field classified with it follow.
   if (!existing.isSystem && updated.classNumber !== previousClassNumber) {
-    await rederiveForLevel(existing.name);
+    try {
+      await rederiveForLevel(existing.name);
+    } catch (e: unknown) {
+      // The class change is already stored: report the failed follow-up instead of throwing past the Result contract.
+      console.error(`[updateClassification] re-deriving the fields of level "${existing.name}" failed`, e);
+      return err({
+        code: "REDERIVE_FAILED",
+        message: `The class of "${existing.name}" was saved, but the attribute values derived from it could not be updated`,
+        suggestedFix: "Save the level again, or re-save the affected fields, to re-derive their attribute values.",
+      });
+    }
   }
 
   return ok(toClassificationLevel(updated));

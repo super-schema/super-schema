@@ -307,6 +307,16 @@ describe("Classification Taxonomy Service", () => {
       expect(rederiveMock).toHaveBeenCalledWith("FINANCIAL");
     });
 
+    it("returns an err Result (and logs) when the re-derivation throws after the class change was stored", async () => {
+      const level = await mkCustom(3);
+      rederiveMock.mockRejectedValueOnce(new Error("db down"));
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const r = await updateClassification({ id: level.id, classNumber: 2 }, adminCtx);
+      expect(r).toMatchObject({ success: false, error: { code: "REDERIVE_FAILED" } });
+      expect(spy).toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
     it("does not call it when the class number is unchanged or absent from the patch", async () => {
       const level = await mkCustom(3);
       await updateClassification({ id: level.id, classNumber: 3 }, adminCtx);

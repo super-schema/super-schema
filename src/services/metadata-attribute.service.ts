@@ -66,8 +66,9 @@ function parseDefinition(input: unknown): Result<MetadataAttributeDefinition> {
 export async function listMetadataAttributes(
   tenantId: string,
   target?: "field" | "entity",
+  db: Pick<Prisma.TransactionClient, "metadataAttributeDefinition"> = prisma,
 ): Promise<Result<MetadataAttributeRecord[]>> {
-  const rows = await prisma.metadataAttributeDefinition.findMany({
+  const rows = await db.metadataAttributeDefinition.findMany({
     where: { tenantId, ...(target ? { targets: { has: target satisfies MetadataAttributeTarget } } : {}) },
     orderBy: { key: "asc" },
   });

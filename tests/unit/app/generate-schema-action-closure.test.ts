@@ -56,6 +56,7 @@ vi.mock("@/lib/webhook-transport", async (importOriginal) => ({
   postWebhook: webhookReceiver.postWebhook,
 }));
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
+vi.mock("@/services/metadata-rederive.service", async () => (await import("../../helpers/no-derivation")).noDerivationModule);
 vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).sessionPrincipalModule);
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));

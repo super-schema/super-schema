@@ -10,7 +10,7 @@ export type Placement = "field" | "items" | "none";
 export interface PlacementField {
   type: string;
   decorators?: unknown;
-  complexType?: { arrayElementType?: string };
+  complexType?: { arrayElementType?: string; nestedFields?: unknown };
 }
 
 const NON_PRIMITIVE = new Set(["reference", "array", "map", "object", "union"]);
@@ -32,8 +32,18 @@ function isDangling(field: PlacementField): boolean {
   return activeDanglingRef(field.type, { danglingRef: d.danglingRef, arrayElementType: arrayElementType(field) }) !== undefined;
 }
 
-/** A scalar value field: not a reference, collection, nested object or union (an enum counts as a scalar). */
+/** An `object` whose properties (`decorators.nestedFields`) are empty or missing: it carries a value, not a structure. */
+function isPropertylessObject(field: PlacementField): boolean {
+  const nested = field.complexType?.nestedFields ?? decoratorsOf(field).nestedFields;
+  return !Array.isArray(nested) || nested.length === 0;
+}
+
+/**
+ * A value field: not a reference, collection or union, and not an object with properties (an enum counts as a scalar; a
+ * property-less object counts as primitive).
+ */
 export function isPrimitiveField(field: PlacementField): boolean {
+  if (field.type === "object") return isPropertylessObject(field);
   return !NON_PRIMITIVE.has(field.type);
 }
 
@@ -47,6 +57,7 @@ export function abcPlacement(field: PlacementField): Placement {
   if (field.type === "array") {
     const element = arrayElementType(field) ?? "string";
     if (element === "reference") return "none";
+    if (element === "object") return isPropertylessObject(field) ? "items" : "field";
     return NON_PRIMITIVE.has(element) ? "field" : "items";
   }
   return "field";

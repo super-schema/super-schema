@@ -1582,7 +1582,7 @@ export async function setFieldReferenceAction(
 
     const field = await prisma.field.findUnique({
       where: { id: fieldId },
-      select: { id: true, entityId: true, type: true, decorators: true },
+      select: { id: true, entityId: true, name: true, type: true, classification: true, decorators: true },
     });
     if (!field || field.entityId !== entityId) return notFound("Field");
     // A reference field, or an array / map of references (the same keys, stored on the field's decorators): the ambiguity of such a field
@@ -1624,6 +1624,15 @@ export async function setFieldReferenceAction(
       ...(pinnedVersion ? { pinnedVersion } : {}),
     });
 
+    // A reference that now resolves moves the field's attribute placement (e.g. to none): derived members follow.
+    const derivation = await loadDerivationContext(access.data.resource.tenantId);
+    const referenceDecorators = deriveFieldDecorators(derivation, {
+      name: field.name,
+      type: field.type,
+      classification: field.classification,
+      decorators,
+    }) ?? decorators;
+
     await withAudit({
       action: "UPDATE",
       entityType: "Field",
@@ -1632,7 +1641,7 @@ export async function setFieldReferenceAction(
       beforeState: field as unknown as object,
       fn: () =>
         prisma.$transaction([
-          prisma.field.update({ where: { id: fieldId }, data: { decorators: decorators as Prisma.InputJsonValue } }),
+          prisma.field.update({ where: { id: fieldId }, data: { decorators: referenceDecorators as Prisma.InputJsonValue } }),
           prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
         ]),
     });
@@ -1916,13 +1925,19 @@ async function upgradeLegacyReferences(entityId: string, principal: Principal, r
   const userId = principal.userId;
   for (const upgrade of own) {
     try {
-      const field = await prisma.field.findUnique({ where: { id: upgrade.fieldId }, select: { id: true, entityId: true, type: true, decorators: true } });
+      const field = await prisma.field.findUnique({ where: { id: upgrade.fieldId }, select: { id: true, entityId: true, name: true, type: true, classification: true, decorators: true } });
       if (!field || field.entityId !== entityId || field.type !== "reference") continue;
       if (!field.decorators || typeof field.decorators !== "object" || Array.isArray(field.decorators)) continue;
       const current = field.decorators as Record<string, unknown>;
       const existing = readFieldReference(current);
       if (!existing || !("legacyName" in existing)) continue;
-      const decorators = upgradeLegacyReference(current, upgrade.ref);
+      const upgraded = upgradeLegacyReference(current, upgrade.ref);
+      const decorators = deriveFieldDecorators(await loadDerivationContext(resource.tenantId), {
+        name: field.name,
+        type: field.type,
+        classification: field.classification,
+        decorators: upgraded,
+      }) ?? upgraded;
       await withAudit({
         action: "UPDATE",
         entityType: "Field",

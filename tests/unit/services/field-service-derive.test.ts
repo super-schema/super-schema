@@ -56,7 +56,7 @@ describe("updateField derives attribute members", () => {
     } as never);
     const result = await updateField("fld-1", { classification: "PUBLIC" }, ctx);
     expect(result.success).toBe(true);
-    expect(listMock).toHaveBeenCalledWith("t-1", "field");
+    expect(listMock).toHaveBeenCalledWith("t-1", "field", expect.anything());
     expect(written("update")).toEqual(stored({ data_class: "class5", data_category: "ConsumerPersonal" }));
   });
 

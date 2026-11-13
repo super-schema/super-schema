@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+
+vi.mock("@/services/metadata-rederive.service", async () => (await import("../../helpers/no-derivation")).noDerivationModule);
 import { cascadeEnumToFields, cascadeScalarToFields, linkFieldToEnum, linkFields, linkImportedEntity, pickByName, relinkDanglingFields, relinkDanglingFieldsToEnum, relinkDanglingFieldsToScalar } from "@/services/imported-links";
 import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 

@@ -66,7 +66,7 @@ describe("updateFieldAction derives attribute members", () => {
   it("persists the re-derived data_class when only the classification changes, keeping the category", async () => {
     expect(await updateFieldAction("fld-1", { classification: "PUBLIC" })).toEqual({ success: true });
     expect(listMock).toHaveBeenCalledTimes(1);
-    expect(listMock).toHaveBeenCalledWith("tenant-1", "field");
+    expect(listMock).toHaveBeenCalledWith("tenant-1", "field", expect.anything());
     expect(updateData().decorators).toEqual(stored({ data_class: "class5", data_category: "ConsumerPersonal" }));
   });
 

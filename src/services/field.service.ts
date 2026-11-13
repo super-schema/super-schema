@@ -16,24 +16,7 @@ import {
 import type { Prisma } from "@/generated/prisma/client";
 import { MARK_DRAFT_CHANGED_SQL } from "@/lib/entity-versioning/draft-state";
 import { reservedFieldNameMessage } from "@/lib/reserved-field-names";
-import { recomputeFieldAttributes } from "@/lib/metadata-attributes/derive";
-import { listMetadataAttributes } from "@/services/metadata-attribute.service";
-import { loadCustomClassMap } from "@/services/classification-scale.service";
-
-/**
- * The decorators to persist: the given ones with the tenant's derived attribute members applied. A tenant with no field-target
- * attributes (or an unknown tenant) gets them back unchanged.
- */
-async function withDerivedAttributes(
-  tenantId: string | undefined,
-  field: { name: string; type: string; classification: string | null; decorators: unknown },
-): Promise<Record<string, unknown> | undefined> {
-  const asObject = (field.decorators && typeof field.decorators === "object" ? field.decorators : undefined) as Record<string, unknown> | undefined;
-  if (!tenantId) return asObject;
-  const listed = await listMetadataAttributes(tenantId, "field");
-  if (!listed.success || listed.data.length === 0) return asObject;
-  return recomputeFieldAttributes(field, listed.data, await loadCustomClassMap());
-}
+import { deriveFieldDecorators, loadDerivationContext } from "@/services/metadata-rederive.service";
 
 /**
  * A field name the AsyncAPI parser cannot read (`PARSER_UNSAFE_KEYS`) is refused: the field would make every event that pins its entity
@@ -93,12 +76,12 @@ export async function createField(
   const nextSortOrder = maxField ? maxField.sortOrder + 1 : 0;
   const classification = parsed.data.classification ?? "SENSITIVE";
   const decorators =
-    (await withDerivedAttributes((entity as { tenantId?: string }).tenantId, {
+    deriveFieldDecorators(await loadDerivationContext((entity as { tenantId?: string }).tenantId), {
       name: parsed.data.name,
       type: parsed.data.type,
       classification,
       decorators: parsed.data.decorators ?? {},
-    })) ?? {};
+    }) ?? {};
 
   try {
     const field = await withAudit({
@@ -199,7 +182,7 @@ export async function updateField(
   });
   // The derived attribute members follow the field as it is AFTER the edit (a classification change alone re-derives them).
   const owner = await prisma.entity.findUnique({ where: { id: existing.entityId }, select: { tenantId: true } });
-  const derivedDecorators = await withDerivedAttributes(owner?.tenantId, {
+  const derivedDecorators = deriveFieldDecorators(await loadDerivationContext(owner?.tenantId), {
     name: parsed.data.name ?? existing.name,
     type: parsed.data.type ?? existing.type,
     classification: parsed.data.classification !== undefined ? parsed.data.classification : existing.classification,

@@ -6,6 +6,7 @@
  */
 export const noDerivationModule = {
   loadDerivationContext: async () => null,
+  loadDerivationContextForDomain: async () => null,
   deriveFieldDecorators: (_ctx: unknown, field: { decorators: unknown }) => field.decorators,
   rederiveForLevel: async () => 0,
   rederiveTenant: async () => 0,
