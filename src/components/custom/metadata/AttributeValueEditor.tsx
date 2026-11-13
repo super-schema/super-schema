@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field";
 import { AttributeControl, SELECT_CLASS } from "@/components/custom/FieldAttributes/AttributeControl";
 import { validateValue, type ValueProblem, type ValueSchema } from "@/lib/metadata-attributes/value-schema";
+import { CLASS_SCALE } from "@/lib/classification-scale";
 
 export const DERIVED_NOTE = "Follows the field's classification";
 
@@ -18,17 +19,51 @@ interface Props {
   /** Label of the control for a non-object schema (an object's properties are labelled by their names). */
   label?: string;
   disabled?: boolean;
+  /** The host already shows the label (a row heading): the top-level control keeps it only as its accessible name. */
+  hideLabel?: boolean;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /**
  * A form driven by a value schema: text / number / checkbox / select (enum) / tag list (string[]) / one row per property (object).
- * Validation problems from `validateValue` are shown inline as warnings; they never stop an edit from being emitted.
+ * Validation problems from `validateValue` are shown inline as warnings; they never stop an edit from being emitted. A value that is still
+ * what a fresh pick starts as (`initialAttributeValue`) shows no problem until the user edits it (U6); a stored value shows them at once.
  */
-export function AttributeValueEditor({ schema, value, derivedKeys = [], onChange, label, disabled }: Props) {
-  const problems = value === undefined ? [] : validateValue(value, schema);
-  return <Node schema={schema} value={value} derivedKeys={derivedKeys} onChange={onChange} label={label} disabled={disabled} path="" problems={problems} />;
+export function AttributeValueEditor({ schema, value, derivedKeys = [], onChange, label, disabled, hideLabel }: Props) {
+  const [touched, setTouched] = useState(() => !isFreshValue(value, schema));
+  const problems = value === undefined || !touched ? [] : validateValue(value, schema);
+  return (
+    <Node
+      schema={schema}
+      value={value}
+      derivedKeys={derivedKeys}
+      onChange={(next) => {
+        setTouched(true);
+        onChange(next);
+      }}
+      label={label}
+      disabled={disabled}
+      hideLabel={hideLabel}
+      path=""
+      problems={problems}
+    />
+  );
+}
+
+/** True when `value` is what a freshly picked attribute of `schema` starts as. */
+function isFreshValue(value: unknown, schema: ValueSchema): boolean {
+  if (value === undefined) return true;
+  return JSON.stringify(value) === JSON.stringify(initialAttributeValue({ valueSchema: schema }));
+}
+
+/** A derived `class1`..`class5` value with its class name: `class2 (Class 2 — PII)`; anything else as it is. */
+export function derivedDisplay(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  const text = String(value);
+  const m = /^class([1-5])$/i.exec(text);
+  const standard = m ? CLASS_SCALE.find((c) => c.classNumber === Number(m[1])) : undefined;
+  return standard ? `${text} (Class ${standard.classNumber} — ${standard.label})` : text;
 }
 
 function problemsAt(problems: ValueProblem[], path: string): string | undefined {
@@ -45,8 +80,10 @@ interface NodeProps extends Props {
   problems: ValueProblem[];
 }
 
-function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disabled, path, problems }: NodeProps) {
+function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disabled, hideLabel, path, problems }: NodeProps) {
   const error = problemsAt(problems, path);
+  // Only the top-level control can carry the host's label; an object's properties are labelled by their own names.
+  const labelHidden = hideLabel && path === "";
 
   if (schema.type === "object" && schema.properties) {
     const current = isObj(value) ? value : {};
@@ -58,7 +95,7 @@ function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disa
             const v = current[name];
             return (
               <AttributeControl key={name} label={name} help={DERIVED_NOTE}>
-                <Input readOnly value={v === undefined || v === null ? "" : String(v)} placeholder="Derived on save" />
+                <Input readOnly value={derivedDisplay(v)} placeholder="Derived on save" />
               </AttributeControl>
             );
           }
@@ -89,7 +126,7 @@ function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disa
     const options = schema.enum;
     const selected = options.find((o) => o === value);
     return (
-      <AttributeControl label={label} error={error}>
+      <AttributeControl label={label} labelHidden={labelHidden} error={error}>
         <select
           className={SELECT_CLASS}
           disabled={disabled}
@@ -111,7 +148,7 @@ function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disa
 
   if (schema.type === "boolean") {
     return (
-      <AttributeControl label={label} error={error}>
+      <AttributeControl label={label} labelHidden={labelHidden} error={error}>
         <input type="checkbox" disabled={disabled} checked={value === true} onChange={(e) => onChange(e.target.checked)} />
       </AttributeControl>
     );
@@ -121,6 +158,7 @@ function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disa
     return (
       <NumberControl
         label={label}
+        labelHidden={labelHidden}
         error={error}
         disabled={disabled}
         integer={schema.type === "integer"}
@@ -135,7 +173,7 @@ function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disa
 
   if (schema.type === "string") {
     return (
-      <AttributeControl label={label} error={error}>
+      <AttributeControl label={label} labelHidden={labelHidden} error={error}>
         <Input
           disabled={disabled}
           spellCheck={false}
@@ -147,24 +185,24 @@ function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disa
   }
 
   if (schema.type === "array" && schema.items?.type === "string" && !schema.items.enum) {
-    return <TagList label={label} value={Array.isArray(value) ? value.map(String) : []} error={error} disabled={disabled} onChange={onChange} />;
+    return <TagList label={label} labelHidden={labelHidden} value={Array.isArray(value) ? value.map(String) : []} error={error} disabled={disabled} onChange={onChange} />;
   }
 
-  return <JsonValue label={label} value={value} error={error} disabled={disabled} onChange={onChange} />;
+  return <JsonValue label={label} labelHidden={labelHidden} value={value} error={error} disabled={disabled} onChange={onChange} />;
 }
 
 /**
  * A number box that keeps what is typed: a half-typed number ("-", "1e") reports "" from the browser and is not a value yet, so it emits nothing
  * and the last number stands; a cleared box emits `undefined` (the caller decides what that means).
  */
-function NumberControl({ label, error, disabled, integer, value, onChange }: { label: string; error?: string; disabled?: boolean; integer: boolean; value: unknown; onChange: (n: number | undefined) => void }) {
+function NumberControl({ label, labelHidden, error, disabled, integer, value, onChange }: { label: string; labelHidden?: boolean; error?: string; disabled?: boolean; integer: boolean; value: unknown; onChange: (n: number | undefined) => void }) {
   const [text, setText] = useState(typeof value === "number" && Number.isFinite(value) ? String(value) : "");
   const current = typeof value === "number" && Number.isFinite(value) ? value : undefined;
   const [emitted, setEmitted] = useState<number | undefined>(current);
   // An outside change of the number (not one this box emitted) wins over the typed text.
   const shown = current !== emitted && current !== undefined ? String(current) : text;
   return (
-    <AttributeControl label={label} error={error}>
+    <AttributeControl label={label} labelHidden={labelHidden} error={error}>
       <Input
         type="number"
         disabled={disabled}
@@ -203,7 +241,7 @@ export function initialAttributeValue(def: { valueSchema: ValueSchema }): unknow
   }
 }
 
-function TagList({ label, value, error, disabled, onChange }: { label: string; value: string[]; error?: string; disabled?: boolean; onChange: (v: unknown) => void }) {
+function TagList({ label, labelHidden, value, error, disabled, onChange }: { label: string; labelHidden?: boolean; value: string[]; error?: string; disabled?: boolean; onChange: (v: unknown) => void }) {
   const [draft, setDraft] = useState("");
   function add() {
     const t = draft.trim();
@@ -213,7 +251,7 @@ function TagList({ label, value, error, disabled, onChange }: { label: string; v
   }
   return (
     <div className="flex min-w-0 flex-col gap-2">
-      <span className="text-sm font-medium text-foreground">{label}</span>
+      <span className={labelHidden ? "sr-only" : "text-sm font-medium text-foreground"}>{label}</span>
       <div className="flex flex-wrap gap-1">
         {value.map((tag, i) => (
           <span key={`${tag}-${i}`} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs">
@@ -248,11 +286,11 @@ function TagList({ label, value, error, disabled, onChange }: { label: string; v
 }
 
 /** Fallback for shapes with no dedicated control (arrays of non-strings, objects without declared properties): raw JSON. */
-function JsonValue({ label, value, error, disabled, onChange }: { label: string; value: unknown; error?: string; disabled?: boolean; onChange: (v: unknown) => void }) {
+function JsonValue({ label, labelHidden, value, error, disabled, onChange }: { label: string; labelHidden?: boolean; value: unknown; error?: string; disabled?: boolean; onChange: (v: unknown) => void }) {
   const [text, setText] = useState(value === undefined ? "" : JSON.stringify(value));
   const [parseError, setParseError] = useState<string | undefined>();
   return (
-    <AttributeControl label={label} error={parseError ?? error}>
+    <AttributeControl label={label} labelHidden={labelHidden} error={parseError ?? error}>
       <Textarea
         disabled={disabled}
         rows={3}

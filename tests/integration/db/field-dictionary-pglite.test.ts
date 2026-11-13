@@ -11,6 +11,7 @@ vi.mock("@/lib/db", async () => {
 import {
   createFieldDictionaryEntry,
   deleteFieldDictionaryEntry,
+  dictionaryFormOptions,
   listFieldDictionary,
   updateFieldDictionaryEntry,
 } from "@/services/field-dictionary.service";
@@ -34,6 +35,26 @@ beforeEach(async () => {
 });
 
 describe("field dictionary service on PGlite", () => {
+  it("form options: the standard and custom classification levels by class, and the tenant's custom scalars and shared enums (U9)", async () => {
+    const a = await mkTenant();
+    const b = await mkTenant();
+    await db().classificationLevel.deleteMany({ where: { isSystem: false } });
+    await db().classificationLevel.create({ data: { name: "FINANCIAL", displayColor: "#000", bgColor: "#fff", textColor: "#000", classNumber: 2 } });
+    await db().customScalar.create({ data: { tenantId: a.id, name: "Currency", baseType: "string" } });
+    await db().sharedEnum.create({ data: { tenantId: a.id, name: "Status", values: ["A"] } });
+    await db().sharedEnum.create({ data: { tenantId: a.id, name: "Status", values: ["B"] } }); // same name in another domain: listed once
+    await db().customScalar.create({ data: { tenantId: b.id, name: "Other", baseType: "string" } });
+    const options = await dictionaryFormOptions(a.id);
+    expect(options.customTypes).toEqual(["Currency", "Status"]);
+    const names = options.levels.map((l) => l.name);
+    expect(names).toEqual(expect.arrayContaining(["NEVER_STORED", "PII", "SENSITIVE", "INTERNAL", "PUBLIC", "FINANCIAL"]));
+    expect(new Set(names).size).toBe(names.length);
+    expect(options.levels.find((l) => l.name === "FINANCIAL")?.classNumber).toBe(2);
+    // Ordered by class number.
+    const classes = options.levels.map((l) => l.classNumber);
+    expect([...classes].sort((x, y) => x - y)).toEqual(classes);
+  });
+
   it("scopes by tenant; the same name is allowed in another tenant", async () => {
     const a = await mkTenant();
     const b = await mkTenant();

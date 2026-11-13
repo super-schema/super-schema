@@ -51,6 +51,8 @@ export function PolicyTemplateEditor({ value, attributeDefinitions = [], onChang
   const [draft, setDraft] = useState<PolicyTemplate>(value ?? {});
 
   const completeness: CompletenessRequirements = draft.completenessRequirements ?? {};
+  // Policy defaults and `requiredWhen` apply to fields and entities only: an event-, channel- or operation-only definition is not listed.
+  const policyDefinitions = attributeDefinitions.filter((d) => d.targets.includes("field") || d.targets.includes("entity"));
 
   function getReq(key: keyof CompletenessRequirements): CompletenessRequirement {
     return completeness[key] ?? DEFAULT_REQ;
@@ -218,11 +220,11 @@ export function PolicyTemplateEditor({ value, attributeDefinitions = [], onChang
         </div>
       </div>
 
-      {attributeDefinitions.length > 0 && (
+      {policyDefinitions.length > 0 && (
         <div className="space-y-space-2">
           <label className="block text-body-small text-muted-foreground font-medium">Metadata attributes</label>
           <p className="text-caption text-muted-foreground">Per attribute: when it is required in this domain, and the value a new field starts with.</p>
-          {attributeDefinitions.map((d) => {
+          {policyDefinitions.map((d) => {
             const o = draft.metadataAttributes?.[d.key] ?? {};
             return (
               <div key={d.key} className="space-y-space-2 rounded-md border border-border/50 px-space-3 py-space-2">

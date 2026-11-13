@@ -5,7 +5,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 const h = vi.hoisted(() => ({
   overview: vi.fn(), usage: vi.fn(), deleteField: vi.fn(),
@@ -54,6 +54,8 @@ describe("DictionariesAdmin failures", () => {
     render(<DictionariesAdmin initial={INITIAL} />);
     const del = screen.getByRole("button", { name: "Delete email" });
     fireEvent.click(del);
+    // U4: the delete is confirmed first.
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/could not be completed|try again/i);
     expect(alert.textContent).not.toContain("network down");

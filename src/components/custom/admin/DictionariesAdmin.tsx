@@ -7,6 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CLASS_SCALE } from "@/lib/classification-scale";
+import { ALL_DATA_TYPES } from "@/lib/data-types";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { checkValueSchema } from "@/lib/metadata-attributes/value-schema";
 import type { DictionaryUsageRow } from "@/services/field-dictionary.service";
@@ -58,10 +61,51 @@ export function valueSchemaProblems(text: string): string[] {
 
 const selectClass = "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm";
 
+type Run = (c: () => Promise<Answer>) => Promise<boolean>;
+
+/** A tenant-wide removal waiting for the admin's confirmation. */
+interface PendingConfirm {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  action: () => Promise<Answer>;
+}
+
+/** The confirmation of a tenant-wide removal, built on the shared dialog (as the account disable confirmation is). */
+function ConfirmRemoval({ pending, busy, onCancel, onConfirm }: { pending: PendingConfirm | null; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <Dialog open={!!pending} onOpenChange={(next) => !next && !busy && onCancel()} modal>
+      <DialogContent className="sm:max-w-md" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>{pending?.title}</DialogTitle>
+          <DialogDescription>{pending?.description}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={busy} onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button type="button" variant="destructive" disabled={busy} onClick={onConfirm}>
+            {pending?.confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** "Class 2 — PII" for a standard level; "FINANCIAL (Class 2)" for a custom one. */
+export function levelOptionLabel(level: { name: string; classNumber: number }): string {
+  const standard = CLASS_SCALE.find((c) => c.level === level.name.toUpperCase());
+  return standard ? `Class ${standard.classNumber} — ${standard.label}` : `${level.name} (Class ${level.classNumber})`;
+}
+
+const STANDARD_LEVELS = CLASS_SCALE.map((c) => ({ name: c.level as string, classNumber: c.classNumber as number }));
+
 export function DictionariesAdmin({ initial }: { initial: DictionariesOverview }) {
   const [data, setData] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<PendingConfirm | null>(null);
 
   async function run(call: () => Promise<Answer>): Promise<boolean> {
     setBusy(true);
@@ -98,16 +142,34 @@ export function DictionariesAdmin({ initial }: { initial: DictionariesOverview }
           {error}
         </p>
       )}
+      <ConfirmRemoval
+        pending={pending}
+        busy={busy}
+        onCancel={() => setPending(null)}
+        onConfirm={() => {
+          const action = pending?.action;
+          setPending(null);
+          if (action) void run(action);
+        }}
+      />
       <Tabs defaultValue="fields">
         <TabsList>
           <TabsTrigger value="fields">Fields</TabsTrigger>
           <TabsTrigger value="attributes">Metadata attributes</TabsTrigger>
         </TabsList>
         <TabsContent value="fields">
-          <FieldsTab entries={data.fields} usage={data.usage ?? {}} busy={busy} run={run} />
+          <FieldsTab
+            entries={data.fields}
+            usage={data.usage ?? {}}
+            levels={data.formOptions?.levels ?? STANDARD_LEVELS}
+            customTypes={data.formOptions?.customTypes ?? []}
+            busy={busy}
+            run={run}
+            confirm={setPending}
+          />
         </TabsContent>
         <TabsContent value="attributes">
-          <AttributesTab data={data} busy={busy} run={run} />
+          <AttributesTab data={data} busy={busy} run={run} confirm={setPending} />
         </TabsContent>
       </Tabs>
     </div>
@@ -182,13 +244,19 @@ function UsageDrawer({ entry, onClose }: { entry: DictionariesOverview["fields"]
 function FieldsTab({
   entries,
   usage,
+  levels,
+  customTypes,
   busy,
   run,
+  confirm,
 }: {
   entries: DictionariesOverview["fields"];
   usage: Record<string, number>;
+  levels: { name: string; classNumber: number }[];
+  customTypes: string[];
   busy: boolean;
-  run: (c: () => Promise<Answer>) => Promise<boolean>;
+  run: Run;
+  confirm: (p: PendingConfirm) => void;
 }) {
   const [usageOf, setUsageOf] = useState<DictionariesOverview["fields"][number] | null>(null);
   const [form, setForm] = useState(EMPTY_FIELD);
@@ -196,6 +264,11 @@ function FieldsTab({
   const [formError, setFormError] = useState<string | null>(null);
   const id = useId();
   const set = (k: keyof typeof EMPTY_FIELD, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  // A stored level the list does not know (renamed, legacy) stays selectable, so editing the entry does not drop it silently.
+  const current = form.classification.trim();
+  const known = levels.find((l) => l.name.toUpperCase() === current.toUpperCase());
+  const levelOptions = current && !known ? [...levels, { name: current, classNumber: 0 }] : levels;
+  const typeOptions = [...new Set([...ALL_DATA_TYPES, ...customTypes])];
 
   async function save() {
     const attrs = parseJson(form.attributes || "{}");
@@ -253,7 +326,19 @@ function FieldsTab({
                 >
                   Edit {e.name}
                 </Button>
-                <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => deleteFieldEntryAction(e.id))}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() =>
+                    confirm({
+                      title: `Delete "${e.name}"?`,
+                      description: "The entry is removed from the tenant's field dictionary. Fields linked to it keep their name, type and values; they are no longer linked.",
+                      confirmLabel: "Delete",
+                      action: () => deleteFieldEntryAction(e.id),
+                    })
+                  }
+                >
                   Delete {e.name}
                 </Button>
               </div>
@@ -269,7 +354,12 @@ function FieldsTab({
         </label>
         <label className="space-y-1 text-body-small" htmlFor={`${id}-type`}>
           Type
-          <Input id={`${id}-type`} value={form.type} onChange={(e) => set("type", e.target.value)} />
+          <Input id={`${id}-type`} list={`${id}-types`} value={form.type} spellCheck={false} onChange={(e) => set("type", e.target.value)} />
+          <datalist id={`${id}-types`}>
+            {typeOptions.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
         </label>
         <label className="space-y-1 text-body-small" htmlFor={`${id}-aliases`}>
           Aliases (comma separated)
@@ -277,7 +367,19 @@ function FieldsTab({
         </label>
         <label className="space-y-1 text-body-small" htmlFor={`${id}-class`}>
           Default classification
-          <Input id={`${id}-class`} value={form.classification} onChange={(e) => set("classification", e.target.value)} />
+          <select
+            id={`${id}-class`}
+            className={selectClass}
+            value={known?.name ?? current}
+            onChange={(e) => set("classification", e.target.value)}
+          >
+            <option value="">None</option>
+            {levelOptions.map((l) => (
+              <option key={l.name} value={l.name}>
+                {l.classNumber === 0 ? l.name : levelOptionLabel(l)}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="space-y-1 text-body-small sm:col-span-2" htmlFor={`${id}-desc`}>
           Description
@@ -313,7 +415,7 @@ function FieldsTab({
   );
 }
 
-function AttributesTab({ data, busy, run }: { data: DictionariesOverview; busy: boolean; run: (c: () => Promise<Answer>) => Promise<boolean> }) {
+function AttributesTab({ data, busy, run, confirm }: { data: DictionariesOverview; busy: boolean; run: Run; confirm: (p: PendingConfirm) => void }) {
   const [form, setForm] = useState(EMPTY_ATTR);
   const [editing, setEditing] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -387,7 +489,19 @@ function AttributesTab({ data, busy, run }: { data: DictionariesOverview; busy: 
                     >
                       Edit {a.key}
                     </Button>
-                    <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => deleteAttributeAction(a.id))}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() =>
+                        confirm({
+                          title: `Delete "${a.key}"?`,
+                          description: "The definition is removed from the tenant's dictionary. Values already stored on fields, entities and events stay where they are; they are no longer edited with a typed editor.",
+                          confirmLabel: "Delete",
+                          action: () => deleteAttributeAction(a.id),
+                        })
+                      }
+                    >
                       Delete {a.key}
                     </Button>
                   </div>
@@ -508,7 +622,19 @@ function AttributesTab({ data, busy, run }: { data: DictionariesOverview; busy: 
               {p.installed ? (
                 <div className="flex items-center gap-2">
                   <Badge>Installed</Badge>
-                  <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => uninstallPackAction(p.id))}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() =>
+                      confirm({
+                        title: `Uninstall "${p.name}"?`,
+                        description: `Its definitions (${p.keys.join(", ")}) are removed from the tenant's dictionary. Stored values remain on fields, entities and events; they are no longer edited with a typed editor or derived.`,
+                        confirmLabel: "Uninstall",
+                        action: () => uninstallPackAction(p.id),
+                      })
+                    }
+                  >
                     Uninstall {p.name}
                   </Button>
                 </div>

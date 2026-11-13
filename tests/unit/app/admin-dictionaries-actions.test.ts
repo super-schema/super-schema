@@ -6,7 +6,7 @@ const h = vi.hoisted(() => {
   const fn = () => vi.fn();
   return {
     activeTenant: fn(), revalidatePath: fn(), withAudit: fn(),
-    listFields: fn(), usage: fn(), usageCounts: fn(), createField: fn(), updateField: fn(), deleteField: fn(),
+    listFields: fn(), usage: fn(), usageCounts: fn(), formOptions: fn(), createField: fn(), updateField: fn(), deleteField: fn(),
     listAttrs: fn(), createAttr: fn(), updateAttr: fn(), deleteAttr: fn(),
     install: fn(), uninstall: fn(), installed: fn(), rederive: fn(),
   };
@@ -19,7 +19,7 @@ vi.mock("@/lib/access/principal", async () => (await import("../../helpers/acces
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.activeTenant }));
 vi.mock("@/lib/audit", () => ({ withAudit: h.withAudit, AuditUserMissingError: class extends Error {} }));
 vi.mock("@/services/field-dictionary.service", () => ({
-  listFieldDictionary: h.listFields, dictionaryUsage: h.usage, dictionaryUsageCounts: h.usageCounts, createFieldDictionaryEntry: h.createField, updateFieldDictionaryEntry: h.updateField, deleteFieldDictionaryEntry: h.deleteField,
+  listFieldDictionary: h.listFields, dictionaryUsage: h.usage, dictionaryUsageCounts: h.usageCounts, dictionaryFormOptions: h.formOptions, createFieldDictionaryEntry: h.createField, updateFieldDictionaryEntry: h.updateField, deleteFieldDictionaryEntry: h.deleteField,
 }));
 vi.mock("@/services/metadata-attribute.service", () => ({
   listMetadataAttributes: h.listAttrs, createMetadataAttribute: h.createAttr, updateMetadataAttribute: h.updateAttr, deleteMetadataAttribute: h.deleteAttr,
@@ -31,7 +31,7 @@ import * as actions from "@/app/(dashboard)/admin/settings/dictionaries/actions"
 
 const T = "tenant-1";
 const GENERIC_FORBIDDEN = "You do not have permission to do this";
-const effects = [h.listFields, h.usage, h.usageCounts, h.createField, h.updateField, h.deleteField, h.listAttrs, h.createAttr, h.updateAttr, h.deleteAttr, h.install, h.uninstall, h.installed, h.rederive, h.withAudit];
+const effects = [h.listFields, h.usage, h.usageCounts, h.formOptions, h.createField, h.updateField, h.deleteField, h.listAttrs, h.createAttr, h.updateAttr, h.deleteAttr, h.install, h.uninstall, h.installed, h.rederive, h.withAudit];
 
 const CALLS: [string, () => Promise<unknown>][] = [
   ["overview", () => actions.dictionariesOverviewAction()],
@@ -69,6 +69,18 @@ describe("dictionary admin actions: authorization", () => {
 
 describe("dictionary admin actions: behavior", () => {
   beforeEach(() => signInAs(tenantMember("ADMIN", T)));
+
+  it("the overview carries the Fields form options: classification levels and the tenant's custom type names (U9)", async () => {
+    h.listFields.mockResolvedValue({ success: true, data: [] });
+    h.listAttrs.mockResolvedValue({ success: true, data: [] });
+    h.installed.mockResolvedValue([]);
+    h.usageCounts.mockResolvedValue({});
+    const options = { levels: [{ name: "PII", classNumber: 2 }], customTypes: ["Currency", "Status"] };
+    h.formOptions.mockResolvedValue(options);
+    const answer = await actions.dictionariesOverviewAction();
+    expect(answer).toMatchObject({ data: { formOptions: options } });
+    expect(h.formOptions).toHaveBeenCalledWith(T);
+  });
 
   it("audits a field entry creation under the acting tenant", async () => {
     h.createField.mockResolvedValue({ success: true, data: { id: "f1", name: "a" } });

@@ -7,6 +7,7 @@
 
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
+import { CLASS_SCALE } from "@/lib/classification-scale";
 import { dictionaryEntryFromField } from "@/lib/field-dictionary/from-field";
 import { validateValue } from "@/lib/metadata-attributes/value-schema";
 import { listMetadataAttributes } from "@/services/metadata-attribute.service";
@@ -215,6 +216,32 @@ export async function dictionaryUsageCounts(tenantId: string): Promise<Record<st
     _count: { _all: true },
   });
   return Object.fromEntries(groups.flatMap((g) => (g.dictionaryEntryId ? [[g.dictionaryEntryId, g._count._all]] : [])));
+}
+
+/** What the admin Fields form offers: every classification level with its class, and the tenant's custom scalar and shared enum names. */
+export interface DictionaryFormOptions {
+  levels: { name: string; classNumber: number }[];
+  customTypes: string[];
+}
+
+/**
+ * The options of the admin Fields form (U9). Levels are the standard 1-5 scale plus the stored levels (custom ones included), once per name,
+ * ordered by class then name. Custom types are the tenant's custom scalar and shared enum names (any domain), once per name, sorted.
+ */
+export async function dictionaryFormOptions(tenantId: string): Promise<DictionaryFormOptions> {
+  const [rows, scalars, enums] = await Promise.all([
+    prisma.classificationLevel.findMany({ select: { name: true, classNumber: true } }),
+    prisma.customScalar.findMany({ where: { tenantId }, select: { name: true } }),
+    prisma.sharedEnum.findMany({ where: { tenantId }, select: { name: true } }),
+  ]);
+  const levels = new Map<string, number>(CLASS_SCALE.map((c) => [c.level, c.classNumber]));
+  for (const r of rows) if (!levels.has(r.name.toUpperCase())) levels.set(r.name, r.classNumber);
+  return {
+    levels: [...levels]
+      .map(([name, classNumber]) => ({ name, classNumber }))
+      .sort((a, b) => a.classNumber - b.classNumber || a.name.localeCompare(b.name)),
+    customTypes: [...new Set([...scalars, ...enums].map((t) => t.name))].sort((a, b) => a.localeCompare(b)),
+  };
 }
 
 export type DictionaryDrift = "type" | "description" | "classification" | "attributes";

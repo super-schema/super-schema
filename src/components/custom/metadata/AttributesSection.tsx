@@ -57,6 +57,7 @@ export function AttributesSection({ target, definitions, extensions, onChange, r
             value={stored[d.key]}
             derivedKeys={Object.keys(d.derive ?? {})}
             label={d.label}
+            hideLabel
             disabled={readOnly}
             onChange={(v) => set(d.key, v)}
           />

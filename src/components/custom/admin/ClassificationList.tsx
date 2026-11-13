@@ -135,7 +135,7 @@ export function ClassificationList() {
               >
                 {CLASS_SCALE.map((c) => (
                   <option key={c.classNumber} value={c.classNumber}>
-                    {c.classNumber} — {c.label}
+                    Class {c.classNumber} — {c.label}
                   </option>
                 ))}
               </select>

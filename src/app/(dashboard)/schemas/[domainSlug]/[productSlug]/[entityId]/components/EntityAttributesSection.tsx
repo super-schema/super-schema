@@ -71,6 +71,7 @@ export function EntityAttributesSection({ metadata, definitions, isReadOnly, onS
             value={shown(d.key)}
             derivedKeys={Object.keys(d.derive ?? {})}
             label={d.label}
+            hideLabel
             disabled={isReadOnly}
             onChange={(v) => setDrafts((cur) => ({ ...cur, [d.key]: v }))}
           />

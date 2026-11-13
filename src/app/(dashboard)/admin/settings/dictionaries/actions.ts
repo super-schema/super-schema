@@ -7,10 +7,12 @@ import { METADATA_PACKS, getMetadataPack } from "@/lib/metadata-attributes/packs
 import {
   createFieldDictionaryEntry,
   deleteFieldDictionaryEntry,
+  dictionaryFormOptions,
   dictionaryUsage,
   dictionaryUsageCounts,
   listFieldDictionary,
   updateFieldDictionaryEntry,
+  type DictionaryFormOptions,
   type DictionaryUsageRow,
 } from "@/services/field-dictionary.service";
 import {
@@ -32,6 +34,8 @@ export interface DictionariesOverview {
   usage: Record<string, number>;
   attributes: MetadataAttributeRecord[];
   packs: { id: string; name: string; description: string; keys: string[]; installed: boolean }[];
+  /** The Fields form's choices (classification levels, custom type names); absent = the form falls back to the standard levels. */
+  formOptions?: DictionaryFormOptions;
 }
 
 export type DictionaryActionResult<T> = { data: T } | { error: string };
@@ -113,11 +117,12 @@ function refresh() {
 export async function dictionariesOverviewAction(): Promise<DictionaryActionResult<DictionariesOverview>> {
   const g = await gate();
   if (!g.ok) return fail(g.error);
-  const [fields, attributes, installed, usage] = await Promise.all([
+  const [fields, attributes, installed, usage, formOptions] = await Promise.all([
     listFieldDictionary(g.tenantId),
     listMetadataAttributes(g.tenantId),
     installedPacks(g.tenantId),
     dictionaryUsageCounts(g.tenantId),
+    dictionaryFormOptions(g.tenantId),
   ]);
   if (!fields.success) return fail(fields.error.message);
   if (!attributes.success) return fail(attributes.error.message);
@@ -125,6 +130,7 @@ export async function dictionariesOverviewAction(): Promise<DictionaryActionResu
     data: {
       fields: fields.data,
       usage,
+      formOptions,
       attributes: attributes.data,
       packs: METADATA_PACKS.map((p) => ({
         id: p.id,

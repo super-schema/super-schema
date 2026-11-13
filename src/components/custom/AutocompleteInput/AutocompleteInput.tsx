@@ -30,6 +30,9 @@ export function AutocompleteInput({
   const [isOpen, setIsOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // The value a pick just wrote: the suggestions stay closed for it (they reopen once the user types again), so the list does not cover
+  // the buttons under the input after a pick.
+  const pickedRef = useRef<string | null>(null);
 
   const updateSuggestions = useCallback(
     (query: string) => {
@@ -47,6 +50,12 @@ export function AutocompleteInput({
   );
 
   useEffect(() => {
+    if (pickedRef.current !== null && pickedRef.current === value) {
+      setSuggestions([]);
+      setIsOpen(false);
+      return;
+    }
+    pickedRef.current = null;
     updateSuggestions(value);
     // Auto-close if the value exactly matches a suggestion (user finished typing)
     if (value && suggestions.some((s) => s.value.toLowerCase() === value.toLowerCase())) {
@@ -57,6 +66,7 @@ export function AutocompleteInput({
   }, [value, updateSuggestions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleSelect(suggestion: AutocompleteSuggestion) {
+    pickedRef.current = suggestion.value;
     onChange(suggestion.value);
     setIsOpen(false);
     setSuggestions([]);
