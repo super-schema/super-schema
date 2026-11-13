@@ -970,20 +970,38 @@ export async function saveFieldToDictionaryAction(fieldId: string, options?: { o
     if (!defs.success) return { error: defs.error.message, code: defs.error.code };
     const input = dictionaryEntryFromField(field, defs.data);
 
+    // The entry a clashing name points at: an identical name first (as the create-side duplicate check), else an alias, case-insensitively.
+    const findTarget = async () => {
+      const entries = await listFieldDictionary(tenantId);
+      if (!entries.success) return entries;
+      const key = field.name.toLowerCase();
+      const byName = entries.data.find((e) => e.name === field.name);
+      const byAlias = byName ? undefined : entries.data.find((e) => e.aliases.some((a) => a.toLowerCase() === key));
+      return ok(byName ? { entry: byName, matchedBy: "name" as const } : byAlias ? { entry: byAlias, matchedBy: "alias" as const } : null);
+    };
+
     let saved: Result<{ id: string }>;
     let updated = false;
     if (options?.overwrite === true) {
-      const entries = await listFieldDictionary(tenantId);
-      if (!entries.success) return { error: entries.error.message, code: entries.error.code };
-      const key = field.name.toLowerCase();
-      const target = entries.data.find((e) => e.name === field.name) ?? entries.data.find((e) => e.aliases.some((a) => a.toLowerCase() === key));
-      if (!target) return { ...notFoundFailure("Dictionary entry") };
-      saved = await updateFieldDictionaryEntry(tenantId, target.id, input);
+      const found = await findTarget();
+      if (!found.success) return { error: found.error.message, code: found.error.code };
+      if (!found.data) return { ...notFoundFailure("Dictionary entry") };
+      // An alias match keeps the entry's own name: only its definition is updated.
+      const { name: _name, ...definition } = input;
+      saved = await updateFieldDictionaryEntry(tenantId, found.data.entry.id, found.data.matchedBy === "alias" ? definition : input);
       updated = true;
     } else {
       saved = await createFieldDictionaryEntry(tenantId, input);
       if (!saved.success && (saved.error.code === "DUPLICATE_NAME" || saved.error.code === "ALIAS_CONFLICT")) {
-        return { needsConfirmation: true as const, code: saved.error.code, error: saved.error.message };
+        const found = await findTarget();
+        if (!found.success) return { error: found.error.message, code: found.error.code };
+        if (!found.data) return { error: saved.error.message, code: saved.error.code };
+        const { entry, matchedBy } = found.data;
+        const message =
+          matchedBy === "alias"
+            ? `This updates the dictionary entry "${entry.name}" (matched by alias "${field.name}").`
+            : `This updates the dictionary entry "${entry.name}".`;
+        return { needsConfirmation: true as const, code: saved.error.code, targetName: entry.name, matchedBy, error: message };
       }
     }
     if (!saved.success) return { error: saved.error.message, code: saved.error.code };

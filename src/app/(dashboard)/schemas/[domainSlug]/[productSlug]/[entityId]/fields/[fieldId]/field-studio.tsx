@@ -703,7 +703,7 @@ export function FieldStudio({
         <DialogContent data-testid="field-studio-dictionary-confirm">
           <DialogHeader>
             <DialogTitle>Already in the field dictionary</DialogTitle>
-            <DialogDescription>{dictionaryPrompt} Update that entry with this field&apos;s type, description, classification and attributes?</DialogDescription>
+            <DialogDescription>{dictionaryPrompt} Its type, description, classification and attributes are replaced with this field&apos;s; its name stays.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDictionaryPrompt(null)}>Cancel</Button>

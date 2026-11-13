@@ -58,12 +58,27 @@ describe("saveFieldToDictionaryAction", () => {
     expect(res).toEqual({ success: true, entryId: "dict-1", updated: false });
   });
 
-  it("surfaces an existing name as the update prompt without writing", async () => {
+  it("surfaces an existing name as the update prompt, naming the entry, without writing", async () => {
     h.create.mockResolvedValue(err({ code: "DUPLICATE_NAME", message: "exists" }));
+    h.list.mockResolvedValue(ok([{ id: "dict-9", name: "email", aliases: [] }]));
     const res = await saveFieldToDictionaryAction("fld-1");
-    expect(res).toEqual({ needsConfirmation: true, code: "DUPLICATE_NAME", error: "exists" });
+    expect(res).toEqual({
+      needsConfirmation: true, code: "DUPLICATE_NAME", targetName: "email", matchedBy: "name",
+      error: 'This updates the dictionary entry "email".',
+    });
     expect(h.update).not.toHaveBeenCalled();
     expect(h.prisma.field.update).not.toHaveBeenCalled();
+  });
+
+  it("prompts on an ALIAS_CONFLICT, naming the entry that holds the alias", async () => {
+    h.create.mockResolvedValue(err({ code: "ALIAS_CONFLICT", message: "alias" }));
+    h.list.mockResolvedValue(ok([{ id: "dict-3", name: "contact", aliases: ["Email"] }]));
+    const res = await saveFieldToDictionaryAction("fld-1");
+    expect(res).toEqual({
+      needsConfirmation: true, code: "ALIAS_CONFLICT", targetName: "contact", matchedBy: "alias",
+      error: 'This updates the dictionary entry "contact" (matched by alias "email").',
+    });
+    expect(h.update).not.toHaveBeenCalled();
   });
 
   it("overwrites the existing entry once confirmed, and links the field", async () => {
@@ -76,11 +91,13 @@ describe("saveFieldToDictionaryAction", () => {
     expect(res).toEqual({ success: true, entryId: "dict-9", updated: true });
   });
 
-  it("finds the entry to overwrite by alias, case-insensitively", async () => {
+  it("an alias match keeps the target's own name: no name in the patch", async () => {
     h.list.mockResolvedValue(ok([{ id: "dict-3", name: "contact", aliases: ["EMAIL"] }]));
     h.update.mockResolvedValue(ok({ id: "dict-3" }));
     await saveFieldToDictionaryAction("fld-1", { overwrite: true });
-    expect(h.update).toHaveBeenCalledWith("tenant-1", "dict-3", EXPECTED);
+    const [, , patch] = h.update.mock.calls[0];
+    expect(patch).not.toHaveProperty("name");
+    expect(patch).toEqual({ type: "string", description: "Customer email", classification: "PII", attributes: EXPECTED.attributes });
   });
 
   it("refuses a field outside the active tenant before reading anything", async () => {
