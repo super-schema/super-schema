@@ -65,6 +65,7 @@ import {
 } from "@/lib/validation/entity-alerts";
 import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-versions";
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
+import type { DictionaryEntry } from "@/types/schemas/field-dictionary";
 import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
 import { AlertsTab } from "./components/AlertsTab";
 import { ApiTab, type ApiOperationData } from "./components/ApiTab";
@@ -165,6 +166,8 @@ export interface EntityWorkspaceProps {
   domainPolicy: Record<string, unknown> | null;
   /** The tenant's metadata attribute definitions (feeds the attribute alerts); optional so loaders and tests that predate it still compile. */
   metadataAttributes?: MetadataAttributeDefinition[];
+  /** The tenant's field dictionary (autocomplete of the New Field form); optional so loaders and tests that predate it still compile. */
+  fieldDictionary?: DictionaryEntry[];
   apiServiceId: string | null;
   /** The entity's API service (name, base path); optional so loaders and tests that predate it still compile. */
   apiService?: ApiServiceInfo | null;
@@ -191,7 +194,7 @@ export interface EntityWorkspaceProps {
   capabilities?: EntityCapabilities;
 }
 
-export function EntityWorkspace({ level, entity, fields, domainPolicy, metadataAttributes, apiServiceId, apiService = null, apiOperations, replacementEntity, referenceStaleness, referenceTargets, capabilities = NO_ENTITY_CAPABILITIES }: EntityWorkspaceProps) {
+export function EntityWorkspace({ level, entity, fields, domainPolicy, metadataAttributes, fieldDictionary, apiServiceId, apiService = null, apiOperations, replacementEntity, referenceStaleness, referenceTargets, capabilities = NO_ENTITY_CAPABILITIES }: EntityWorkspaceProps) {
   const readOnly_ = isReadOnly(entity.status as EntityStatus);
 
   // Track recent entity access for command palette
@@ -1026,6 +1029,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, metadataA
                 domainSlug={entity.domainSlug}
                 productSlug={entity.productSlug}
                 fields={fields}
+                dictionary={fieldDictionary}
                 domainPolicy={domainPolicy}
                 isReadOnly={readOnly_}
                 selectedFieldId={selectedFieldId}

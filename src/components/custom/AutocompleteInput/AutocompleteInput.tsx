@@ -96,6 +96,7 @@ export function AutocompleteInput({
   }, [selectedIndex]);
 
   const sourceColors: Record<string, string> = {
+    dictionary: "text-success",
     standard: "text-info",
     domain: "text-primary",
     pattern: "text-muted-foreground",

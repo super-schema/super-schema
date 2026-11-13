@@ -9,6 +9,7 @@ import { toDraftVersionState } from "@/lib/entity-versioning/draft-label";
 import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-versions";
 import { loadReferenceStaleness } from "@/services/entity-version.service";
 import { listMetadataAttributes } from "@/services/metadata-attribute.service";
+import { listFieldDictionary } from "@/services/field-dictionary.service";
 import { loadPickableEntities } from "@/lib/references/pickable-entities";
 import type { ReplacementEntityLink } from "@/components/custom/DeprecationBanner";
 import { OPERATION_DETAILS_INCLUDE, operationRecordFromRow } from "@/lib/api-operations/records";
@@ -109,6 +110,16 @@ async function loadStaleReferences(entityId: string): Promise<ReferenceStaleness
 }
 
 /** The tenant's attribute definitions (feeds the attribute alerts). A lookup that fails reads as none: an alert is never worth the entity page. */
+async function loadFieldDictionary(tenantId: string) {
+  try {
+    const listed = await listFieldDictionary(tenantId);
+    return listed.success ? listed.data : [];
+  } catch (e: unknown) {
+    console.error("[loadEntityWorkspace] field dictionary lookup failed", e);
+    return [];
+  }
+}
+
 async function loadMetadataAttributes(tenantId: string) {
   try {
     const listed = await listMetadataAttributes(tenantId);
@@ -145,6 +156,7 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
   const replacementEntity = await loadReplacementEntity(entity, where.tenantId, readable);
   const referenceStaleness = await loadStaleReferences(entity.id);
   const metadataAttributes = await loadMetadataAttributes(where.tenantId);
+  const fieldDictionary = await loadFieldDictionary(where.tenantId);
   // The entities of THIS tenant (the scope's tenant, never the client's) a reference field can be pointed at, for the type picker.
   // ... and only those the caller may read.
   const referenceTargets = await loadPickableEntities(prisma, where.tenantId, readable);
@@ -153,6 +165,7 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
     props: {
       referenceStaleness,
       metadataAttributes,
+      fieldDictionary,
       referenceTargets,
       capabilities: entityCapabilities(principal.assignments, place),
       level: productId === null ? "TENANT" : "PRODUCT",

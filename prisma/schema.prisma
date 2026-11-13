@@ -114,6 +114,7 @@ model Tenant {
   sharedEnums    SharedEnum[]
   customScalars  CustomScalar[]
   metadataAttributes MetadataAttributeDefinition[]
+  fieldDictionary    FieldDictionaryEntry[]
   unionTypes     UnionType[]
   services       ServiceDefinition[]
   traits         Trait[]
@@ -323,11 +324,14 @@ model Field {
   classification String?
   sortOrder      Int
   decorators     Json     @default("{}")
+  /// The tenant dictionary entry this field was created from; cleared when the entry is deleted.
+  dictionaryEntryId String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   entity       Entity             @relation(fields: [entityId], references: [id], onDelete: Cascade)
   conceptLinks FieldConceptLink[]
+  dictionaryEntry FieldDictionaryEntry? @relation(fields: [dictionaryEntryId], references: [id], onDelete: SetNull)
 
   @@unique([entityId, name])
   @@unique([entityId, slug])
@@ -1537,4 +1541,24 @@ model MetadataAttributeDefinition {
   @@unique([tenantId, key])
   @@unique([tenantId, protobufOptionNumber])
   @@map("metadata_attribute_definitions")
+}
+
+/// Tenant field dictionary: a canonical field (name, aliases, type, classification, default x-* attribute values) offered by autocomplete.
+model FieldDictionaryEntry {
+  id             String   @id @default(cuid())
+  tenantId       String
+  name           String
+  aliases        String[]
+  type           String // logical type, or a custom scalar / shared enum name
+  description    String   @default("")
+  classification String?
+  attributes     Json     @default("{}") // default metadata attribute values, x-key -> value
+  conceptId      String? // optional BusinessConcept link
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fields         Field[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@map("field_dictionary_entries")
 }

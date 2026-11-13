@@ -173,6 +173,8 @@ export async function addFieldAction(
     fieldNumber?: number | null;
     aliases?: string[];
     decorators?: Record<string, unknown>;
+    /** The tenant dictionary entry the field was created from; ignored (not linked) when it is not one of the active tenant's. */
+    dictionaryEntryId?: string | null;
   }
 ) {
 
@@ -242,6 +244,9 @@ export async function addFieldAction(
     const createDecorators = derivation
       ? deriveFieldDecorators(derivation, { name: fieldName.name, type, classification: createClassification, decorators: normalizedDocumentation.decorators ?? {} })
       : normalizedDocumentation.decorators;
+    const dictionaryEntry = opts?.dictionaryEntryId
+      ? await prisma.fieldDictionaryEntry.findFirst({ where: { id: opts.dictionaryEntryId, tenantId: access.resource.tenantId }, select: { id: true } })
+      : null;
     const field = await withAudit({
       action: "CREATE",
       entityType: "Field",
@@ -267,6 +272,7 @@ export async function addFieldAction(
               ...(opts?.scale !== undefined && { scale: opts.scale }),
               fieldNumber: assignedFieldNumber,
               ...(opts?.aliases && { aliases: opts.aliases }),
+              ...(dictionaryEntry && { dictionaryEntryId: dictionaryEntry.id }),
               ...((opts?.decorators || derivation) && { decorators: createDecorators as Prisma.InputJsonValue }),
             },
           }),
