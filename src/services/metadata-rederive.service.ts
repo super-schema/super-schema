@@ -7,6 +7,8 @@ import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { MARK_DRAFT_CHANGED_SQL } from "@/lib/entity-versioning/draft-state";
 import { recomputeFieldAttributes, type DerivableField } from "@/lib/metadata-attributes/derive";
+import { applyPolicyDefaults, resolveDefinitionsForDomain } from "@/lib/metadata-attributes/policy";
+import type { PolicyTemplate } from "@/types/schemas/domain-policy";
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import { listMetadataAttributes } from "@/services/metadata-attribute.service";
 import { loadCustomClassMap } from "@/services/classification-scale.service";
@@ -40,6 +42,32 @@ export async function loadDerivationContextForDomain(
 export function deriveFieldDecorators(ctx: DerivationContext | null, field: DerivableField): Record<string, unknown> | undefined {
   if (!ctx) return (field.decorators && typeof field.decorators === "object" ? field.decorators : undefined) as Record<string, unknown> | undefined;
   return recomputeFieldAttributes(field, ctx.defs, ctx.custom);
+}
+
+/** The domain policy template of the domain an entity belongs to (directly, or through its product); null when it has none. */
+export async function loadEntityDomainPolicy(
+  entityId: string,
+  db: Pick<Prisma.TransactionClient, "entity"> = prisma,
+): Promise<PolicyTemplate | null> {
+  const row = (await db.entity.findUnique({
+    where: { id: entityId },
+    select: { domain: { select: { policyTemplate: true } }, product: { select: { domain: { select: { policyTemplate: true } } } } },
+  })) as { domain?: { policyTemplate: unknown } | null; product?: { domain?: { policyTemplate: unknown } | null } | null } | null;
+  const raw = row?.domain?.policyTemplate ?? row?.product?.domain?.policyTemplate ?? null;
+  return raw && typeof raw === "object" ? (raw as PolicyTemplate) : null;
+}
+
+/** Decorators for a NEW field in a domain: its policy defaults fill absent attributes, then derived members resolve on top (domain `requiredWhen` applies). */
+export function deriveNewFieldDecorators(
+  ctx: DerivationContext | null,
+  policy: PolicyTemplate | null,
+  field: DerivableField,
+): Record<string, unknown> | undefined {
+  if (!ctx) return deriveFieldDecorators(ctx, field);
+  const defs = resolveDefinitionsForDomain(ctx.defs, policy);
+  const base = (field.decorators && typeof field.decorators === "object" ? field.decorators : {}) as Record<string, unknown>;
+  const filled = applyPolicyDefaults(base, defs, policy);
+  return deriveFieldDecorators({ ...ctx, defs }, { ...field, decorators: filled });
 }
 
 type FieldRow = {

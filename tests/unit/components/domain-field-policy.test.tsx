@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DomainDataTable } from "@/components/custom/admin/DomainDataTable";
 
 const mocks = vi.hoisted(() => ({ list: vi.fn(), save: vi.fn(), invalidate: vi.fn() }));
-vi.mock("@/app/(dashboard)/admin/actions", () => ({ getDomainsAdminAction: mocks.list, updateDomainPolicyAction: mocks.save, createDomainAdminAction: vi.fn() }));
+vi.mock("@/app/(dashboard)/admin/actions", () => ({ getDomainsAdminAction: mocks.list, updateDomainPolicyAction: mocks.save, createDomainAdminAction: vi.fn(), listPolicyAttributeDefinitionsAction: vi.fn().mockResolvedValue({ success: true, data: [] }) }));
 vi.mock("@/hooks/useDomainsTree", () => ({ useInvalidateDomainsTree: () => mocks.invalidate }));
 
 const DOMAIN = { id: "d1", name: "Identity", description: "Accounts", entityCount: 3, policyTemplateStatus: "No template", policyTemplate: null, createdAt: new Date("2026-01-01") };

@@ -16,7 +16,7 @@ import {
 import type { Prisma } from "@/generated/prisma/client";
 import { MARK_DRAFT_CHANGED_SQL } from "@/lib/entity-versioning/draft-state";
 import { reservedFieldNameMessage } from "@/lib/reserved-field-names";
-import { deriveFieldDecorators, loadDerivationContext } from "@/services/metadata-rederive.service";
+import { deriveNewFieldDecorators, deriveFieldDecorators, loadDerivationContext, loadEntityDomainPolicy } from "@/services/metadata-rederive.service";
 
 /**
  * A field name the AsyncAPI parser cannot read (`PARSER_UNSAFE_KEYS`) is refused: the field would make every event that pins its entity
@@ -75,8 +75,9 @@ export async function createField(
   });
   const nextSortOrder = maxField ? maxField.sortOrder + 1 : 0;
   const classification = parsed.data.classification ?? "SENSITIVE";
+  const derivationCtx = await loadDerivationContext((entity as { tenantId?: string }).tenantId);
   const decorators =
-    deriveFieldDecorators(await loadDerivationContext((entity as { tenantId?: string }).tenantId), {
+    deriveNewFieldDecorators(derivationCtx, derivationCtx ? await loadEntityDomainPolicy(entityId) : null, {
       name: parsed.data.name,
       type: parsed.data.type,
       classification,

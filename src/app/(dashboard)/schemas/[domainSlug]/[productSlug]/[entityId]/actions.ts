@@ -78,7 +78,7 @@ import {
   type GovernanceDiagnostic,
 } from "@/lib/compiler/typespec-compiler";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
-import { loadDerivationContext, deriveFieldDecorators } from "@/services/metadata-rederive.service";
+import { loadDerivationContext, deriveFieldDecorators, deriveNewFieldDecorators, loadEntityDomainPolicy } from "@/services/metadata-rederive.service";
 import { fieldNeedsUpdate, mergeSyncedField, entityExtensionsChange } from "@/lib/typespec-sync/merge-fields";
 import { isDecimalType } from "@/lib/data-types";
 import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
@@ -242,7 +242,7 @@ export async function addFieldAction(
     const derivation = await loadDerivationContext(access.resource.tenantId);
     const createClassification = opts?.classification !== undefined ? opts.classification : "SENSITIVE";
     const createDecorators = derivation
-      ? deriveFieldDecorators(derivation, { name: fieldName.name, type, classification: createClassification, decorators: normalizedDocumentation.decorators ?? {} })
+      ? deriveNewFieldDecorators(derivation, await loadEntityDomainPolicy(entityId), { name: fieldName.name, type, classification: createClassification, decorators: normalizedDocumentation.decorators ?? {} })
       : normalizedDocumentation.decorators;
     const dictionaryEntry = opts?.dictionaryEntryId
       ? await prisma.fieldDictionaryEntry.findFirst({ where: { id: opts.dictionaryEntryId, tenantId: access.resource.tenantId }, select: { id: true } })

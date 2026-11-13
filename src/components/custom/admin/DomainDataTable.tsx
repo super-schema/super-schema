@@ -6,9 +6,11 @@ import {
   getDomainsAdminAction,
   createDomainAdminAction,
   updateDomainPolicyAction,
+  listPolicyAttributeDefinitionsAction,
 } from "@/app/(dashboard)/admin/actions";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import type { PolicyTemplate } from "@/types/schemas/domain-policy";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import { PolicyTemplateEditor } from "./PolicyTemplateEditor";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -68,6 +70,14 @@ export function DomainDataTable() {
     // Fetch once on mount; state updates occur after the async result resolves.
     void load();
   }, [load]);
+
+  const [attributeDefs, setAttributeDefs] = useState<MetadataAttributeDefinition[]>([]);
+  useEffect(() => {
+    void (async () => {
+      const res = await listPolicyAttributeDefinitionsAction();
+      if (res && "data" in res) setAttributeDefs(res.data ?? []);
+    })();
+  }, []);
 
   function openCreate() {
     setNewName("");
@@ -235,7 +245,7 @@ export function DomainDataTable() {
           </DialogHeader>
           {policyDomain && (
             <fieldset disabled={policySaving} className="min-w-0">
-              <PolicyTemplateEditor key={policyDomain.id} value={policyDomain.policyTemplate} onChange={(template) => { void savePolicy(template); }} />
+              <PolicyTemplateEditor key={policyDomain.id} value={policyDomain.policyTemplate} attributeDefinitions={attributeDefs} onChange={(template) => { void savePolicy(template); }} />
             </fieldset>
           )}
           {policySaving && <p role="status" className="text-body-small text-muted-foreground">Saving policy…</p>}

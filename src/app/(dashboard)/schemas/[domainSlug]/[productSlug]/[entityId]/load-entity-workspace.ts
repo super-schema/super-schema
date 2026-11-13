@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db";
+import { resolveDefinitionsForDomain } from "@/lib/metadata-attributes/policy";
+import type { PolicyTemplate } from "@/types/schemas/domain-policy";
 import { can, readableWhere } from "@/lib/access";
 import { entityCapabilities } from "@/lib/access/capabilities";
 import { omitSchemaVersions } from "@/lib/access/schema-version-redaction";
@@ -155,7 +157,8 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
   const readable = readableWhere(principal.assignments, "entity.read", where.tenantId);
   const replacementEntity = await loadReplacementEntity(entity, where.tenantId, readable);
   const referenceStaleness = await loadStaleReferences(entity.id);
-  const metadataAttributes = await loadMetadataAttributes(where.tenantId);
+  // Definitions as this entity's domain resolves them (its `requiredWhen` overrides), so the alerts follow the domain policy.
+  const metadataAttributes = resolveDefinitionsForDomain(await loadMetadataAttributes(where.tenantId), domainPolicy as PolicyTemplate | null);
   const fieldDictionary = await loadFieldDictionary(where.tenantId);
   // The entities of THIS tenant (the scope's tenant, never the client's) a reference field can be pointed at, for the type picker.
   // ... and only those the caller may read.
