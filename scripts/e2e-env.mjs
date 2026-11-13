@@ -209,6 +209,7 @@ export const HERMETIC_DROPPED_NAMES = Object.freeze({
   NEXT_PHASE: "set by Next itself while it builds (`phase-production-build`); src/instrumentation.ts only reads it, a value of the shell would skip the startup check",
   TEST_EMAIL: "read by the browser run (which loads no .env); the seeded admin is the contract",
   TEST_PASSWORD: "read by the browser run like TEST_EMAIL; the seeded admin's password is the contract",
+  PGLITE_ALLOW_CHANGED_MIGRATIONS: "a one-off repair switch for a developer's own database (src/lib/pglite-migrate.ts); the run's fresh database must refuse an edited migration",
 });
 
 /** Read by the app and passed through from the shell on purpose. */
