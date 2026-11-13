@@ -6,7 +6,7 @@ import { parseRepository } from "@/lib/deployments/github";
 import { externalJson } from "@/lib/deployments/http";
 import type { ServiceContext } from "@/types/service-context";
 import type { Prisma, TenantGitBinding } from "@/generated/prisma/client";
-import { contentStorage } from "@/lib/gitops/mode";
+import { resolveTenantStorage } from "@/lib/gitops/tenant-mode";
 import { validateDocument } from "@/lib/gitops/canonical";
 import {
   AppSchema,
@@ -174,6 +174,48 @@ export async function rootBinding(tenantId: string) {
     where: { tenantId, productId: null },
   });
 }
+/** A tenant root reserves its files across all environment branches, including folder ancestors. */
+export async function assertGitRootAvailable(
+  tenantId: string,
+  input: { repositoryUrl: string; basePath: string },
+  db: Pick<Prisma.TransactionClient, "tenantGitBinding"> = prisma,
+) {
+  const repository = parseRepository(input.repositoryUrl).web.toLowerCase();
+  const others = await db.tenantGitBinding.findMany({
+    where: {
+      tenantId: { not: tenantId },
+    },
+    select: { repositoryUrl: true, basePath: true },
+  });
+  for (const other of others) {
+    if (parseRepository(other.repositoryUrl).web.toLowerCase() !== repository)
+      continue;
+    if (
+      !input.basePath ||
+      !other.basePath ||
+      input.basePath === other.basePath ||
+      input.basePath.startsWith(`${other.basePath}/`) ||
+      other.basePath.startsWith(`${input.basePath}/`)
+    )
+      throw new GitOpsError(
+        "This repository folder is reserved by another tenant. Choose a separate folder or repository.",
+        "ROOT_CONFLICT",
+      );
+  }
+}
+async function reserveGitRoot<T>(
+  tenantId: string,
+  input: { repositoryUrl: string; basePath: string },
+  save: (tx: Prisma.TransactionClient) => Promise<T>,
+) {
+  const repository = parseRepository(input.repositoryUrl).web.toLowerCase();
+  return prisma.$transaction(async (tx) => {
+    // Serialize folder reservations across tenants, including ancestor and descendant paths.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('superschema:git-root'),hashtext(${repository}))`;
+    await assertGitRootAvailable(tenantId, input, tx);
+    return save(tx);
+  });
+}
 export async function bindingFor(productId: string) {
   const settings = await prisma.productGitSettings.findUnique({
     where: { productId },
@@ -276,6 +318,7 @@ export async function saveBinding(
 ) {
   requireAccess(ctx, "deploy.configure", { tenantId });
   const data = BindingSchema.parse(raw);
+  await assertGitRootAvailable(tenantId, data);
   parseRepository(data.repositoryUrl);
   const existing = await rootBinding(tenantId);
   if (
@@ -300,14 +343,31 @@ export async function saveBinding(
   const remote = await provider(candidate);
   await remote.base(data.branch);
   if (remote instanceof GitHubProvider) await remote.verify();
-  const binding = existing
-    ? await prisma.tenantGitBinding.update({
-        where: { id: existing.id },
-        data: { ...data, revision: { increment: 1 } },
-      })
-    : await prisma.tenantGitBinding.create({
-        data: { ...data, tenantId, createdBy: ctx.userId },
-      });
+  const binding = await reserveGitRoot(tenantId, data, async (tx) => {
+    const current = await tx.tenantGitBinding.findFirst({
+      where: { tenantId, productId: null },
+    });
+    if (
+      current &&
+      (current.repositoryUrl !== data.repositoryUrl ||
+        current.branch !== data.branch ||
+        current.basePath !== data.basePath) &&
+      (await tx.gitCanonicalDocument.count({
+        where: { bindingId: current.id },
+      }))
+    )
+      throw new GitOpsError(
+        "An indexed binding cannot be repointed; migrate its repository explicitly",
+      );
+    return current
+      ? tx.tenantGitBinding.update({
+          where: { id: current.id },
+          data: { ...data, revision: { increment: 1 } },
+        })
+      : tx.tenantGitBinding.create({
+          data: { ...data, tenantId, createdBy: ctx.userId },
+        });
+  });
   const tenant = await prisma.tenant.findUniqueOrThrow({
     where: { id: tenantId },
   });
@@ -360,23 +420,8 @@ export async function saveProductSettings(
     )
   )
     throw new GitOpsError("Choose environments configured for this tenant");
-  if (contentStorage() === "git") {
+  if (resolveTenantStorage(product.domain.tenant.contentStorage) === "git") {
     const current = await bindingFor(productId);
-    if (
-      (data.repositoryUrl ?? root.repositoryUrl) !==
-        current.binding.repositoryUrl ||
-      (data.branch ?? root.branch) !== current.binding.branch ||
-      (data.basePath ?? root.basePath) !== current.binding.basePath
-    )
-      throw new GitOpsError(
-        "Changing an indexed source binding requires an explicit repository migration",
-      );
-    if (data.stages[0].branch !== current.binding.branch)
-      throw new GitOpsError(
-        "The first environment must use the canonical source branch",
-      );
-    const remote = await provider(current.binding);
-    for (const stage of data.stages) await remote.base(stage.branch);
     const canonical = await prisma.gitCanonicalDocument.findFirst({
       where: {
         bindingId: current.binding.id,
@@ -384,19 +429,47 @@ export async function saveProductSettings(
         objectId: productId,
       },
     });
-    if (!canonical)
-      throw new GitOpsError(
-        "Merge the product bootstrap before changing Git-owned configuration",
+    if (!canonical) {
+      if (
+        await prisma.changeSet.findFirst({
+          where: {
+            productId,
+            kind: "BOOTSTRAP",
+            state: { notIn: ["MERGED", "CLOSED"] },
+          },
+        })
+      )
+        throw new GitOpsError(
+          "Merge or discard the initial import before changing its workflow settings",
+          "BOOTSTRAP_IN_PROGRESS",
+        );
+      // Before the first source manifest, these are operational bootstrap settings.
+    } else {
+      if (
+        (data.repositoryUrl ?? root.repositoryUrl) !==
+          current.binding.repositoryUrl ||
+        (data.branch ?? root.branch) !== current.binding.branch ||
+        (data.basePath ?? root.basePath) !== current.binding.basePath
+      )
+        throw new GitOpsError(
+          "Changing an indexed source binding requires an explicit repository migration",
+        );
+      if (data.stages[0].branch !== current.binding.branch)
+        throw new GitOpsError(
+          "The first environment must use the canonical source branch",
+        );
+      const remote = await provider(current.binding);
+      for (const stage of data.stages) await remote.base(stage.branch);
+      const document = validateDocument(canonical.document);
+      document.owners = data.owners;
+      document.configuration = json(data) as never;
+      const { GitContentStore } = await import("./content-store");
+      return new GitContentStore(provider).saveDraft(
+        { productId, document },
+        undefined,
+        ctx,
       );
-    const document = validateDocument(canonical.document);
-    document.owners = data.owners;
-    document.configuration = json(data) as never;
-    const { GitContentStore } = await import("./content-store");
-    return new GitContentStore(provider).saveDraft(
-      { productId, document },
-      undefined,
-      ctx,
-    );
+    }
   }
   const override = [
     data.repositoryUrl,
@@ -414,6 +487,7 @@ export async function saveProductSettings(
       branch: data.branch ?? root.branch,
       basePath: data.basePath ?? root.basePath,
     };
+    await assertGitRootAvailable(root.tenantId, config);
     const prior = await prisma.tenantGitBinding.findUnique({
       where: { productId },
     });
@@ -424,16 +498,18 @@ export async function saveProductSettings(
         prior.basePath !== config.basePath)
     )
       throw new GitOpsError("An indexed product binding cannot be repointed");
-    binding = await prisma.tenantGitBinding.upsert({
-      where: { productId },
-      create: {
-        ...config,
-        productId,
-        tenantId: root.tenantId,
-        createdBy: ctx.userId,
-      },
-      update: { ...config, enabled: true, revision: { increment: 1 } },
-    });
+    binding = await reserveGitRoot(root.tenantId, config, (tx) =>
+      tx.tenantGitBinding.upsert({
+        where: { productId },
+        create: {
+          ...config,
+          productId,
+          tenantId: root.tenantId,
+          createdBy: ctx.userId,
+        },
+        update: { ...config, enabled: true, revision: { increment: 1 } },
+      }),
+    );
   }
   if (data.stages[0].branch !== binding.branch)
     throw new GitOpsError(
@@ -520,7 +596,10 @@ export function callbackUrl(): string {
   if (!base) throw new GitOpsError("Set AUTH_URL before connecting GitHub");
   return new URL("/api/gitops/callback", base).href;
 }
-export async function beginGitHubLink(userId: string): Promise<string> {
+export async function beginGitHubLink(
+  userId: string,
+  destination: "workspace" | "settings" = "workspace",
+): Promise<string> {
   const app = await configuredApp(),
     state = randomBytes(32).toString("base64url"),
     verifier = randomBytes(48).toString("base64url");
@@ -528,6 +607,10 @@ export async function beginGitHubLink(userId: string): Promise<string> {
     data: {
       hash: createHash("sha256").update(state).digest("hex"),
       userId,
+      returnTo:
+        destination === "settings"
+          ? "/admin/settings/storage"
+          : "/admin/workflows/gitops",
       verifier: sealSecret(verifier, "GitOpsOAuthState.verifier"),
       expiresAt: new Date(Date.now() + 10 * 60000),
     },
@@ -546,7 +629,7 @@ export async function finishGitHubLink(
   userId: string,
   state: string,
   code: string,
-): Promise<void> {
+): Promise<string> {
   if (!/^[A-Za-z0-9_-]{40,100}$/.test(state) || !code || code.length > 1000)
     throw new GitOpsError("Invalid OAuth callback");
   const hash = createHash("sha256").update(state).digest("hex"),
@@ -597,4 +680,7 @@ export async function finishGitHubLink(
       ...tokenData(token, app.revision),
     },
   });
+  return saved.returnTo === "/admin/settings/storage"
+    ? saved.returnTo
+    : "/admin/workflows/gitops?connected=github";
 }

@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { ctxCan } from "@/lib/access";
-import { contentStorage } from "@/lib/gitops/mode";
+import { resolveTenantStorage } from "@/lib/gitops/tenant-mode";
 import { compareVersion, validateDocument } from "@/lib/gitops/canonical";
 import { GitOpsError } from "@/lib/gitops/contracts";
 import type { ServiceContext } from "@/types/service-context";
@@ -138,7 +138,7 @@ export async function getGitOpsWorkspace(
     ? errors
     : errors.filter((e) => e.path.startsWith(prefix));
   return {
-    mode: contentStorage(),
+    mode: resolveTenantStorage(tenant.contentStorage),
     tenant: {
       id: tenant.id,
       name: tenant.name,

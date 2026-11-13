@@ -18,3 +18,7 @@ software.
 
 Order rationale: phase 1 has no git dependency and changes the version model every later phase serializes; phases 2→3 give a
 read-only git mode before any write path exists; 4 adds writes; 5 and 6 depend on merges being detected by 3.
+
+## Tenant storage follow-up (2026-11-12)
+
+Storage selection is now per tenant. Settings supports database/Git selection, repository root and workflow configuration, GitHub connection, initial PR/index readiness and new tenant onboarding. See [implementation and acceptance](2026-11-12-tenant-storage-onboarding.md) and [operating guide](../../gitops-storage.md). `CONTENT_STORAGE` only initializes legacy null choices; explicit choices survive deployment environment changes.

@@ -97,7 +97,10 @@ describe("portable GitOps configuration", () => {
   });
   it("uses the same defaults when optional sections are omitted", () => {
     const defaults = GitOpsConfigSchema.parse({ version: 1 });
-    expect(defaults).toEqual(loadGitOpsConfig({ configPath: sample })!.config);
+    expect({
+      ...defaults,
+      scope: { ...defaults.scope, contentStorage: "database" },
+    }).toEqual(loadGitOpsConfig({ configPath: sample })!.config);
   });
   it("allows a whole-repository root, custom stages, hosts, owners and target bindings", () => {
     const config = GitOpsConfigSchema.parse({

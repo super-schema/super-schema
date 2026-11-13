@@ -5,7 +5,7 @@ version: 1
 
 application:
   url: http://localhost:3000
-  # Keep database until the bootstrap PR has merged. Then set git and restart.
+  # Legacy tenant migration default only. New tenants use scope.contentStorage or Settings.
   contentStorage: database
 
 database:
@@ -39,6 +39,7 @@ repository:
 
 scope:
   tenantId: "" # REQUIRED: existing application tenant ID
+  contentStorage: database # per tenant: database | git; choose git before creating the bootstrap PR
   operatorEmail: "" # REQUIRED: existing enabled user; actual RBAC assignments are checked
   productIds: [] # empty means all existing products in this tenant; supply IDs to limit scope
 

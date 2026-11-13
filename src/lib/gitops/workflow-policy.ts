@@ -1,17 +1,20 @@
 import { prisma } from "@/lib/db";
 import { DeliveryError } from "@/lib/deployments/contracts";
 import { ProductSettingsSchema } from "./contracts";
-import { contentStorage } from "./mode";
+import { tenantContentStorage } from "./tenant-mode";
 /** The managed default workflow inherits its repository and environment branch from Git-owned product configuration. */
 export async function gitOpsWorkflowPolicy(
   workflowId: string,
   environment: string,
 ) {
-  if (contentStorage() !== "git") return null;
   const settings = await prisma.productGitSettings.findFirst({
     where: { workflowId },
   });
-  if (!settings) return null;
+  if (
+    !settings ||
+    (await tenantContentStorage(prisma, settings.tenantId)) !== "git"
+  )
+    return null;
   const binding = await prisma.tenantGitBinding.findUnique({
     where: { id: settings.bindingId },
   });

@@ -1,3 +1,7 @@
+import {
+  tenantContentStorage,
+  resolveTenantStorage,
+} from "@/lib/gitops/tenant-mode";
 import { randomUUID } from "node:crypto";
 import { getGitOpsWorkerSettings } from "@/lib/gitops/config.mjs";
 import { prisma } from "@/lib/db";
@@ -43,6 +47,17 @@ export async function synchronizeBinding(
     where: { id },
   });
   if (!binding.enabled) return;
+  if ((await tenantContentStorage(prisma, binding.tenantId)) !== "git") {
+    await prisma.tenantGitBinding.update({
+      where: { id },
+      data: {
+        lastSyncStatus: "DATABASE_MODE",
+        lastError: null,
+        lastSyncAt: new Date(),
+      },
+    });
+    return;
+  }
   const remote = await provider(binding),
     sha = await remote.base(binding.branch);
   await prisma.tenantGitBinding.update({
@@ -165,6 +180,15 @@ export async function synchronizeBinding(
           .map((f) => f.document),
         binding.createdBy,
         async (tx) => {
+          const tenantMode = await tx.$queryRaw<
+            { contentStorage: string | null }[]
+          >`SELECT "contentStorage" FROM "tenants" WHERE id=${binding.tenantId} FOR SHARE`;
+          if (resolveTenantStorage(tenantMode[0]?.contentStorage) !== "git")
+            throw new GitOpsError(
+              "Tenant storage changed during synchronization",
+              "STORAGE_CHANGED",
+            );
+
           await tx.gitCanonicalDocument.deleteMany({
             where: {
               bindingId: id,
@@ -522,9 +546,17 @@ export async function receiveWebhook(
 }
 export async function pollBindings(): Promise<void> {
   const now = new Date();
-  const {pollIntervalMs}=getGitOpsWorkerSettings();
+  const { pollIntervalMs } = getGitOpsWorkerSettings();
+  const gitTenants = await prisma.tenant.findMany({
+    where: { contentStorage: "git" },
+    select: { id: true },
+  });
   for (const binding of await prisma.tenantGitBinding.findMany({
-    where: { enabled: true, nextSyncAt: { lte: now } },
+    where: {
+      enabled: true,
+      tenantId: { in: gitTenants.map((t) => t.id) },
+      nextSyncAt: { lte: now },
+    },
     take: 100,
   })) {
     await prisma.$transaction(async (tx) => {

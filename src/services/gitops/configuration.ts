@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { setTenantContentStorage } from "@/services/tenant-storage.service";
 import { ctxCan } from "@/lib/access";
 import { openSecret } from "@/lib/crypto/secret-box";
 import { parseRepository } from "@/lib/deployments/github";
@@ -43,6 +44,8 @@ export async function applyGitOpsConfiguration(
       `Complete these configuration fields before applying: ${missing.join(", ")}`,
     );
   requireAccess(ctx, "deploy.configure", { tenantId });
+  if (c.scope.contentStorage)
+    requireAccess(ctx, "tenant.storage.configure", { tenantId });
   const actor = await prisma.user.findUnique({ where: { id: ctx.userId } });
   if (
     !actor ||
@@ -239,6 +242,10 @@ export async function applyGitOpsConfiguration(
       data: { deploymentEnvironments: environments },
     });
   const savedBinding = await saveBinding(tenantId, binding, ctx, provider);
+  await prisma.tenantGitBinding.update({
+    where: { id: savedBinding.id },
+    data: { workflowDefaults: JSON.parse(JSON.stringify(c.workflow)) },
+  });
   const results = [];
   if (savedBinding.enabled)
     for (const plan of plans) {
@@ -255,5 +262,12 @@ export async function applyGitOpsConfiguration(
           : { configured: true }),
       });
     }
+  if (c.scope.contentStorage)
+    await setTenantContentStorage(
+      tenantId,
+      c.scope.contentStorage,
+      tenant.storageRevision,
+      ctx,
+    );
   return { bindingId: savedBinding.id, products: results };
 }

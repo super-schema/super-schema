@@ -105,6 +105,9 @@ model Tenant {
   description String  @default("")
   isActive  Boolean  @default(true)
   isSystem  Boolean  @default(false)
+  /// Canonical content backend. Null is only for legacy tenants awaiting default initialization.
+  contentStorage String? @default("database")
+  storageRevision Int @default(1)
   domains   Domain[]
   userRoles UserRole[]
   entities       Entity[]
@@ -1342,6 +1345,7 @@ model TenantGitBinding {
   revision Int @default(1)
   enabled Boolean @default(true)
   connectionId String?
+  workflowDefaults Json @default("{}")
   createdBy String
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
@@ -1380,6 +1384,7 @@ model GitUserLink {
 model GitOpsOAuthState {
   hash String @id
   verifier String
+  returnTo String @default("/admin/workflows/gitops")
   userId String
   expiresAt DateTime
   @@map("gitops_oauth_states")

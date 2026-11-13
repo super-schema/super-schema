@@ -43,9 +43,10 @@ export function assertContentWrite(
   model: string,
   operation: string,
   args?: unknown,
+  tenantMode: "database" | "git" = contentStorage(),
 ): void {
   if (
-    contentStorage() !== "git" ||
+    tenantMode !== "git" ||
     projection.getStore() ||
     !/^(create|update|upsert|delete)/.test(operation)
   )
@@ -65,6 +66,8 @@ export function assertContentWrite(
     Object.keys(data?.data ?? {}).every((key) =>
       [
         "deploymentEnvironments",
+        "contentStorage",
+        "storageRevision",
         "deploymentEnvironmentDetails",
         "deploymentTargetMethods",
         "updatedAt",

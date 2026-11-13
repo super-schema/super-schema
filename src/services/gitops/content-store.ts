@@ -20,21 +20,34 @@ import {
 } from "@/lib/gitops/canonical";
 import {
   DraftSchema,
+  ProductSettingsSchema,
   GitOpsError,
   type CanonicalDocument,
   type FileChange,
   type ObjectKind,
 } from "@/lib/gitops/contracts";
+import { resolveTenantStorage } from "@/lib/gitops/tenant-mode";
 import { mergeDocuments } from "@/lib/gitops/merge";
 import { exportProduct, VERSION_FIELDS } from "@/lib/gitops/projection";
 import {
   bindingFor,
   json,
-  productFor,
+  productFor as readProduct,
   providerFor,
   requireAccess,
+  saveProductSettings,
   type ProviderFactory,
 } from "./settings";
+
+async function productFor(id: string, ctx: ServiceContext, action: ActionId) {
+  const product = await readProduct(id, ctx, action);
+  if (resolveTenantStorage(product.domain.tenant.contentStorage) !== "git")
+    throw new GitOpsError(
+      "Choose Git storage in tenant Settings before authoring source PRs",
+      "GIT_STORAGE_REQUIRED",
+    );
+  return product;
+}
 
 const actionFor = (kind: ObjectKind): ActionId =>
   kind === "Entity"
@@ -293,6 +306,32 @@ export class GitContentStore implements ContentStore {
       throw new GitOpsError(
         "This product is already indexed; edit its snapshots instead",
       );
+    if (
+      !(await prisma.productGitSettings.findUnique({ where: { productId } }))
+    ) {
+      const defaults = ProductSettingsSchema.safeParse(
+        binding.workflowDefaults,
+      );
+      await saveProductSettings(
+        productId,
+        defaults.success
+          ? defaults.data
+          : {
+              owners: [],
+              targets: [],
+              stages: p.domain.tenant.deploymentEnvironments.map((name, i) => ({
+                name,
+                branch:
+                  i === 0
+                    ? binding.branch
+                    : name.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
+                path: "environments",
+              })),
+            },
+        ctx,
+        this.provider,
+      );
+    }
     const cs = await openSet(productId, ctx, "BOOTSTRAP"),
       docs = await exportProduct(prisma, productId);
     const remote = await this.provider(binding, ctx.userId),

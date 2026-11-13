@@ -154,6 +154,7 @@ export const GitOpsConfigSchema = z
     scope: z
       .object({
         tenantId: z.string().default(""),
+        contentStorage: z.enum(["database", "git"]).optional(),
         productIds: z.array(z.string().min(1)).default([]),
         operatorEmail: z.union([z.literal(""), z.string().email()]).default(""),
       })

@@ -35,5 +35,6 @@ export async function setActiveTenantAction(tenantId: string) {
   });
 
   revalidatePath("/schemas");
+  revalidatePath("/", "layout");
   return { success: true };
 }

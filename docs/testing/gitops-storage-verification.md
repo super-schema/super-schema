@@ -50,6 +50,21 @@ The hosted proof validates real Git operations and the default workflow, not reg
 - Prisma generation, TypeScript, scoped ESLint, `git diff --check` and the production webpack build passed on Node 22.22.2. The build used an isolated PostgreSQL URL and disabled local configuration discovery.
 - Configuration application was exercised through real settings services against migrated in-memory PGlite with a stateful Git provider fixture. No deployment configuration was applied to the live database or hosted repository.
 
+## Per-tenant storage and onboarding (2026-11-12)
+
+- 292 tests passed across 19 files on Node 22.22.2, including real migrations and tenant onboarding in isolated in-memory PGlite. HTTP transport fixtures used temporary loopback servers; no live application database was opened.
+- Mixed database/Git tenants, legacy initialization, tenant RBAC, source PR gating, nested/bulk/raw writes, cross-tenant reparenting, parent deletion and transaction-scoped projection permissions are covered. Git documents cannot overwrite a database tenant's stable IDs. Database tenants are skipped by synchronization.
+- Git onboarding verifies the remote before tenant creation, installs creator membership and an initial workspace, preserves repository folders and environment defaults, creates the initial source PR and indexes merged entries into workspace data. Tests cover non-overlapping roots, stale storage revisions, unsafe reverse cutover, setup edits during an import and default workflows on newly bootstrapped products.
+- Settings component tests cover explicit backend selection, server errors, empty roots, multiple owners, platform/tenant controls and database/Git onboarding.
+- TypeScript and scoped ESLint passed. Production build used disabled configuration discovery and an isolated unreachable PostgreSQL URL. Existing middleware and dynamic JSON Schema dependency warnings remain.
+- Browser fixtures render the actual Settings component with local actions. They cover desktop/mobile, light/dark, keyboard source selection, onboarding root preservation and private tenant creation. All four passed without page errors, horizontal overflow or axe accessibility violations. No live GitHub actions are invoked.
+- The hosted smoke script now selects tenant Git storage before publishing its initial PR. The earlier hosted proof remains historical; this follow-up did not register a live GitHub App, run its OAuth callback/webhook ingress, or change the installed database/repository.
+
+```bash
+npx vitest run tests/unit/lib/gitops tests/integration/db/gitops-storage-pglite.test.ts tests/integration/db/deployment-workflows-pglite.test.ts tests/unit/lib/db-built-in-traits.test.ts tests/unit/components/tenant-storage-settings.test.tsx tests/unit/deployments tests/unit/lib/crypto/secret-box.test.ts tests/unit/middleware.test.ts tests/unit/lib/middleware-edge-safe.test.ts tests/unit/lib/instrumentation-startup-checks.test.ts
+CHROME_EXECUTABLE='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' node scripts/verify-tenant-storage-ui.mjs
+```
+
 ## Maintenance
 
 Rebuild `.github/actions/gitops-validate/validate.cjs` with `npm run gitops:build-validator` after changing the canonical validator. The smoke script is opt-in and refuses a repository other than the authorized test repository; it creates and cleans only its own uniquely named test branches. Read `scripts/gitops-hosted-smoke.ts` before rerunning it because it creates real PRs.

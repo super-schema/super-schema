@@ -6,6 +6,7 @@ import { writeFileSync } from "node:fs";
 import { prisma, hostedPg } from "./gitops-hosted-db";
 import { GitHubProvider } from "@/lib/gitops/provider";
 import { GitContentStore } from "@/services/gitops/content-store";
+import { setTenantContentStorage } from "@/services/tenant-storage.service";
 import { synchronizeBinding } from "@/services/gitops/sync";
 import {
   deliverArtifacts,
@@ -250,6 +251,7 @@ try {
     stages,
   );
   report.defaultWorkflowId = workflowId;
+  await setTenantContentStorage(ctx.tenantId!, "git", 1, ctx);
   let cs = await store.bootstrap("gitops-smoke-product", ctx);
   cs = await store.submit(
     cs.id,

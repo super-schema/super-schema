@@ -1,3 +1,5 @@
+import { prisma } from "@/lib/db";
+import { tenantContentStorage } from "@/lib/gitops/tenant-mode";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { adminCapabilities } from "@/lib/access/capabilities";
@@ -37,8 +39,8 @@ export default async function DashboardLayout({
 
   // Whether to SHOW the Admin link: the person administers the tenant in view or the platform (the policy's reading, `adminCapabilities`: never a role
   // name). A convenience for the navigation only; the Admin pages and every admin action decide for themselves.
-  const principal = await getPrincipal();
+  const [principal,storage] = await Promise.all([getPrincipal(),tenantContentStorage(prisma,tenantId)]);
   const adminArea = principal ? adminCapabilities(principal.assignments, tenantId).area : false;
 
-  return <DashboardClientShell adminArea={adminArea}>{process.env.CONTENT_STORAGE === "git" && <a href="/admin/workflows/gitops" className="mb-4 block rounded-md border border-border px-3 py-2 text-sm text-primary">GitOps storage · browse repository entries and author changes through GitHub PRs</a>}{children}</DashboardClientShell>;
+  return <DashboardClientShell adminArea={adminArea}>{storage === "git" && <a href="/admin/workflows/gitops" className="mb-4 block rounded-md border border-border px-3 py-2 text-sm text-primary">GitOps storage · browse repository entries and author changes through GitHub PRs</a>}{children}</DashboardClientShell>;
 }

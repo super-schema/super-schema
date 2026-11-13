@@ -46,6 +46,8 @@ export async function installBuiltInTraits({ strict }: { strict: boolean }): Pro
 
     const prisma = new PrismaClient({ adapter });
     try {
+      const {initializeLegacyTenantStorage}=await import("./gitops/tenant-mode");
+      await initializeLegacyTenantStorage(prisma);
       const result = await ensureBundledTraitsForAllTenants(prisma);
       if (!result.success) throw new Error(`${result.error.code}: ${result.error.message}`);
       const { tenants, created, skipped, failed } = result.data;

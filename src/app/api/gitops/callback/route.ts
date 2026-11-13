@@ -8,14 +8,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   const u = new URL(request.url);
   try {
-    await finishGitHubLink(
+    const destination = await finishGitHubLink(
       principal.userId,
       u.searchParams.get("state") ?? "",
       u.searchParams.get("code") ?? "",
     );
-    return NextResponse.redirect(
-      new URL("/admin/workflows/gitops?connected=github", callbackUrl()),
-    );
+    return NextResponse.redirect(new URL(destination, callbackUrl()));
   } catch {
     return NextResponse.json(
       {

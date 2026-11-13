@@ -14,6 +14,7 @@ vi.mock("@/services/events/bundled-traits.service", () => ({ ensureBundledTraits
 vi.mock("@/generated/prisma/client", () => ({
   PrismaClient: class {
     $disconnect = h.disconnect;
+    tenant = { updateMany: vi.fn().mockResolvedValue({count:0}) };
   },
 }));
 vi.mock("@prisma/adapter-pg", () => ({ PrismaPg: class {} }));

@@ -1,6 +1,8 @@
 # GitOps storage mode — design
 
-Status: approved · Date: 2026-11-02
+Status: implemented; tenant scope amended 2026-11-12 · Date: 2026-11-02
+
+Tenant storage and onboarding supersede the original deployment-wide exclusivity: [tenant storage implementation](../plans/2026-11-12-tenant-storage-onboarding.md). Each tenant chooses database or Git through Settings. Database row guards and sync gating enforce that choice; the deployment-wide environment flag initializes legacy null choices once.
 
 Implemented behavior and activation: [GitOps storage guide](../../gitops-storage.md), [verification record](../../testing/gitops-storage-verification.md). The implementation reads immutable Git objects through the provider API instead of maintaining disk clones. Product settings additionally define the default same-repository environment lifecycle; the root can be the whole repository or one folder.
 
@@ -17,7 +19,7 @@ become drafts, drafts become a PR, the PR review is the approval, the merge land
 ## 2. Goals, non-goals, anti-goals
 
 **Goals**
-- Two mutually exclusive content storage modes per deployment: `database` (today's storage; adopts the new versioning model) and `git`.
+- Two mutually exclusive content storage modes per tenant: `database` (today's storage; adopts the new versioning model) and `git`.
 - In `git` mode: every create/update/deprecate/delete becomes a draft; drafts are grouped into a **change set scoped to one product**;
   submitting opens a GitHub PR **authored by the user**; GitHub PR review + merge is the only approval path.
 - UI shows change-set / PR state (draft, in review, changes requested, conflicts, checks, merged, closed) and version stage
@@ -30,7 +32,7 @@ become drafts, drafts become a PR, the PR review is the approval, the merge land
 - In-app approvals in git mode (may come later from user feedback). Database mode keeps today's governance.
 - GitLab / Bitbucket adapters (interface only).
 - Registry publication, infrastructure provisioning, deployment — promotion does not deploy.
-- Running both modes at once or per-tenant mode mixing.
+- Mixing storage ownership within one tenant. Different tenants may use different backends.
 - Git → database migration. Not in the UI; a separate offline utility may be built later if needed. Database → git ("Export to Git") is the only supported direction.
 
 **Anti-goals (failure even if it "works")**
@@ -76,7 +78,8 @@ become drafts, drafts become a PR, the PR review is the approval, the merge land
 ### 5.1 Modes
 
 ```
-CONTENT_STORAGE = database | git        (deployment-wide)
+Tenant.contentStorage = database | git  (per tenant)
+CONTENT_STORAGE = database | git         (one-time legacy initialization default)
 DB_PROVIDER     = pglite   | postgresql (metadata + projection store, independent)
 ```
 
@@ -220,7 +223,7 @@ derived: object has no released version.
 
 ### 9.1 Setup (admin)
 
-1. Admin sets `CONTENT_STORAGE=git` (deployment config) and registers the GitHub App (app id, private key, webhook secret, client
+1. Admin selects Git in tenant Storage settings and registers the shared GitHub App (app id, private key, webhook secret, client
    id/secret) in admin settings.
 2. Per tenant: **Tenant settings → Git binding**: installation, repo, branch, basePath. "Test connection" really calls GitHub
    (replaces stub `testConnection`).

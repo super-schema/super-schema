@@ -37,6 +37,7 @@ vi.mock("@/lib/db", () => ({
     },
   ),
 }));
+import { projectionTransaction } from "@/lib/gitops/projection-transaction";
 import { emptyEventDocument } from "@/lib/events/document/types";
 import { GitContentStore } from "@/services/gitops/content-store";
 import {
@@ -49,6 +50,14 @@ import { getGitOpsWorkspace } from "@/services/gitops/workspace";
 import { applyGitOpsConfiguration } from "@/services/gitops/configuration";
 import { GitOpsConfigSchema } from "@/lib/gitops/config.mjs";
 import { sealSecret } from "@/lib/crypto/secret-box";
+import { initializeLegacyTenantStorage } from "@/lib/gitops/tenant-mode";
+import {
+  getTenantStorageSettings,
+  onboardTenant,
+  saveTenantGitProfile,
+  setTenantContentStorage,
+  startTenantBootstrap,
+} from "@/services/tenant-storage.service";
 
 afterEach(() => vi.unstubAllEnvs());
 async function configurationApp() {
@@ -226,23 +235,25 @@ afterAll(async () => {
   await pg?.close();
 });
 beforeEach(async () => {
-  for (const remove of [
-    () => h.db.gitOpsJob.deleteMany(),
-    () => h.db.indexError.deleteMany(),
-    () => h.db.gitCanonicalDocument.deleteMany(),
-    () => h.db.changeSetItem.deleteMany(),
-    () => h.db.changeSet.deleteMany(),
-    () => h.db.deliveryPullRequest.deleteMany(),
-    () => h.db.productGitSettings.deleteMany(),
-    () => h.db.tenantGitBinding.deleteMany(),
-    () => h.db.schemaReference.deleteMany(),
-    () => h.db.eventSpec.deleteMany(),
-    () => h.db.entity.deleteMany(),
-    () => h.db.product.deleteMany(),
-    () => h.db.domain.deleteMany(),
-    () => h.db.tenant.deleteMany(),
-  ])
-    await remove();
+  await projectionTransaction(h.db, async (tx) => {
+    for (const remove of [
+      () => tx.gitOpsJob.deleteMany(),
+      () => tx.indexError.deleteMany(),
+      () => tx.gitCanonicalDocument.deleteMany(),
+      () => tx.changeSetItem.deleteMany(),
+      () => tx.changeSet.deleteMany(),
+      () => tx.deliveryPullRequest.deleteMany(),
+      () => tx.productGitSettings.deleteMany(),
+      () => tx.tenantGitBinding.deleteMany(),
+      () => tx.schemaReference.deleteMany(),
+      () => tx.eventSpec.deleteMany(),
+      () => tx.entity.deleteMany(),
+      () => tx.product.deleteMany(),
+      () => tx.domain.deleteMany(),
+      () => tx.tenant.deleteMany(),
+    ])
+      await remove();
+  });
   for (const id of ["author", "other"])
     await h.db.user.upsert({
       where: { id },
@@ -324,6 +335,10 @@ beforeEach(async () => {
   store = new GitContentStore(async () => repo);
 }, 30000);
 async function bootstrap() {
+  await h.db.tenant.update({
+    where: { id: "tenant" },
+    data: { contentStorage: "git" },
+  });
   const cs = await store.bootstrap("product", ctx());
   const submitted = await store.submit(cs.id, "Bootstrap", "", ctx());
   repo.merge(submitted.prNumber!);
@@ -337,6 +352,447 @@ async function entityDoc() {
 }
 
 describe("GitOps on actual migrated PGlite tables", () => {
+  const profile = () => ({
+    binding: {
+      repositoryUrl: "https://github.com/owner/repo",
+      installationId: "1",
+      branch: "main",
+      basePath: "storage/new-tenant",
+      enabled: true,
+    },
+    owners: ["@schema-owner"],
+    stages: [
+      { name: "development", branch: "main", path: "environments" },
+      { name: "staging", branch: "staging", path: "environments" },
+    ],
+  });
+
+  it("keeps explicit database tenants editable beside Git tenants even with the legacy Git default", async () => {
+    vi.stubEnv("CONTENT_STORAGE", "git");
+    await h.db.tenant.create({
+      data: {
+        id: "git-tenant",
+        name: "Git",
+        slug: "git",
+        contentStorage: "git",
+      },
+    });
+    await h.db.entity.update({
+      where: { id: "account" },
+      data: { description: "database content" },
+    });
+    await expect(
+      h.db.entity.create({
+        data: {
+          name: "Private",
+          slug: "private",
+          tenantId: "git-tenant",
+          ownerId: "author",
+        },
+      }),
+    ).rejects.toThrow("GITOPS_AUTHORING_REQUIRED");
+    expect(
+      (await h.db.entity.findUniqueOrThrow({ where: { id: "account" } }))
+        .description,
+    ).toBe("database content");
+    const status = await getTenantStorageSettings("tenant", ctx());
+    expect(status.tenant.mode).toBe("database");
+  });
+
+  it("guards nested writes, bulk writes, raw SQL, reparenting and parent cascades for Git content", async () => {
+    await h.db.tenant.update({
+      where: { id: "tenant" },
+      data: { contentStorage: "git" },
+    });
+    await expect(
+      h.db.entity.update({
+        where: { id: "account" },
+        data: {
+          fields: {
+            create: {
+              name: "blocked",
+              slug: "blocked",
+              type: "string",
+              sortOrder: 1,
+            },
+          },
+        },
+      }),
+    ).rejects.toThrow("GITOPS_AUTHORING_REQUIRED");
+    await expect(
+      h.db.field.updateMany({
+        where: { entityId: "account" },
+        data: { description: "blocked" },
+      }),
+    ).rejects.toThrow("GITOPS_AUTHORING_REQUIRED");
+    await expect(
+      h.db
+        .$executeRaw`UPDATE "fields" SET "description"='blocked' WHERE id='field'`,
+    ).rejects.toThrow("GITOPS_AUTHORING_REQUIRED");
+    await h.db.tenant.create({
+      data: { id: "database-tenant", name: "Private", slug: "private" },
+    });
+    await h.db.entity.create({
+      data: {
+        id: "private-entity",
+        tenantId: "database-tenant",
+        name: "Private",
+        slug: "private",
+        ownerId: "author",
+      },
+    });
+    await expect(
+      h.db.field.update({
+        where: { id: "field" },
+        data: { entityId: "private-entity" },
+      }),
+    ).rejects.toThrow("GITOPS_AUTHORING_REQUIRED");
+    await expect(
+      h.db.entity.update({
+        where: { id: "private-entity" },
+        data: { tenantId: "tenant" },
+      }),
+    ).rejects.toThrow("GITOPS_AUTHORING_REQUIRED");
+    await expect(
+      h.db.domain.delete({ where: { id: "domain" } }),
+    ).rejects.toThrow("GITOPS_AUTHORING_REQUIRED");
+    expect(await h.db.entity.count({ where: { id: "account" } })).toBe(1);
+    await h.db.tenant.update({
+      where: { id: "tenant" },
+      data: { deploymentEnvironments: ["development", "production"] },
+    });
+  });
+
+  it("limits projection permission to its transaction and clears it after commit and rollback", async () => {
+    await h.db.tenant.update({
+      where: { id: "tenant" },
+      data: { contentStorage: "git" },
+    });
+    await projectionTransaction(h.db, (tx) =>
+      tx.field.update({
+        where: { id: "field" },
+        data: { description: "projected" },
+      }),
+    );
+    await expect(
+      h.db.field.update({
+        where: { id: "field" },
+        data: { description: "leaked" },
+      }),
+    ).rejects.toThrow("GITOPS_AUTHORING_REQUIRED");
+    await expect(
+      projectionTransaction(h.db, async (tx) => {
+        await tx.field.update({
+          where: { id: "field" },
+          data: { description: "rollback" },
+        });
+        throw new Error("abort");
+      }),
+    ).rejects.toThrow("abort");
+    expect(
+      (await h.db.field.findUniqueOrThrow({ where: { id: "field" } }))
+        .description,
+    ).toBe("projected");
+    await expect(h.db.field.delete({ where: { id: "field" } })).rejects.toThrow(
+      "GITOPS_AUTHORING_REQUIRED",
+    );
+  });
+
+  it("never indexes a configured repository over a database tenant", async () => {
+    await expect(store.bootstrap("product", ctx())).rejects.toThrow(
+      "Choose Git storage",
+    );
+    await synchronizeBinding("binding", async () => repo);
+    expect(repo.calls).toBe(0);
+    expect(await h.db.gitCanonicalDocument.count()).toBe(0);
+    expect(
+      (await h.db.entity.findUniqueOrThrow({ where: { id: "account" } }))
+        .description,
+    ).toBe("original");
+    expect(
+      (
+        await h.db.tenantGitBinding.findUniqueOrThrow({
+          where: { id: "binding" },
+        })
+      ).lastSyncStatus,
+    ).toBe("DATABASE_MODE");
+  });
+
+  it("allows initial Git workflow configuration and freezes it while the initial import is in progress", async () => {
+    await configurationApp();
+    await setTenantContentStorage("tenant", "git", 1, ctx());
+    const initial = {
+      ...profile(),
+      binding: { ...profile().binding, basePath: "storage/contracts" },
+    };
+    await saveTenantGitProfile("tenant", initial, ctx(), async () => repo);
+    const draft = await store.bootstrap("product", ctx());
+    await expect(
+      saveTenantGitProfile("tenant", initial, ctx(), async () => repo),
+    ).rejects.toThrow("Merge or discard");
+    await store.discard(draft.id, ctx());
+    await expect(
+      saveTenantGitProfile("tenant", initial, ctx(), async () => repo),
+    ).resolves.toHaveProperty("bindingId");
+  });
+
+  it("inherits the tenant workflow defaults when bootstrapping a newly added product", async () => {
+    await configurationApp();
+    await saveTenantGitProfile(
+      "tenant",
+      {
+        ...profile(),
+        binding: { ...profile().binding, basePath: "storage/contracts" },
+      },
+      ctx(),
+      async () => repo,
+    );
+    await setTenantContentStorage("tenant", "git", 1, ctx());
+    const product = await h.db.product.create({
+      data: { domainId: "domain", name: "New product", slug: "new-product" },
+    });
+    await store.bootstrap(product.id, ctx());
+    const settings = await h.db.productGitSettings.findUniqueOrThrow({
+      where: { productId: product.id },
+    });
+    expect(settings.stages).toEqual(profile().stages);
+    expect(settings.workflowId).toBeTruthy();
+    expect(
+      (
+        await h.db.deploymentWorkflow.findUniqueOrThrow({
+          where: { id: settings.workflowId! },
+        })
+      ).name,
+    ).toBe("GitOps · same repository");
+  });
+
+  it("rejects Git documents whose stable IDs belong to a private database tenant", async () => {
+    await bootstrap();
+    await h.db.tenant.create({
+      data: { id: "private-tenant", name: "Private", slug: "private" },
+    });
+    const privateEntity = await h.db.entity.create({
+      data: {
+        id: "private-id",
+        name: "Private",
+        slug: "private",
+        tenantId: "private-tenant",
+        ownerId: "author",
+        description: "private data",
+      },
+    });
+    const malicious = validateDocument((await entityDoc()).document);
+    malicious.id = "private-id";
+    malicious.spec.record.id = "private-id";
+    malicious.spec.record.slug = "private";
+    malicious.spec.children = {};
+    malicious.spec.versionRecord = { id: "forged-version-id" };
+    repo.handEdit(
+      canonicalPath("storage/contracts", malicious),
+      serializeDocument(malicious),
+    );
+    await expect(
+      synchronizeBinding("binding", async () => repo),
+    ).rejects.toThrow("already belongs to another scope");
+    expect(
+      await h.db.entity.findUniqueOrThrow({ where: { id: "private-id" } }),
+    ).toEqual(privateEntity);
+  });
+
+  it("materializes the legacy default once without changing explicit per-tenant choices", async () => {
+    await projectionTransaction(h.db, async (tx) => {
+      await tx.tenant.create({
+        data: {
+          id: "legacy",
+          name: "Legacy",
+          slug: "legacy",
+          contentStorage: null,
+        },
+      });
+    });
+    vi.stubEnv("CONTENT_STORAGE", "git");
+    await initializeLegacyTenantStorage(h.db);
+    expect(
+      (await h.db.tenant.findUniqueOrThrow({ where: { id: "legacy" } }))
+        .contentStorage,
+    ).toBe("git");
+    expect(
+      (await h.db.tenant.findUniqueOrThrow({ where: { id: "tenant" } }))
+        .contentStorage,
+    ).toBe("database");
+    vi.stubEnv("CONTENT_STORAGE", "database");
+    await initializeLegacyTenantStorage(h.db);
+    expect(
+      (await h.db.tenant.findUniqueOrThrow({ where: { id: "legacy" } }))
+        .contentStorage,
+    ).toBe("git");
+  });
+
+  it("creates a database tenant with an initial workspace, administrator membership and private traits", async () => {
+    const result = await onboardTenant(
+      { name: "Private schemas", storage: "database" },
+      configurationContext(),
+    );
+    const tenant = await h.db.tenant.findUniqueOrThrow({
+      where: { id: result.tenantId },
+    });
+    expect(tenant.contentStorage).toBe("database");
+    expect(
+      await h.db.product.count({ where: { domain: { tenantId: tenant.id } } }),
+    ).toBe(1);
+    expect(
+      await h.db.userRole.count({
+        where: { tenantId: tenant.id, userId: "author", role: "ADMIN" },
+      }),
+    ).toBe(1);
+    expect(
+      await h.db.trait.count({ where: { tenantId: tenant.id } }),
+    ).toBeGreaterThan(0);
+    expect(
+      await h.db.tenantGitBinding.count({ where: { tenantId: tenant.id } }),
+    ).toBe(0);
+    expect(result.notice).toBeUndefined();
+  });
+
+  it("onboards Git storage, bootstraps under its folder and indexes merged entries for the UI", async () => {
+    await configurationApp();
+    const result = await onboardTenant(
+      {
+        name: "Git schemas",
+        storage: "git",
+        domainName: "Payments",
+        productName: "Contracts",
+        git: profile(),
+      },
+      configurationContext(),
+      async () => repo,
+    );
+    expect(result.notice).toBeUndefined();
+    const context = { ...configurationContext(), tenantId: result.tenantId };
+    const before = await getTenantStorageSettings(result.tenantId, context);
+    expect(before.tenant.mode).toBe("git");
+    expect(before.profile.stages).toEqual(profile().stages);
+    expect(before.state).toBe("bootstrap_required");
+    const bootstrap = await startTenantBootstrap(
+      result.tenantId,
+      context,
+      async () => repo,
+    );
+    expect(bootstrap.pullRequests).toHaveLength(1);
+    const pr = bootstrap.pullRequests[0].number!;
+    const files = repo.commits.get(repo.prs.get(pr)!.state.headSha)!;
+    expect([...files.keys()].filter((p) => !p.startsWith(".github/"))).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^storage\/new-tenant\//)]),
+    );
+    repo.merge(pr);
+    await synchronizeBinding(before.binding!.id, async () => repo);
+    const after = await getTenantStorageSettings(result.tenantId, context);
+    expect(after.state).toBe("ready");
+    expect(after.canReturnToDatabase).toBe(false);
+    await expect(
+      setTenantContentStorage(
+        result.tenantId,
+        "database",
+        after.tenant.revision,
+        context,
+      ),
+    ).rejects.toThrow("Git history");
+    const ui = await getGitOpsWorkspace(result.tenantId, undefined, context);
+    expect(ui.mode).toBe("git");
+    expect(ui.documents.length).toBeGreaterThan(0);
+  });
+
+  it("does not create tenants when repository verification fails or the caller lacks platform access", async () => {
+    await expect(onboardTenant({ name: "Forbidden" }, ctx())).rejects.toThrow(
+      "Platform administrator",
+    );
+    await expect(
+      onboardTenant(
+        { name: "Broken", storage: "git", git: profile() },
+        configurationContext(),
+        async () => {
+          throw new Error("denied");
+        },
+      ),
+    ).rejects.toThrow("denied");
+    expect(await h.db.tenant.count()).toBe(1);
+  });
+
+  it("rejects overlapping repository roots across tenants and allows sibling folders", async () => {
+    await configurationApp();
+    const other = await onboardTenant(
+      { name: "Other", storage: "database" },
+      configurationContext(),
+    );
+    const context = { ...configurationContext(), tenantId: other.tenantId };
+    for (const basePath of [
+      "",
+      "storage",
+      "storage/contracts",
+      "storage/contracts/nested",
+    ]) {
+      await expect(
+        saveTenantGitProfile(
+          other.tenantId,
+          { ...profile(), binding: { ...profile().binding, basePath } },
+          context,
+          async () => repo,
+        ),
+      ).rejects.toThrow("reserved by another tenant");
+    }
+    await expect(
+      saveTenantGitProfile(
+        other.tenantId,
+        profile(),
+        context,
+        async () => repo,
+      ),
+    ).resolves.toHaveProperty("bindingId");
+    expect(
+      (await getTenantStorageSettings(other.tenantId, context)).tenant.mode,
+    ).toBe("database");
+  });
+
+  it("requires tenant administrator access and an up-to-date storage revision", async () => {
+    await expect(
+      setTenantContentStorage("tenant", "git", 1, ctx("author", "EDITOR")),
+    ).rejects.toThrow("access denied");
+    await setTenantContentStorage("tenant", "git", 1, ctx());
+    await expect(
+      setTenantContentStorage("tenant", "database", 1, ctx()),
+    ).rejects.toThrow("another tab");
+    await setTenantContentStorage("tenant", "database", 2, ctx());
+    expect((await getTenantStorageSettings("tenant", ctx())).tenant.mode).toBe(
+      "database",
+    );
+  });
+
+  it("applies a portable configuration storage choice only to its selected tenant", async () => {
+    await configurationApp();
+    await h.db.tenant.create({
+      data: { id: "private", name: "Private", slug: "private" },
+    });
+    await applyGitOpsConfiguration(
+      configuration({
+        scope: {
+          tenantId: "tenant",
+          operatorEmail: "author@example.test",
+          contentStorage: "git",
+        },
+      }),
+      configurationContext(),
+      async () => repo,
+    );
+    expect(
+      (await h.db.tenant.findUniqueOrThrow({ where: { id: "tenant" } }))
+        .contentStorage,
+    ).toBe("git");
+    expect(
+      (await h.db.tenant.findUniqueOrThrow({ where: { id: "private" } }))
+        .contentStorage,
+    ).toBe("database");
+  });
+
   it.each([{ basePath: "" }, { installationId: "2" }])(
     "applies and preserves a product source override %j",
     async (override) => {
@@ -520,6 +976,10 @@ describe("GitOps on actual migrated PGlite tables", () => {
     expect(validateDocument(draft.document).owners).toEqual(["@schema-owner"]);
   });
   it("exports a bootstrap PR under the configured folder and indexes only after merge", async () => {
+    await h.db.tenant.update({
+      where: { id: "tenant" },
+      data: { contentStorage: "git" },
+    });
     const cs = await store.bootstrap("product", ctx());
     expect(await h.db.gitCanonicalDocument.count()).toBe(0);
     const result = await store.submit(cs.id, "Bootstrap", "", ctx());
@@ -962,7 +1422,7 @@ describe("GitOps on actual migrated PGlite tables", () => {
         },
       }),
     ).toBe(1);
-    await h.db.schemaReference.deleteMany();
+    await projectionTransaction(h.db, (tx) => tx.schemaReference.deleteMany());
     await synchronizeBinding("binding", async () => repo, true);
     expect(await h.db.eventSpecVersion.count()).toBe(1);
     expect((await h.db.eventSpecVersion.findFirstOrThrow()).id).toBe(

@@ -73,6 +73,8 @@ export const ACTIONS = freezeTable({
   "reference.read": { minRole: "VIEWER", level: "anywhere" },
   // tenant membership: setActiveTenantAction, GET /api/tenants and the tenant switcher (accessibleTenants), validating the active_tenant cookie [the tenant asked about]
   "tenant.access": { minRole: "VIEWER", level: "anywhere" },
+  // Select this tenant's content backend and configure its Git onboarding [the active tenant].
+  "tenant.storage.configure": { minRole: "ADMIN", level: "tenant" },
 
   // ── Authoring: AUTHOR, at the covering scope ─────────────────────────────────────────────────────────────────────────────────────
   // create / edit / delete entities and fields: createEntity, createEntityWithFields, createTenantEntity (tenant-level), deleteEntity, addField,
