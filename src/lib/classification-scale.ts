@@ -21,7 +21,7 @@ export function classNumberOf(level: string | null | undefined, custom?: Readonl
   const upper = level.toUpperCase();
   const standard = CLASS_SCALE.find((c) => c.level === upper);
   if (standard) return standard.classNumber;
-  const mapped = custom?.get(level);
+  const mapped = custom?.get(upper);
   if (mapped !== undefined && Number.isInteger(mapped) && mapped >= 1 && mapped <= 5) return mapped as ClassNumber;
   const vendor = /^class([1-5])$/i.exec(level);
   if (vendor) return Number(vendor[1]) as ClassNumber;
@@ -32,7 +32,7 @@ export function systemLevelForClass(n: ClassNumber): string {
   return CLASS_SCALE.find((c) => c.classNumber === n)!.level;
 }
 
-/** `"Class 3 — Sensitive"` for a standard level; other levels resolve through classNumberOf and show their own name. */
+/** `"Class 3 — Sensitive"` for a standard level; any other level is returned as itself. */
 export function classLabel(level: string): string {
   const upper = level.toUpperCase();
   const standard = CLASS_SCALE.find((c) => c.level === upper);

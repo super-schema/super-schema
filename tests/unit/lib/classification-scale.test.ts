@@ -15,6 +15,7 @@ describe("classification-scale", () => {
   it("resolves custom levels through the map, else 3", () => {
     expect(classNumberOf("FINANCIAL", new Map([["FINANCIAL", 2]]))).toBe(2);
     expect(classNumberOf("FINANCIAL")).toBe(3);
+    expect(classNumberOf("financial", new Map([["FINANCIAL", 2]]))).toBe(2);
   });
   it("accepts vendor classN levels in range only", () => {
     expect(classNumberOf("class4")).toBe(4);
