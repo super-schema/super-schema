@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { AsyncApiVisual } from "@/features/events/event-page/AsyncApiVisual";
 
@@ -15,7 +15,16 @@ const DOC = {
     messages: {
       Decision: {
         name: "Decision", contentType: "application/json", traits: [{ $ref: "#/components/messageTraits/CloudEvents" }],
-        payload: { type: "object", required: ["id"], properties: { id: { type: "string" }, reasons: { type: "array", items: { type: "string" } }, actor: { type: "object", properties: { name: { type: "string" } } } } },
+        payload: {
+          type: "object", required: ["id", "status"],
+          properties: {
+            id: { type: "string", format: "uuid", description: "Decision id" },
+            status: { type: "string", enum: ["APPROVED", "REJECTED", "PENDING"] },
+            score: { type: "number", minimum: 0, maximum: 100, default: 50 },
+            reasons: { type: "array", items: { type: "string" } },
+            actor: { type: "object", properties: { name: { type: "string", examples: ["Ada"] } } },
+          },
+        },
       },
     },
     messageTraits: { CloudEvents: { headers: { type: "object" } } },
@@ -28,9 +37,17 @@ it("shows the flow, the channel, the message with its payload tree and traits, a
   expect(screen.getByTestId("visual-channel-decisions").textContent).toContain("accounts.decisions.v1");
   const message = screen.getByTestId("visual-message-Decision");
   expect(message.textContent).toContain("CloudEvents");
-  expect(message.textContent).toMatch(/idstringrequired/);
-  expect(message.textContent).toContain("string[]");
-  expect(message.textContent).toMatch(/actor.*name/);
+  const row = (path: string) => screen.getByTestId(`visual-field-${path}`).textContent ?? "";
+  expect(row("id")).toMatch(/id\*string/);
+  expect(row("id")).toContain("format uuid");
+  expect(row("id")).toContain("Decision id");
+  expect(row("status")).toMatch(/One ofAPPROVEDREJECTEDPENDING/);
+  expect(row("score")).toContain("≥ 0 · ≤ 100");
+  expect(row("score")).toContain("default 50");
+  expect(row("reasons")).toContain("string[]");
+  expect(row("actor.name")).toContain("e.g. Ada");
+  fireEvent.click(screen.getByRole("button", { name: "Collapse actor" }));
+  expect(screen.queryByTestId("visual-field-actor.name")).toBeNull();
   expect(screen.getByTestId("asyncapi-visual").textContent).toContain("urn:app:accounts");
   expect(screen.getByTestId("visual-servers")).toBeTruthy();
   expect(screen.queryByTestId("visual-security")).toBeNull();
@@ -43,7 +60,14 @@ it("says nothing is defined for an empty document", () => {
 it("lists Avro record fields with optional ones not required", () => {
   const avro = { ...DOC, components: { messages: { Decision: { name: "Decision", payload: { schemaFormat: "application/vnd.apache.avro+json;version=1.9.0", schema: { type: "record", name: "D", fields: [{ name: "id", type: "string" }, { name: "note", type: ["null", "string"] }] } } } } } };
   render(<AsyncApiVisual document={avro} />);
-  const text = screen.getByTestId("visual-message-Decision").textContent ?? "";
-  expect(text).toMatch(/idstringrequired/);
-  expect(text).toMatch(/notestring(?!required)/);
+  expect(screen.getByTestId("visual-field-id").textContent).toMatch(/id\*string/);
+  expect(screen.getByTestId("visual-field-note").textContent).toMatch(/^notestring/);
+});
+
+it("shows Avro enum symbols and defaults as possible values", () => {
+  const avro = { ...DOC, components: { messages: { Decision: { name: "Decision", payload: { schemaFormat: "application/vnd.apache.avro+json;version=1.9.0", schema: { type: "record", name: "D", fields: [{ name: "status", type: { type: "enum", name: "Status", symbols: ["ON", "OFF"] }, default: "ON" }] } } } } } };
+  render(<AsyncApiVisual document={avro} />);
+  const text = screen.getByTestId("visual-field-status").textContent ?? "";
+  expect(text).toMatch(/One ofONOFF/);
+  expect(text).toContain("default ON");
 });

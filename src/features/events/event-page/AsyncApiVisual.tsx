@@ -4,7 +4,7 @@
 // A visual, read-only reading of a generated AsyncAPI 3 document: what the event sends and receives, on which channels, carrying which
 // messages (payload and header fields as a tree), and the servers and security it declares. Only what the document sets is shown:
 // an event without servers has no Servers section. Every item is collapsible; the flow summary at the top stays compact.
-import type { ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { ArrowDownLeft, ArrowUpRight, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -63,50 +63,169 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 const Mono = ({ children }: { children: ReactNode }) => <code className="break-all font-mono text-caption">{children}</code>;
 
-/** Fields of a schema as a tree: JSON Schema `properties`, Avro record `fields`, or the schema's type / reference when it has neither. */
-function SchemaTree({ doc, schema, depth = 0 }: { doc: Json; schema: unknown; depth?: number }) {
-  const s = deref(doc, schema);
-  // A multi-format payload (`{ schemaFormat, schema }`).
-  if (isObj(s) && "schemaFormat" in s && "schema" in s) return <SchemaTree doc={doc} schema={s.schema} depth={depth} />;
-  if (!isObj(s)) return <Mono>{typeof s === "string" ? s : JSON.stringify(s)}</Mono>;
-  const rows: { name: string; type: string; required: boolean; child?: unknown; description?: string }[] = [];
+/** One field of a payload or headers schema, flattened for the table; `children` are the fields of a nested object or array of objects. */
+interface FieldRow {
+  path: string; name: string; type: string; required: boolean; description?: string;
+  /** Possible values: enum members, or the single value a `const` allows. */
+  values?: { kind: "one-of" | "always"; items: string[] };
+  /** Constraints and hints shown as small facts: format, range, length, pattern, default, example. */
+  facts: string[];
+  children: FieldRow[];
+}
+
+const show = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
+
+function jsonSchemaFacts(p: Json): string[] {
+  const f: string[] = [];
+  if (str(p.format)) f.push(`format ${p.format}`);
+  const lo = p.minimum ?? p.exclusiveMinimum, hi = p.maximum ?? p.exclusiveMaximum;
+  if (lo !== undefined || hi !== undefined) f.push(`${lo !== undefined ? `${p.exclusiveMinimum !== undefined ? ">" : "≥"} ${show(lo)}` : ""}${lo !== undefined && hi !== undefined ? " · " : ""}${hi !== undefined ? `${p.exclusiveMaximum !== undefined ? "<" : "≤"} ${show(hi)}` : ""}`);
+  if (p.minLength !== undefined || p.maxLength !== undefined) f.push(`length ${p.minLength ?? 0}–${p.maxLength ?? "∞"}`);
+  if (p.minItems !== undefined || p.maxItems !== undefined) f.push(`items ${p.minItems ?? 0}–${p.maxItems ?? "∞"}`);
+  if (str(p.pattern)) f.push(`pattern ${p.pattern}`);
+  if (p.default !== undefined) f.push(`default ${show(p.default)}`);
+  const example = Array.isArray(p.examples) ? p.examples[0] : p.example;
+  if (example !== undefined) f.push(`e.g. ${show(example)}`);
+  return f;
+}
+
+/** Fields of a schema: JSON Schema `properties` or an Avro record's `fields` (a multi-format `{ schemaFormat, schema }` is unwrapped). */
+function fieldRows(doc: Json, schema: unknown, prefix = "", depth = 0): FieldRow[] | string {
+  let s = deref(doc, schema);
+  if (isObj(s) && "schemaFormat" in s && "schema" in s) s = deref(doc, s.schema);
+  if (!isObj(s)) return typeof s === "string" ? s : JSON.stringify(s);
+  if (depth > 5) return [];
   if (isObj(s.properties)) {
     const required = new Set(Array.isArray(s.required) ? s.required : []);
-    for (const [name, raw] of Object.entries(s.properties)) {
+    return Object.entries(s.properties).map(([name, raw]) => {
       const p = deref(doc, raw);
-      const type = isObj(p) ? (str(p.type) ?? (Array.isArray(p.type) ? p.type.join(" | ") : undefined) ?? refName(raw) ?? (p.enum ? "enum" : "object")) : "any";
-      const nested = isObj(p) && (isObj(p.properties) || (isObj(p.items) && isObj(deref(doc, p.items)) && isObj((deref(doc, p.items) as Json).properties))) ? (isObj(p.properties) ? p : p.items) : undefined;
-      rows.push({ name, type: isObj(p) && p.type === "array" && isObj(p.items) ? `${str((deref(doc, p.items) as Json).type) ?? refName(p.items) ?? "item"}[]` : type, required: required.has(name), child: nested, description: isObj(p) ? str(p.description) : undefined });
-    }
-  } else if (Array.isArray(s.fields)) {
-    for (const f of s.fields) {
-      if (!isObj(f) || typeof f.name !== "string") continue;
-      const t = f.type;
-      const optional = Array.isArray(t) && t.includes("null");
-      const base = Array.isArray(t) ? t.filter((x) => x !== "null") : [t];
-      const label = base.map((x) => (typeof x === "string" ? x : isObj(x) ? str(x.name) ?? str(x.type) ?? "complex" : "?")).join(" | ");
-      const record = base.find((x) => isObj(x) && x.type === "record");
-      rows.push({ name: f.name, type: label, required: !optional, child: record, description: str(f.doc) });
-    }
-  } else {
-    const label = str(s.type) ?? str(s.title) ?? refName(schema) ?? str(s.$ref);
-    return label ? <Mono>{label}</Mono> : <span className="text-muted-foreground">No fields</span>;
+      const path = prefix ? `${prefix}.${name}` : name;
+      if (!isObj(p)) return { path, name, type: "any", required: required.has(name), facts: [], children: [] };
+      const items = isObj(p.items) ? deref(doc, p.items) : undefined;
+      const itemType = isObj(items) ? str(items.type) ?? refName(p.items) ?? "item" : undefined;
+      const type = p.type === "array" ? `${itemType ?? "item"}[]` : Array.isArray(p.type) ? p.type.join(" | ") : str(p.type) ?? refName(raw) ?? (p.enum ? "enum" : isObj(p.properties) ? "object" : "any");
+      const enumOf = Array.isArray(p.enum) ? p.enum : isObj(items) && Array.isArray(items.enum) ? items.enum : undefined;
+      const nested = isObj(p.properties) ? p : isObj(items) && isObj(items.properties) ? items : undefined;
+      const children = nested ? fieldRows(doc, nested, path, depth + 1) : [];
+      return {
+        path, name, type, required: required.has(name), description: str(p.description),
+        values: p.const !== undefined ? { kind: "always" as const, items: [show(p.const)] } : enumOf ? { kind: "one-of" as const, items: enumOf.map(show) } : undefined,
+        facts: [...jsonSchemaFacts(p), ...(isObj(items) ? jsonSchemaFacts(items).map((f) => `each ${f}`) : [])],
+        children: Array.isArray(children) ? children : [],
+      };
+    });
   }
-  if (rows.length === 0) return <span className="text-muted-foreground">No fields</span>;
+  if (Array.isArray(s.fields)) {
+    return s.fields.flatMap((f): FieldRow[] => {
+      if (!isObj(f) || typeof f.name !== "string") return [];
+      const path = prefix ? `${prefix}.${f.name}` : f.name;
+      const branches = Array.isArray(f.type) ? f.type : [f.type];
+      const optional = branches.includes("null");
+      const real = branches.filter((x) => x !== "null");
+      const label = (x: unknown): string => {
+        if (typeof x === "string") return x;
+        if (!isObj(x)) return "?";
+        if (x.type === "array") return `${label(x.items)}[]`;
+        if (x.type === "map") return `map<${label(x.values)}>`;
+        if (str(x.logicalType)) return `${str(x.type)} (${x.logicalType})`;
+        return str(x.name) ?? str(x.type) ?? "complex";
+      };
+      const enumType = real.find((x) => isObj(x) && x.type === "enum") as Json | undefined;
+      const record = real.find((x) => isObj(x) && x.type === "record") ?? real.map((x) => (isObj(x) && x.type === "array" && isObj(x.items) && x.items.type === "record" ? x.items : undefined)).find(Boolean);
+      const children = record ? fieldRows(doc, record, path, depth + 1) : [];
+      return [{
+        path, name: f.name, type: real.map(label).join(" | "), required: !optional, description: str(f.doc),
+        values: enumType && Array.isArray(enumType.symbols) ? { kind: "one-of", items: enumType.symbols.map(show) } : undefined,
+        facts: f.default !== undefined && f.default !== null ? [`default ${show(f.default)}`] : [],
+        children: Array.isArray(children) ? children : [],
+      }];
+    });
+  }
+  return str(s.type) ?? str(s.title) ?? refName(schema) ?? str(s.$ref) ?? "";
+}
+
+/** Values chips: up to 8 shown, the rest behind "+n". */
+function Values({ values }: { values: NonNullable<FieldRow["values"]> }) {
+  const shown = values.items.slice(0, 8);
   return (
-    <ul className={cn("space-y-0.5", depth > 0 && "ml-space-3 border-l border-border/60 pl-space-2")}>
-      {rows.map((r) => (
-        <li key={r.name}>
-          <div className="flex flex-wrap items-baseline gap-x-space-2">
-            <span className="font-mono text-caption text-foreground">{r.name}</span>
-            <span className="font-mono text-caption text-muted-foreground">{r.type}</span>
-            {r.required && <span className="text-caption text-warning">required</span>}
-            {r.description && <span className="truncate text-caption text-muted-foreground" title={r.description}>{r.description}</span>}
-          </div>
-          {r.child !== undefined && depth < 4 && <SchemaTree doc={doc} schema={r.child} depth={depth + 1} />}
-        </li>
-      ))}
-    </ul>
+    <div className="flex flex-wrap items-center gap-1">
+      <span className="text-caption text-muted-foreground">{values.kind === "always" ? "Always" : "One of"}</span>
+      {shown.map((v) => <Badge key={v} variant="secondary" className="font-mono">{v}</Badge>)}
+      {values.items.length > shown.length && <span className="text-caption text-muted-foreground" title={values.items.slice(8).join(", ")}>+{values.items.length - shown.length} more</span>}
+    </div>
+  );
+}
+
+function Rows({ rows, depth, collapsed, toggle }: { rows: FieldRow[]; depth: number; collapsed: Set<string>; toggle: (path: string) => void }) {
+  return (
+    <>
+      {rows.map((r) => {
+        const open = !collapsed.has(r.path);
+        return (
+          <Fragment key={r.path}>
+            <tr data-testid={`visual-field-${r.path}`} className="align-top">
+              <td className="py-1.5 pr-space-2">
+                <div className="flex items-start gap-1" style={{ paddingLeft: `${depth * 0.875}rem` }}>
+                  {r.children.length > 0 ? (
+                    <button type="button" aria-expanded={open} aria-label={`${open ? "Collapse" : "Expand"} ${r.path}`} onClick={() => toggle(r.path)} className="mt-0.5 rounded text-muted-foreground hover:text-foreground">
+                      <ChevronRight aria-hidden="true" className={cn("size-3.5 transition-transform", open && "rotate-90")} />
+                    </button>
+                  ) : <span className="w-3.5 shrink-0" />}
+                  <span className="break-all font-mono text-caption font-medium text-foreground">{r.name}</span>
+                  {r.required && <span className="text-caption text-destructive" title="Required">*</span>}
+                </div>
+              </td>
+              <td className="py-1.5 pr-space-2"><span className="break-all font-mono text-caption text-primary">{r.type}</span></td>
+              <td className="py-1.5">
+                <div className="space-y-1">
+                  {r.values && <Values values={r.values} />}
+                  {r.facts.length > 0 && <div className="flex flex-wrap gap-1">{r.facts.map((f) => <span key={f} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{f}</span>)}</div>}
+                  {r.description && <p className="text-caption text-muted-foreground">{r.description}</p>}
+                  {!r.values && r.facts.length === 0 && !r.description && <span className="text-caption text-muted-foreground/60">—</span>}
+                </div>
+              </td>
+            </tr>
+            {open && r.children.length > 0 && <Rows rows={r.children} depth={depth + 1} collapsed={collapsed} toggle={toggle} />}
+          </Fragment>
+        );
+      })}
+    </>
+  );
+}
+
+const countRows = (rows: FieldRow[]): number => rows.reduce((n, r) => n + 1 + countRows(r.children), 0);
+
+/** A payload or headers schema as a table: Field (nesting indented, collapsible) · Type · Allowed values & description. */
+function SchemaTable({ doc, schema, label }: { doc: Json; schema: unknown; label: string }) {
+  const rows = useMemo(() => fieldRows(doc, schema), [doc, schema]);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggle = (path: string) => setCollapsed((c) => { const n = new Set(c); if (n.has(path)) n.delete(path); else n.add(path); return n; });
+  if (typeof rows === "string") {
+    return <p className="text-caption text-muted-foreground">{rows ? <>Schema <Mono>{rows}</Mono> — its fields appear once the full schemas render.</> : "No fields"}</p>;
+  }
+  if (rows.length === 0) return <p className="text-caption text-muted-foreground">No fields</p>;
+  const required = rows.filter((r) => r.required).length;
+  return (
+    <div className="space-y-1">
+      <div className="flex items-baseline justify-between gap-space-2">
+        <p className="text-caption font-medium text-foreground">{label}</p>
+        <p className="text-caption text-muted-foreground">{countRows(rows)} fields · {required} required at top level <span className="text-destructive">*</span></p>
+      </div>
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table className="w-full min-w-[24rem] border-collapse" aria-label={`${label} fields`}>
+          <thead className="bg-muted/40">
+            <tr className="text-left text-caption text-muted-foreground">
+              <th scope="col" className="w-[34%] px-space-2 py-1 font-medium">Field</th>
+              <th scope="col" className="w-[18%] px-space-2 py-1 font-medium">Type</th>
+              <th scope="col" className="px-space-2 py-1 font-medium">Values &amp; description</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/60 [&_td]:px-space-2">
+            <Rows rows={rows} depth={0} collapsed={collapsed} toggle={toggle} />
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -197,8 +316,8 @@ export function AsyncApiVisual({ document: doc }: { document: Json }) {
                 meta={<>{str(m.contentType) && <Badge variant="outline">{str(m.contentType)}</Badge>}{traits.map((t) => <Badge key={t} variant="secondary">{t}</Badge>)}</>}
               >
                 {(str(m.summary) || str(m.description)) && <p className="text-muted-foreground">{str(m.summary) ?? str(m.description)}</p>}
-                {m.payload !== undefined && <div className="space-y-1"><p className="text-caption font-medium text-muted-foreground">Payload</p><SchemaTree doc={doc} schema={m.payload} /></div>}
-                {m.headers !== undefined && <div className="space-y-1"><p className="text-caption font-medium text-muted-foreground">Headers</p><SchemaTree doc={doc} schema={m.headers} /></div>}
+                {m.payload !== undefined && <SchemaTable doc={doc} schema={m.payload} label="Payload" />}
+                {m.headers !== undefined && <SchemaTable doc={doc} schema={m.headers} label="Headers" />}
                 {isObj(m.correlationId) && <Field label="Correlation id"><Mono>{str(m.correlationId.location) ?? "set"}</Mono></Field>}
                 {examples > 0 && <Field label="Examples">{examples}</Field>}
                 {Object.keys(isObj(m.bindings) ? m.bindings : {}).length > 0 && <Field label="Bindings">{Object.keys(m.bindings as Json).join(", ")}</Field>}
