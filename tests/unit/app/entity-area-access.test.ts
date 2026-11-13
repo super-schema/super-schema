@@ -119,6 +119,7 @@ const OPS: Op[] = [
   { label: "updateEntityMetadataAction (retention policy)", call: () => actions.updateEntityMetadataAction("ent-1", { retentionPolicy: {} }), needs: ["entity.write", "retention.write"] },
   { label: "updateEntityMetadataAction (schema versions)", call: () => actions.updateEntityMetadataAction("ent-1", { schemaVersions: {} }), needs: ["entity.write", "entity.publish", "deploy.run"] },
   { label: "updateEntityMetadataAction (deprecation)", call: () => actions.updateEntityMetadataAction("ent-1", { deprecation: { deprecated: true } }), needs: ["entity.write", "entity.lifecycle"] },
+  { label: "updateEntityAttributeAction", call: () => actions.updateEntityAttributeAction("ent-1", "x-owner", "team"), needs: ["entity.write"] },
   { label: "updateEntityDescriptionAction", call: () => actions.updateEntityDescriptionAction("ent-1", "text"), needs: ["entity.write"] },
   { label: "getEntityDeploymentStatusAction", call: () => actions.getEntityDeploymentStatusAction("ent-1"), needs: ["deploy.read"] },
   { label: "markEntityDeployedAction", call: () => actions.markEntityDeployedAction("ent-1", "ent-1:bigquery", "prod"), needs: ["deploy.run"] },

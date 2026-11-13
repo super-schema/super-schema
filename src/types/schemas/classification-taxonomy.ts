@@ -9,6 +9,7 @@ export const ClassificationLevelSchema = z.object({
   description: z.string().nullable(),
   sortOrder: z.number().int(),
   isSystem: z.boolean(),
+  classNumber: z.number().int().min(1).max(5),
   createdAt: z.date().optional(),
   updatedAt: z.date().optional(),
 });
@@ -25,6 +26,7 @@ export const CreateClassificationInputSchema = z.object({
   textColor: z.string().min(1, "Text color is required"),
   description: z.string().optional(),
   sortOrder: z.number().int(),
+  classNumber: z.number().int().min(1, "Class must be 1-5").max(5, "Class must be 1-5"),
 });
 
 export type CreateClassificationInput = z.infer<typeof CreateClassificationInputSchema>;
@@ -36,6 +38,7 @@ export const UpdateClassificationInputSchema = z.object({
   textColor: z.string().optional(),
   description: z.string().optional(),
   sortOrder: z.number().int().optional(),
+  classNumber: z.number().int().min(1, "Class must be 1-5").max(5, "Class must be 1-5").optional(),
 });
 
 export type UpdateClassificationInput = z.infer<typeof UpdateClassificationInputSchema>;
@@ -52,6 +55,7 @@ export const SYSTEM_CLASSIFICATION_DEFAULTS: Omit<ClassificationLevel, "id" | "c
     description: "Personally Identifiable Information",
     sortOrder: 1,
     isSystem: true,
+    classNumber: 2,
   },
   {
     name: "SENSITIVE",
@@ -61,6 +65,7 @@ export const SYSTEM_CLASSIFICATION_DEFAULTS: Omit<ClassificationLevel, "id" | "c
     description: "Sensitive business data",
     sortOrder: 2,
     isSystem: true,
+    classNumber: 3,
   },
   {
     name: "INTERNAL",
@@ -70,6 +75,7 @@ export const SYSTEM_CLASSIFICATION_DEFAULTS: Omit<ClassificationLevel, "id" | "c
     description: "Internal use only",
     sortOrder: 3,
     isSystem: true,
+    classNumber: 4,
   },
   {
     name: "PUBLIC",
@@ -79,5 +85,6 @@ export const SYSTEM_CLASSIFICATION_DEFAULTS: Omit<ClassificationLevel, "id" | "c
     description: "Public data",
     sortOrder: 4,
     isSystem: true,
+    classNumber: 5,
   },
 ];

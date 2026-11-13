@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+// The tenant has no metadata attribute dictionary (renders unchanged); the stubbed client has no table for it.
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 import { createArtifactRenderer, type EmitFiles } from "@/services/events/artifact-renderer";
 import { Semaphore } from "@/lib/concurrency/semaphore";

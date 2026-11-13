@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { assign, globalAdmin, principalOf, roleless, signInAs, tenantMember } from "../../helpers/access-mocks";
 
-const { mockEntityFindFirst, mockEntityFindUnique, mockEntityFindMany } = vi.hoisted(() => ({
+const { mockEntityFindFirst, mockEntityFindUnique, mockEntityFindMany, mockListAttributes } = vi.hoisted(() => ({
+  mockListAttributes: vi.fn(),
   mockEntityFindFirst: vi.fn(),
   mockEntityFindUnique: vi.fn(),
   mockEntityFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/access/principal", async () => (await import("../../helpers/access-mocks")).principalModule);
+vi.mock("@/services/metadata-attribute.service", () => ({ listMetadataAttributes: mockListAttributes }));
 vi.mock("@/lib/db", () => ({
   prisma: { entity: { findFirst: mockEntityFindFirst, findUnique: mockEntityFindUnique, findMany: mockEntityFindMany } },
 }));
@@ -67,6 +69,20 @@ function entityRow(over: Record<string, unknown> = {}) {
 }
 
 describe("loadEntityWorkspace", () => {
+  beforeEach(() => {
+    mockListAttributes.mockReset();
+    mockListAttributes.mockResolvedValue({ success: true, data: [] });
+  });
+
+  it("passes the tenant's metadata attribute definitions to the workspace", async () => {
+    const defs = [{ key: "x-data-category", label: "Data category" }];
+    mockListAttributes.mockResolvedValue({ success: true, data: defs });
+    mockEntityFindFirst.mockResolvedValueOnce(entityRow());
+    const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+    expect(mockListAttributes).toHaveBeenCalledWith("tenant-1");
+    expect(data?.props.metadataAttributes).toEqual(defs);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     signInAs(globalAdmin());

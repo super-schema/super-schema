@@ -25,6 +25,7 @@ import { withUnionFieldsAsString } from "@/lib/compiler/union-fields";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import { checkTypeSpecImports, TYPESPEC_IMPORT_NOT_ALLOWED } from "@/lib/typespec/import-guard";
 import { bundleFileContents } from "./bundle";
+import { attributeKeysIn, skippedAttributeWarning, stripInternal, type MetadataEmissionContext } from "@/lib/metadata-attributes/emission";
 import { Semaphore, SemaphoreCancelledError, SemaphoreFullError, SemaphoreWaitTimeoutError } from "@/lib/concurrency/semaphore";
 
 const execFileAsync = promisify(execFile);
@@ -49,6 +50,11 @@ export interface EmitterRunOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   onStart?: () => void;
+  /**
+   * The tenant's metadata attribute dictionary (`loadMetadataEmission`): `internal` keys are stripped from the outputs, `abc-primitive`
+   * keys of primitive arrays go on `items`, Avro gets the values as properties. Undefined (no dictionary): today's output, byte for byte.
+   */
+  metadata?: MetadataEmissionContext;
 }
 
 /** The `busy` flag of a failed run: set only for a run refused because the compiler is busy. */
@@ -114,6 +120,9 @@ export async function emitOfficialTypeSpecTargetForEntity(
     sortOrder: field.sortOrder,
   }));
 
+  const { loadMetadataEmission } = await import("@/services/metadata-emission.service");
+  const metadata = await loadMetadataEmission(entity.tenantId);
+  const run: EmitterRunOptions = metadata ? { metadata } : {};
   const closure = await import("@/lib/references/closure");
   if (closure.baseNameOf(entity.metadata) !== undefined) {
     if (!inherit) return invalidResult(`${entity.name} extends another entity: generating it needs the caller's tenant, mode and roles.`);
@@ -122,9 +131,9 @@ export async function emitOfficialTypeSpecTargetForEntity(
       const { closureFailure } = await import("@/lib/emission/closure-generation");
       return invalidResult(closureFailure(inherited.error).message);
     }
-    return emitOfficialTypeSpecTargetFromData(prismaEntity, closure.withInheritedFields(prismaFields, inherited.data.fields), targetKey);
+    return emitOfficialTypeSpecTargetFromData(prismaEntity, closure.withInheritedFields(prismaFields, inherited.data.fields), targetKey, run);
   }
-  return emitOfficialTypeSpecTargetFromData(prismaEntity, prismaFields, targetKey);
+  return emitOfficialTypeSpecTargetFromData(prismaEntity, prismaFields, targetKey, run);
 }
 
 /** The catalog target for a key that the Schemas tab can emit, else the message that says why not. */
@@ -160,7 +169,8 @@ export async function emitOfficialTypeSpecTargetFromData(
     return { output: bundleEmittedFiles(files), validationStatus: warnings.length > 0 ? "WARNING" : "VALID", warnings, errors: [] };
   }
 
-  const model = compileEntity(entity, fields);
+  const compiled = compileEntity(entity, fields);
+  const model = run.metadata ? stripInternal(compiled, run.metadata.definitions) : compiled;
   // A name that already exists in the database may be too long for the emitters (they write a file per declaration and crash with
   // ENAMETOOLONG): say so instead.
   const overlong = findOverlongName(model);
@@ -172,6 +182,11 @@ export async function emitOfficialTypeSpecTargetFromData(
   }
   const built = buildSourceForTarget(model, target.key);
   built.warnings.push(...danglingReferenceWarnings(model, target.key));
+  if (run.metadata) {
+    // The DB targets have no place for metadata attributes.
+    const skipped = attributeKeysIn([model], run.metadata.definitions);
+    if (skipped.length > 0) built.warnings.push(skippedAttributeWarning(target.key, skipped));
+  }
   if (built.errors.length > 0) {
     return { output: "", validationStatus: "INVALID", warnings: built.warnings, errors: built.errors.map((message) => ({ message })) };
   }

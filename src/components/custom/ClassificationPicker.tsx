@@ -6,14 +6,22 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { CLASS_SCALE, classLabel } from "@/lib/classification-scale";
 
-const CLASSIFICATIONS = [
-  { value: "NEVER_STORED", label: "Class 1 — Never Stored", shortLabel: "Never Stored", badgeClass: "badge-never-stored" },
-  { value: "PII", label: "Class 2 — PII", shortLabel: "PII", badgeClass: "badge-pii" },
-  { value: "SENSITIVE", label: "Class 3 — Sensitive", shortLabel: "Sensitive", badgeClass: "badge-sensitive" },
-  { value: "INTERNAL", label: "Class 4 — Internal", shortLabel: "Internal", badgeClass: "badge-internal" },
-  { value: "PUBLIC", label: "Class 5 — Public", shortLabel: "Public", badgeClass: "badge-public" },
-] as const;
+const BADGE_CLASSES: Record<string, string> = {
+  NEVER_STORED: "badge-never-stored",
+  PII: "badge-pii",
+  SENSITIVE: "badge-sensitive",
+  INTERNAL: "badge-internal",
+  PUBLIC: "badge-public",
+};
+
+const CLASSIFICATIONS = CLASS_SCALE.map((c) => ({
+  value: c.level,
+  label: classLabel(c.level),
+  shortLabel: c.label,
+  badgeClass: BADGE_CLASSES[c.level],
+}));
 
 /**
  * Resolve null/undefined to SENSITIVE (Class 3 default). A level outside the scale (an import keeps the vendor's own level, e.g.

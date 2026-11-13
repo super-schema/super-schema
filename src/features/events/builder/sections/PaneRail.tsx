@@ -3,7 +3,7 @@
 // src/features/events/builder/sections/PaneRail.tsx
 // The parts of one item (a message's Payload, Details, Examples, …) as a vertical rail of tabs with ONE part showing, in place of the
 // accordion of stacked cards: the part being worked on gets the whole height. Below `@xl` (36rem) of the form's own width the rail is a
-// row of scrolling pills above the part instead. A part is rendered the first time it is shown (and the ones named in `keepMounted`,
+// row of pills above the part instead; the row wraps (never scrolls sideways), so the last part (Metadata) is always in view. A part is rendered the first time it is shown (and the ones named in `keepMounted`,
 // and the ones that hold a problem, from the start) and then stays mounted, hidden when another part shows, so what it holds (focus order, a half-typed field's
 // validation, an editor's state) is not rebuilt on every switch. Which part shows lives in `usePaneState`, kept by the SECTION so the
 // choice survives switching from one item to another.
@@ -73,7 +73,7 @@ export function PaneRail({ idPrefix, panes, active, onSelect, keepMounted = [], 
   return (
     <div data-testid={`${idPrefix}-rail`} className="@container">
       <div className="flex flex-col gap-space-4 @xl:grid @xl:grid-cols-[9rem_minmax(0,1fr)] @xl:items-start">
-        <div role="tablist" aria-label={label} aria-orientation="vertical" className="flex gap-space-1 overflow-x-auto @xl:flex-col @xl:overflow-visible">
+        <div role="tablist" aria-label={label} aria-orientation="vertical" className="flex flex-wrap gap-space-1 @xl:flex-col @xl:flex-nowrap">
           {panes.map((pane, index) => {
             const isActive = pane.id === active;
             return (

@@ -2,7 +2,7 @@
 // One pure parser for the v2 event document — runs in the browser (inline validation) and on the server (save/publish).
 import { err, ok, type Result } from "@/types/result";
 import type { EntityPin } from "@/lib/events/types";
-import type { EventSpecInfo, JsonObject, JsonSchemaDialect, OperationAction, PayloadFormat, TraitKind } from "@/lib/event-specs/types";
+import type { EventSpecInfo, JsonObject, JsonSchemaDialect, JsonValue, OperationAction, PayloadFormat, TraitKind } from "@/lib/event-specs/types";
 import { isReservedKey } from "@/lib/event-specs/own-property";
 import { reservedKeyMessage } from "@/lib/reserved-field-names";
 import {
@@ -11,6 +11,7 @@ import {
   type DocumentProblem, type EventDocument, type Origin,
 } from "./types";
 import { createObjectReaders, isBag, ptr, type Bad, type Bag } from "./parse-objects";
+import { isAttributeKey, isJsonValue } from "./extensions";
 import { ANY_PROPERTIES, propertiesNoun } from "./wording";
 
 /** A parsed array item plus what the cross-reference pass needs to know about it. */
@@ -122,7 +123,23 @@ function createReaders(bad: Bad) {
     else return { key, keyOk: true };
     return { key, keyOk: false };
   };
-  return { item, array, opt, req, obj, record, list, pin, origin, docKey };
+  /** Metadata attributes of an item: every key follows the attribute key rule and every value is JSON. Absent / empty = undefined. */
+  const extensions = (src: Bag, pointer: string): Record<string, JsonValue> | undefined => {
+    const v = src.extensions;
+    if (v === undefined || v === null) return undefined;
+    const at = `${pointer}/extensions`;
+    if (!isBag(v)) { bad(at, "extensions must be an object"); return undefined; }
+    const out: Record<string, JsonValue> = {};
+    for (const [key, value] of Object.entries(v)) {
+      if (!isAttributeKey(key)) {
+        bad(`${at}${ptr(key)}`, `Attribute key "${key}" must start with "x-" followed by letters, digits, "_", "." or "-" (at most 64 characters)`);
+      } else if (!isJsonValue(value)) {
+        bad(`${at}${ptr(key)}`, `The value of "${key}" must be JSON (and not nested more than 64 levels)`);
+      } else Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true });
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
+  return { item, array, opt, req, obj, record, list, pin, origin, docKey, extensions };
 }
 
 export function parseEventDocument(value: unknown): Result<EventDocument> {
@@ -252,6 +269,7 @@ export function parseEventDocument(value: unknown): Result<EventDocument> {
         tags: ax.read(c, "tags", p, ax.tags),
         externalDocs: ax.read(c, "externalDocs", p, ax.externalDocs),
         messageKeys: r.list(c, "messageKeys", p),
+        extensions: r.extensions(c, p),
       }),
     };
   });
@@ -280,6 +298,7 @@ export function parseEventDocument(value: unknown): Result<EventDocument> {
         headers: r.pin(m, "headers", p, false),
         keyPin: r.pin(m, "keyPin", p, false),
         traitKeys: r.list(m, "traitKeys", p),
+        extensions: r.extensions(m, p),
       }),
     };
   });
@@ -340,6 +359,7 @@ export function parseEventDocument(value: unknown): Result<EventDocument> {
         externalDocs: ax.read(o, "externalDocs", p, ax.externalDocs),
         bindings: r.obj(o, "bindings", p),
         reply,
+        extensions: r.extensions(o, p),
       }),
     };
   });

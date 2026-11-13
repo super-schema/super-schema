@@ -60,6 +60,11 @@ export interface InstantAsyncApiOptions {
    * A trait whose headers are a pinned ENTITY has no inline properties here: its headers come with the server render.
    */
   libraryTraits?: ReadonlyMap<string, InstantLibraryTrait>;
+  /**
+   * The tenant's `internal`-scope metadata attribute keys (`internalKeySet` of the dictionary the editors get): dropped from the Code
+   * panel's document like from every emitted one (R10). Default: none.
+   */
+  internalKeys?: ReadonlySet<string>;
 }
 
 /** The builder's library options as the map `buildInstantAsyncApi` takes; an option that carries no `spec` is left out (it stays a stub). */
@@ -217,7 +222,7 @@ function build(raw: EventDocument, opts: InstantAsyncApiOptions): InstantAsyncAp
     return failed([...omitted, ...problemsOf(resolved.error.details).map((p) => diagnostic("error", "UNRESOLVED_REFERENCE", p.message, p.pointer))]);
   }
 
-  const assembled = assembleAsyncApi3(resolved.data);
+  const assembled = assembleAsyncApi3(opts.internalKeys ? { ...resolved.data, internalKeys: opts.internalKeys } : resolved.data);
   const diagnostics = normalizeDiagnostics([...omitted, ...assembled.diagnostics, ...validateAsyncApi3Structure(assembled.document)]);
   return { document: assembled.document, yaml: toYaml(assembled.document), json: toJson(assembled.document), diagnostics };
 }

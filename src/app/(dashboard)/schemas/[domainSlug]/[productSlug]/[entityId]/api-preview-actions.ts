@@ -42,10 +42,13 @@ export async function previewEntityOpenApiAction(entityId: string): Promise<Enti
 
     const { closureFailure, emitClosureTarget } = await import("@/lib/emission/closure-generation");
     const { filesForEntity } = await import("@/lib/typespec-official/closure-emit");
-    const loaded = await loadReferenceClosure(prisma, await getActiveTenantId(), entityId, "draft", { reader: entityReader(access.principal.assignments) });
+    const tenantId = await getActiveTenantId();
+    const loaded = await loadReferenceClosure(prisma, tenantId, entityId, "draft", { reader: entityReader(access.principal.assignments) });
     if (!loaded.success) return { ...failureOf(closureFailure(loaded.error), "previewEntityOpenApiAction") };
 
-    const result = await emitClosureTarget(loaded.data, "openapi3");
+    const { loadMetadataEmission } = await import("@/services/metadata-emission.service");
+    const metadata = await loadMetadataEmission(tenantId);
+    const result = await emitClosureTarget(loaded.data, "openapi3", metadata ? { metadata } : {});
     const errors = bounded(result.errors.map((e) => e.message));
     const warnings = bounded(result.warnings);
     if (result.validationStatus === "INVALID") {

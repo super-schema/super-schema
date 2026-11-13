@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { MetadataAttributeKeySchema } from "@/types/schemas/metadata-attribute";
+
 /**
  * Shared contract for API operations (OpenAPI 3.1 Operation Object subset). The DB rows, server actions, TypeSpec
  * emission, OpenAPI import and the API tab editor all speak this shape. Do not fork it; extend it here.
@@ -56,6 +58,8 @@ export const apiOperationSchema = z.object({
   parameters: z.array(apiParameterSchema).default([]),
   requestBody: apiRequestBodySchema.nullable().default(null),
   responses: z.array(apiResponseSchema).default([]),
+  /** Metadata attributes (`x-*` key -> JSON value); stored at `Operation.decorators.extensions`. Absent = none. */
+  extensions: z.record(MetadataAttributeKeySchema, z.json()).optional(),
 });
 
 export type ApiTypeRef = z.infer<typeof apiTypeRefSchema>;

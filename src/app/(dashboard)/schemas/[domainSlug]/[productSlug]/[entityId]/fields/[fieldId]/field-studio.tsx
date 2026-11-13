@@ -22,8 +22,10 @@ import {
   Check,
   AlertCircle,
   CheckCircle2,
+  MoreHorizontal,
+  BookMarked,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -35,7 +37,9 @@ import { readFieldCompletenessPolicy } from "@/types/schemas/field-completeness-
 
 import { getTypeInfo } from "@/lib/data-types";
 import { assetHref } from "@/lib/navigation/asset-href";
-import { updateFieldAction } from "../../actions";
+import { saveFieldToDictionaryAction, updateFieldAction } from "../../actions";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   applyReferencePick,
   describeEntityRef,
@@ -47,6 +51,7 @@ import {
   type ReferencePick,
 } from "@/lib/references/entity-reference";
 import type { TypeSpecDecorators } from "@/types/schemas/typespec-decorator.schema";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 
 interface FieldData {
   id: string;
@@ -85,6 +90,8 @@ interface FieldStudioProps {
    * for the target and the autosave writes it as a fully qualified reference. Without it `reference` is a plain type change.
    */
   referenceTargets?: PickableEntity[];
+  /** The tenant's attribute dictionary for the `field` target (typed editors in the Extensions panel). */
+  metadataAttributes?: MetadataAttributeDefinition[];
 }
 
 /**
@@ -145,6 +152,7 @@ export function FieldStudio({
   entity,
   domain,
   referenceTargets,
+  metadataAttributes,
   isReadOnly = false,
   policyContext,
   knownVersions,
@@ -415,6 +423,35 @@ export function FieldStudio({
     if ((await save()) === null) router.push(entityHref);
   }, [save, router, entityHref]);
 
+  // "Save to field dictionary": flush pending edits first (the server saves the stored field), then create the entry. An existing name
+  // or alias asks for confirmation before the entry is overwritten.
+  // `canOverwrite` false (no tenant.admin): the prompt says to ask a tenant admin and offers no overwrite (R11).
+  const [dictionaryPrompt, setDictionaryPrompt] = useState<{ message: string; canOverwrite: boolean } | null>(null);
+  const [dictionaryBusy, setDictionaryBusy] = useState(false);
+  const saveToDictionary = useCallback(
+    async (overwrite: boolean) => {
+      setDictionaryBusy(true);
+      try {
+        if ((await save()) !== null) return;
+        const res = await saveFieldToDictionaryAction(field.id, overwrite ? { overwrite: true } : undefined);
+        if ("needsConfirmation" in res) {
+          setDictionaryPrompt({ message: res.error ?? "This name already exists in the dictionary.", canOverwrite: res.canOverwrite === true });
+          return;
+        }
+        setDictionaryPrompt(null);
+        if ("success" in res) {
+          toast.success(res.updated ? "Dictionary entry updated" : "Saved to field dictionary");
+          router.refresh();
+        } else {
+          toast.error(res.error);
+        }
+      } finally {
+        setDictionaryBusy(false);
+      }
+    },
+    [save, field.id, router],
+  );
+
   // Cmd+S / Ctrl+S immediate save
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -643,7 +680,45 @@ export function FieldStudio({
           </Badge>
           <SaveIndicator />
         </div>
+        {!isReadOnly && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              type="button"
+              data-testid="field-studio-actions"
+              aria-label="Field actions"
+              title="Field actions"
+              disabled={dictionaryBusy}
+              className={buttonVariants({ variant: "outline", size: "icon", className: "text-muted-foreground" })}
+            >
+              <MoreHorizontal aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-auto min-w-40">
+              <DropdownMenuItem data-testid="field-studio-save-to-dictionary" onClick={() => { void saveToDictionary(false); }}>
+                <BookMarked aria-hidden="true" /> Save to field dictionary
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
+      <Dialog open={dictionaryPrompt !== null} onOpenChange={(open) => { if (!open) setDictionaryPrompt(null); }}>
+        <DialogContent data-testid="field-studio-dictionary-confirm">
+          <DialogHeader>
+            <DialogTitle>Already in the field dictionary</DialogTitle>
+            <DialogDescription>
+              {dictionaryPrompt?.message}
+              {dictionaryPrompt?.canOverwrite ? " Its type, description, classification and attributes are replaced with this field's; its name stays." : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDictionaryPrompt(null)}>{dictionaryPrompt?.canOverwrite ? "Cancel" : "Close"}</Button>
+            {dictionaryPrompt?.canOverwrite ? (
+              <Button disabled={dictionaryBusy} data-testid="field-studio-update-dictionary" onClick={() => { void saveToDictionary(true); }}>
+                Update dictionary entry
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* What the server said when the save failed (a refused name, for one): a sentence of its own, under the header row, that wraps. */}
       {saveStatus === "error" && saveError && (
@@ -674,6 +749,7 @@ export function FieldStudio({
       </fieldset>
       <FieldAttributeSections
         referenceTargets={referenceTargets}
+        metadataAttributes={metadataAttributes}
         fieldType={fieldType}
         typespec={typespec}
         identity={typespec.identity ?? {}}

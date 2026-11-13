@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({ emitClosure: vi.fn(), emitStandalone: vi.fn() }));
+const h = vi.hoisted(() => ({ emitClosure: vi.fn(), emitStandalone: vi.fn(), loadMetadata: vi.fn() }));
 vi.mock("@/lib/db", () => ({ prisma: {} }));
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: h.loadMetadata }));
 vi.mock("@/lib/typespec-official/closure-emit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/typespec-official/closure-emit")>()),
   emitClosure: h.emitClosure,
@@ -65,6 +66,8 @@ const closureOk = (key: string) => ({
 beforeEach(() => {
   h.emitClosure.mockReset();
   h.emitStandalone.mockReset();
+  h.loadMetadata.mockReset();
+  h.loadMetadata.mockResolvedValue(undefined);
   h.emitClosure.mockImplementation(async (_closure: unknown, key: string) => closureOk(key));
   h.emitStandalone.mockResolvedValue({ output: "DDL", validationStatus: "VALID", warnings: [], errors: [] });
 });
@@ -84,6 +87,22 @@ describe("emitTargetsForEntity", () => {
     expect(run.results.map((r) => [r.target.key, r.result.validationStatus, r.result.files?.length])).toEqual([["json-schema", "VALID", 1], ["avro", "VALID", 1]]);
     expect(run.resolution).toMatchObject({ mode: "draft", preview: true });
     expect(run.resolution?.entities.map((e) => e.ref.entity)).toEqual(["A", "B"]);
+  });
+
+  it("loads the tenant's metadata dictionary once and hands it to every target; without one the run options are unchanged", async () => {
+    const metadata = { definitions: [{ key: "x-a", scope: "internal" }] };
+    h.loadMetadata.mockResolvedValue(metadata);
+    const { db } = fakeDb([{ id: "a", name: "A" }]);
+    await emitTargetsForEntity(db, ENTITY, [], [target("json-schema"), target("avro"), target("postgresql")], "draft", everything);
+    expect(h.loadMetadata).toHaveBeenCalledTimes(1);
+    expect(h.loadMetadata.mock.calls[0][0]).toBe("t1");
+    expect(h.emitClosure.mock.calls.map((c) => c[2])).toEqual([{ metadata }, { metadata }]);
+    expect(h.emitStandalone.mock.calls[0][3]).toEqual({ metadata });
+
+    h.loadMetadata.mockResolvedValue(undefined);
+    h.emitClosure.mockClear();
+    await emitTargetsForEntity(db, ENTITY, [], [target("json-schema")], "draft", everything);
+    expect(h.emitClosure.mock.calls[0][2]).toEqual({});
   });
 
   it("emits a DB target on its own from the entity it was given, with no closure and no files", async () => {

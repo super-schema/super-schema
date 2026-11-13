@@ -1192,7 +1192,7 @@ export async function updateOperationAction(
 }
 
 /** Columns an editor may not know about yet: absent from a replace payload means "keep what is stored", not "reset". */
-const KEPT_WHEN_UNSENT = ["operationId", "summary", "tags", "deprecated", "requestBody"] as const;
+const KEPT_WHEN_UNSENT = ["operationId", "summary", "tags", "deprecated", "requestBody", "extensions"] as const;
 
 function keepUnsentColumns(op: ApiOperation, sent: unknown, stored: ApiOperation): ApiOperation {
   const raw = sent as Record<string, unknown>;

@@ -109,6 +109,8 @@ export type ResolvedChannel = {
    * (`message.profile ?? channel.profile`). Only for the rare mix of an explicit channel format and an Auto message.
    */
   messageProfiles?: Record<string, FormatProfile>;
+  /** Metadata attributes (`x-…` → JSON value), emitted after the native keys; `ResolvedEventSpec.internalKeys` are dropped. */
+  extensions?: Record<string, JsonValue>;
 };
 
 export type ResolvedMessage = {
@@ -138,6 +140,8 @@ export type ResolvedMessage = {
   keys?: SchemaArtifact[];
   /** Draft preview of an unpublished Message (spec §7.2 step 2). */
   unpublished?: boolean;
+  /** Metadata attributes (`x-…` → JSON value), emitted after the native keys; `ResolvedEventSpec.internalKeys` are dropped. */
+  extensions?: Record<string, JsonValue>;
   /**
    * The profile this message is emitted in, on every channel that has no more specific one (`ResolvedChannel.messageProfiles`):
    * it picks the payload and Kafka-key artifacts instead of the channel's profile. Set when the message chose a representation or
@@ -178,6 +182,8 @@ export type ResolvedOperation = {
   externalDocs?: AsyncApiExternalDocs;
   bindings?: JsonObject;
   reply?: { address?: AsyncApiReplyAddress; channelRef?: string; messageRefs?: string[] };
+  /** Metadata attributes (`x-…` → JSON value), emitted after the native keys; `ResolvedEventSpec.internalKeys` are dropped. */
+  extensions?: Record<string, JsonValue>;
 };
 
 export type ResolvedEventSpec = {
@@ -200,6 +206,11 @@ export type ResolvedEventSpec = {
    * Absent = emit what operations use (what published versions have always done).
    */
   emitAll?: boolean;
+  /**
+   * Keys of the tenant's `internal`-scope metadata attributes: the assembler drops them from every channel, message and operation it
+   * emits. Never part of a stored spec (a Set does not serialize): the caller of an emission passes it. Absent = nothing is dropped.
+   */
+  internalKeys?: ReadonlySet<string>;
 };
 
 // ── Diagnostics and adapter results ─────────────────────────────────────────

@@ -43,6 +43,7 @@ import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import { MAX_LITERAL_DEPTH, setOwn } from "@/lib/compiler/governance-decorators";
 import { getClassificationConfig, type ClassificationConfig } from "./classification-config";
+import { systemLevelForClass, type ClassNumber } from "@/lib/classification-scale";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { constraintAppliesTo, type ConstraintKind } from "@/lib/compiler/constraint-targets";
 import { pickRootEntity } from "./multi-asset";
@@ -1763,8 +1764,16 @@ function readClassification(
     const own = (name: string) => (Object.prototype.hasOwnProperty.call(block, name) ? (block as Record<string, unknown>)[name] : undefined);
     const dataClass = nonEmptyString(own(config.levelField));
     if (dataClass) {
-      const mapped = Object.prototype.hasOwnProperty.call(config.valueMap, dataClass) ? config.valueMap[dataClass] : dataClass;
+      // An explicit env-map entry wins; else a vendor `classN` level takes the system level of class N; else the raw value.
+      const vendor = /^class([1-5])$/i.exec(dataClass);
+      const mapped = Object.prototype.hasOwnProperty.call(config.valueMap, dataClass)
+        ? config.valueMap[dataClass]
+        : vendor
+          ? systemLevelForClass(Number(vendor[1]) as ClassNumber)
+          : dataClass;
       const dataCategory = nonEmptyString(own(config.categoryField));
+      // `governance` is for the import preview only (decorator-builder no longer persists it): the block itself stays in `extensions`,
+      // the only place the attribute value lives.
       return { classification: mapped, governance: { dataClass, ...(dataCategory ? { dataCategory } : {}) } };
     }
   }

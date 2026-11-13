@@ -18,11 +18,11 @@ Legacy source formats can still supply a summary; it is compatibility input, rat
 | Documentation | Typed example, external documentation, preserved legacy text. Description remains visible above the sections and has a safe Markdown preview. |
 | Validation | Numeric bounds with inclusive/exclusive endpoints, string length/pattern, array length. Inconsistent ranges, invalid regexes and invalid dimensions are rejected. |
 | Data Quality | Dataset/business assertions with JSON parameters, distinct from payload constraints. Assertions are metadata for quality tooling; this editor does not execute them against production data. |
-| Data Governance | Classification, sensitive-value annotation, sensitive data categories, glossary term, units, data treatment, encryption scope/algorithm/policy reference, policy context, and custom attributes. |
+| Data Governance | Classification (a fixed 1-5 class scale, see [Dictionaries](dictionaries.md#the-class-scale)), sensitive-value annotation, sensitive data categories, glossary term, units, data treatment, encryption scope/algorithm/policy reference, policy context, and custom attributes (tenant `x-` attributes are defined in the [Metadata Attribute Dictionary](dictionaries.md#metadata-attribute-dictionary)). |
 | Lifecycle Visibility | Create/read/update/delete/query inclusion, presets, and a preview matching generated `visibility`, `removeVisibility`, or `invisible` annotations. User authorization remains governed by the application access policy. |
 | Serialization | Type-specific encoding, media-type-specific encoded names, and Protobuf field number. HTTP placement belongs to API operations. Legacy field HTTP/XML metadata is preserved and identified as such. |
 | Storage Hints | Requested partition/index/cluster hints. These are metadata and do not provision physical structures. |
-| Extensions | Explicit string/number/boolean/null/JSON values, editing/removal, duplicate protection, and vendor-prefix handling. Existing imported schema keys retain their identity when edited. |
+| Extensions | Explicit string/number/boolean/null/JSON values, editing/removal, duplicate protection, and vendor-prefix handling. Existing imported schema keys retain their identity when edited. An `x-` key defined in the [Metadata Attribute Dictionary](dictionaries.md#metadata-attribute-dictionary) is validated against its value schema, and its derived members follow the field on save. |
 | Schema Evolution | Added/removed/renamed/type/requiredness annotations, deprecation and replacement guidance, and the entity discriminator property selection. This is separate from recorded audit/version history. |
 
 ## Presence, nullability and defaults

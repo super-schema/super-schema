@@ -88,7 +88,11 @@ describe("Accounts AsyncAPI 2.0 spec", () => {
     expect(mapped.data.document.servers).toHaveLength(1);
     expect(mapped.data.document.operations).toHaveLength(3);
     const all = [...upgraded.data.warnings, ...mapped.data.warnings];
-    expect(all.some((w) => w.code === "UNSUPPORTED_EXTENSION" && /x-(visibility|slo)/.test(w.message))).toBe(true);
+    // the operation-level x-visibility / x-slo are kept as the operation's extensions: nothing is lost, so nothing is reported
+    expect(all.some((w) => w.code === "UNSUPPORTED_EXTENSION" && /x-(visibility|slo)/.test(w.message))).toBe(false);
+    const withSlo = mapped.data.document.operations.filter((o) => o.extensions?.["x-slo"] !== undefined);
+    expect(withSlo.length).toBeGreaterThan(0);
+    expect(withSlo[0].extensions).toMatchObject({ "x-visibility": { extent: "LIMITED-RELEASE" }, "x-slo": { response_time_95th_percentile: 200 } });
     expect(extracted.data.map((p) => [p.messageKey, p.role, p.format])).toEqual([
       ["login_activity_event", "payload", "json-schema"], ["login_activity_event", "headers", "json-schema"],
       ["account-activation_event", "payload", "json-schema"], ["account_closed_event", "payload", "json-schema"],

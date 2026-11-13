@@ -39,6 +39,20 @@ import { describeNameCollision, findNameCollisions } from "./name-collisions";
 import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "./avro-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
 import { withUnionFieldsAsString } from "@/lib/compiler/union-fields";
+import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
+import {
+  addAvroProperties,
+  attributeKeysIn,
+  internalKeySet,
+  itemsTagsFor,
+  moveTagsToItems,
+  skippedAttributeWarning,
+  stripInternalFromClosure,
+  type AvroRecordName,
+  type MetadataEmissionContext,
+} from "@/lib/metadata-attributes/emission";
+import { annotateProto, buildOptionsProto, METADATA_OPTIONS_PROTO_PATH } from "@/lib/metadata-attributes/protobuf-options";
+import { deepStripInternalFromFiles } from "@/lib/metadata-attributes/deep-strip";
 import {
   buildEmitterOptions,
   buildSourceForTarget,
@@ -122,6 +136,8 @@ interface Plan {
    * the attribution to keep it under, `null` to leave it dropped. Repeated until no file is adopted any more.
    */
   adopt?: (file: { path: string; content: string }, kept: readonly EmittedFile[]) => Attribution;
+  /** Avro (combined plan): entity id -> the full name of its record, which the metadata attribute post-pass matches on. */
+  avroRecords?: ReadonlyMap<string, AvroRecordName>;
   /** JSON Schema: entity id -> the stem of the entity's own file (its model name), when the plan knows it. */
   rootStems?: ReadonlyMap<string, string>;
   /** Checks the finished file list; returns what is wrong with it, if anything. */
@@ -159,7 +175,7 @@ export async function emitClosure(closure: Closure, targetKey: TargetId, run: Em
   }
 }
 
-async function emitClosureUnguarded(closure: Closure, targetKey: TargetId, run: EmitterRunOptions): Promise<Result<ClosureEmission, ServiceError>> {
+async function emitClosureUnguarded(input: Closure, targetKey: TargetId, run: EmitterRunOptions): Promise<Result<ClosureEmission, ServiceError>> {
   const resolved = resolveEmittableTarget(targetKey);
   if ("error" in resolved) return err({ code: "UNSUPPORTED_TARGET", message: resolved.error });
   const target = resolved.target;
@@ -169,6 +185,8 @@ async function emitClosureUnguarded(closure: Closure, targetKey: TargetId, run: 
       message: `Closure emission does not apply to "${target.displayName}": a reference stays a plain column there, so emit the entity on its own.`,
     });
   }
+  // `internal` metadata attributes never reach a target output: strip them from the input both plans compile from.
+  const closure = run.metadata ? stripInternalFromClosure(input, run.metadata.definitions) : input;
   const entities = closure.entities;
   if (entities.length === 0) return err({ code: "EMPTY_CLOSURE", message: "The closure has no entity to emit." });
   if (entities.length > DEFAULT_MAX_CLOSURE_ENTITIES) {
@@ -267,7 +285,65 @@ async function emitClosureUnguarded(closure: Closure, targetKey: TargetId, run: 
     for (const f of finalFiles) if (f.entityId !== undefined) served.get(f.entityId)?.add(f.path);
   }
   const entityFiles = Object.fromEntries(entities.map((e) => [e.entityId, [...(served.get(e.entityId) ?? [])].sort(compareCodeUnits)]));
-  return ok({ files: finalFiles, warnings: plan.warnings, entityFiles });
+  if (!run.metadata) return ok({ files: finalFiles, warnings: plan.warnings, entityFiles });
+  const members = entities.map((e, i) => ({ entityId: e.entityId, model: models[i], avroRecord: plan.avroRecords?.get(e.entityId) }));
+  const projected = projectMetadataAttributes(key, finalFiles, members, run.metadata, entityFiles);
+  // R10: the defensive last pass. An `internal` key the input projection could not see (nested in another attribute's value) never reaches
+  // an emitted JSON / YAML document. Byte-identical files when nothing matched.
+  const stripped = deepStripInternalFromFiles(projected.files, internalKeySet(run.metadata.definitions));
+  return ok({ files: stripped, warnings: [...plan.warnings, ...projected.warnings], entityFiles });
+}
+
+/**
+ * The metadata attribute post-passes on the emitted files (paths never change): JSON Schema / OpenAPI move the `abc-primitive` keys of
+ * primitive arrays onto `items`, Avro gets the `schema`-scope values as properties, Protobuf gets them as custom options (each entity's
+ * `.proto` sets them, `superschema/metadata_options.proto` declares them; that file belongs to no entity, so it is not in `entityFiles`),
+ * Java POJO warns that it skips them.
+ */
+function projectMetadataAttributes(
+  key: string,
+  files: EmittedFile[],
+  members: Array<{ entityId: string; model: SuperSchemaModel; avroRecord?: AvroRecordName }>,
+  metadata: MetadataEmissionContext,
+  entityFiles: Record<string, string[]>
+): { files: EmittedFile[]; warnings: string[] } {
+  const defs = metadata.definitions;
+  switch (key) {
+    case "json-schema": {
+      const tagsOf = new Map(members.map((m) => [m.entityId, itemsTagsFor(m.model, defs)]));
+      return { files: files.map((f) => (f.entityId === undefined ? f : moveTagsToItems(f, tagsOf.get(f.entityId) ?? {}))), warnings: [] };
+    }
+    case "openapi3": {
+      // Every document inlines the schemas it refers to: each entity's keys apply to that entity's schema (by its declared name).
+      const perModel = members.map((m) => ({ tags: itemsTagsFor(m.model, defs), names: [m.model.entity.name, sanitizeIdentifier(m.model.entity.name)] }));
+      return { files: files.map((f) => perModel.reduce((file, m) => moveTagsToItems(file, m.tags, m.names), f)), warnings: [] };
+    }
+    case "avro":
+      return { files: files.map((f) => members.reduce((file, m) => addAvroProperties(file, m.model, defs, m.avroRecord), f)), warnings: [] };
+    case "protobuf": {
+      if (files.some((f) => f.path === METADATA_OPTIONS_PROTO_PATH)) {
+        const keys = attributeKeysIn(members.map((m) => m.model), defs);
+        const clash = `The emitted set already has a file at ${METADATA_OPTIONS_PROTO_PATH}, so these metadata attributes were not emitted as Protobuf options: ${keys.join(", ")}.`;
+        return { files, warnings: keys.length > 0 ? [clash] : [] };
+      }
+      const warnings: string[] = [];
+      const used = new Set<string>();
+      // Each entity's values go on the file(s) that carry it (a cycle's shared package file carries several).
+      const annotated = files.map((f) =>
+        members.reduce((file, m) => ((entityFiles[m.entityId] ?? []).includes(f.path) ? annotateProto(file, m.model, defs, { warnings, used }) : file), f)
+      );
+      if (used.size > 0) {
+        const options = buildOptionsProto(defs, used, warnings);
+        annotated.push({ path: options.path, content: options.content, target: "protobuf" });
+        annotated.sort((a, b) => compareCodeUnits(a.path, b.path));
+      }
+      return { files: annotated, warnings: [...new Set(warnings)] };
+    }
+    default: {
+      const skipped = attributeKeysIn(members.map((m) => m.model), defs);
+      return { files, warnings: skipped.length > 0 ? [skippedAttributeWarning(key, skipped)] : [] };
+    }
+  }
 }
 
 /** Checks every target makes of what the emitter wrote (the safety nets behind the source projections). */
@@ -402,7 +478,8 @@ function combinedPlan(closure: Closure, models: SuperSchemaModel[], key: string)
       warnings.push(...described.warnings);
       errors.push(...described.errors);
       errors.push(...emittedNameCollisions(places, "Avro", avroEmitted));
-      return { ...base, source: projection.source, attribute: emittedAttribution(places, avroEmitted, avroNamespaceOf) };
+      const avroRecords = new Map(places.map((p): [string, AvroRecordName] => [p.entityId, { namespace: avroEmitted(p).directory, name: avroEmitted(p).record }]));
+      return { ...base, source: projection.source, attribute: emittedAttribution(places, avroEmitted, avroNamespaceOf), avroRecords };
     }
     default:
       errors.push(...emittedNameCollisions(places, "Java POJO", javaEmitted));

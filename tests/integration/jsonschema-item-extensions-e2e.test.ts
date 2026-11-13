@@ -14,6 +14,7 @@ import { toAssetImportResult } from "@/lib/importers/multi-asset";
 import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
+import { withNoDictionary } from "../helpers/no-dictionary";
 
 vi.mock("server-only", () => ({}));
 
@@ -52,7 +53,7 @@ async function persist(): Promise<void> {
   });
   payload.entities[0].name = "Payment";
   const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-  const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
+  const tx = withNoDictionary({ product: { findUnique: vi.fn(async () => null) }, field: { findMany: vi.fn(async () => []) }, auditLog: { create: vi.fn(async () => ({})) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null) } }) as unknown as Prisma.TransactionClient;
   await createImportedEntities(tx, {
     entities: [payload.entities[0] as unknown as ImportedEntityInput],
     productScope: { tenantId: "t", domainId: "d", productId: "p" },

@@ -14,9 +14,12 @@ export function AttributeControl({
   error,
   children,
   group = false,
+  labelHidden = false,
 }: {
   group?: boolean;
   label: string;
+  /** Keep the label for assistive technology only (the host shows it already). */
+  labelHidden?: boolean;
   /** Small monospace note after the label, for example the TypeSpec decorator a control writes. */
   hint?: string;
   help?: ReactNode;
@@ -26,7 +29,7 @@ export function AttributeControl({
   const id = useId();
   return (
     <Field data-invalid={Boolean(error) || undefined}>
-      <FieldLabel id={`${id}-label`} htmlFor={group ? undefined : id}>
+      <FieldLabel id={`${id}-label`} htmlFor={group ? undefined : id} className={labelHidden ? "sr-only" : undefined}>
         {label}
         {hint && (
           <code className="ml-2 font-mono text-xs font-normal text-muted-foreground">

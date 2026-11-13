@@ -1,3 +1,5 @@
+import { internalKeySet } from "@/lib/metadata-attributes/emission";
+import { deepStripInternal } from "@/lib/metadata-attributes/deep-strip";
 import { readEntitySnapshot } from "@/lib/entity-versioning/entity-snapshot";
 import type { CanonicalDocument } from "./contracts";
 import { GitOpsError } from "./contracts";
@@ -230,13 +232,20 @@ export async function renderCanonicalArtifact(
     (t) => t.key === target && t.enabledInSchemaTab,
   );
   if (!definition) throw new GitOpsError(`Target ${target} is not enabled`);
+  // `internal` metadata attributes stay in the canonical GitOps source but not in the emitted artifacts.
+  const { loadMetadataEmission } = await import(
+    "@/services/metadata-emission.service"
+  );
+  const metadata = await loadMetadataEmission(root.scope.tenantId);
+  const run = metadata ? { metadata } : {};
   const closure = frozenClosure(root, all),
     result = definition.closureEmission
-      ? await emitClosureTarget(closure, definition.key)
+      ? await emitClosureTarget(closure, definition.key, run)
       : await emitOfficialTypeSpecTargetFromData(
           closure.root.entity,
           closure.root.fields,
           definition.key,
+          run,
         );
   if (result.validationStatus === "INVALID" || result.busy)
     throw new GitOpsError(
@@ -273,15 +282,22 @@ async function renderEvent(
     !Array.isArray(frozen) &&
     typeof frozen.asyncapi === "string"
   ) {
-    const { stringify } = await import("yaml");
+    const [{ stringify }, { loadMetadataEmission }] = await Promise.all([
+      import("yaml"),
+      import("@/services/metadata-emission.service"),
+    ]);
+    // R10: a stored document published before a key became `internal` is stripped on read with the CURRENT dictionary. The same
+    // document (byte-identical output) when nothing matched.
+    const metadata = await loadMetadataEmission(root.scope.tenantId);
+    const served = deepStripInternal(frozen, internalKeySet(metadata?.definitions));
     return [
       {
         path: `${documentSlug(root)}.asyncapi.json`,
-        content: JSON.stringify(frozen, null, 2) + "\n",
+        content: JSON.stringify(served, null, 2) + "\n",
       },
       {
         path: `${documentSlug(root)}.asyncapi.yaml`,
-        content: stringify(frozen),
+        content: stringify(served),
       },
     ];
   }
@@ -302,6 +318,13 @@ async function renderEvent(
     import("@/services/events/event-emit.service"),
     import("yaml"),
   ]);
+  // The projection DB holds no metadata attribute dictionary: the tenant's comes from the live DB, injected into a renderer of this call only
+  // (never the process-wide one, which keeps the first client it was given).
+  const [{ loadMetadataEmission }, { createArtifactRenderer, getSharedRenderQueue }] = await Promise.all([
+    import("@/services/metadata-emission.service"),
+    import("@/services/events/artifact-renderer"),
+  ]);
+  const metadata = await loadMetadataEmission(root.scope.tenantId);
   const pg = new PGlite();
   let db: InstanceType<typeof PrismaClient> | undefined;
   try {
@@ -326,6 +349,12 @@ async function renderEvent(
           },
         ],
         prisma: db,
+      },
+      // Its compiles share the process-wide limit: N GitOps renders never run more than it at once.
+      {
+        renderer: createArtifactRenderer({ db, loadMetadata: async () => metadata, queue: getSharedRenderQueue() }),
+        // The projection DB holds no dictionary: the tenant's `internal` keys come from the one loaded above.
+        internalKeys: internalKeySet(metadata?.definitions) ?? new Set<string>(),
       },
     );
     if (

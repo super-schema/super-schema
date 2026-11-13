@@ -42,6 +42,8 @@ const { mockPrisma } = vi.hoisted(() => {
   };
 });
 
+// The tenant has no metadata attribute dictionary (emission unchanged); the stubbed client has no table for it.
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 
 // Which targets APPLY a stored per-field type override (`supportsFieldOverrides`): none does today (catalog.ts), so a test of the override

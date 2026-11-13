@@ -1,4 +1,5 @@
 "use client";
+import { itemAttributeAlerts } from "@/lib/metadata-attributes/alerts";
 import { fieldPolicyContext } from "@/lib/field-policy-context";
 import { evolutionVersions } from "@/lib/field-attributes";
 
@@ -51,7 +52,8 @@ import { usePublishEligibility } from "./components/usePublishEligibility";
 import { RightPanelRouter } from "./components/RightPanelRouter";
 import { InlineEntityMeta } from "./components/InlineEntityMeta";
 import { RetentionPolicyEditor } from "@/features/governance/RetentionPolicyEditor/RetentionPolicyEditor";
-import { updateEntityMetadataAction } from "./actions";
+import { updateEntityMetadataAction, updateEntityAttributeAction } from "./actions";
+import { EntityAttributesSection } from "./components/EntityAttributesSection";
 import { NO_ENTITY_CAPABILITIES, type EntityCapabilities } from "@/lib/access/capabilities";
 import type { RetentionPolicy } from "@/types/schemas/retention-policy.schema";
 import {
@@ -63,6 +65,8 @@ import {
   generateTargetDriftAlerts,
 } from "@/lib/validation/entity-alerts";
 import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-versions";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
+import type { DictionaryEntry } from "@/types/schemas/field-dictionary";
 import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
 import { AlertsTab } from "./components/AlertsTab";
 import { ApiTab, type ApiOperationData } from "./components/ApiTab";
@@ -161,6 +165,10 @@ export interface EntityWorkspaceProps {
   };
   fields: FieldData[];
   domainPolicy: Record<string, unknown> | null;
+  /** The tenant's metadata attribute definitions (feeds the attribute alerts); optional so loaders and tests that predate it still compile. */
+  metadataAttributes?: MetadataAttributeDefinition[];
+  /** The tenant's field dictionary (autocomplete of the New Field form); optional so loaders and tests that predate it still compile. */
+  fieldDictionary?: DictionaryEntry[];
   apiServiceId: string | null;
   /** The entity's API service (name, base path); optional so loaders and tests that predate it still compile. */
   apiService?: ApiServiceInfo | null;
@@ -187,7 +195,7 @@ export interface EntityWorkspaceProps {
   capabilities?: EntityCapabilities;
 }
 
-export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiService = null, apiOperations, replacementEntity, referenceStaleness, referenceTargets, capabilities = NO_ENTITY_CAPABILITIES }: EntityWorkspaceProps) {
+export function EntityWorkspace({ level, entity, fields, domainPolicy, metadataAttributes, fieldDictionary, apiServiceId, apiService = null, apiOperations, replacementEntity, referenceStaleness, referenceTargets, capabilities = NO_ENTITY_CAPABILITIES }: EntityWorkspaceProps) {
   const readOnly_ = isReadOnly(entity.status as EntityStatus);
 
   // Track recent entity access for command palette
@@ -495,11 +503,12 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   const entityAlerts = useMemo(() => {
     const completenessReqs = (domainPolicy?.completenessRequirements as CompletenessRequirements) ?? undefined;
     return [
-      ...generateEntityAlerts(entity, fields, completenessReqs),
+      ...generateEntityAlerts(entity, fields, completenessReqs, metadataAttributes),
+      ...itemAttributeAlerts("operation", apiOperations.map((o) => ({ id: o.id, name: o.name, extensions: o.extensions })), metadataAttributes ?? []),
       ...generateReferenceStalenessAlerts(referenceStaleness ?? []),
       ...generateTargetDriftAlerts(entity, fields),
     ];
-  }, [entity, fields, domainPolicy, referenceStaleness]);
+  }, [entity, fields, domainPolicy, referenceStaleness, metadataAttributes, apiOperations]);
 
   const alertCount = entityAlerts.length;
 
@@ -929,6 +938,18 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         discardRef={metaDraft.discardRef}
       />
 
+      <EntityAttributesSection
+        metadata={entity.metadata}
+        definitions={metadataAttributes ?? []}
+        isReadOnly={readOnly_ || !capabilities.write}
+        onSave={async (key, value) => {
+          const res = await updateEntityAttributeAction(entity.id, key, value);
+          if (res?.error) return { error: res.error };
+          handleMetaSaved();
+          router.refresh();
+        }}
+      />
+
       {/* Right panel router (renders nothing itself, pushes content via context) */}
       <RightPanelRouter
         policyContext={fieldPolicy} knownVersions={knownFieldVersions}
@@ -1010,6 +1031,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
                 domainSlug={entity.domainSlug}
                 productSlug={entity.productSlug}
                 fields={fields}
+                dictionary={fieldDictionary}
                 domainPolicy={domainPolicy}
                 isReadOnly={readOnly_}
                 selectedFieldId={selectedFieldId}
@@ -1234,6 +1256,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
             initialOperations={apiOperations}
             fields={fields.map((f) => ({ name: f.name, type: f.type, isKey: f.isKey }))}
             typeNames={referenceTargets?.map((t) => t.name)}
+            metadataAttributes={metadataAttributes}
             isReadOnly={readOnly_}
           />
         )}

@@ -9,6 +9,8 @@ const h = vi.hoisted(() => ({
   getActiveTenantId: vi.fn(),
 }));
 
+// The tenant has no metadata attribute dictionary (emission unchanged); the stubbed client has no table for it.
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
 vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
 vi.mock("@/lib/access", () => ({ entityReader: () => "reader" }));
@@ -47,7 +49,7 @@ describe("previewEntityOpenApiAction", () => {
     const result = await previewEntityOpenApiAction("e1");
     expect(h.guardSubject).toHaveBeenCalledWith("schema.generate", { kind: "entity", id: "e1" }, { label: "Entity" });
     expect(h.loadReferenceClosure).toHaveBeenCalledWith({ tag: "prisma" }, "t1", "e1", "draft", { reader: "reader" });
-    expect(h.emitClosureTarget).toHaveBeenCalledWith(expect.anything(), "openapi3");
+    expect(h.emitClosureTarget).toHaveBeenCalledWith(expect.anything(), "openapi3", {});
     expect(result).toEqual({ success: true, yaml: "openapi: 3.0.0 # order", path: "openapi.Order.yaml", validationStatus: "WARNING", warnings: ["w1"], errors: [] });
   });
 

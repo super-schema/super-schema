@@ -29,6 +29,13 @@ import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymb
 import { projectTypeSpecSourceForProtobuf } from "@/lib/typespec-official/protobuf-source";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
 import { ok, err, type Result } from "@/types/result";
+import { createHash } from "node:crypto";
+import { compileEntity, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
+import { addAvroProperties, attributeKeysIn, itemsTagsFor, moveTagsToItems, type MetadataEmissionContext } from "@/lib/metadata-attributes/emission";
+import { MetadataStripError, modelExtensionsInSource, stripExtensionDecorators } from "@/lib/metadata-attributes/source-attributes";
+import { deepStripInternal } from "@/lib/metadata-attributes/deep-strip";
+import type { SuperSchemaModel } from "@/types/super-schema-model";
+import { loadMetadataEmission } from "@/services/metadata-emission.service";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -77,6 +84,10 @@ export interface ProgramPart {
   rootModel: string;
   source: string;
   fields: Array<{ name: string; fieldNumber: number | null }>;
+  /** The entity's name (the metadata attribute post-pass builds the part's model from it). */
+  entityName?: string;
+  /** A version's frozen fields (the metadata attribute post-pass reads their attribute values and shapes). */
+  snapshot?: FieldSnapshot[];
 }
 export interface Program {
   root: ProgramPart;
@@ -145,6 +156,8 @@ async function loadVersionPart(
       rootModel: rootModel.data,
       source: v.resolvedSource,
       fields: snapshot.map((f) => ({ name: f.name, fieldNumber: f.fieldNumber ?? null })),
+      entityName: v.entity.name,
+      snapshot,
     },
     pins: pins.map((p) => p.toId),
     tenantId: v.entity.tenantId,
@@ -231,6 +244,7 @@ export async function loadProgram(db: Db, subject: ArtifactSubject, canRead?: Pl
     rootModel: rootModel.data,
     source,
     fields: entity.fields.map((f) => ({ name: f.name, fieldNumber: f.fieldNumber })),
+    entityName: entity.name,
   };
   // The same resolution publish pins from: ids stored on the fields plus by-name references resolved in the entity's line.
   const resolved = await resolveEntityReferences(db, entity);
@@ -409,6 +423,13 @@ export interface ArtifactRendererOptions {
   maxWaitMs?: number;
   /** A `tsp` run is killed after this long (default 120 000 ms); the render then fails with `EMITTER_TIMEOUT`. */
   emitTimeoutMs?: number;
+  /**
+   * The compile limiter to run in (default: one of its own, from `concurrency` / `maxWaiting`). Renderers built per call (GitOps) pass the
+   * process-wide one (`getSharedRenderQueue`), so N of them still run at most its limit of compiles at once.
+   */
+  queue?: Semaphore;
+  /** The tenant's metadata attribute dictionary (default: `loadMetadataEmission` on `db`); undefined = none, the render is today's. */
+  loadMetadata?: (tenantId: string) => Promise<MetadataEmissionContext | undefined>;
 }
 
 /** The emitter kills its own process at `emitTimeoutMs`; this guard only frees the slot if an emitter fails to honour it. */
@@ -459,11 +480,62 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
   const emitFiles = options.emitFiles ?? runTypeSpecEmitterFiles;
   const maxEntries = options.maxEntries ?? 256;
   const timeoutMs = options.emitTimeoutMs ?? DEFAULT_EMITTER_TIMEOUT_MS;
-  const queue = new Semaphore(options.concurrency ?? 2, { maxWaiting: options.maxWaiting ?? TSP_MAX_WAITING_RUNS });
+  const queue = options.queue ?? new Semaphore(options.concurrency ?? 2, { maxWaiting: options.maxWaiting ?? TSP_MAX_WAITING_RUNS });
   const maxWaitMs = options.maxWaitMs ?? TSP_MAX_WAIT_MS;
   const cache = new Map<string, Promise<Result<RenderedArtifact>>>();
 
-  async function renderUncached(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader, run?: RenderRun): Promise<Result<RenderedArtifact>> {
+  const loadMetadata = options.loadMetadata ?? ((tenantId: string) => loadMetadataEmission(tenantId, options.db));
+
+  /** The model of a program part, as the metadata attribute post-pass needs it: a draft's from its rows, a version's from its frozen fields and source. */
+  async function partModel(part: ProgramPart): Promise<SuperSchemaModel | undefined> {
+    if (part.versionId === null) {
+      const loaded = await loadEntityModel(options.db, part.entityId);
+      return loaded.success ? loaded.data : undefined;
+    }
+    if (!part.snapshot) return undefined;
+    const extensions = modelExtensionsInSource(part.source, part.rootModel);
+    return compileEntity(
+      {
+        id: part.entityId, name: part.entityName ?? part.rootModel, description: "", status: "PUBLISHED", version: 1, domainId: null,
+        metadata: Object.keys(extensions).length > 0 ? { custom: { extensions } } : null, domain: null,
+      },
+      part.snapshot as unknown as PrismaFieldInput[]
+    );
+  }
+
+  /** The emitted files with the `abc-primitive` keys of primitive arrays on `items` (JSON Schema) or the attribute values as Avro properties. */
+  async function withMetadataAttributes(format: PayloadFormat, files: EmittedFile[], parts: ProgramPart[], metadata: MetadataEmissionContext): Promise<EmittedFile[]> {
+    // A payload `.proto` must stay one self-contained file (a registry / consumer has no `superschema/metadata_options.proto`): no options.
+    // `protobufSkippedNote` says so.
+    if (format === "protobuf") return files;
+    const models = await Promise.all(parts.map(async (part) => ({ part, model: await partModel(part) })));
+    return files.map((file) => {
+      if (format === "json-schema") {
+        // The bundle keeps one `$defs` entry per model (whatever the file is called): each part's keys go to its own entry.
+        const asJson = { path: "bundle.json", content: file.content };
+        const moved = models.reduce((f, { part, model }) => (model ? moveTagsToItems(f, itemsTagsFor(model, metadata.definitions), [part.rootModel]) : f), asJson);
+        return moved === asJson ? file : { ...file, content: moved.content };
+      }
+      // Every model of the program sits in one namespace: the one the file's top-level record has.
+      const namespace = avroTopNamespace(file.content);
+      const asAvro = { path: "schema.avsc", content: file.content };
+      const added = models.reduce((f, { part, model }) => (model ? addAvroProperties(f, model, metadata.definitions, { namespace, name: part.rootModel }) : f), asAvro);
+      return added === asAvro ? file : { ...file, content: added.content };
+    });
+  }
+
+  /** The note of a Protobuf payload whose parts hold `schema`-scope attribute values: they are not emitted (no custom options in a payload). */
+  async function protobufSkippedNote(parts: ProgramPart[], metadata: MetadataEmissionContext): Promise<{ code: string; message: string } | undefined> {
+    const models = (await Promise.all(parts.map(partModel))).filter((m): m is SuperSchemaModel => m !== undefined);
+    const keys = attributeKeysIn(models, metadata.definitions);
+    if (keys.length === 0) return undefined;
+    return {
+      code: "METADATA_ATTRIBUTES_NOT_EMITTED",
+      message: `An event payload .proto must be self-contained, so its metadata attributes are not emitted as Protobuf options: ${keys.join(", ")}.`,
+    };
+  }
+
+  async function renderUncached(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader, run?: RenderRun, metadata?: MetadataEmissionContext): Promise<Result<RenderedArtifact>> {
     const program = await loadProgram(options.db, subject, canRead);
     if (!program.success) return program;
     const parts = [program.data.root, ...program.data.deps];
@@ -481,7 +553,19 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
         });
       }
     }
-    const combined = combineTypeSpecSources(parts.map((p) => ({ label: p.label, source: toRealCompilable(p.source) })));
+    // `internal` metadata attributes never reach a payload: their extension decorators are removed from the text that is compiled.
+    const internalKeys = metadata?.definitions.filter((d) => d.scope === "internal").map((d) => d.key) ?? [];
+    const stripped: Array<{ label: string; source: string }> = [];
+    for (const p of parts) {
+      try {
+        stripped.push({ label: p.label, source: toRealCompilable(stripExtensionDecorators(p.source, internalKeys)) });
+      } catch (error) {
+        if (!(error instanceof MetadataStripError)) throw error;
+        // Fail closed: a source whose internal attributes cannot be removed is never compiled into a payload.
+        return err({ code: "ARTIFACT_RENDER_FAILED", message: `${p.label} → ${format}: ${error.message}`, details: { cause: "INTERNAL_ATTRIBUTE_STRIP_FAILED" } });
+      }
+    }
+    const combined = combineTypeSpecSources(stripped);
     if (!combined.success) {
       return err({
         code: "ARTIFACT_RENDER_FAILED",
@@ -513,16 +597,22 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
       if (files.error.code === "EMITTER_BUSY") return err({ code: "EMITTER_BUSY", message: files.error.message });
       return err({ code: "ARTIFACT_RENDER_FAILED", message: `${label} → ${format}: ${files.error.message}`, details: { cause: files.error.code } });
     }
-    const artifact = pickEmittedArtifact(format, files.data, program.data.root.rootModel);
-    if (!artifact.success) return artifact;
+    const emitted = metadata ? await withMetadataAttributes(format, files.data, parts, metadata) : files.data;
+    const picked = pickEmittedArtifact(format, emitted, program.data.root.rootModel);
+    if (!picked.success) return picked;
+    // R10: the defensive last pass. A key the decorator strip cannot see (nested in another extension's value, e.g. an `items` extension)
+    // never reaches the payload either. The same artifact when nothing matched.
+    const artifact = { ...picked, data: deepStripInternal(picked.data, internalKeys) };
     const notes = (avro?.warnings ?? []).map((message) => ({ code: "AVRO_ENUM_SYMBOL_RENAMED", message }));
+    const skipped = metadata && format === "protobuf" ? await protobufSkippedNote(parts, metadata) : undefined;
+    if (skipped) notes.push(skipped);
     return ok({ artifact: artifact.data, warnings: combined.data.warnings, ...(notes.length > 0 && { notes }) });
   }
 
   /** Never rejects: whatever a loader, the combiner, the emitter or the picker throws is an `ARTIFACT_RENDER_FAILED` result. */
-  async function renderSafely(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader, run?: RenderRun): Promise<Result<RenderedArtifact>> {
+  async function renderSafely(subject: ArtifactSubject, format: PayloadFormat, canRead?: PlaceReader, run?: RenderRun, metadata?: MetadataEmissionContext): Promise<Result<RenderedArtifact>> {
     try {
-      return await renderUncached(subject, format, canRead, run);
+      return await renderUncached(subject, format, canRead, run, metadata);
     } catch (error) {
       return renderFailure(subject, format, error);
     }
@@ -548,12 +638,20 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
       if (typeof subject.tenantId !== "string" || subject.tenantId === "") {
         return err({ code: "NOT_FOUND", message: `${describeSubject(subject)} not found` });
       }
-      if (subject.kind === "draft") return renderSafely(subject, format, canRead, run);
+      let metadata: MetadataEmissionContext | undefined;
+      try {
+        metadata = await loadMetadata(subject.tenantId);
+      } catch (error) {
+        return renderFailure(subject, format, error);
+      }
+      if (subject.kind === "draft") return renderSafely(subject, format, canRead, run, metadata);
       let key: string;
       try {
         const keyed = await versionCacheKey(subject, format);
         if (!keyed.success) return keyed;
-        key = keyed.data;
+        // Decision: a frozen version is rendered with the tenant's CURRENT dictionary; its state is part of the key, so a changed
+        // dictionary renders again instead of serving a payload projected with the old one.
+        key = `${keyed.data}:${dictionaryFingerprint(metadata)}`;
         // The caller's read scope is checked before the cache is consulted: a render cached for a caller whose roles cover the closure is never
         // handed to one whose roles do not. The closure of a frozen version does not change, so the check reads the same rows a render would.
         if (canRead) {
@@ -569,7 +667,7 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
         cache.set(key, hit);
         return hit;
       }
-      const pending: Promise<Result<RenderedArtifact>> = renderSafely(subject, format, canRead).then((result) => {
+      const pending: Promise<Result<RenderedArtifact>> = renderSafely(subject, format, canRead, undefined, metadata).then((result) => {
         if (!result.success && cache.get(key) === pending) cache.delete(key);
         return result;
       });
@@ -580,10 +678,36 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
   };
 }
 
+/** What of a dictionary changes a payload (key, scope, placement), as a short stable hash; "" for none. */
+function dictionaryFingerprint(metadata: MetadataEmissionContext | undefined): string {
+  if (!metadata) return "";
+  const rows = metadata.definitions.map((d) => `${d.key}\u0000${d.scope}\u0000${d.placement}`).sort();
+  return createHash("sha256").update(rows.join("\n")).digest("hex").slice(0, 16);
+}
+
+/** The namespace of an Avro file's top-level named schema (its own `namespace`, or the prefix of a dotted name); undefined when it has none. */
+function avroTopNamespace(content: string): string | undefined {
+  try {
+    const top: unknown = JSON.parse(content);
+    if (!isJsonObject(top) || typeof top.name !== "string") return undefined;
+    if (top.name.includes(".")) return top.name.slice(0, top.name.lastIndexOf("."));
+    return typeof top.namespace === "string" && top.namespace !== "" ? top.namespace : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 let shared: ArtifactRenderer | undefined;
+let sharedQueue: Semaphore | undefined;
+
+/** The process-wide render limiter (the shared renderer's, with its defaults), for renderers built per call. */
+export function getSharedRenderQueue(): Semaphore {
+  sharedQueue ??= new Semaphore(2, { maxWaiting: TSP_MAX_WAITING_RUNS });
+  return sharedQueue;
+}
 
 /** Process-wide renderer (D9 cache) for server code; tests construct their own. */
 export function getSharedArtifactRenderer(db: PrismaClient): ArtifactRenderer {
-  shared ??= createArtifactRenderer({ db });
+  shared ??= createArtifactRenderer({ db, queue: getSharedRenderQueue() });
   return shared;
 }

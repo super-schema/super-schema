@@ -37,6 +37,8 @@ import {
   type DomainField,
 } from "@/lib/autocomplete/field-name-autocomplete";
 import { suggestType } from "@/lib/autocomplete/type-suggestion";
+import { writeFieldAttribute } from "@/lib/metadata-attributes/values";
+import type { DictionaryEntry } from "@/types/schemas/field-dictionary";
 import { FieldCard } from "./components/FieldCard";
 import type { ReferenceFieldControls } from "./components/ReferencePinControl";
 import { pluralize } from "@/lib/pluralize";
@@ -58,6 +60,8 @@ interface FieldData {
   sortOrder: number;
 }
 
+type NewFieldOptions = NonNullable<Parameters<FieldEditorProps["onAddField"]>[2]>;
+
 const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 5 } };
 const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: sortableKeyboardCoordinates };
 
@@ -70,6 +74,8 @@ interface FieldEditorProps {
   productSlug: string | null;
   fields: FieldData[];
   domainFields?: DomainField[];
+  /** The tenant's field dictionary: its entries are offered first by the New Field name autocomplete. */
+  dictionary?: DictionaryEntry[];
   domainPolicy: Record<string, unknown> | null;
   isReadOnly?: boolean;
   onAddField: (
@@ -85,6 +91,7 @@ interface FieldEditorProps {
       fieldNumber?: number | null;
       aliases?: string[];
       decorators?: Record<string, unknown>;
+      dictionaryEntryId?: string | null;
     }
   ) => Promise<{ field?: { id: string; slug?: string } } | void>;
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
@@ -113,6 +120,7 @@ export function FieldEditor({
   productSlug,
   fields,
   domainFields = [],
+  dictionary,
   domainPolicy,
   isReadOnly = false,
   onAddField,
@@ -138,6 +146,9 @@ export function FieldEditor({
     setNewFieldType(type);
     setNewFieldReference(null);
   }, []);
+
+  // The dictionary entry picked for the new field (its defaults go with the field); forgotten as soon as the name stops being the entry's.
+  const [newFieldDictionary, setNewFieldDictionary] = useState<AutocompleteSuggestion | null>(null);
 
   // Filter state
   const [searchQuery, setSearchQuery] = useState("");
@@ -251,6 +262,7 @@ export function FieldEditor({
       if (e.key === "Escape") {
         setShowCreateDialog(false);
         setNewFieldName("");
+        setNewFieldDictionary(null);
         chooseNewFieldType("string");
       }
     }
@@ -264,13 +276,15 @@ export function FieldEditor({
       getFieldNameSuggestions(query, {
         existingFieldNames: fields.map((f) => f.name),
         domainFields,
+        dictionary,
         maxResults: 8,
       }),
-    [fields, domainFields]
+    [fields, domainFields, dictionary]
   );
 
   function handleNameChange(name: string) {
     setNewFieldName(name);
+    if (newFieldDictionary && name !== newFieldDictionary.value) setNewFieldDictionary(null);
     // Auto-suggest type based on field name
     const ts = suggestType(name);
     if (ts && newFieldType === "string") {
@@ -283,12 +297,24 @@ export function FieldEditor({
     if (suggestion.suggestedType) {
       chooseNewFieldType(suggestion.suggestedType);
     }
+    setNewFieldDictionary(suggestion.source === "dictionary" && suggestion.entryId ? suggestion : null);
   }
 
   /** The options a new field is created with: the qualified reference of a reference field whose target was picked, nothing otherwise. */
-  function newFieldOptions(): { decorators: Record<string, unknown> } | undefined {
-    if (newFieldType !== "reference" || !newFieldReference) return undefined;
-    return { decorators: applyReferencePick({}, newFieldReference) };
+  function newFieldOptions(): NewFieldOptions | undefined {
+    const reference = newFieldType === "reference" && newFieldReference ? applyReferencePick({}, newFieldReference) : undefined;
+    const entry = newFieldDictionary;
+    if (!entry) return reference ? { decorators: reference } : undefined;
+    // The entry's default attribute values are written through the same writer the stored values are read with; derived members (data_class)
+    // are resolved by the create action from the field's classification.
+    let decorators: Record<string, unknown> | undefined = reference;
+    for (const [key, value] of Object.entries(entry.attributes ?? {})) decorators = writeFieldAttribute(decorators, key, value);
+    return {
+      ...(entry.description ? { description: entry.description } : {}),
+      ...(entry.suggestedClassification ? { classification: entry.suggestedClassification } : {}),
+      ...(decorators ? { decorators } : {}),
+      dictionaryEntryId: entry.entryId,
+    };
   }
 
   function createField() {
@@ -299,6 +325,7 @@ export function FieldEditor({
   function resetDialog() {
     setShowCreateDialog(false);
     setNewFieldName("");
+    setNewFieldDictionary(null);
     chooseNewFieldType("string");
   }
 

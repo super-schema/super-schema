@@ -16,6 +16,8 @@ import { contentTypeFor, formatSuffix, normalizeProfile, schemaFormatFor } from 
 import { qualifyNames, type NameCandidate } from "./qualify";
 import { headersSchema, kafkaKeyProfile, placeKafkaKey, selectArtifact } from "./message-schemas";
 import { RESERVED_KEYS, setOwn } from "./own-property";
+import { isAttributeKey } from "@/lib/events/document/extensions";
+import { deepStripInternal } from "@/lib/metadata-attributes/deep-strip";
 
 /**
  * Spec §7.2 steps 3–5: assemble an AsyncAPI 3.0.0 document from a
@@ -115,8 +117,28 @@ function profileOn(channel: ResolvedChannel, message: ResolvedMessage): FormatPr
 /** What a message nothing carries is emitted as: the default profile of JSON Schema (draft-07). */
 const UNCARRIED_PROFILE: FormatProfile = { format: "json-schema" };
 
+/**
+ * Metadata attributes of a channel, message or operation, spread onto its emitted object AFTER the native keys. A key already on the
+ * object is never overwritten (an attribute key starts with `x-`; any other key is skipped), and a key in `internalKeys`
+ * (an `internal`-scope attribute) is dropped: it stays in the stored draft and never reaches the emitted document.
+ */
+function withExtensions(
+  target: JsonObject,
+  extensions: Record<string, JsonValue> | undefined,
+  internalKeys: ReadonlySet<string> | undefined,
+): JsonObject {
+  if (!extensions) return target;
+  for (const key of Object.keys(extensions).sort(compareStrings)) {
+    // `address`, `title`, … fail the attribute key rule: only `x-…` keys are ever spread, whatever the input holds.
+    if (!isAttributeKey(key) || internalKeys?.has(key) || Object.prototype.hasOwnProperty.call(target, key)) continue;
+    setOwn(target, key, structuredClone(extensions[key]));
+  }
+  return target;
+}
+
 export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
   const diagnostics: Diagnostic[] = [];
+  const internalKeys = spec.internalKeys;
   /**
    * `__proto__` / `constructor` / `prototype` collide with `Object.prototype`: as a document key they would be
    * silently dropped (or reshape the object). They are never valid names — fail with a clear message (the key is
@@ -406,7 +428,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     setOwn(
       componentMessages,
       name,
-      ordered([
+      withExtensions(ordered([
         ["name", msg.messageName ?? (name !== msg.name ? msg.name : undefined)],
         ["title", msg.title],
         ["summary", msg.summary],
@@ -421,7 +443,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
         ["deprecated", msg.deprecated],
         ["bindings", bindings],
         ["examples", clone(msg.examples)],
-      ]),
+      ]), msg.extensions, internalKeys),
     );
   }
 
@@ -434,13 +456,15 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     ]),
   )) {
     rejectReservedKey("Message trait name", name, jsonPointer("components", "messageTraits", name));
+    // A trait spec is copied as authored: its `internal` attribute keys (at any depth) are dropped, like a message's.
+    const traitSpec = deepStripInternal(trait.spec, internalKeys);
     if (!trait.headers) {
-      setOwn(componentMessageTraits, name, structuredClone(trait.spec));
+      setOwn(componentMessageTraits, name, structuredClone(traitSpec));
       continue;
     }
     const h = headersSchema(trait.headers, jsonPointer("components", "messageTraits", name, "headers"));
     diagnostics.push(...h.diagnostics);
-    const rest = Object.entries(trait.spec).filter(([k]) => k !== "headers");
+    const rest = Object.entries(traitSpec).filter(([k]) => k !== "headers");
     setOwn(
       componentMessageTraits,
       name,
@@ -458,7 +482,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     ]),
   )) {
     rejectReservedKey("Operation trait name", name, jsonPointer("components", "operationTraits", name));
-    setOwn(componentOperationTraits, name, operationTraitSpec(trait.spec));
+    setOwn(componentOperationTraits, name, operationTraitSpec(deepStripInternal(trait.spec, internalKeys)));
   }
 
   // ── 5. channels ──
@@ -482,7 +506,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     setOwn(
       channels,
       name,
-      ordered([
+      withExtensions(ordered([
         ["address", channel.address],
         ["messages", nonEmpty(messages)],
         ["title", channel.title],
@@ -493,7 +517,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
         ["tags", clone(channel.tags)],
         ["externalDocs", clone(channel.externalDocs)],
         ["bindings", clone(channel.bindings)],
-      ]),
+      ]), channel.extensions, internalKeys),
     );
   }
 
@@ -531,7 +555,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     setOwn(
       operationsOut,
       op.key,
-      ordered([
+      withExtensions(ordered([
         ["action", op.action],
         ["channel", ref("channels", cKey)],
         ["title", op.title],
@@ -544,7 +568,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
         ["traits", traitRefs.length > 0 ? traitRefs : undefined],
         ["messages", messageRefs.length > 0 ? messageRefs : undefined],
         ["reply", reply],
-      ]),
+      ]), op.extensions, internalKeys),
     );
   }
 
@@ -617,5 +641,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     ["components", nonEmpty(components)],
   ]);
 
-  return { document, diagnostics: normalizeDiagnostics(diagnostics) };
+  // R10: the defensive last pass. Whatever the projections above missed (a key nested in another value, a payload or header schema), an
+  // `internal` key never reaches the emitted document. The same object when nothing matched.
+  return { document: deepStripInternal(document, internalKeys), diagnostics: normalizeDiagnostics(diagnostics) };
 }

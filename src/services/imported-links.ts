@@ -12,10 +12,27 @@ import { withoutReferenceKeys, writeFieldReference, type EntityRef } from "@/lib
 import { sameAssetName } from "@/lib/importers/asset-name-match";
 import { applyScalarToField, type ScalarFacts } from "@/lib/importers/scalar-asset";
 import { readValueDescriptions } from "@/lib/importers/enum-value-descriptions";
+import {
+  deriveFieldDecorators,
+  loadDerivationContext,
+  loadDerivationContextForDomain,
+  type DerivationContext,
+} from "@/services/metadata-rederive.service";
 
 export { readValueDescriptions };
 
 type Target = { id: string; name: string; sourceRef?: string };
+
+/** The decorators of a field as it will be stored: derived attribute members applied when the tenant has definitions (else untouched). */
+function derivedDecorators(
+  ctx: DerivationContext | null,
+  row: { name: string; classification?: string | null },
+  type: string,
+  decorators: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!ctx) return decorators;
+  return deriveFieldDecorators(ctx, { name: row.name, type, classification: row.classification ?? null, decorators }) ?? decorators;
+}
 
 function decoratorsOf(field: CreateFieldInput): Record<string, unknown> | undefined {
   const value = field.decorators;
@@ -111,7 +128,7 @@ async function danglingFieldsOfDomain(tx: Prisma.TransactionClient, scope: { dom
       ...(exceptEntityId ? { entityId: { not: exceptEntityId } } : {}),
       decorators: { path: ["danglingRef", "ref"], string_contains: "" },
     },
-    select: { id: true, name: true, type: true, entityId: true, decorators: true, entity: { select: { productId: true } } },
+    select: { id: true, name: true, type: true, classification: true, entityId: true, decorators: true, entity: { select: { productId: true } } },
   });
 }
 
@@ -218,6 +235,8 @@ export async function relinkDanglingFields(tx: Prisma.TransactionClient, args: {
   const place = await placeOf(tx, args.productId);
   if (!place?.domainId) return 0;
   const sameName = (await domainEntities(tx, place.domainId)).filter((e) => namesAsset(e, args.entity.name) || (args.entity.sourceRef !== undefined && namesAsset(e, args.entity.sourceRef)));
+  // Every candidate is a field of this domain: derived with its policy (C6).
+  const derivation = await loadDerivationContext(args.actor.tenantId, tx, { domainId: place.domainId });
   let linked = 0;
   for (const row of named) {
     const ownProduct = row.entity?.productId;
@@ -227,7 +246,7 @@ export async function relinkDanglingFields(tx: Prisma.TransactionClient, args: {
     if (ownCandidate) continue;
     if (!mine && sameName.length !== 1) continue;
     const decorators = row.decorators as Record<string, unknown>;
-    const nextDecorators = linkedDecorators(decorators, args.entity, place) as Prisma.InputJsonObject;
+    const nextDecorators = derivedDecorators(derivation, row, row.type, linkedDecorators(decorators, args.entity, place)) as Prisma.InputJsonObject;
     await tx.field.update({ where: { id: row.id }, data: { decorators: nextDecorators } });
     await auditInTransaction(tx, args.actor, {
       action: "UPDATE",
@@ -257,12 +276,14 @@ function matchesDangling(row: { decorators: unknown }, asset: { name: string; so
  * of it (files imported in any order end up linked). Returns how many fields were linked.
  */
 export async function relinkDanglingFieldsToEnum(tx: Prisma.TransactionClient, args: { domainId: string; enum: EnumTarget; actor: AuditActor }): Promise<number> {
+  const derivation = await loadDerivationContextForDomain(args.domainId, tx);
   let linked = 0;
   for (const row of await danglingFieldsOfDomain(tx, { domainId: args.domainId })) {
     if (!matchesDangling(row, args.enum)) continue;
     const input = asCreateInput(row);
-    const next = linkFieldToEnum(input, args.enum);
-    if (next === input) continue;
+    const linkedField = linkFieldToEnum(input, args.enum);
+    if (linkedField === input) continue;
+    const next = { ...linkedField, decorators: derivedDecorators(derivation, row, linkedField.type, linkedField.decorators as Record<string, unknown>) };
     await tx.field.update({ where: { id: row.id }, data: { type: next.type, decorators: next.decorators as Prisma.InputJsonObject } });
     await auditInTransaction(tx, args.actor, {
       action: "UPDATE",
@@ -300,12 +321,14 @@ export function linkFieldsToScalars(fields: CreateFieldInput[], scalars: Readonl
 
 /** After a shared scalar is created: the domain's dangling fields that name it use it (type, format and constraints copied). */
 export async function relinkDanglingFieldsToScalar(tx: Prisma.TransactionClient, args: { domainId: string; scalar: ScalarTarget }): Promise<number> {
+  const derivation = await loadDerivationContextForDomain(args.domainId, tx);
   let linked = 0;
   for (const row of await danglingFieldsOfDomain(tx, { domainId: args.domainId })) {
     if (!matchesDangling(row, args.scalar)) continue;
     const input = asCreateInput(row);
-    const next = linkFieldToScalar(input, args.scalar);
-    if (next === input) continue;
+    const linkedField = linkFieldToScalar(input, args.scalar);
+    if (linkedField === input) continue;
+    const next = { ...linkedField, decorators: derivedDecorators(derivation, row, linkedField.type, linkedField.decorators as Record<string, unknown>) };
     await tx.field.update({ where: { id: row.id }, data: { type: next.type, decorators: next.decorators as Prisma.InputJsonObject } });
     linked += 1;
   }
@@ -320,14 +343,16 @@ export async function relinkDanglingFieldsToScalar(tx: Prisma.TransactionClient,
 export async function cascadeScalarToFields(tx: Prisma.TransactionClient, args: { domainId: string; scalar: ScalarTarget }): Promise<number> {
   const rows = await tx.field.findMany({
     where: { entity: { domainId: args.domainId }, decorators: { path: ["scalarName"], equals: args.scalar.name } },
-    select: { id: true, entityId: true, type: true, decorators: true },
+    select: { id: true, name: true, entityId: true, type: true, classification: true, decorators: true },
   });
+  const derivation = rows.length > 0 ? await loadDerivationContextForDomain(args.domainId, tx) : null;
   const touched = new Set<string>();
   let updated = 0;
   for (const row of rows) {
     const decorators = (row.decorators ?? {}) as Record<string, unknown>;
     const isElement = row.type === "array";
-    const next = applyScalarToField({ type: row.type, decorators }, args.scalar.name, args.scalar, isElement);
+    const applied = applyScalarToField({ type: row.type, decorators }, args.scalar.name, args.scalar, isElement);
+    const next = { ...applied, decorators: derivedDecorators(derivation, row, applied.type, applied.decorators as Record<string, unknown>) };
     if (next.type === row.type && JSON.stringify(next.decorators) === JSON.stringify(decorators)) continue;
     await tx.field.update({ where: { id: row.id }, data: { type: next.type, decorators: next.decorators as Prisma.InputJsonObject } });
     touched.add(row.entityId);
@@ -349,15 +374,16 @@ export async function cascadeEnumToFields(
 ): Promise<number> {
   const rows = await tx.field.findMany({
     where: { entity: { domainId: args.domainId }, decorators: { path: ["enumName"], equals: args.enum.name } },
-    select: { id: true, entityId: true, type: true, aliases: true, decorators: true },
+    select: { id: true, name: true, entityId: true, type: true, classification: true, aliases: true, decorators: true },
   });
+  const derivation = rows.length > 0 ? await loadDerivationContextForDomain(args.domainId, tx) : null;
   const descriptions = readValueDescriptions(args.enum.valueDescriptions);
   const kept = descriptions ? Object.fromEntries(Object.entries(descriptions).filter(([symbol]) => args.enum.values.includes(symbol))) : undefined;
   const touched = new Set<string>();
   let updated = 0;
   for (const row of rows) {
     const before = (row.decorators ?? {}) as Record<string, unknown>;
-    const decorators: Record<string, unknown> = { ...before };
+    let decorators: Record<string, unknown> = { ...before };
     let aliases = row.aliases;
     if (row.type === "enum") {
       const typespec = (decorators.typespec && typeof decorators.typespec === "object" ? { ...(decorators.typespec as Record<string, unknown>) } : {}) as Record<string, unknown>;
@@ -371,6 +397,7 @@ export async function cascadeEnumToFields(
     }
     if (kept && Object.keys(kept).length > 0) decorators.enumValueDescriptions = kept;
     else delete decorators.enumValueDescriptions;
+    decorators = derivedDecorators(derivation, row, row.type, decorators);
     if (JSON.stringify(decorators) === JSON.stringify(before) && JSON.stringify(aliases) === JSON.stringify(row.aliases)) continue;
     await tx.field.update({ where: { id: row.id }, data: { decorators: decorators as Prisma.InputJsonObject, aliases } });
     touched.add(row.entityId);

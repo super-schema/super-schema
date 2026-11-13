@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { Prisma } from "@/generated/prisma/client";
+import { toApiOperations } from "@/lib/api-operations/to-typespec";
 import {
   apiRequestBodySchema,
   HTTP_METHODS,
@@ -30,6 +31,8 @@ export interface OperationRow {
   tags?: unknown;
   deprecated?: boolean | null;
   requestBody?: unknown;
+  /** Json: `{ extensions: { "x-...": value } }`. */
+  decorators?: unknown;
   parameters: {
     name: string;
     type: string;
@@ -78,6 +81,7 @@ export function operationRecordFromRow(row: OperationRow): ApiOperationRecord {
   }
   const tags = tagsSchema.safeParse(row.tags);
   const method = row.httpMethod.trim().toUpperCase();
+  const extensions = toApiOperations([{ name: row.name, httpMethod: "GET", httpPath: "/", decorators: row.decorators }])[0]?.extensions;
   return {
     id: row.id,
     serviceId: row.serviceId,
@@ -100,6 +104,7 @@ export function operationRecordFromRow(row: OperationRow): ApiOperationRecord {
         description: p.description,
       })),
     requestBody,
+    ...(extensions ? { extensions } : {}),
     responses: bySortOrder(row.responses).map((r) => ({
       statusCode: r.statusCode,
       type: r.type,
@@ -130,6 +135,8 @@ export function operationColumns(op: ApiOperation) {
     tags: op.tags,
     deprecated: op.deprecated,
     requestBody: op.requestBody ? (op.requestBody as Prisma.InputJsonObject) : Prisma.DbNull,
+    // Written only when the operation says something about its attributes (`{}` clears them): a payload without `extensions` leaves the column alone.
+    ...(op.extensions !== undefined ? { decorators: (Object.keys(op.extensions).length > 0 ? { extensions: op.extensions } : {}) as Prisma.InputJsonObject } : {}),
   };
 }
 

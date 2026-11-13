@@ -8,6 +8,8 @@ import { requirePageAccess } from "@/lib/access/page-access";
 import { ENTERPRISE_ENTITIES_SEGMENT, ENTERPRISE_ROUTE_SEGMENT, assetHref, type QueryParams } from "@/lib/navigation/asset-href";
 import { findEntityInScope } from "../../load-entity-workspace";
 import { loadPickableEntities } from "@/lib/references/pickable-entities";
+import { listMetadataAttributes } from "@/services/metadata-attribute.service";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string; entityId: string; fieldId: string }>;
@@ -104,8 +106,18 @@ export default async function FieldDetailPage({ params, searchParams }: Props) {
   // The entities of the entity's own tenant a reference can point at, for the type picker (fail-soft: a typed name still works).
   const referenceTargets = await loadPickableEntities(prisma, field.entity.tenantId, readableWhere(principal.assignments, "entity.read", field.entity.tenantId));
 
+  // The tenant's attribute dictionary for fields. A failed lookup reads as none: the raw extension editor still works.
+  let metadataAttributes: MetadataAttributeDefinition[] = [];
+  try {
+    const listed = await listMetadataAttributes(field.entity.tenantId, "field");
+    if (listed.success) metadataAttributes = listed.data;
+  } catch (e: unknown) {
+    console.error("[FieldDetailPage] metadata attribute lookup failed", e);
+  }
+
   return (
     <FieldStudio
+      metadataAttributes={metadataAttributes}
       policyContext={fieldPolicyContext(field.entity.metadata, domainPolicy, domain?.name)}
       isReadOnly={!can(principal.assignments, "entity.write", { tenantId: entity.tenantId, domainId: entity.domainId ?? entity.product?.domainId ?? null, productId: entity.productId })}
       referenceTargets={referenceTargets}

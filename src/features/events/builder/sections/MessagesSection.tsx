@@ -21,6 +21,8 @@ import type { EntityOption, PickerScope } from "@/features/events/shared/EntityP
 import { autoRenameKey, leftForm, newKey } from "../auto-key";
 import { withDefaultMessageTraits } from "../traits";
 import type { SectionProps } from "../EventBuilder";
+import { AttributesSection } from "@/components/custom/metadata/AttributesSection";
+import { extensionCount, hasAttributes, withExtensions } from "../attributes";
 import { IdentifierDisclosure } from "../Identifier";
 import { messagePropertiesTitle } from "../labels";
 import { problemMessage, problemsByField, uniqueProblems } from "../problems";
@@ -399,6 +401,17 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
     { id: "docs", title: "Docs & tags", count: (message.tags?.length ?? 0) + (message.externalDocs ? 1 : 0), body: cardForm(DOCS_KEYS) },
     { id: "correlation", title: "Correlation id", count: message.correlationId ? 1 : 0, body: cardForm(CORRELATION_KEYS) },
     { id: "more", title: "More", count: setFieldCount(template, MORE_KEYS, formValue), body: cardForm(MORE_KEYS) },
+    ...(hasAttributes(options.metadataAttributes, "message", message)
+      ? [{
+        id: "attributes", title: "Metadata", count: extensionCount(message),
+        body: (
+          <AttributesSection
+            target="message" definitions={options.metadataAttributes ?? []} extensions={message.extensions}
+            onChange={(next) => patch((m) => withExtensions(m, next))}
+          />
+        ),
+      }]
+      : []),
   ].map((p) => ({ ...p, broken: errored.has(p.id) }));
 
   return (

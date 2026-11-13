@@ -16,6 +16,8 @@ const h = vi.hoisted(() => ({
 }));
 
 // The caller is the API key's service principal (a platform administrator acting in tenant-1): `withApiAuth` needs no session or database for it.
+// The tenant has no metadata attribute dictionary (emission unchanged); the stubbed client has no table for it.
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
 vi.mock("@/app/api/v1/middleware", () => ({
   authenticateRequest: async () => ({
     authenticated: true,

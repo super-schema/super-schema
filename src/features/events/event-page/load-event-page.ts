@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db";
+import { listMetadataAttributes } from "@/services/metadata-attribute.service";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import { can, readableWhere } from "@/lib/access";
 import { getPrincipal } from "@/lib/access/principal";
 import { assetHref, normalizeBuilderSection, normalizeEventTab, type BuilderSection, type EventTab } from "@/lib/navigation/asset-href";
@@ -21,6 +23,8 @@ export interface EventPageData {
   productSlug: string;
   /** Every entity of the tenant, for the payload / headers / key pins. */
   entityOptions: EntityOption[];
+  /** The tenant's metadata attribute dictionary (empty when none, or when it cannot be read: the page works without it). */
+  metadataAttributes?: MetadataAttributeDefinition[];
   /** The library traits the event may use (tenant level and the event's own domain), message traits first: what "Add from library" offers. */
   libraryTraits: LibraryTraitOption[];
   crumbs: Crumb[];
@@ -44,6 +48,17 @@ function libraryOption(option: LibraryTraitSource, kind: LibraryTraitOption["kin
     id: option.id, name: option.name, kind, level: option.ownerLabel === "Enterprise" ? "Enterprise" : `Domain · ${option.ownerLabel}`,
     spec: option.spec, bundled: option.bundled, properties: option.properties,
   };
+}
+
+/** The tenant's attribute dictionary; an unreadable one is logged and the builder works without it. */
+async function loadDictionary(tenantId: string): Promise<MetadataAttributeDefinition[]> {
+  try {
+    const listed = await listMetadataAttributes(tenantId);
+    return listed.success ? listed.data : [];
+  } catch (e: unknown) {
+    console.error("[loadEventPage] metadata attribute lookup failed", e);
+    return [];
+  }
 }
 
 /**
@@ -88,6 +103,7 @@ export async function loadEventPage(params: {
     loadTraitOptions(libraryScope, "MESSAGE", readTraits),
     loadTraitOptions(libraryScope, "OPERATION", readTraits),
   ]);
+  const metadataAttributes = await loadDictionary(route.tenantId);
   const libraryTraits = [
     ...messageTraits.map((t) => libraryOption(t, "MESSAGE")),
     ...operationTraits.map((t) => libraryOption(t, "OPERATION")),
@@ -102,6 +118,7 @@ export async function loadEventPage(params: {
     productSlug: route.product.slug,
     entityOptions,
     libraryTraits,
+    metadataAttributes,
     crumbs: productCrumbs(route, { label: "Events", href: listHref }, row.name),
     listHref,
     initialTab: normalizeEventTab(params.tab),

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Plus, Trash2, Edit2, Shield } from "lucide-react";
 import { SYSTEM_CLASSIFICATION_DEFAULTS } from "@/types/schemas/classification-taxonomy";
+import { CLASS_SCALE } from "@/lib/classification-scale";
 import type { ClassificationLevel } from "@/types/schemas/classification-taxonomy";
 
 type ClassificationRow = ClassificationLevel;
@@ -21,6 +22,7 @@ export function ClassificationList() {
   const [newColor, setNewColor] = useState("#8B5CF6");
   const [newDescription, setNewDescription] = useState("");
   const [newSortOrder, setNewSortOrder] = useState(5);
+  const [newClassNumber, setNewClassNumber] = useState<number>(3);
   const [error, setError] = useState<string | null>(null);
 
   function handleCreate() {
@@ -39,6 +41,7 @@ export function ClassificationList() {
       description: newDescription || null,
       sortOrder: newSortOrder,
       isSystem: false,
+      classNumber: newClassNumber,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -48,6 +51,7 @@ export function ClassificationList() {
     setNewColor("#8B5CF6");
     setNewDescription("");
     setNewSortOrder(levels.length + 1);
+    setNewClassNumber(3);
   }
 
   return (
@@ -118,6 +122,23 @@ export function ClassificationList() {
                 onChange={(e) => setNewSortOrder(parseInt(e.target.value) || 0)}
                 className="w-full bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none"
               />
+            </div>
+            <div className="space-y-space-1">
+              <label htmlFor="classification-class" className="text-caption text-muted-foreground">Class</label>
+              <select
+                id="classification-class"
+                data-testid="classification-class"
+                required
+                value={newClassNumber}
+                onChange={(e) => setNewClassNumber(parseInt(e.target.value))}
+                className="w-full bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none"
+              >
+                {CLASS_SCALE.map((c) => (
+                  <option key={c.classNumber} value={c.classNumber}>
+                    Class {c.classNumber} — {c.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
           {/* Preview */}

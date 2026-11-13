@@ -69,6 +69,8 @@ export interface DocChannel {
   formatDialect?: JsonSchemaDialect;
   title?: string; summary?: string; description?: string; parameters?: Record<string, DocChannelParameter>; tags?: DocTag[]; externalDocs?: DocExternalDocs;
   messageKeys: string[];
+  /** Metadata attributes: `x-…` key (the attribute key rule) → JSON value. Emitted on the item after its native keys. */
+  extensions?: Record<string, JsonValue>;
 }
 export interface DocMessage {
   key: string; name?: string; title?: string; summary?: string; description?: string; contentType?: string; correlationId?: DocCorrelationId;
@@ -79,6 +81,8 @@ export interface DocMessage {
    */
   representation?: PayloadFormat;
   payload: EntityPin; headers?: EntityPin; keyPin?: EntityPin; traitKeys: string[];
+  /** Metadata attributes: `x-…` key (the attribute key rule) → JSON value. Emitted on the item after its native keys. */
+  extensions?: Record<string, JsonValue>;
 }
 export type DocTrait =
   | { key: string; kind: TraitKind; spec: JsonObject; headers?: EntityPin }
@@ -90,6 +94,8 @@ export interface DocOperation {
   security?: string[];
   tags?: DocTag[]; externalDocs?: DocExternalDocs; bindings?: JsonObject;
   reply?: { address?: DocReplyAddress; channelKey?: string; messageKeys?: string[] };
+  /** Metadata attributes: `x-…` key (the attribute key rule) → JSON value. Emitted on the item after its native keys. */
+  extensions?: Record<string, JsonValue>;
 }
 export interface DocExternalRef { key: string; eventVersionId: string; kind: "channel" | "message"; itemKey: string }
 export interface DocComponents { correlationIds?: Record<string, JsonObject>; parameters?: Record<string, JsonObject>; securitySchemes?: Record<string, DocSecurityScheme> }

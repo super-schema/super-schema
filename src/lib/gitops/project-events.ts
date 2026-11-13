@@ -8,7 +8,7 @@ import {
 } from "@/services/events/event-snapshot";
 import { createArtifactRenderer } from "@/services/events/artifact-renderer";
 import { replaceReferences } from "@/services/events/schema-references";
-import { emitResolved } from "@/services/events/event-emit.service";
+import { emitResolved, withInternalKeys } from "@/services/events/event-emit.service";
 import { compareVersion, stableVersionId } from "./canonical";
 import { GitOpsError, type CanonicalDocument } from "./contracts";
 const json = (v: unknown) =>
@@ -102,6 +102,7 @@ export async function projectEventVersions(
       const output = await emitResolved(
         resolved.resolved,
         String(d.spec.record.specType ?? "asyncapi@3.0"),
+        await withInternalKeys({}, snapshot.data.event.tenantId, tx),
       );
       if (
         !output.success ||

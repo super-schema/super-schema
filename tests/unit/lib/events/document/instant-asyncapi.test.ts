@@ -416,3 +416,28 @@ describe("buildInstantAsyncApi: never throws", () => {
     expect(built).toBeLessThan(300);
   });
 });
+
+describe("buildInstantAsyncApi: internal metadata attributes (R10, A4)", () => {
+  const withInternal = (): EventDocument => {
+    const doc = checkoutService();
+    return {
+      ...doc,
+      channels: doc.channels.map((c, i) => (i === 0 ? { ...c, extensions: { "x-review-note": "secret-ch", "x-owner": "payments" } } : c)),
+      messages: doc.messages.map((m, i) => (i === 0 ? { ...m, extensions: { "x-review-note": "secret-msg" } } : m)),
+      operations: doc.operations.map((o, i) => (i === 0 ? { ...o, extensions: { "x-review-note": "secret-op" } } : o)),
+      traits: doc.traits.map((t) => (t.key === "Retryable" ? { ...t, spec: { summary: "Retried", "x-review-note": "secret-trait" } } : t)),
+    };
+  };
+
+  it("drops the internal keys from the Code panel's JSON and YAML when they are given", () => {
+    const out = buildInstantAsyncApi(withInternal(), { ...OPTS, internalKeys: new Set(["x-review-note"]) });
+    expect(out.document).not.toBeNull();
+    expect(out.json).not.toContain("secret");
+    expect(out.yaml).not.toContain("secret");
+    expect(out.json).toContain("x-owner");
+  });
+
+  it("shows them when no internal keys are given", () => {
+    expect(buildInstantAsyncApi(withInternal(), OPTS).json).toContain("secret-ch");
+  });
+});

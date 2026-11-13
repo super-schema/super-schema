@@ -11,6 +11,7 @@ import { MAX_DOCUMENT_DEPTH, MAX_DOCUMENT_VALUES, documentSizeProblem, toJson, t
 import type { JsonObject } from "@/lib/event-specs/types";
 import { checkoutServiceSpec } from "./fixtures/worked-example";
 import { message, operation, spec } from "./fixtures/builders";
+import { withNoDictionary } from "../../../helpers/no-dictionary";
 
 /** `depth` single-key objects chained by `next`, ending in `deepest`: the shape only depth makes expensive. */
 function deepChain(depth: number, deepest: JsonObject): JsonObject {
@@ -126,11 +127,11 @@ describe("emitEventStoredVersion on a stored document past the bounds", () => {
       id: EVENT, name: "checkout", specType: "asyncapi@3.0", tenantId: TENANT, domainId: "domain-1", productId: PRODUCT,
       product: { slug: "checkout" }, latestVersion: null,
     };
-    return {
+    return withNoDictionary({
       eventSpec: { findUnique: vi.fn(async () => event) },
       product: { findUnique: vi.fn(async () => ({ id: PRODUCT, domainId: "domain-1", domain: { tenantId: TENANT } })) },
       eventSpecVersion: { findUnique: vi.fn(async () => ({ document, major: 1, minor: 0, patch: 0, stage: "RELEASED", compatReport: {} })) },
-    };
+    });
   }
 
   it("refuses to serve it, and does not serialize it", async () => {

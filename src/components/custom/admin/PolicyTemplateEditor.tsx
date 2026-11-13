@@ -2,10 +2,16 @@
 
 import { useState } from "react";
 import type { PolicyTemplate, CompletenessRequirements, CompletenessRequirement } from "@/types/schemas/domain-policy";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
+import { AttributeValueEditor } from "@/components/custom/metadata/AttributeValueEditor";
 import { FieldCompletenessPolicyEditor } from "./FieldCompletenessPolicyEditor";
+
+type AttributeOverride = NonNullable<PolicyTemplate["metadataAttributes"]>[string];
 
 interface PolicyTemplateEditorProps {
   value: PolicyTemplate | null;
+  /** The tenant's field-attribute definitions; the "Metadata attributes" section is shown when there are any. */
+  attributeDefinitions?: MetadataAttributeDefinition[];
   onChange: (template: PolicyTemplate) => void;
 }
 
@@ -40,11 +46,13 @@ const REQUIREMENT_DEFS: RequirementDef[] = [
 
 const DEFAULT_REQ: CompletenessRequirement = { enabled: false, severity: "warning" };
 
-export function PolicyTemplateEditor({ value, onChange }: PolicyTemplateEditorProps) {
+export function PolicyTemplateEditor({ value, attributeDefinitions = [], onChange }: PolicyTemplateEditorProps) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [draft, setDraft] = useState<PolicyTemplate>(value ?? {});
 
   const completeness: CompletenessRequirements = draft.completenessRequirements ?? {};
+  // Policy defaults and `requiredWhen` apply to fields and entities only: an event-, channel- or operation-only definition is not listed.
+  const policyDefinitions = attributeDefinitions.filter((d) => d.targets.includes("field") || d.targets.includes("entity"));
 
   function getReq(key: keyof CompletenessRequirements): CompletenessRequirement {
     return completeness[key] ?? DEFAULT_REQ;
@@ -58,6 +66,16 @@ export function PolicyTemplateEditor({ value, onChange }: PolicyTemplateEditorPr
         [key]: updated,
       },
     });
+  }
+
+  function setAttributeOverride(key: string, patch: Partial<AttributeOverride>) {
+    const next: AttributeOverride = { ...draft.metadataAttributes?.[key], ...patch };
+    if (next.requiredWhen === undefined) delete next.requiredWhen;
+    if (next.default === undefined) delete next.default;
+    const all = { ...draft.metadataAttributes };
+    if (Object.keys(next).length === 0) delete all[key];
+    else all[key] = next;
+    setDraft({ ...draft, metadataAttributes: Object.keys(all).length ? all : undefined });
   }
 
   function handleSave() {
@@ -201,6 +219,43 @@ export function PolicyTemplateEditor({ value, onChange }: PolicyTemplateEditorPr
           })}
         </div>
       </div>
+
+      {policyDefinitions.length > 0 && (
+        <div className="space-y-space-2">
+          <label className="block text-body-small text-muted-foreground font-medium">Metadata attributes</label>
+          <p className="text-caption text-muted-foreground">Per attribute: when it is required in this domain, and the value a new field starts with.</p>
+          {policyDefinitions.map((d) => {
+            const o = draft.metadataAttributes?.[d.key] ?? {};
+            return (
+              <div key={d.key} className="space-y-space-2 rounded-md border border-border/50 px-space-3 py-space-2">
+                <div className="flex items-center gap-space-3">
+                  <span className="flex-1 text-body-small text-foreground">{d.label} <span className="text-caption text-muted-foreground">({d.key})</span></span>
+                  <select
+                    aria-label={`Required when for ${d.key}`}
+                    value={o.requiredWhen ?? ""}
+                    onChange={(e) => setAttributeOverride(d.key, { requiredWhen: (e.target.value || undefined) as AttributeOverride["requiredWhen"] })}
+                    className="bg-muted rounded px-space-2 py-0.5 text-caption text-foreground outline-none"
+                  >
+                    <option value="">Dictionary default ({d.requiredWhen})</option>
+                    <option value="never">Never required</option>
+                    <option value="always">Always required</option>
+                    <option value="primitive">Required on primitive fields</option>
+                  </select>
+                </div>
+                {d.valueSchema && d.targets.includes("field") && (
+                  <AttributeValueEditor
+                    schema={d.valueSchema}
+                    value={o.default}
+                    derivedKeys={Object.keys(d.derive ?? {})}
+                    label={`Default for ${d.key}`}
+                    onChange={(v) => setAttributeOverride(d.key, { default: v })}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Save */}
       <FieldCompletenessPolicyEditor value={draft.fieldCompleteness} onChange={(fieldCompleteness) => setDraft({ ...draft, fieldCompleteness })} />

@@ -23,6 +23,7 @@ vi.mock("@/lib/auth", () => ({ auth: vi.fn().mockResolvedValue({ user: { id: "us
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
 
+import { noDictionaryTables, withNoDictionary } from "../helpers/no-dictionary";
 import { compileAndApplyTypeSpecSourceAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 import { createImportedEntities, type ImportedEntityInput } from "@/services/imported-entities";
 import { compileEntity, type PrismaEntityInput, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
@@ -76,7 +77,7 @@ async function persist(): Promise<void> {
   });
   payload.entities[0].name = "UserEvent";
   const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-  const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
+  const tx = withNoDictionary({ entity: { create, findFirst: vi.fn().mockResolvedValue(null) }, product: { findUnique: vi.fn(async () => null) }, field: { findMany: vi.fn(async () => []) }, auditLog: { create: vi.fn(async () => ({})) } }) as unknown as Prisma.TransactionClient;
   await createImportedEntities(tx, {
     entities: [payload.entities[0] as unknown as ImportedEntityInput],
     productScope: { tenantId: "t", domainId: "d", productId: "p" },
@@ -113,13 +114,14 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Object.assign(mockPrisma, noDictionaryTables());
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
   mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
   mockPrisma.field.create.mockResolvedValue({ id: "new" });
   mockPrisma.field.update.mockResolvedValue({ id: "upd" });
   mockPrisma.field.findMany.mockImplementation(async (arg?: { select?: unknown }) => (arg?.select ? dbRows().map((r) => ({ name: r.name })) : dbRows()));
   mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
-  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1", metadata });
+  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "UserEvent", typespecSource: null, tenantId: "tenant-1", metadata });
 });
 
 const save = (text: string) => compileAndApplyTypeSpecSourceAction("ent-1", text);
@@ -180,7 +182,10 @@ describe("edits change only what they say", () => {
     expect(u.f2).toMatchObject({ type: "utcDateTime" });
     expect(decorators.danglingRef).toBeUndefined();
     expect(decorators.referencedEntityName).toBeUndefined();
-    expect(decorators.governance).toEqual({ dataClass: "class4", dataCategory: "Intrinsic" });
+    expect(decorators.governance).toBeUndefined();
+    expect(decorators).toMatchObject({
+      typespec: { extensions: { openapi: { "x-securityClassification": { data_class: "class4", data_category: "Intrinsic" } } } },
+    });
   }, 60_000);
 
   it("renaming the $ref value updates the marker's raw ref", async () => {
@@ -215,7 +220,7 @@ describe("edits change only what they say", () => {
     mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
     mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
     mockPrisma.field.findMany.mockImplementation(async (arg?: { select?: unknown }) => (arg?.select ? dbRows().map((r) => ({ name: r.name })) : dbRows()));
-    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1", metadata });
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "UserEvent", typespecSource: null, tenantId: "tenant-1", metadata });
     const stripped = source.split("\n").filter((l) => !l.includes("x-owner-team")).join("\n");
     const res2 = await save(stripped);
     expect(res2.success).toBe(true);
@@ -263,7 +268,7 @@ describe("resolved references are stable across a save", () => {
       const res = await save(declared(text));
       expect(res.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
       expect(res.success).toBe(true);
-      expect(res.applied).toEqual({ added: 0, updated: 0, removed: [] });
+    expect(res.applied).toEqual({ added: 0, updated: 0, removed: [] });
       expect(mockPrisma.field.update).not.toHaveBeenCalled();
     } finally {
       mockPrisma.field.findMany.mockImplementation(async (arg?: { select?: unknown }) => (arg?.select ? dbRows().map((r) => ({ name: r.name })) : dbRows()));

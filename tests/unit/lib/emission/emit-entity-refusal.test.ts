@@ -12,6 +12,7 @@ const tenantRows = [
   { id: "x2", name: "Address", description: "", status: "DRAFT", version: 1, domainId: null, metadata: null, latestVersionId: null, domain: { id: "d2", name: "D2", slug: "d2" }, product: { name: "P2" } },
 ];
 
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
 vi.mock("@/lib/db", () => ({
   prisma: {
     entity: {

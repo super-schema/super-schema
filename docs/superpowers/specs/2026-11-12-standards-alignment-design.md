@@ -92,7 +92,8 @@ Two tenant-level catalogs, managed like custom data types (`CustomScalar`, `Shar
 | TypeSpec → JSON Schema / OpenAPI / AsyncAPI | Emitted by the official emitters from the extension decorators; `internal` keys removed by the emission projection; `abc-primitive` array tags moved to `items` by a post-pass |
 | JSON Schema / OpenAPI / AsyncAPI → model | Existing vendor-extension round trip (`2026-10-20-vendor-extension-roundtrip-design.md`) |
 | Avro | Emitted as Avro field/record custom properties (the Avro spec allows extra attributes), post-pass on the `.avsc` |
-| Protobuf, DDL, Java | Not representable (Protobuf needs declared custom options). A warning lists the attributes that were skipped |
+| Protobuf | custom options (`superschema/metadata_options.proto`) |
+| DDL, Java | Not representable. A warning lists the attributes that were skipped |
 
 ### 3.5 PayPal "Security Classification" pack (install on demand)
 

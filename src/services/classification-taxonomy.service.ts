@@ -8,6 +8,7 @@
 
 import { ctxCan } from "@/lib/access";
 import { prisma } from "@/lib/db";
+import { rederiveForLevel } from "@/services/metadata-rederive.service";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -18,6 +19,9 @@ import {
   type CreateClassificationInput,
   type UpdateClassificationInput,
 } from "@/types/schemas/classification-taxonomy";
+
+/** Bounds of the class-change transaction (level update + re-derivation of every field on the level, across tenants). */
+export const CLASS_CHANGE_TX_OPTIONS = { timeout: 120_000, maxWait: 10_000 } as const;
 
 // ---------------------------------------------------------------------------
 // Prisma row → app ClassificationLevel mapper
@@ -32,6 +36,7 @@ function toClassificationLevel(row: {
   description: string;
   sortOrder: number;
   isSystem: boolean;
+  classNumber: number;
   createdAt: Date;
   updatedAt: Date;
 }): ClassificationLevel {
@@ -44,6 +49,7 @@ function toClassificationLevel(row: {
     description: row.description || null,
     sortOrder: row.sortOrder,
     isSystem: row.isSystem,
+    classNumber: row.classNumber,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -70,6 +76,7 @@ export async function _seedClassifications(levels: ClassificationLevel[]): Promi
         description: level.description ?? "",
         sortOrder: level.sortOrder,
         isSystem: level.isSystem,
+        classNumber: level.classNumber,
       },
     });
   }
@@ -147,6 +154,7 @@ export async function createClassification(
       textColor: parsed.data.textColor,
       description: parsed.data.description ?? "",
       sortOrder: parsed.data.sortOrder,
+      classNumber: parsed.data.classNumber,
       isSystem: false,
     },
   });
@@ -191,19 +199,55 @@ export async function updateClassification(
     });
   }
 
+  if (
+    existing.isSystem &&
+    parsed.data.classNumber !== undefined &&
+    parsed.data.classNumber !== existing.classNumber
+  ) {
+    return err({
+      code: "SYSTEM_CLASS_FIXED",
+      message: `The class of system level "${existing.name}" is fixed`,
+      suggestedFix: "Only custom classification levels can change class.",
+    });
+  }
+
   const data: Record<string, unknown> = {};
   if (parsed.data.displayColor !== undefined) data.displayColor = parsed.data.displayColor;
   if (parsed.data.bgColor !== undefined) data.bgColor = parsed.data.bgColor;
   if (parsed.data.textColor !== undefined) data.textColor = parsed.data.textColor;
   if (parsed.data.description !== undefined) data.description = parsed.data.description ?? "";
   if (parsed.data.sortOrder !== undefined) data.sortOrder = parsed.data.sortOrder;
+  if (parsed.data.classNumber !== undefined) data.classNumber = parsed.data.classNumber;
 
-  const updated = await prisma.classificationLevel.update({
-    where: { id: parsed.data.id },
-    data,
-  });
+  const previousClassNumber = existing.classNumber;
+  const classMoves = !existing.isSystem && data.classNumber !== undefined && data.classNumber !== previousClassNumber;
+  if (!classMoves) {
+    const updated = await prisma.classificationLevel.update({ where: { id: parsed.data.id }, data });
+    return ok(toClassificationLevel(updated));
+  }
 
-  return ok(toClassificationLevel(updated));
+  // A custom level's class moved: the derived attribute values of every field classified with it follow, in the SAME transaction (C4). A
+  // failed re-derivation rolls the class change back, so saving the level again repairs it (the class still differs then). A level spans
+  // every tenant, so the transaction is bounded explicitly (Prisma's default 5 s would abort a large one) and the re-derivation walks the
+  // fields in locked, id-ordered chunks rather than one list of every field (N1).
+  try {
+    const updated = await prisma.$transaction(
+      async (tx) => {
+        const row = await tx.classificationLevel.update({ where: { id: parsed.data.id }, data });
+        await rederiveForLevel(existing.name, tx);
+        return row;
+      },
+      CLASS_CHANGE_TX_OPTIONS,
+    );
+    return ok(toClassificationLevel(updated));
+  } catch (e: unknown) {
+    console.error(`[updateClassification] re-deriving the fields of level "${existing.name}" failed`, e);
+    return err({
+      code: "REDERIVE_FAILED",
+      message: `The class of "${existing.name}" was not changed: the attribute values derived from it could not be updated`,
+      suggestedFix: "Try again. Nothing was saved.",
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -45,6 +45,16 @@ export const PolicyTemplateSchema = z
     namingConventions: z.string().optional(),
     completenessRequirements: CompletenessRequirementsSchema.optional(),
     fieldCompleteness: FieldCompletenessPolicySchema.optional(),
+    /** Per attribute key: this domain's `requiredWhen` override and default value. */
+    metadataAttributes: z
+      .record(
+        z.string(),
+        z.object({
+          requiredWhen: z.enum(["never", "always", "primitive"]).optional(),
+          default: z.unknown().optional(),
+        }),
+      )
+      .optional(),
   })
   .partial();
 

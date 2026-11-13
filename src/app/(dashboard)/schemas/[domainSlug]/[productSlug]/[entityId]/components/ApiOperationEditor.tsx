@@ -6,7 +6,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { HTTP_METHODS, PARAM_LOCATIONS, type ApiParameter, type ApiRequestBody } from "@/types/schemas/api-operation";
+import { AttributesSection } from "@/components/custom/metadata/AttributesSection";
+import { HTTP_METHODS, PARAM_LOCATIONS, type ApiOperationRecord, type ApiParameter, type ApiRequestBody } from "@/types/schemas/api-operation";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import type { ApiOperationIssue } from "@/lib/api-operations/validate";
 import {
   COMMON_CONTENT_TYPES,
@@ -32,6 +34,7 @@ export const METHOD_COLORS: Record<string, string> = {
 
 const INPUT = "h-7 text-caption";
 const NO_WARNINGS: readonly string[] = [];
+const NO_DEFINITIONS: readonly MetadataAttributeDefinition[] = [];
 const CONTENT_TYPE_LIST = "api-content-types";
 
 interface ApiOperationRowProps {
@@ -45,6 +48,8 @@ interface ApiOperationRowProps {
   warnings?: readonly string[];
   groups: TypeOptionGroups;
   readOnly: boolean;
+  /** The tenant's metadata attribute dictionary (the "Metadata" section offers its operation-target attributes). */
+  definitions?: readonly MetadataAttributeDefinition[];
   onToggle: (id: string) => void;
   onChange: (next: OperationDraft) => void;
   onDelete: (id: string) => void;
@@ -54,7 +59,7 @@ interface ApiOperationRowProps {
 
 /** One operation: its summary row (expand toggle, reorder) and, expanded, its editor. */
 export const ApiOperationRow = memo(function ApiOperationRow({
-  draft, index, count, expanded, issues, warnings = NO_WARNINGS, groups, readOnly, onToggle, onChange, onDelete, onDuplicate, onMove,
+  draft, index, count, expanded, issues, warnings = NO_WARNINGS, groups, readOnly, definitions = NO_DEFINITIONS, onToggle, onChange, onDelete, onDuplicate, onMove,
 }: ApiOperationRowProps) {
   const methodColor = METHOD_COLORS[draft.httpMethod] ?? METHOD_COLORS.GET;
   const hasIssues = issues.length > 0;
@@ -104,7 +109,7 @@ export const ApiOperationRow = memo(function ApiOperationRow({
       </div>
 
       {expanded && (
-        <OperationEditor draft={draft} issues={issues} warnings={warnings} groups={groups} readOnly={readOnly} onChange={onChange} onDelete={onDelete} onDuplicate={onDuplicate} />
+        <OperationEditor draft={draft} issues={issues} warnings={warnings} groups={groups} readOnly={readOnly} definitions={definitions} onChange={onChange} onDelete={onDelete} onDuplicate={onDuplicate} />
       )}
     </div>
   );
@@ -116,12 +121,13 @@ interface OperationEditorProps {
   warnings: readonly string[];
   groups: TypeOptionGroups;
   readOnly: boolean;
+  definitions: readonly MetadataAttributeDefinition[];
   onChange: (next: OperationDraft) => void;
   onDelete: (id: string) => void;
   onDuplicate: (id: string) => void;
 }
 
-function OperationEditor({ draft, issues, warnings, groups, readOnly, onChange, onDelete, onDuplicate }: OperationEditorProps) {
+function OperationEditor({ draft, issues, warnings, groups, readOnly, definitions, onChange, onDelete, onDuplicate }: OperationEditorProps) {
   const uid = useId();
   const errors = issuesByPath(issues);
   const general = issues.filter((i) => !isPlacedIssuePath(i.path));
@@ -211,6 +217,11 @@ function OperationEditor({ draft, issues, warnings, groups, readOnly, onChange, 
           Deprecated
         </label>
       </div>
+
+      <AttributesSection
+        target="operation" definitions={definitions} extensions={draft.extensions} readOnly={readOnly}
+        onChange={(next) => set({ extensions: (next ?? {}) as ApiOperationRecord["extensions"] })}
+      />
 
       {/* Parameters */}
       <section aria-label="Parameters">

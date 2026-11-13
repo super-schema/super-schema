@@ -11,6 +11,7 @@ let classificationStore: Array<{
   textColor: string;
   description: string;
   sortOrder: number;
+  classNumber: number;
   isSystem: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -31,6 +32,7 @@ vi.mock("@/lib/db", () => ({
           textColor: args.data.textColor as string,
           description: (args.data.description as string) ?? "",
           sortOrder: (args.data.sortOrder as number) ?? 0,
+          classNumber: (args.data.classNumber as number) ?? 3,
           isSystem: (args.data.isSystem as boolean) ?? false,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -78,8 +80,22 @@ vi.mock("@/lib/db", () => ({
         return 0;
       }),
     },
+    // An interactive transaction: the client itself as `tx`, with a rollback of the level rows when the callback throws.
+    $transaction: vi.fn(async function (this: unknown, fn: (tx: unknown) => Promise<unknown>) {
+      const snapshot = classificationStore.map((c) => ({ ...c }));
+      const { prisma } = await import("@/lib/db");
+      try {
+        return await fn({ ...prisma, isTx: true });
+      } catch (e) {
+        classificationStore = snapshot;
+        throw e;
+      }
+    }),
   },
 }));
+
+const rederiveMock = vi.hoisted(() => vi.fn(async () => 0));
+vi.mock("@/services/metadata-rederive.service", () => ({ rederiveForLevel: rederiveMock }));
 
 import {
   getClassificationLevels,
@@ -154,6 +170,7 @@ describe("Classification Taxonomy Service", () => {
           bgColor: "#8B5CF620",
           textColor: "#8B5CF6",
           description: "Confidential data",
+          classNumber: 3,
           sortOrder: 5,
         },
         adminCtx
@@ -174,6 +191,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#DC2626",
           bgColor: "#DC262620",
           textColor: "#DC2626",
+          classNumber: 3,
           sortOrder: 6,
         },
         adminCtx
@@ -193,6 +211,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#FF0000",
           bgColor: "#FF000020",
           textColor: "#FF0000",
+          classNumber: 3,
           sortOrder: 10,
         },
         adminCtx
@@ -210,6 +229,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#000000",
           bgColor: "#00000020",
           textColor: "#000000",
+          classNumber: 3,
           sortOrder: 10,
         },
         viewerCtx
@@ -227,6 +247,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "not-a-color",
           bgColor: "#00000020",
           textColor: "#000000",
+          classNumber: 3,
           sortOrder: 10,
         },
         adminCtx
@@ -235,6 +256,98 @@ describe("Classification Taxonomy Service", () => {
       if (!result.success) {
         expect(result.error.code).toBe("VALIDATION_ERROR");
       }
+    });
+  });
+
+  describe("class number", () => {
+    const base = { displayColor: "#8B5CF6", bgColor: "#8B5CF620", textColor: "#8B5CF6", sortOrder: 20 };
+
+    it("stores the chosen class on create", async () => {
+      const r = await createClassification({ ...base, name: "secret", classNumber: 2 }, adminCtx);
+      expect(r.success).toBe(true);
+      if (r.success) expect(r.data.classNumber).toBe(2);
+    });
+
+    it("rejects a missing class number", async () => {
+      const r = await createClassification({ ...base, name: "nonum" } as never, adminCtx);
+      expect(r.success).toBe(false);
+      if (!r.success) expect(r.error.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("rejects class 6", async () => {
+      const r = await createClassification({ ...base, name: "six", classNumber: 6 } as never, adminCtx);
+      expect(r.success).toBe(false);
+      if (!r.success) expect(r.error.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("refuses to change the class of a system level", async () => {
+      const r = await updateClassification({ id: "sys-1", classNumber: 4 }, adminCtx);
+      expect(r.success).toBe(false);
+      if (!r.success) expect(r.error.code).toBe("SYSTEM_CLASS_FIXED");
+    });
+
+    it("changes the class of a custom level", async () => {
+      const c = await createClassification({ ...base, name: "movable", classNumber: 3 }, adminCtx);
+      if (!c.success) throw new Error("create failed");
+      const r = await updateClassification({ id: c.data.id, classNumber: 5 }, adminCtx);
+      expect(r.success).toBe(true);
+      if (r.success) expect(r.data.classNumber).toBe(5);
+    });
+
+    it("system defaults carry the fixed scale", () => {
+      expect(Object.fromEntries(SYSTEM_CLASSIFICATION_DEFAULTS.map((d) => [d.name, d.classNumber]))).toEqual({ PII: 2, SENSITIVE: 3, INTERNAL: 4, PUBLIC: 5 });
+    });
+  });
+
+  describe("updateClassification rederive wiring", () => {
+    const mkCustom = async (classNumber: number) => {
+      const created = await createClassification(
+        { name: "financial", displayColor: "#111111", bgColor: "#11111120", textColor: "#111111", description: "", classNumber, sortOrder: 9 },
+        adminCtx
+      );
+      if (!created.success) throw new Error("setup failed");
+      rederiveMock.mockClear();
+      return created.data;
+    };
+
+    it("calls rederiveForLevel with the level name when a custom level's class changes", async () => {
+      const level = await mkCustom(3);
+      const r = await updateClassification({ id: level.id, classNumber: 2 }, adminCtx);
+      expect(r.success).toBe(true);
+      expect(rederiveMock).toHaveBeenCalledTimes(1);
+      // In the transaction that changed the class (C4).
+      expect(rederiveMock).toHaveBeenCalledWith("FINANCIAL", expect.objectContaining({ isTx: true }));
+    });
+
+    it("bounds the transaction explicitly instead of Prisma's 5 s default (N1)", async () => {
+      const level = await mkCustom(3);
+      const { prisma } = await import("@/lib/db");
+      const txSpy = vi.mocked(prisma.$transaction);
+      txSpy.mockClear();
+      await updateClassification({ id: level.id, classNumber: 2 }, adminCtx);
+      expect(txSpy).toHaveBeenCalledWith(expect.any(Function), { timeout: 120_000, maxWait: 10_000 });
+    });
+
+    it("rolls the class change back when the re-derivation fails, so saving again repairs it (C4)", async () => {
+      const level = await mkCustom(3);
+      rederiveMock.mockRejectedValueOnce(new Error("db down"));
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const r = await updateClassification({ id: level.id, classNumber: 2 }, adminCtx);
+      expect(r).toMatchObject({ success: false, error: { code: "REDERIVE_FAILED" } });
+      expect(spy).toHaveBeenCalled();
+      spy.mockRestore();
+      // Nothing was stored: the level keeps its class, and the retry re-derives.
+      expect((await _getClassificationStore()).find((c) => c.id === level.id)?.classNumber).toBe(3);
+      const retry = await updateClassification({ id: level.id, classNumber: 2 }, adminCtx);
+      expect(retry.success).toBe(true);
+      expect(rederiveMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not call it when the class number is unchanged or absent from the patch", async () => {
+      const level = await mkCustom(3);
+      await updateClassification({ id: level.id, classNumber: 3 }, adminCtx);
+      await updateClassification({ id: level.id, description: "only text" }, adminCtx);
+      expect(rederiveMock).not.toHaveBeenCalled();
     });
   });
 
@@ -287,6 +400,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#000000",
           bgColor: "#00000020",
           textColor: "#000000",
+          classNumber: 3,
           sortOrder: 10,
         },
         adminCtx
@@ -313,6 +427,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#000000",
           bgColor: "#00000020",
           textColor: "#000000",
+          classNumber: 3,
           sortOrder: 99,
         },
         adminCtx
@@ -344,6 +459,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#000000",
           bgColor: "#00000020",
           textColor: "#000000",
+          classNumber: 3,
           sortOrder: 99,
         },
         adminCtx
@@ -379,6 +495,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#FF0000",
           bgColor: "#FF000020",
           textColor: "#FF0000",
+          classNumber: 3,
           sortOrder: 0, // lower than PII (1)
         },
         adminCtx

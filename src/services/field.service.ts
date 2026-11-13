@@ -16,6 +16,7 @@ import {
 import type { Prisma } from "@/generated/prisma/client";
 import { MARK_DRAFT_CHANGED_SQL } from "@/lib/entity-versioning/draft-state";
 import { reservedFieldNameMessage } from "@/lib/reserved-field-names";
+import { deriveNewFieldDecorators, deriveFieldDecorators, loadDerivationContext, loadEntityDomainPolicy } from "@/services/metadata-rederive.service";
 
 /**
  * A field name the AsyncAPI parser cannot read (`PARSER_UNSAFE_KEYS`) is refused: the field would make every event that pins its entity
@@ -73,6 +74,15 @@ export async function createField(
     select: { sortOrder: true },
   });
   const nextSortOrder = maxField ? maxField.sortOrder + 1 : 0;
+  const classification = parsed.data.classification ?? "SENSITIVE";
+  const derivationCtx = await loadDerivationContext((entity as { tenantId?: string }).tenantId);
+  const decorators =
+    deriveNewFieldDecorators(derivationCtx, derivationCtx ? await loadEntityDomainPolicy(entityId) : null, {
+      name: parsed.data.name,
+      type: parsed.data.type,
+      classification,
+      decorators: parsed.data.decorators ?? {},
+    }) ?? {};
 
   try {
     const field = await withAudit({
@@ -97,11 +107,9 @@ export async function createField(
               fieldNumber: parsed.data.fieldNumber,
               description: parsed.data.description,
               aliases: parsed.data.aliases,
-              classification: parsed.data.classification ?? "SENSITIVE",
+              classification,
               sortOrder: nextSortOrder,
-              decorators:
-                (parsed.data.decorators as unknown as Prisma.InputJsonValue) ??
-                {},
+              decorators: decorators as unknown as Prisma.InputJsonValue,
             },
           }),
           prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
@@ -168,6 +176,22 @@ export async function updateField(
     if (reserved) return reserved;
   }
 
+  // An edit that resolves an unresolved external reference clears its marker (see field-dangling.ts).
+  const editedDecorators = decoratorsAfterFieldEdit(existing, {
+    type: typeof parsed.data.type === "string" ? parsed.data.type : undefined,
+    decorators: parsed.data.decorators as Record<string, unknown> | undefined,
+  });
+  // The derived attribute members follow the field as it is AFTER the edit (a classification change alone re-derives them).
+  const owner = await prisma.entity.findUnique({ where: { id: existing.entityId }, select: { tenantId: true } });
+  const derivedDecorators = deriveFieldDecorators(await loadDerivationContext(owner?.tenantId, prisma, { entityId: existing.entityId }), {
+    name: parsed.data.name ?? existing.name,
+    type: parsed.data.type ?? existing.type,
+    classification: parsed.data.classification !== undefined ? parsed.data.classification : existing.classification,
+    decorators: editedDecorators ?? existing.decorators,
+  });
+  const decoratorsToWrite =
+    derivedDecorators !== undefined && derivedDecorators !== (editedDecorators ?? existing.decorators) ? derivedDecorators : editedDecorators;
+
   const field = await withAudit({
     action: "UPDATE",
     entityType: "Field",
@@ -177,14 +201,7 @@ export async function updateField(
     fn: async () => {
       const updateData: Record<string, unknown> = {
           ...parsed.data,
-          // An edit that resolves an unresolved external reference clears its marker (see field-dangling.ts).
-          decorators: (() => {
-            const next = decoratorsAfterFieldEdit(existing, {
-              type: typeof parsed.data.type === "string" ? parsed.data.type : undefined,
-              decorators: parsed.data.decorators as Record<string, unknown> | undefined,
-            });
-            return next !== undefined ? (next as unknown as Prisma.InputJsonValue) : undefined;
-          })(),
+          decorators: decoratorsToWrite !== undefined ? (decoratorsToWrite as unknown as Prisma.InputJsonValue) : undefined,
         };
       // Regenerate slug when name changes
       if (parsed.data.name && parsed.data.name !== existing.name) {

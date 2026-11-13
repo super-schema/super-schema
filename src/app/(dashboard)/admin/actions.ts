@@ -27,6 +27,8 @@ import {
   updateDomainAdmin,
 } from "@/services/domain-admin.service";
 import type { CreateDomainAdminInput, PolicyTemplate } from "@/types/schemas/domain-policy";
+import { listMetadataAttributes } from "@/services/metadata-attribute.service";
+import type { MetadataAttributeRecord } from "@/types/schemas/metadata-attribute";
 
 /**
  * `/schemas` pages are served from the client router cache for 30s
@@ -250,6 +252,16 @@ export async function getDomainsAdminAction() {
   const access = await gate("tenant.access");
   if (!access.ok) return { error: access.error };
   const result = await getDomainsAdmin(access.ctx);
+  if (!result.success) return { error: result.error.message };
+  return { success: true as const, data: result.data };
+}
+
+/** The tenant's field-attribute definitions, for the domain policy editor's per-attribute overrides. */
+export async function listPolicyAttributeDefinitionsAction() {
+  const access = await gate("tenant.access");
+  if (!access.ok) return { error: access.error };
+  if (!access.ctx.tenantId) return { success: true as const, data: [] as MetadataAttributeRecord[] };
+  const result = await listMetadataAttributes(access.ctx.tenantId, "field");
   if (!result.success) return { error: result.error.message };
   return { success: true as const, data: result.data };
 }

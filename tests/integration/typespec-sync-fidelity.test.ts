@@ -26,6 +26,7 @@ vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedV
 import { compileAndApplyTypeSpecSourceAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 import { compileEntity } from "@/lib/compiler/compiler.service";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { noDictionaryTables } from "../helpers/no-dictionary";
 import { importAndPersist, type Imported, type Row } from "../helpers/import-persist";
 
 vi.setConfig({ testTimeout: 60_000 });
@@ -58,6 +59,7 @@ const dbRows = () =>
   }));
 
 beforeEach(() => {
+  Object.assign(mockPrisma, noDictionaryTables());
   vi.clearAllMocks();
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
   mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
@@ -65,7 +67,7 @@ beforeEach(() => {
   mockPrisma.field.update.mockResolvedValue({ id: "upd" });
   mockPrisma.field.findMany.mockImplementation(async (arg?: { select?: unknown }) => (arg?.select ? dbRows().map((r) => ({ name: r.name, type: r.type, decorators: r.decorators })) : dbRows()));
   mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
-  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1", metadata: imported?.metadata ?? {} });
+  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Evt", typespecSource: null, tenantId: "tenant-1", metadata: imported?.metadata ?? {} });
 });
 
 const save = (text: string) => compileAndApplyTypeSpecSourceAction("ent-1", text);

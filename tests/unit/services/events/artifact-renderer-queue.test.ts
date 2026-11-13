@@ -5,6 +5,8 @@
  * starts nothing. Each of the three was unbounded before: the renderer waited for its turn without a limit and an abort did not remove the render.
  */
 import { describe, expect, it, vi } from "vitest";
+// The tenant has no metadata attribute dictionary (renders unchanged); the stubbed client has no table for it.
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 // A draft has no reference to resolve here: the render is about its queue, not the closure of a draft.
 vi.mock("@/lib/entity-versioning/line-references", () => ({ resolveEntityReferences: async () => ({ targetIds: [], unresolvedNames: [] }) }));

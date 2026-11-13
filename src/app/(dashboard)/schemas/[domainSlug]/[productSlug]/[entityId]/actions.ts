@@ -31,6 +31,9 @@ import {
   storedReferenceNames,
   type SourceReference,
 } from "@/lib/references/source-reference";
+import { dictionaryEntryFromField } from "@/lib/field-dictionary/from-field";
+import { createFieldDictionaryEntry, listFieldDictionary, updateFieldDictionaryEntry } from "@/services/field-dictionary.service";
+import { listMetadataAttributes } from "@/services/metadata-attribute.service";
 import type { PublishNeedsReference } from "@/lib/entity-versioning/publish-plan";
 import { TYPESPEC_STD_TYPE_NAMES, sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import type { ParsedTypeSpecModel } from "@/lib/compiler/typespec-parser";
@@ -78,11 +81,14 @@ import {
   type GovernanceDiagnostic,
 } from "@/lib/compiler/typespec-compiler";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { loadDerivationContext, deriveFieldDecorators, deriveNewFieldDecorators, loadEntityDomainPolicy } from "@/services/metadata-rederive.service";
 import { fieldNeedsUpdate, mergeSyncedField, entityExtensionsChange } from "@/lib/typespec-sync/merge-fields";
 import { isDecimalType } from "@/lib/data-types";
 import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
 import { FOREIGN_REFERENCE_MESSAGE, referencedEntityAllowed } from "@/lib/references/foreign-reference-guard";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
+import { writeEntityAttribute } from "@/lib/metadata-attributes/values";
+import { METADATA_ATTRIBUTE_KEY_REGEX } from "@/types/schemas/metadata-attribute";
 import {
   markEntityDraftChanged,
   metadataChangesDraft,
@@ -170,6 +176,8 @@ export async function addFieldAction(
     fieldNumber?: number | null;
     aliases?: string[];
     decorators?: Record<string, unknown>;
+    /** The tenant dictionary entry the field was created from; ignored (not linked) when it is not one of the active tenant's. */
+    dictionaryEntryId?: string | null;
   }
 ) {
 
@@ -233,6 +241,15 @@ export async function addFieldAction(
     const normalizedDocumentation = normalizeFieldDocumentation({ description: opts?.description, decorators: opts?.decorators });
     const attributeErrors = fieldAttributeErrors({ type, precision: opts?.precision, scale: opts?.scale, fieldNumber: assignedFieldNumber, decorators: normalizedDocumentation.decorators });
     if (attributeErrors.length) return { error: attributeErrors.join(" "), code: "VALIDATION_ERROR" as const };
+    // Derived attribute members (e.g. data_class from the classification); nothing happens for a tenant without field attributes.
+    const derivation = await loadDerivationContext(access.resource.tenantId);
+    const createClassification = opts?.classification !== undefined ? opts.classification : "SENSITIVE";
+    const createDecorators = derivation
+      ? deriveNewFieldDecorators(derivation, await loadEntityDomainPolicy(entityId), { name: fieldName.name, type, classification: createClassification, decorators: normalizedDocumentation.decorators ?? {} })
+      : normalizedDocumentation.decorators;
+    const dictionaryEntry = opts?.dictionaryEntryId
+      ? await prisma.fieldDictionaryEntry.findFirst({ where: { id: opts.dictionaryEntryId, tenantId: access.resource.tenantId }, select: { id: true } })
+      : null;
     const field = await withAudit({
       action: "CREATE",
       entityType: "Field",
@@ -251,14 +268,15 @@ export async function addFieldAction(
               type,
               sortOrder: maxField ? maxField.sortOrder + 1 : 0,
               description: normalizedDocumentation.description,
-              classification: opts?.classification !== undefined ? opts.classification : "SENSITIVE",
+              classification: createClassification,
               ...(opts?.nullable != null && { nullable: opts.nullable }),
               ...(opts?.isKey != null && { isKey: opts.isKey }),
               ...(opts?.precision !== undefined && { precision: opts.precision }),
               ...(opts?.scale !== undefined && { scale: opts.scale }),
               fieldNumber: assignedFieldNumber,
               ...(opts?.aliases && { aliases: opts.aliases }),
-              ...(opts?.decorators && { decorators: normalizedDocumentation.decorators as Prisma.InputJsonValue }),
+              ...(dictionaryEntry && { dictionaryEntryId: dictionaryEntry.id }),
+              ...((opts?.decorators || derivation) && { decorators: createDecorators as Prisma.InputJsonValue }),
             },
           }),
           prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
@@ -383,7 +401,20 @@ export async function updateFieldAction(
     // An edit that resolves an unresolved external reference (the type changes away from it, or its target changes) clears the marker.
     const editedDecorators = decoratorsAfterFieldEdit(existing, { type: typeof rest.type === "string" ? rest.type : undefined, decorators });
     const normalized = normalizeFieldDocumentation({ ...existing, decorators: editedDecorators ?? existing.decorators }, typeof rest.description === "string" ? rest.description : undefined);
-    const nextDecorators = editedDecorators !== undefined || JSON.stringify(normalized.decorators) !== JSON.stringify(existing.decorators ?? {}) ? normalized.decorators : undefined;
+    const editedNext = editedDecorators !== undefined || JSON.stringify(normalized.decorators) !== JSON.stringify(existing.decorators ?? {}) ? normalized.decorators : undefined;
+    // Derived attribute members follow the field as it is AFTER this edit (a classification change alone re-derives them).
+    const derivation = await loadDerivationContext(access.resource.tenantId, prisma, { entityId: existing.entityId });
+    let nextDecorators = editedNext;
+    if (derivation) {
+      const base = (editedNext ?? existing.decorators ?? {}) as Record<string, unknown>;
+      const derived = deriveFieldDecorators(derivation, {
+        name: typeof rest.name === "string" ? rest.name : existing.name,
+        type: typeof rest.type === "string" ? rest.type : existing.type,
+        classification: rest.classification !== undefined ? (rest.classification as string | null) : existing.classification,
+        decorators: base,
+      });
+      if (derived !== undefined && derived !== base) nextDecorators = derived;
+    }
     if (rest.description !== undefined || normalized.description !== (existing.description ?? "")) rest.description = normalized.description;
     const errorsBefore = fieldAttributeErrors(existing);
     const errorsAfter = fieldAttributeErrors({ ...existing, ...rest, decorators: nextDecorators ?? existing.decorators });
@@ -920,6 +951,103 @@ export async function deleteFieldAction(fieldId: string) {
   }
 }
 
+const ASK_TENANT_ADMIN = "Ask a tenant admin to update the dictionary entry.";
+
+/**
+ * Saves a field to its tenant's field dictionary and links the field to the entry. The tenant is the guarded field's own, never the client's.
+ * A name or alias that already exists answers `needsConfirmation` (nothing written); the same call with `overwrite: true` updates that entry.
+ * Creating needs `entity.write`; the overwrite (a tenant-wide change) needs `tenant.admin` too, and is audited. `canOverwrite` in the prompt
+ * says whether the caller may confirm it.
+ */
+export async function saveFieldToDictionaryAction(fieldId: string, options?: { overwrite?: boolean }) {
+  const fieldIdCheck = requireId(fieldId, "Field id");
+  if (!fieldIdCheck.success) return { error: fieldIdCheck.error.message, code: fieldIdCheck.error.code };
+
+  try {
+    const access = await guardSubject("entity.write", { kind: "field", id: fieldId }, { label: "Field" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+    const tenantId = access.resource.tenantId;
+    const field = await prisma.field.findUnique({ where: { id: fieldId } });
+    if (!field) return { ...notFoundFailure("Field") };
+
+    const defs = await listMetadataAttributes(tenantId, "field");
+    if (!defs.success) return { error: defs.error.message, code: defs.error.code };
+    const input = dictionaryEntryFromField(field, defs.data);
+
+    // The entry a clashing name points at: an identical name first (as the create-side duplicate check), else an alias, case-insensitively.
+    const findTarget = async () => {
+      const entries = await listFieldDictionary(tenantId);
+      if (!entries.success) return entries;
+      const key = field.name.toLowerCase();
+      const byName = entries.data.find((e) => e.name === field.name);
+      const byAlias = byName ? undefined : entries.data.find((e) => e.aliases.some((a) => a.toLowerCase() === key));
+      return ok(byName ? { entry: byName, matchedBy: "name" as const } : byAlias ? { entry: byAlias, matchedBy: "alias" as const } : null);
+    };
+
+    // R11: changing a tenant-wide entry is a tenant administrator's act (the dictionaries page's guard); creating one stays `entity.write`.
+    const canOverwrite = can(access.principal.assignments, "tenant.admin", { tenantId, domainId: null, productId: null });
+
+    let saved: Result<{ id: string }>;
+    let updated = false;
+    if (options?.overwrite === true) {
+      if (!canOverwrite) return { error: ASK_TENANT_ADMIN, code: "FORBIDDEN" as const };
+      const found = await findTarget();
+      if (!found.success) return { error: found.error.message, code: found.error.code };
+      if (!found.data) return { ...notFoundFailure("Dictionary entry") };
+      const target = found.data;
+      // An alias match keeps the entry's own name: only its definition is updated.
+      const { name: _name, ...definition } = input;
+      const patch = target.matchedBy === "alias" ? definition : input;
+      // Audited when it happens: a refused update throws out of the audited block (no entry) and is answered as the refusal.
+      class Refused extends Error {
+        constructor(readonly result: Result<{ id: string }>) {
+          super("refused");
+        }
+      }
+      try {
+        saved = await withAudit({
+          action: "UPDATE",
+          entityType: "FieldDictionaryEntry",
+          entityId: target.entry.id,
+          userId: access.principal.userId,
+          tenantId,
+          beforeState: target.entry as unknown as object,
+          fn: async () => {
+            const result = await updateFieldDictionaryEntry(tenantId, target.entry.id, patch);
+            if (!result.success) throw new Refused(result);
+            return result;
+          },
+        });
+      } catch (e) {
+        if (!(e instanceof Refused)) throw e;
+        saved = e.result;
+      }
+      updated = true;
+    } else {
+      saved = await createFieldDictionaryEntry(tenantId, input);
+      if (!saved.success && (saved.error.code === "DUPLICATE_NAME" || saved.error.code === "ALIAS_CONFLICT")) {
+        const found = await findTarget();
+        if (!found.success) return { error: found.error.message, code: found.error.code };
+        if (!found.data) return { error: saved.error.message, code: saved.error.code };
+        const { entry, matchedBy } = found.data;
+        const message = !canOverwrite
+          ? `The dictionary already has an entry "${entry.name}". ${ASK_TENANT_ADMIN}`
+          : matchedBy === "alias"
+            ? `This updates the dictionary entry "${entry.name}" (matched by alias "${field.name}").`
+            : `This updates the dictionary entry "${entry.name}".`;
+        return { needsConfirmation: true as const, code: saved.error.code, targetName: entry.name, matchedBy, canOverwrite, error: message };
+      }
+    }
+    if (!saved.success) return { error: saved.error.message, code: saved.error.code };
+
+    await prisma.field.update({ where: { id: fieldId }, data: { dictionaryEntryId: saved.data.id } });
+    revalidatePath("/schemas");
+    return { success: true as const, entryId: saved.data.id, updated };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("saveFieldToDictionaryAction", e) };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Bidirectional TypeSpec editing — apply parsed TypeSpec to entity fields
 // ---------------------------------------------------------------------------
@@ -929,6 +1057,11 @@ export interface ApplyTypeSpecResult {
   updated: number;
   removed: string[];
   error?: string;
+  /**
+   * Derivation changed what a written row stores against what the text said (e.g. the text says `data_class: "class5"` of a PII field):
+   * the saved text no longer matches the rows, so the source must stay stale until regeneration reconciles it (C2).
+   */
+  derivedChanged?: boolean;
 }
 
 type TypeSpecParsedField = {
@@ -1046,7 +1179,11 @@ async function applyTypeSpecFields(
 
     let addedCount = 0;
     let updatedCount = 0;
+    let derivedChanged = false;
     const removedNames: string[] = [];
+    // Definitions (resolved for the entity's domain) and the custom class map are loaded once for the whole sync; null (no definitions)
+    // skips every derivation.
+    const derivation = await loadDerivationContext(access.resource.tenantId, prisma, { entityId });
 
     // Get max sort order for new fields
     const maxSort = existingFields.reduce((max, f) => Math.max(max, f.sortOrder), -1);
@@ -1066,17 +1203,32 @@ async function applyTypeSpecFields(
       // The row the source means: the stored decorators MERGED with what the text can express (never replaced), see
       // `@/lib/typespec-sync/merge-fields` for which keys the source owns and which are preserved. `fieldGovernance` is only
       // given on the real-compiler path; a field without governance decorators there is still "known to have none".
-      const merged = mergeSyncedField(existing ?? null, pf, {
+      const mergedBase = mergeSyncedField(existing ?? null, pf, {
         governance,
         governanceKnown: fieldGovernance !== undefined,
         enums,
         reference: references?.get(pf.name),
         declared,
       });
+      const merged = derivation
+        ? {
+            ...mergedBase,
+            decorators:
+              deriveFieldDecorators(derivation, {
+                name: pf.name,
+                type: mergedBase.type,
+                classification: mergedBase.classification,
+                decorators: mergedBase.decorators,
+              }) ?? mergedBase.decorators,
+          }
+        : mergedBase;
       const decoratorsJson = merged.decorators;
       const classification = merged.classification;
+      // What the text says vs what derivation stores (only a row that is actually written counts, below).
+      const derivationMoved = merged.decorators !== mergedBase.decorators && JSON.stringify(merged.decorators) !== JSON.stringify(mergedBase.decorators);
 
       if (!existing) {
+        if (derivationMoved) derivedChanged = true;
         // Create new field
         await withAudit({
           action: "CREATE",
@@ -1105,6 +1257,7 @@ async function applyTypeSpecFields(
       } else {
         // Anything changed? (A re-sync of unchanged source changes nothing.)
         if (fieldNeedsUpdate(existing, merged, pf)) {
+          if (derivationMoved) derivedChanged = true;
           await withAudit({
             action: "UPDATE",
             entityType: "Field",
@@ -1160,7 +1313,7 @@ async function applyTypeSpecFields(
     }
 
     revalidatePath("/schemas");
-    return { added: addedCount, updated: updatedCount, removed: removedNames };
+    return { added: addedCount, updated: updatedCount, removed: removedNames, ...(derivedChanged ? { derivedChanged } : {}) };
   } catch (e: unknown) {
     return { added: 0, updated: 0, removed: [], error: unexpectedFailure("applyTypeSpecAction", e).error };
   }
@@ -1548,7 +1701,7 @@ export async function setFieldReferenceAction(
 
     const field = await prisma.field.findUnique({
       where: { id: fieldId },
-      select: { id: true, entityId: true, type: true, decorators: true },
+      select: { id: true, entityId: true, name: true, type: true, classification: true, decorators: true },
     });
     if (!field || field.entityId !== entityId) return notFound("Field");
     // A reference field, or an array / map of references (the same keys, stored on the field's decorators): the ambiguity of such a field
@@ -1590,6 +1743,15 @@ export async function setFieldReferenceAction(
       ...(pinnedVersion ? { pinnedVersion } : {}),
     });
 
+    // A reference that now resolves moves the field's attribute placement (e.g. to none): derived members follow.
+    const derivation = await loadDerivationContext(access.data.resource.tenantId, prisma, { entityId });
+    const referenceDecorators = deriveFieldDecorators(derivation, {
+      name: field.name,
+      type: field.type,
+      classification: field.classification,
+      decorators,
+    }) ?? decorators;
+
     await withAudit({
       action: "UPDATE",
       entityType: "Field",
@@ -1598,7 +1760,7 @@ export async function setFieldReferenceAction(
       beforeState: field as unknown as object,
       fn: () =>
         prisma.$transaction([
-          prisma.field.update({ where: { id: fieldId }, data: { decorators: decorators as Prisma.InputJsonValue } }),
+          prisma.field.update({ where: { id: fieldId }, data: { decorators: referenceDecorators as Prisma.InputJsonValue } }),
           prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
         ]),
     });
@@ -1697,7 +1859,8 @@ async function generateSchema(entityId: string, target: string, opts: { mode?: R
         // In published mode the ROOT too is read from its latest PUBLISHED version, not from its saved rows: unpublished edits to the
         // entity itself are not in the result (publish the entity first to include them), exactly like its referenced entities.
         const { closureFailure, describeResolution, emitClosureTarget } = await import("@/lib/emission/closure-generation");
-        const loaded = await loadReferenceClosure(prisma, await getActiveTenantId(), entityId, mode, { reader: entityReader(access.principal.assignments) });
+        const tenantId = await getActiveTenantId();
+        const loaded = await loadReferenceClosure(prisma, tenantId, entityId, mode, { reader: entityReader(access.principal.assignments) });
         if (!loaded.success) {
           // A name frozen in a published or pinned member is not a question (a pick cannot change a published version): it is the refusal.
           if (loaded.error.code === "AMBIGUOUS_REFERENCE" && !loaded.error.frozen) {
@@ -1710,7 +1873,9 @@ async function generateSchema(entityId: string, target: string, opts: { mode?: R
         const share = admitCompilerRuns(access.principal.userId, 1);
         if (!share) return { error: SHARE_IN_USE_MESSAGE, code: "RATE_LIMITED" as const };
         try {
-          officialResult = await emitClosureTarget(loaded.data, targetDefinition.key);
+          const { loadMetadataEmission } = await import("@/services/metadata-emission.service");
+          const metadata = await loadMetadataEmission(tenantId);
+          officialResult = await emitClosureTarget(loaded.data, targetDefinition.key, metadata ? { metadata } : {});
         } finally {
           share();
         }
@@ -1882,13 +2047,19 @@ async function upgradeLegacyReferences(entityId: string, principal: Principal, r
   const userId = principal.userId;
   for (const upgrade of own) {
     try {
-      const field = await prisma.field.findUnique({ where: { id: upgrade.fieldId }, select: { id: true, entityId: true, type: true, decorators: true } });
+      const field = await prisma.field.findUnique({ where: { id: upgrade.fieldId }, select: { id: true, entityId: true, name: true, type: true, classification: true, decorators: true } });
       if (!field || field.entityId !== entityId || field.type !== "reference") continue;
       if (!field.decorators || typeof field.decorators !== "object" || Array.isArray(field.decorators)) continue;
       const current = field.decorators as Record<string, unknown>;
       const existing = readFieldReference(current);
       if (!existing || !("legacyName" in existing)) continue;
-      const decorators = upgradeLegacyReference(current, upgrade.ref);
+      const upgraded = upgradeLegacyReference(current, upgrade.ref);
+      const decorators = deriveFieldDecorators(await loadDerivationContext(resource.tenantId, prisma, { entityId }), {
+        name: field.name,
+        type: field.type,
+        classification: field.classification,
+        decorators: upgraded,
+      }) ?? upgraded;
       await withAudit({
         action: "UPDATE",
         entityType: "Field",
@@ -2170,6 +2341,74 @@ export async function updateEntityMetadataAction(
     return { success: true };
   } catch (e: unknown) {
     return { ...unexpectedFailure("updateEntityMetadataAction", e) };
+  }
+}
+
+/**
+ * Set (or, with `undefined`, remove) ONE metadata attribute of an entity: one key of `metadata.custom.extensions`.
+ *
+ * `updateEntityMetadataAction` never stores an `extensions` the client sends: `custom.extensions` is the model's `@extension` entries, kept equal to the
+ * TypeSpec source by the source sync (SET_ENTITY_EXTENSIONS_SQL), and a whole-object write from a client would clobber them. This action is the narrow
+ * alternative: it touches exactly one `x-` key, under the row lock, over the extensions AS STORED. The keys the source keeps outside the generated
+ * source (ENTITY_STORED_ONLY_EXTENSION_KEYS: `$id`, `$schema`) are not `x-` keys, so the key rule refuses them. The edit marks the draft changed and
+ * the source stale, so the next regeneration writes the attribute into the source (the generator emits `custom.extensions`).
+ */
+const MAX_ATTRIBUTE_VALUE_BYTES = 64 * 1024;
+
+export async function updateEntityAttributeAction(entityId: string, key: string, value: unknown | undefined) {
+  if (typeof key !== "string" || !METADATA_ATTRIBUTE_KEY_REGEX.test(key) || key.length > 64) {
+    return { error: "The attribute key must start with x- followed by letters, digits, _, . or -", code: "VALIDATION_ERROR" };
+  }
+  if (value !== undefined) {
+    let serialized: string | undefined;
+    try {
+      serialized = JSON.stringify(value, (_k, v) => {
+        if (typeof v === "number" && !Number.isFinite(v)) throw new Error("non-finite number");
+        return v;
+      });
+    } catch {
+      serialized = undefined;
+    }
+    if (serialized === undefined) return { error: "The attribute value must be JSON (no functions, cycles or non-finite numbers)", code: "VALIDATION_ERROR" };
+    if (serialized.length > MAX_ATTRIBUTE_VALUE_BYTES) return { error: "The attribute value is too large (64 KB at most)", code: "VALIDATION_ERROR" };
+  }
+  try {
+    const access = await guardSubject("entity.write", { kind: "entity", id: entityId }, { label: "Entity" });
+    if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
+
+    const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+    if (!entity) return { ...notFoundFailure("Entity") };
+    const before = (entity.metadata as Record<string, unknown>) ?? {};
+
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Entity",
+      entityId,
+      userId: access.principal.userId,
+      tenantId: access.resource.tenantId,
+      beforeState: { metadata: before } as unknown as object,
+      fn: () =>
+        prisma.$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT "id" FROM "entities" WHERE "id" = ${entityId} FOR UPDATE`;
+          const locked = await tx.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+          const storedMeta = (locked?.metadata as Record<string, unknown>) ?? {};
+          const mergedMeta = writeEntityAttribute(storedMeta, key, value);
+          const changesDraft = metadataChangesDraft(storedMeta, mergedMeta);
+          const updatedMeta = withSourceStale(storedMeta, mergedMeta, changesDraft);
+          return tx.entity.update({
+            where: { id: entityId },
+            data: {
+              metadata: updatedMeta as unknown as Prisma.InputJsonValue,
+              ...(changesDraft && { hasUnpublishedChanges: true }),
+            },
+          });
+        }),
+    });
+
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("updateEntityAttributeAction", e) };
   }
 }
 
@@ -2771,7 +3010,8 @@ async function compileAndApplyTypeSpecSource(entityId: string, source: string, p
     beforeState: { typespecSource: entity.typespecSource } as unknown as object,
     fn: async () => {
       // Source + fields were just written consistently: save the source and clear
-      // `sourceStale` (set by applyTypeSpecAction above) in one atomic batch.
+      // `sourceStale` (set by applyTypeSpecAction above) in one atomic batch. When derivation changed what a row stores against the
+      // text (C2), the text is NOT consistent with the rows: the source stays stale, so the next open regenerates it from the rows.
       const [updated] = await prisma.$transaction([
         prisma.entity.update({
           where: { id: entityId },
@@ -2785,7 +3025,7 @@ async function compileAndApplyTypeSpecSource(entityId: string, source: string, p
           : extensionsChange.kind === "clear"
             ? [prisma.$executeRawUnsafe(CLEAR_ENTITY_EXTENSIONS_SQL, entityId)]
             : []),
-        prisma.$executeRawUnsafe(CLEAR_SOURCE_STALE_SQL, entityId),
+        prisma.$executeRawUnsafe(applyResult.derivedChanged ? MARK_DRAFT_CHANGED_SQL : CLEAR_SOURCE_STALE_SQL, entityId),
       ]);
       return updated;
     },

@@ -3,6 +3,7 @@
 // src/features/events/builder/EventBuilder.tsx
 // The builder shell: outline (left), the selected section's form (middle) and a sticky Save / Discard bar. Sections read and write the
 // document only through `draft` (`draft.update(fn)`), and show their own field errors from `draft.problems` + `draft.serverProblems`.
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
 import { Info, Loader2, MessageSquare, Network, PanelLeftClose, PanelLeftOpen, Save, Search, Server, Settings2, Tags, Workflow, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -83,7 +84,11 @@ function readOutlineMode(): OutlineMode {
 
 /** Where the event lives: the entity picker starts on its product, and CloudEvents values are derived from it. */
 export interface BuilderScope { tenantSlug: string; domainId: string; domainSlug: string; productId: string; productSlug: string }
-export interface BuilderOptions { entityOptions: EntityOption[]; libraryTraits: LibraryTraitOption[]; scope?: BuilderScope }
+export interface BuilderOptions {
+  entityOptions: EntityOption[]; libraryTraits: LibraryTraitOption[]; scope?: BuilderScope;
+  /** The tenant's metadata attribute dictionary: what the "Metadata" section of a channel, message or operation offers. Absent = none. */
+  metadataAttributes?: MetadataAttributeDefinition[];
+}
 
 export interface SectionProps {
   draft: DraftState;

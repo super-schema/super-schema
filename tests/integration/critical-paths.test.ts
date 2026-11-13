@@ -113,8 +113,13 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
+import { noDictionaryTables } from "../helpers/no-dictionary";
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // The tenant has no dictionary (attribute definitions, levels, counters), and no dangling field waits to be relinked.
+  Object.assign(mockPrisma, noDictionaryTables());
+  mockPrisma.field.findMany.mockResolvedValue([]);
   // Interactive transactions (tenant name lock) run their callback against the same mock client.
   mockPrisma.$transaction.mockImplementation(async (arg: unknown) => (Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: typeof mockPrisma) => unknown)(mockPrisma)));
   // Re-set audit mock default

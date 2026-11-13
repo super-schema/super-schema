@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db";
+import { resolveDefinitionsForDomain } from "@/lib/metadata-attributes/policy";
+import type { PolicyTemplate } from "@/types/schemas/domain-policy";
 import { can, readableWhere } from "@/lib/access";
 import { entityCapabilities } from "@/lib/access/capabilities";
 import { omitSchemaVersions } from "@/lib/access/schema-version-redaction";
@@ -8,6 +10,8 @@ import { domainLabel } from "@/lib/entity-placement";
 import { toDraftVersionState } from "@/lib/entity-versioning/draft-label";
 import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-versions";
 import { loadReferenceStaleness } from "@/services/entity-version.service";
+import { listMetadataAttributes } from "@/services/metadata-attribute.service";
+import { listFieldDictionary } from "@/services/field-dictionary.service";
 import { loadPickableEntities } from "@/lib/references/pickable-entities";
 import type { ReplacementEntityLink } from "@/components/custom/DeprecationBanner";
 import { OPERATION_DETAILS_INCLUDE, operationRecordFromRow } from "@/lib/api-operations/records";
@@ -107,6 +111,27 @@ async function loadStaleReferences(entityId: string): Promise<ReferenceStaleness
   }
 }
 
+/** The tenant's attribute definitions (feeds the attribute alerts). A lookup that fails reads as none: an alert is never worth the entity page. */
+async function loadFieldDictionary(tenantId: string) {
+  try {
+    const listed = await listFieldDictionary(tenantId);
+    return listed.success ? listed.data : [];
+  } catch (e: unknown) {
+    console.error("[loadEntityWorkspace] field dictionary lookup failed", e);
+    return [];
+  }
+}
+
+async function loadMetadataAttributes(tenantId: string) {
+  try {
+    const listed = await listMetadataAttributes(tenantId);
+    return listed.success ? listed.data : [];
+  } catch (e: unknown) {
+    console.error("[loadEntityWorkspace] metadata attribute lookup failed", e);
+    return [];
+  }
+}
+
 /**
  * Load everything EntityWorkspace renders for one entity, resolved through
  * `findEntityInScope`. Returns `null` when nothing matches, so callers decide how to 404.
@@ -132,6 +157,9 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
   const readable = readableWhere(principal.assignments, "entity.read", where.tenantId);
   const replacementEntity = await loadReplacementEntity(entity, where.tenantId, readable);
   const referenceStaleness = await loadStaleReferences(entity.id);
+  // Definitions as this entity's domain resolves them (its `requiredWhen` overrides), so the alerts follow the domain policy.
+  const metadataAttributes = resolveDefinitionsForDomain(await loadMetadataAttributes(where.tenantId), domainPolicy as PolicyTemplate | null);
+  const fieldDictionary = await loadFieldDictionary(where.tenantId);
   // The entities of THIS tenant (the scope's tenant, never the client's) a reference field can be pointed at, for the type picker.
   // ... and only those the caller may read.
   const referenceTargets = await loadPickableEntities(prisma, where.tenantId, readable);
@@ -139,6 +167,8 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
   return {
     props: {
       referenceStaleness,
+      metadataAttributes,
+      fieldDictionary,
       referenceTargets,
       capabilities: entityCapabilities(principal.assignments, place),
       level: productId === null ? "TENANT" : "PRODUCT",

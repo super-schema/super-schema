@@ -65,6 +65,8 @@ const { mockPrisma } = await vi.hoisted(async () => {
   };
 });
 
+// The tenant has no metadata attribute dictionary (emission unchanged); the stubbed client has no table for it.
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 
 // ---------------------------------------------------------------------------
@@ -120,8 +122,13 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
+import { noDictionaryTables } from "../helpers/no-dictionary";
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // The tenant has no dictionary (attribute definitions, levels, counters), and no dangling field waits to be relinked.
+  Object.assign(mockPrisma, noDictionaryTables());
+  mockPrisma.field.findMany.mockResolvedValue([]);
   // Interactive transactions (tenant name lock) run their callback against the same mock client.
   mockPrisma.$transaction.mockImplementation(async (arg: unknown) => (Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: typeof mockPrisma) => unknown)(mockPrisma)));
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });

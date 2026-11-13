@@ -13,6 +13,7 @@ import { isPlainObject } from "@/lib/editable-fields";
 import { genericExtensionEntries, setOwn } from "@/lib/compiler/governance-decorators";
 import { generateSlug } from "@/lib/slug";
 import { entityNameMessage } from "@/lib/entity-name";
+import { deriveFieldDecorators, loadDerivationContext, type DerivationContext } from "@/services/metadata-rederive.service";
 import { EXTENDS_METADATA_KEY, auditInTransaction, linkImportedEntity, relinkDanglingFields } from "@/services/imported-links";
 
 export interface ImportedEntityInput {
@@ -112,6 +113,15 @@ async function renameUnsafeEntities(tx: Prisma.TransactionClient, args: CreateIm
   return { entities, originals };
 }
 
+/** The field with its attribute members derived from its classification (the field untouched when there is no context). */
+function derivedField(derivation: DerivationContext | null, field: CreateFieldInput): CreateFieldInput {
+  if (!derivation) return field;
+  const decorators = deriveFieldDecorators(derivation, {
+    name: field.name, type: field.type, classification: field.classification, decorators: field.decorators,
+  });
+  return decorators === field.decorators ? field : { ...field, decorators };
+}
+
 /**
  * Creates the entities inside the caller's transaction (which holds the tenant's name lock). Every known conflict is checked before
  * its create and skipped with a message, so no statement that can fail on a known conflict runs inside the interactive transaction
@@ -124,6 +134,10 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
   // Names are trimmed before BOTH the registry check and the write: the registry compares trimmed names, so an
   // untrimmed stored name ("Foo ") would slip past a later "Foo" and break line uniqueness.
   const { entities, originals } = await renameUnsafeEntities(tx, args);
+  // The importer writes field rows itself, so attribute members (e.g. `data_class`) are derived here against each field's final
+  // classification. Null (nothing to do) when the tenant has no definitions.
+  // Resolved for the product's domain: its policy's `requiredWhen` overrides apply (C6).
+  const derivation = await loadDerivationContext(productScope.tenantId, tx, productScope.domainId ? { domainId: productScope.domainId } : undefined);
   for (const entity of entities) {
     const name = entity.name.trim();
     if (!(await args.isNameFree(name))) continue;
@@ -176,7 +190,7 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
         ...(parentEntityId ? { parentEntityId } : {}),
         ...(Object.keys(entityMetadata).length > 0 ? { metadata: entityMetadata } : {}),
         fields: {
-          create: renameReservedFields(linked.fields, (from, to) => args.note?.(reservedFieldRenamedMessage(from, to, name))).map((field, index) => mapFieldCreateInput(field, index)),
+          create: renameReservedFields(linked.fields, (from, to) => args.note?.(reservedFieldRenamedMessage(from, to, name))).map((field, index) => mapFieldCreateInput(derivedField(derivation, field), index)),
         },
       },
     });
