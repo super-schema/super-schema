@@ -27,7 +27,10 @@ const DEF = {
   pack: "paypal",
 };
 
-type Stored = { classification: string | null; decorators: Record<string, any> };
+type Stored = {
+  classification: string | null;
+  decorators: { typespec: { extensions: { openapi: Record<string, unknown> } }; governance?: unknown };
+};
 
 async function importAndPersist(schema: object): Promise<Stored[]> {
   const parsed = parseJsonSchemaDocument(JSON.stringify(schema));
@@ -50,7 +53,7 @@ async function importAndPersist(schema: object): Promise<Stored[]> {
     productScope: { tenantId: "t", domainId: "d", productId: "p" },
     productId: "p", ownerId: "u", isNameFree: async () => true, skip: () => {}, refs: new Map(),
   });
-  return (create.mock.calls[0][0].data as any).fields.create;
+  return (create.mock.calls[0][0].data as unknown as { fields: { create: Stored[] } }).fields.create;
 }
 
 const schema = (block: unknown) => ({ title: "Thing", type: "object", properties: { a: { type: "string", [KEY]: block } } });

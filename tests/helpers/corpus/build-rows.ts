@@ -15,6 +15,7 @@ import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
 import { mapDocumentToImportResult, type TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import type { MultiEntityImportResult } from "@/lib/importers/types";
 import type { CorpusCase, ModelInput, Placement } from "../../fixtures/corpus/types";
+import { withNoDictionary } from "../no-dictionary";
 
 /** The domain and product every entity of a document (and a model case that names no place) lives in. */
 export const CORPUS_PLACE: Required<Placement> = { domain: "Corpus", product: "Corpus" };
@@ -66,7 +67,7 @@ async function persist(result: TypeSpecImportResult, rootName: string): Promise<
   });
   const recorded: Array<{ name: string; metadata?: Record<string, unknown>; description?: string; fields: { create: Row[] } }> = [];
   const create = vi.fn(async ({ data }: { data: (typeof recorded)[number] }) => { recorded.push(data); return { id: `id-${data.name}` }; });
-  const tx = { auditLog: { create: vi.fn(async () => ({})) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
+  const tx = withNoDictionary({ product: { findUnique: vi.fn(async () => null) }, field: { findMany: vi.fn(async () => []) }, auditLog: { create: vi.fn(async () => ({})) }, entity: { create, findFirst: vi.fn().mockResolvedValue(null) } }) as unknown as Prisma.TransactionClient;
   const skipped: string[] = [];
   await createImportedEntities(tx, {
     entities: payload.entities as unknown as ImportedEntityInput[],

@@ -17,6 +17,7 @@ import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import { activeDanglingRef } from "@/lib/field-dangling";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { getTargetRequirements, primaryKeyIneligibility } from "@/lib/schema-targets/requirements";
+import { withNoDictionary } from "../helpers/no-dictionary";
 
 vi.mock("server-only", () => ({}));
 
@@ -77,7 +78,7 @@ async function persist(): Promise<void> {
   });
   payload.entities[0].name = "UserEvent";
   const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-  const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null) }, metadataAttributeDefinition: { findMany: vi.fn(async () => []) }, product: { findUnique: vi.fn(async () => null) }, field: { findMany: vi.fn(async () => []) }, auditLog: { create: vi.fn(async () => ({})) } } as unknown as Prisma.TransactionClient;
+  const tx = withNoDictionary({ entity: { create, findFirst: vi.fn().mockResolvedValue(null) }, product: { findUnique: vi.fn(async () => null) }, field: { findMany: vi.fn(async () => []) }, auditLog: { create: vi.fn(async () => ({})) } }) as unknown as Prisma.TransactionClient;
   await createImportedEntities(tx, {
     entities: [payload.entities[0] as unknown as ImportedEntityInput],
     productScope: { tenantId: "t", domainId: "d", productId: "p" },
