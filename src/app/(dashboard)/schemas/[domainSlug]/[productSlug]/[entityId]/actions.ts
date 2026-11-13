@@ -951,9 +951,13 @@ export async function deleteFieldAction(fieldId: string) {
   }
 }
 
+const ASK_TENANT_ADMIN = "Ask a tenant admin to update the dictionary entry.";
+
 /**
  * Saves a field to its tenant's field dictionary and links the field to the entry. The tenant is the guarded field's own, never the client's.
  * A name or alias that already exists answers `needsConfirmation` (nothing written); the same call with `overwrite: true` updates that entry.
+ * Creating needs `entity.write`; the overwrite (a tenant-wide change) needs `tenant.admin` too, and is audited. `canOverwrite` in the prompt
+ * says whether the caller may confirm it.
  */
 export async function saveFieldToDictionaryAction(fieldId: string, options?: { overwrite?: boolean }) {
   const fieldIdCheck = requireId(fieldId, "Field id");
@@ -980,15 +984,44 @@ export async function saveFieldToDictionaryAction(fieldId: string, options?: { o
       return ok(byName ? { entry: byName, matchedBy: "name" as const } : byAlias ? { entry: byAlias, matchedBy: "alias" as const } : null);
     };
 
+    // R11: changing a tenant-wide entry is a tenant administrator's act (the dictionaries page's guard); creating one stays `entity.write`.
+    const canOverwrite = can(access.principal.assignments, "tenant.admin", { tenantId, domainId: null, productId: null });
+
     let saved: Result<{ id: string }>;
     let updated = false;
     if (options?.overwrite === true) {
+      if (!canOverwrite) return { error: ASK_TENANT_ADMIN, code: "FORBIDDEN" as const };
       const found = await findTarget();
       if (!found.success) return { error: found.error.message, code: found.error.code };
       if (!found.data) return { ...notFoundFailure("Dictionary entry") };
+      const target = found.data;
       // An alias match keeps the entry's own name: only its definition is updated.
       const { name: _name, ...definition } = input;
-      saved = await updateFieldDictionaryEntry(tenantId, found.data.entry.id, found.data.matchedBy === "alias" ? definition : input);
+      const patch = target.matchedBy === "alias" ? definition : input;
+      // Audited when it happens: a refused update throws out of the audited block (no entry) and is answered as the refusal.
+      class Refused extends Error {
+        constructor(readonly result: Result<{ id: string }>) {
+          super("refused");
+        }
+      }
+      try {
+        saved = await withAudit({
+          action: "UPDATE",
+          entityType: "FieldDictionaryEntry",
+          entityId: target.entry.id,
+          userId: access.principal.userId,
+          tenantId,
+          beforeState: target.entry as unknown as object,
+          fn: async () => {
+            const result = await updateFieldDictionaryEntry(tenantId, target.entry.id, patch);
+            if (!result.success) throw new Refused(result);
+            return result;
+          },
+        });
+      } catch (e) {
+        if (!(e instanceof Refused)) throw e;
+        saved = e.result;
+      }
       updated = true;
     } else {
       saved = await createFieldDictionaryEntry(tenantId, input);
@@ -997,11 +1030,12 @@ export async function saveFieldToDictionaryAction(fieldId: string, options?: { o
         if (!found.success) return { error: found.error.message, code: found.error.code };
         if (!found.data) return { error: saved.error.message, code: saved.error.code };
         const { entry, matchedBy } = found.data;
-        const message =
-          matchedBy === "alias"
+        const message = !canOverwrite
+          ? `The dictionary already has an entry "${entry.name}". ${ASK_TENANT_ADMIN}`
+          : matchedBy === "alias"
             ? `This updates the dictionary entry "${entry.name}" (matched by alias "${field.name}").`
             : `This updates the dictionary entry "${entry.name}".`;
-        return { needsConfirmation: true as const, code: saved.error.code, targetName: entry.name, matchedBy, error: message };
+        return { needsConfirmation: true as const, code: saved.error.code, targetName: entry.name, matchedBy, canOverwrite, error: message };
       }
     }
     if (!saved.success) return { error: saved.error.message, code: saved.error.code };

@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   update: vi.fn(),
   list: vi.fn(),
   listAttrs: vi.fn(),
+  audit: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
@@ -24,8 +25,16 @@ vi.mock("@/services/field-dictionary.service", () => ({
   listFieldDictionary: h.list,
 }));
 vi.mock("@/services/metadata-attribute.service", () => ({ listMetadataAttributes: h.listAttrs }));
+vi.mock("@/lib/audit", () => ({
+  withAudit: async (opts: { fn: () => Promise<unknown> }) => {
+    h.audit(opts);
+    return opts.fn();
+  },
+  recordAuditFailure: vi.fn(),
+}));
 
 import { saveFieldToDictionaryAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
+import { assign, resetSessionPrincipal, setSessionPrincipal } from "../../helpers/access-mocks";
 
 const GUARD_ROW = { entity: { tenantId: "tenant-1", domainId: null, productId: null, product: null } };
 const FIELD = {
@@ -43,6 +52,7 @@ const EXPECTED = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetSessionPrincipal();
   h.activeTenant.mockResolvedValue("tenant-1");
   h.prisma.field.findUnique.mockImplementation(async (args: { select?: { entity?: unknown } }) => (args.select?.entity ? GUARD_ROW : FIELD));
   h.prisma.field.update.mockResolvedValue({ id: "fld-1" });
@@ -63,7 +73,7 @@ describe("saveFieldToDictionaryAction", () => {
     h.list.mockResolvedValue(ok([{ id: "dict-9", name: "email", aliases: [] }]));
     const res = await saveFieldToDictionaryAction("fld-1");
     expect(res).toEqual({
-      needsConfirmation: true, code: "DUPLICATE_NAME", targetName: "email", matchedBy: "name",
+      needsConfirmation: true, code: "DUPLICATE_NAME", targetName: "email", matchedBy: "name", canOverwrite: true,
       error: 'This updates the dictionary entry "email".',
     });
     expect(h.update).not.toHaveBeenCalled();
@@ -75,7 +85,7 @@ describe("saveFieldToDictionaryAction", () => {
     h.list.mockResolvedValue(ok([{ id: "dict-3", name: "contact", aliases: ["Email"] }]));
     const res = await saveFieldToDictionaryAction("fld-1");
     expect(res).toEqual({
-      needsConfirmation: true, code: "ALIAS_CONFLICT", targetName: "contact", matchedBy: "alias",
+      needsConfirmation: true, code: "ALIAS_CONFLICT", targetName: "contact", matchedBy: "alias", canOverwrite: true,
       error: 'This updates the dictionary entry "contact" (matched by alias "email").',
     });
     expect(h.update).not.toHaveBeenCalled();
@@ -105,5 +115,33 @@ describe("saveFieldToDictionaryAction", () => {
     const res = await saveFieldToDictionaryAction("fld-1");
     expect(res).toMatchObject({ code: "NOT_FOUND" });
     expect(h.create).not.toHaveBeenCalled();
+  });
+
+  describe("overwrite needs tenant.admin (R11, B1)", () => {
+    it("audits an admin's overwrite of the tenant entry", async () => {
+      h.list.mockResolvedValue(ok([{ id: "dict-9", name: "email", aliases: [] }]));
+      h.update.mockResolvedValue(ok({ id: "dict-9" }));
+      await saveFieldToDictionaryAction("fld-1", { overwrite: true });
+      expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entityType: "FieldDictionaryEntry", entityId: "dict-9", tenantId: "tenant-1" }));
+    });
+
+    it("refuses the overwrite for an author (entity.write only), writing nothing", async () => {
+      setSessionPrincipal([assign.tenant("AUTHOR", "tenant-1")]);
+      h.list.mockResolvedValue(ok([{ id: "dict-9", name: "email", aliases: [] }]));
+      const res = await saveFieldToDictionaryAction("fld-1", { overwrite: true });
+      expect(res).toMatchObject({ code: "FORBIDDEN", error: "Ask a tenant admin to update the dictionary entry." });
+      expect(h.update).not.toHaveBeenCalled();
+      expect(h.prisma.field.update).not.toHaveBeenCalled();
+    });
+
+    it("an author still creates entries, and the clash prompt offers no overwrite", async () => {
+      setSessionPrincipal([assign.tenant("AUTHOR", "tenant-1")]);
+      h.create.mockResolvedValue(ok({ id: "dict-1" }));
+      expect(await saveFieldToDictionaryAction("fld-1")).toEqual({ success: true, entryId: "dict-1", updated: false });
+      h.create.mockResolvedValue(err({ code: "DUPLICATE_NAME", message: "exists" }));
+      h.list.mockResolvedValue(ok([{ id: "dict-9", name: "email", aliases: [] }]));
+      const res = await saveFieldToDictionaryAction("fld-1");
+      expect(res).toMatchObject({ needsConfirmation: true, canOverwrite: false, error: 'The dictionary already has an entry "email". Ask a tenant admin to update the dictionary entry.' });
+    });
   });
 });

@@ -425,7 +425,8 @@ export function FieldStudio({
 
   // "Save to field dictionary": flush pending edits first (the server saves the stored field), then create the entry. An existing name
   // or alias asks for confirmation before the entry is overwritten.
-  const [dictionaryPrompt, setDictionaryPrompt] = useState<string | null>(null);
+  // `canOverwrite` false (no tenant.admin): the prompt says to ask a tenant admin and offers no overwrite (R11).
+  const [dictionaryPrompt, setDictionaryPrompt] = useState<{ message: string; canOverwrite: boolean } | null>(null);
   const [dictionaryBusy, setDictionaryBusy] = useState(false);
   const saveToDictionary = useCallback(
     async (overwrite: boolean) => {
@@ -434,7 +435,7 @@ export function FieldStudio({
         if ((await save()) !== null) return;
         const res = await saveFieldToDictionaryAction(field.id, overwrite ? { overwrite: true } : undefined);
         if ("needsConfirmation" in res) {
-          setDictionaryPrompt(res.error ?? "This name already exists in the dictionary.");
+          setDictionaryPrompt({ message: res.error ?? "This name already exists in the dictionary.", canOverwrite: res.canOverwrite === true });
           return;
         }
         setDictionaryPrompt(null);
@@ -703,13 +704,18 @@ export function FieldStudio({
         <DialogContent data-testid="field-studio-dictionary-confirm">
           <DialogHeader>
             <DialogTitle>Already in the field dictionary</DialogTitle>
-            <DialogDescription>{dictionaryPrompt} Its type, description, classification and attributes are replaced with this field&apos;s; its name stays.</DialogDescription>
+            <DialogDescription>
+              {dictionaryPrompt?.message}
+              {dictionaryPrompt?.canOverwrite ? " Its type, description, classification and attributes are replaced with this field's; its name stays." : null}
+            </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDictionaryPrompt(null)}>Cancel</Button>
-            <Button disabled={dictionaryBusy} data-testid="field-studio-update-dictionary" onClick={() => { void saveToDictionary(true); }}>
-              Update dictionary entry
-            </Button>
+            <Button variant="outline" onClick={() => setDictionaryPrompt(null)}>{dictionaryPrompt?.canOverwrite ? "Cancel" : "Close"}</Button>
+            {dictionaryPrompt?.canOverwrite ? (
+              <Button disabled={dictionaryBusy} data-testid="field-studio-update-dictionary" onClick={() => { void saveToDictionary(true); }}>
+                Update dictionary entry
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
