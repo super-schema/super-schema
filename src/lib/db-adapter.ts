@@ -40,5 +40,6 @@ export function createDbAdapter() {
     return new PrismaPg({ connectionString });
   }
 
-  return new PrismaPGlite(getPgliteClient());
+  // Opened on Prisma's first query, not here: see PrismaPGliteAdapterFactory.
+  return new PrismaPGlite(getPgliteClient);
 }

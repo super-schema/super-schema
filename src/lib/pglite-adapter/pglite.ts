@@ -228,10 +228,15 @@ export class PrismaPGliteAdapterFactory implements SqlMigrationAwareDriverAdapte
   readonly provider = "postgres";
   readonly adapterName = packageName;
 
-  constructor(private readonly client: pglite.PGlite) {}
+  /**
+   * `client` may be a function: it is then called on the first `connect()` (Prisma's first query), not when the factory is built. Building a
+   * Prisma client at import time must not open the data directory: Next's dev workers import server modules without querying.
+   */
+  constructor(private readonly client: pglite.PGlite | (() => pglite.PGlite)) {}
 
   connect(): Promise<SqlDriverAdapter> {
-    return Promise.resolve(new PrismaPGliteAdapter(this.client));
+    const client = typeof this.client === "function" ? this.client() : this.client;
+    return Promise.resolve(new PrismaPGliteAdapter(client));
   }
 
   connectToShadowDb(): Promise<SqlDriverAdapter> {
