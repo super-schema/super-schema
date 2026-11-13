@@ -107,6 +107,20 @@ describe("artifact renderer with a metadata attribute dictionary", () => {
     expect(emitFiles).not.toHaveBeenCalled();
   });
 
+  it("drops an internal key nested in another extension's value (an `items` extension) from the payload (R10, A1)", async () => {
+    const db = fakeDb();
+    const nested = SOURCE.replace("  tags: string[];", '  @TypeSpec.JsonSchema.extension("items", #{ type: "string", `x-review-note`: "nested secret" })\n  tags: string[];');
+    db.entityVersion.findUnique.mockImplementation(async () => ({ ...(await fakeDb().entityVersion.findUnique()), resolvedSource: nested }));
+    // What the real JSON Schema emitter writes for it: the nested key survives the decorator strip.
+    const leaky = structuredClone(BUNDLE) as unknown as { $defs: { Customer: { properties: Record<string, Record<string, unknown>> } } };
+    leaky.$defs.Customer.properties.tags.items = { type: "string", "x-review-note": "nested secret" };
+    const emitFiles = vi.fn<EmitFiles>(async () => ({ success: true, data: [{ relativePath: "Customer", content: JSON.stringify(leaky, null, 2) }] }));
+    const r = await createArtifactRenderer({ db: db as never, emitFiles, loadMetadata: async () => ({ definitions: [SECURITY, REVIEW] }) }).render(subject, "json-schema");
+    expect(r.success).toBe(true);
+    expect(JSON.stringify(r.success ? r.data.artifact : null)).not.toContain("nested secret");
+    expect(JSON.stringify(r.success ? r.data.artifact : null)).toContain("x-securityClassification");
+  });
+
   it("renderers given one shared limiter never run more compiles at once than its limit", async () => {
     let active = 0;
     let peak = 0;

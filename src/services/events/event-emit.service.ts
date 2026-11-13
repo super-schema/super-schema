@@ -16,6 +16,7 @@ import type { ServiceContext } from "@/types/service-context";
 import { getSharedArtifactRenderer, type ArtifactRenderer } from "./artifact-renderer";
 import { DRAFT_VERSION, eventRenderShare, loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
 import { loadInternalKeys } from "@/services/metadata-emission.service";
+import { deepStripInternal } from "@/lib/metadata-attributes/deep-strip";
 import { validatePinRefs } from "./pin-refs";
 import { assertOwnedEvent, guardRead, requireId } from "./service-guards";
 
@@ -159,12 +160,17 @@ export async function emitEventStoredVersion(eventId: string, productId: string,
       return err({ code: "DATA_CORRUPT", message: `Stored document of version ${formatVersionLabel(row, row.stage)} is invalid` });
     }
     // jsonb returns keys shortest-first; serialize in the assembler's canonical order, like the draft emission.
-    const document = canonicalizeDocumentOrder(row.document);
+    const ordered = canonicalizeDocumentOrder(row.document);
     // A stored document is served as it was published; one past the bounds is refused here too, so it cannot cost more to serve than to publish.
-    const tooLarge = documentSizeProblem(document);
+    const tooLarge = documentSizeProblem(ordered);
     if (tooLarge !== null) {
       return err({ code: "VALIDATION_ERROR", message: `Version ${formatVersionLabel(row)} of event "${eventId}" cannot be served: ${tooLarge}` });
     }
+    // R10: ...except for the keys that are `internal` NOW (one published before it became internal, or before the strip existed): they are
+    // removed on read, at any depth, with the event tenant's current dictionary. The same document when nothing matched.
+    const event = await ctx.prisma.eventSpec.findUnique({ where: { id: eventId }, select: { tenantId: true } });
+    if (!event) return err({ code: "NOT_FOUND", message: `Event "${eventId}" not found` });
+    const document = deepStripInternal(ordered, await loadInternalKeys(event.tenantId, ctx.prisma));
     const report = isJsonObject(row.compatReport) ? row.compatReport : {};
     return ok({
       document,

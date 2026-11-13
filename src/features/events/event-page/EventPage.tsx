@@ -92,9 +92,15 @@ function EventPageBody({ data }: { data: EventPageData }) {
   );
   // The instant code emits each library / built-in trait from its stored definition (the real CloudEvents properties), not a stub.
   const instantLibrary = useMemo(() => instantLibraryTraits(libraryTraits), [libraryTraits]);
+  // The Code panel drops the tenant's `internal` attribute keys like every emitted document (R10): from the dictionary the editors get.
+  // (Computed here, not with `internalKeySet`: its module pulls the emitters' helpers into the client bundle.)
+  const internalKeys = useMemo(() => {
+    const keys = (metadataAttributes ?? []).filter((d) => d.scope === "internal").map((d) => d.key);
+    return keys.length > 0 ? new Set(keys) : undefined;
+  }, [metadataAttributes]);
   const codeSource = useMemo<EventCodeSource>(
-    () => ({ eventId: event.id, productId, productSlug, doc: draft.doc, problems: draft.problems, entityLabels, versionLabels, libraryTraits: instantLibrary }),
-    [event.id, productId, productSlug, draft.doc, draft.problems, entityLabels, versionLabels, instantLibrary]
+    () => ({ eventId: event.id, productId, productSlug, doc: draft.doc, problems: draft.problems, entityLabels, versionLabels, libraryTraits: instantLibrary, internalKeys }),
+    [event.id, productId, productSlug, draft.doc, draft.problems, entityLabels, versionLabels, instantLibrary, internalKeys]
   );
   const [codeStore] = useState(() => createEventCodeSourceStore(codeSource));
   useEffect(() => { codeStore.set(codeSource); }, [codeStore, codeSource]);

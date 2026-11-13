@@ -43,6 +43,7 @@ import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import {
   addAvroProperties,
   attributeKeysIn,
+  internalKeySet,
   itemsTagsFor,
   moveTagsToItems,
   skippedAttributeWarning,
@@ -51,6 +52,7 @@ import {
   type MetadataEmissionContext,
 } from "@/lib/metadata-attributes/emission";
 import { annotateProto, buildOptionsProto, METADATA_OPTIONS_PROTO_PATH } from "@/lib/metadata-attributes/protobuf-options";
+import { deepStripInternalFromFiles } from "@/lib/metadata-attributes/deep-strip";
 import {
   buildEmitterOptions,
   buildSourceForTarget,
@@ -286,7 +288,10 @@ async function emitClosureUnguarded(input: Closure, targetKey: TargetId, run: Em
   if (!run.metadata) return ok({ files: finalFiles, warnings: plan.warnings, entityFiles });
   const members = entities.map((e, i) => ({ entityId: e.entityId, model: models[i], avroRecord: plan.avroRecords?.get(e.entityId) }));
   const projected = projectMetadataAttributes(key, finalFiles, members, run.metadata, entityFiles);
-  return ok({ files: projected.files, warnings: [...plan.warnings, ...projected.warnings], entityFiles });
+  // R10: the defensive last pass. An `internal` key the input projection could not see (nested in another attribute's value) never reaches
+  // an emitted JSON / YAML document. Byte-identical files when nothing matched.
+  const stripped = deepStripInternalFromFiles(projected.files, internalKeySet(run.metadata.definitions));
+  return ok({ files: stripped, warnings: [...plan.warnings, ...projected.warnings], entityFiles });
 }
 
 /**

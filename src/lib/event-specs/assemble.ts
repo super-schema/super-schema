@@ -17,6 +17,7 @@ import { qualifyNames, type NameCandidate } from "./qualify";
 import { headersSchema, kafkaKeyProfile, placeKafkaKey, selectArtifact } from "./message-schemas";
 import { RESERVED_KEYS, setOwn } from "./own-property";
 import { isAttributeKey } from "@/lib/events/document/extensions";
+import { deepStripInternal } from "@/lib/metadata-attributes/deep-strip";
 
 /**
  * Spec §7.2 steps 3–5: assemble an AsyncAPI 3.0.0 document from a
@@ -455,13 +456,15 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     ]),
   )) {
     rejectReservedKey("Message trait name", name, jsonPointer("components", "messageTraits", name));
+    // A trait spec is copied as authored: its `internal` attribute keys (at any depth) are dropped, like a message's.
+    const traitSpec = deepStripInternal(trait.spec, internalKeys);
     if (!trait.headers) {
-      setOwn(componentMessageTraits, name, structuredClone(trait.spec));
+      setOwn(componentMessageTraits, name, structuredClone(traitSpec));
       continue;
     }
     const h = headersSchema(trait.headers, jsonPointer("components", "messageTraits", name, "headers"));
     diagnostics.push(...h.diagnostics);
-    const rest = Object.entries(trait.spec).filter(([k]) => k !== "headers");
+    const rest = Object.entries(traitSpec).filter(([k]) => k !== "headers");
     setOwn(
       componentMessageTraits,
       name,
@@ -479,7 +482,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     ]),
   )) {
     rejectReservedKey("Operation trait name", name, jsonPointer("components", "operationTraits", name));
-    setOwn(componentOperationTraits, name, operationTraitSpec(trait.spec));
+    setOwn(componentOperationTraits, name, operationTraitSpec(deepStripInternal(trait.spec, internalKeys)));
   }
 
   // ── 5. channels ──
@@ -638,5 +641,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     ["components", nonEmpty(components)],
   ]);
 
-  return { document, diagnostics: normalizeDiagnostics(diagnostics) };
+  // R10: the defensive last pass. Whatever the projections above missed (a key nested in another value, a payload or header schema), an
+  // `internal` key never reaches the emitted document. The same object when nothing matched.
+  return { document: deepStripInternal(document, internalKeys), diagnostics: normalizeDiagnostics(diagnostics) };
 }

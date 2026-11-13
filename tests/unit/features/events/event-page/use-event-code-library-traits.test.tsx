@@ -65,3 +65,14 @@ describe("useEventCode: library trait definitions", () => {
     expect(result.current.yaml).not.toContain(PLACEHOLDER_LIBRARY_TRAIT_KEY);
   });
 });
+
+describe("useEventCode: internal metadata attributes (R10, A4)", () => {
+  it("passes the internal keys to the instant build, so the Code panel never shows them", () => {
+    const d = doc();
+    const withExt: EventDocument = { ...d, channels: d.channels.map((c) => ({ ...c, extensions: { "x-review-note": "secret" } })) };
+    const { result } = setup({ doc: withExt, internalKeys: new Set(["x-review-note"]) });
+    expect(result.current.yaml).not.toContain("secret");
+    const shown = setup({ doc: withExt });
+    expect(shown.result.current.yaml).toContain("secret");
+  });
+});

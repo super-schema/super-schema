@@ -97,4 +97,27 @@ describe("GitOps renderEvent with a projection DB", () => {
       expect(f.content).not.toContain("x-review-note");
     }
   });
+
+  it("strips a key made internal AFTER the version was frozen from the stored AsyncAPI document, on read (R10, A3)", async () => {
+    h.live.mockImplementation(async (tenantId: string) => (tenantId === "t1" ? { definitions: [REVIEW] } : undefined));
+    const frozen = {
+      asyncapi: "3.0.0", info: { title: "customers", version: "1.0.0" },
+      channels: { customers: { address: "customers.v1", "x-review-note": "secret-ch" } },
+      components: { schemas: { Customer: { type: "object", properties: { note: { type: "string", "x-review-note": "secret-field" } } } } },
+    };
+    const root = {
+      kind: "Event", id: "ev1", version: "1.0.0", scope: { tenantId: "t1", productId: "p1" },
+      spec: { record: { slug: "customer-changed", document: {} }, versionRecord: { document: frozen } },
+    };
+    const files = await renderCanonicalArtifact(root as never, "asyncapi", [root as never], "user-1");
+    expect(files.map((f) => f.path)).toEqual(["customer-changed.asyncapi.json", "customer-changed.asyncapi.yaml"]);
+    for (const f of files) {
+      expect(f.content).not.toContain("secret");
+      expect(f.content).toContain("customers.v1");
+    }
+    // Without an internal key, the stored document is served exactly as frozen.
+    h.live.mockImplementation(async () => undefined);
+    const verbatim = await renderCanonicalArtifact(root as never, "asyncapi", [root as never], "user-1");
+    expect(verbatim[0].content).toBe(JSON.stringify(frozen, null, 2) + "\n");
+  });
 });

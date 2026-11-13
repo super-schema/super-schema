@@ -33,6 +33,8 @@ export interface UseEventCodeArgs {
   versionLabels?: ReadonlyMap<string, string>;
   /** libraryTraitId → the trait's stored definition (`instantLibraryTraits`): the instant build emits it instead of a stub. */
   libraryTraits?: ReadonlyMap<string, InstantLibraryTrait>;
+  /** The tenant's `internal` metadata attribute keys: the instant build drops them, like every emitted document (R10). */
+  internalKeys?: ReadonlySet<string>;
 }
 
 export interface EventCodeState {
@@ -79,14 +81,14 @@ function contentKey(value: unknown): string {
  * the draft became invalid, or the hook unmounted is dropped. Errors are shown through `actionErrorText`; the instant build stays.
  */
 export function useEventCode(args: UseEventCodeArgs): EventCodeState {
-  const { eventId, productId, productSlug, doc, blocked, entityLabels, versionLabels, libraryTraits } = args;
+  const { eventId, productId, productSlug, doc, blocked, entityLabels, versionLabels, libraryTraits, internalKeys } = args;
   const [settled, setSettled] = useState<Settled | null>(null);
   const [refreshes, setRefreshes] = useState(0);
   const immediate = useRef(false);
 
   const instant = useMemo(
-    () => buildInstantAsyncApi(doc, { productSlug, entityLabels, versionLabels, libraryTraits }),
-    [doc, productSlug, entityLabels, versionLabels, libraryTraits]
+    () => buildInstantAsyncApi(doc, { productSlug, entityLabels, versionLabels, libraryTraits, internalKeys }),
+    [doc, productSlug, entityLabels, versionLabels, libraryTraits, internalKeys]
   );
   const key = useMemo(() => contentKey(doc), [doc]);
 

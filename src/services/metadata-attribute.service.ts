@@ -174,6 +174,48 @@ function packOwned(pack: string) {
   });
 }
 
+/**
+ * How many items of `tenantId` still hold a value for `key`: fields (`decorators.typespec.extensions.openapi`), entities
+ * (`metadata.custom.extensions`), API operations (`decorators.extensions`) and the channels / messages / operations of event drafts
+ * (`document.<list>[].extensions`). The JSON columns are searched directly.
+ */
+export async function countStoredAttributeValues(
+  tenantId: string,
+  key: string,
+  db: Pick<Prisma.TransactionClient, "$queryRaw"> = prisma,
+): Promise<number> {
+  const rows = await db.$queryRaw<Array<{ n: bigint | number }>>`
+    SELECT (
+      (SELECT COUNT(*) FROM "fields" f JOIN "entities" e ON e."id" = f."entityId"
+        WHERE e."tenantId" = ${tenantId} AND (f."decorators" #> '{typespec,extensions,openapi}') -> ${key} IS NOT NULL)
+    + (SELECT COUNT(*) FROM "entities" e
+        WHERE e."tenantId" = ${tenantId} AND (e."metadata" #> '{custom,extensions}') -> ${key} IS NOT NULL)
+    + (SELECT COUNT(*) FROM "operations" o JOIN "service_definitions" s ON s."id" = o."serviceId"
+        WHERE s."tenantId" = ${tenantId} AND (o."decorators" -> 'extensions') -> ${key} IS NOT NULL)
+    + (SELECT COUNT(*) FROM "event_specs" ev,
+          LATERAL jsonb_array_elements(
+            (CASE WHEN jsonb_typeof(ev."document" -> 'channels') = 'array' THEN ev."document" -> 'channels' ELSE '[]'::jsonb END)
+            || (CASE WHEN jsonb_typeof(ev."document" -> 'messages') = 'array' THEN ev."document" -> 'messages' ELSE '[]'::jsonb END)
+            || (CASE WHEN jsonb_typeof(ev."document" -> 'operations') = 'array' THEN ev."document" -> 'operations' ELSE '[]'::jsonb END)
+          ) AS item
+        WHERE ev."tenantId" = ${tenantId} AND jsonb_typeof(item) = 'object' AND (item -> 'extensions') -> ${key} IS NOT NULL)
+    ) AS n`;
+  return Number(rows[0]?.n ?? 0);
+}
+
+/** Refuses a change that would turn the stored values of an `internal` attribute into ordinary (emitted) extensions. */
+async function internalValuesGuard(tenantId: string, row: { key: string; scope: string }) {
+  if (row.scope !== "internal") return undefined;
+  const count = await countStoredAttributeValues(tenantId, row.key);
+  if (count === 0) return undefined;
+  return err({
+    code: "INTERNAL_VALUES_EXIST",
+    message: `${count} item(s) still hold a value for the internal attribute "${row.key}". Remove the stored values first; deleting this definition would publish them.`,
+    details: { count, key: row.key },
+    suggestedFix: "Remove the stored values first; deleting this definition would publish them.",
+  });
+}
+
 export async function updateMetadataAttribute(
   tenantId: string,
   id: string,
@@ -200,6 +242,9 @@ export async function updateMetadataAttribute(
   if (!parsed.success) return parsed;
   const d = parsed.data;
   if (d.key !== row.key) {
+    // The values stored under the old key would no longer be known as internal: they would be emitted.
+    const refused = await internalValuesGuard(tenantId, row);
+    if (refused) return refused;
     const clash = await prisma.metadataAttributeDefinition.findUnique({ where: { tenantId_key: { tenantId, key: d.key } } });
     if (clash) return duplicate(d.key);
   }
@@ -224,6 +269,8 @@ export async function deleteMetadataAttribute(tenantId: string, id: string): Pro
   const row = await prisma.metadataAttributeDefinition.findFirst({ where: { id, tenantId } });
   if (!row) return notFound();
   if (row.pack) return packOwned(row.pack);
+  const refused = await internalValuesGuard(tenantId, row);
+  if (refused) return refused;
   await prisma.metadataAttributeDefinition.delete({ where: { id } });
   return ok({ id });
 }

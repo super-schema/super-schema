@@ -118,6 +118,76 @@ describe("metadata attribute service on PGlite", () => {
     expect([...numbers].sort()).toEqual([50000, 50001, 50002, 50003]);
   });
 
+  describe("an internal definition whose values are still stored (R10, A5)", () => {
+    const NOTE = "x-review-note";
+    async function seedValues(tenantId: string, where: Array<"field" | "entity" | "operation" | "channel" | "message">) {
+      const user = await db().user.create({ data: { email: `u${++n}@example.test` } });
+      const entity = await db().entity.create({
+        data: { name: `E${n}`, slug: `e${n}`, tenantId, ownerId: user.id, metadata: where.includes("entity") ? { custom: { extensions: { [NOTE]: "e" } } } : undefined },
+      });
+      if (where.includes("field")) {
+        await db().field.create({ data: { entityId: entity.id, name: "a", slug: "a", type: "string", sortOrder: 0, decorators: { typespec: { extensions: { openapi: { [NOTE]: "f" } } } } } });
+      }
+      const domain = await db().domain.create({ data: { tenantId, name: `D${n}`, slug: `d${n}` } });
+      if (where.includes("operation")) {
+        const service = await db().serviceDefinition.create({ data: { name: "S", tenantId, domainId: domain.id, entityId: entity.id, scope: "ENTITY" } });
+        await db().operation.create({ data: { serviceId: service.id, name: "get", httpMethod: "GET", httpPath: "/", decorators: { extensions: { [NOTE]: "o" } } } });
+      }
+      if (where.includes("channel") || where.includes("message")) {
+        const product = await db().product.create({ data: { domainId: domain.id, name: `P${n}`, slug: `p${n}` } });
+        await db().eventSpec.create({
+          data: {
+            tenantId, domainId: domain.id, productId: product.id, name: `ev${n}`,
+            document: {
+              channels: [{ key: "c", ...(where.includes("channel") ? { extensions: { [NOTE]: "c" } } : {}) }],
+              messages: [{ key: "m", ...(where.includes("message") ? { extensions: { [NOTE]: "m" } } : {}) }],
+              operations: [],
+            },
+          },
+        });
+      }
+    }
+
+    it.each([["field"], ["entity"], ["operation"], ["channel"], ["message"]] as const)("refuses delete and key change while a %s holds a value", async (where) => {
+      const a = await mkTenant();
+      const c = await createMetadataAttribute(a.id, input(NOTE, { scope: "internal", targets: ["field", "entity", "operation", "channel", "message"] }));
+      if (!c.success) throw new Error(c.error.message);
+      await seedValues(a.id, [where]);
+      const del = await deleteMetadataAttribute(a.id, c.data.id);
+      expect(!del.success && del.error).toMatchObject({ code: "INTERNAL_VALUES_EXIST", details: { count: 1 } });
+      expect(!del.success && del.error.message).toContain("Remove the stored values first; deleting this definition would publish them.");
+      const rename = await updateMetadataAttribute(a.id, c.data.id, { key: "x-renamed" });
+      expect(!rename.success && rename.error.code).toBe("INTERNAL_VALUES_EXIST");
+      // A change that keeps the key is fine.
+      expect((await updateMetadataAttribute(a.id, c.data.id, { label: "Note" })).success).toBe(true);
+      expect(await db().metadataAttributeDefinition.count({ where: { id: c.data.id } })).toBe(1);
+    });
+
+    it("counts every holder, ignores other tenants and non-internal definitions, and allows delete once none is left", async () => {
+      const a = await mkTenant();
+      const b = await mkTenant();
+      const c = await createMetadataAttribute(a.id, input(NOTE, { scope: "internal", targets: ["field", "entity"] }));
+      if (!c.success) throw new Error(c.error.message);
+      await seedValues(a.id, ["field", "entity", "message"]);
+      const del = await deleteMetadataAttribute(a.id, c.data.id);
+      expect(!del.success && del.error.details).toMatchObject({ count: 3 });
+      // Values in another tenant do not block.
+      const other = await createMetadataAttribute(b.id, input(NOTE, { scope: "internal" }));
+      if (!other.success) throw new Error(other.error.message);
+      expect((await deleteMetadataAttribute(b.id, other.data.id)).success).toBe(true);
+      // A schema-scope definition is deleted even with values (its values are already emitted).
+      const pub = await createMetadataAttribute(a.id, input("x-public"));
+      if (!pub.success) throw new Error(pub.error.message);
+      await db().field.updateMany({ data: { decorators: { typespec: { extensions: { openapi: { "x-public": "p", [NOTE]: "f" } } } } } });
+      expect((await deleteMetadataAttribute(a.id, pub.data.id)).success).toBe(true);
+      // Remove the values: the delete goes through.
+      await db().field.deleteMany();
+      await db().entity.updateMany({ data: { metadata: {} } });
+      await db().eventSpec.deleteMany();
+      expect((await deleteMetadataAttribute(a.id, c.data.id)).success).toBe(true);
+    });
+  });
+
   it("refuses a create once the tenant has used every number up to 99999", async () => {
     const a = await mkTenant();
     await db().metadataAttributeCounter.create({ data: { tenantId: a.id, nextProtobufOption: 99999 } });

@@ -196,3 +196,17 @@ describe("metadata attributes at emission (real emitters)", () => {
     expect(payload).not.toContain("x-review-note");
   });
 });
+
+describe("internal keys nested in another attribute value (R10, A1, real emitters)", () => {
+  const nestedField: PrismaFieldInput = { ...base, id: "f4", name: "meta", type: "string", classification: null, sortOrder: 3, decorators: ext({ "x-meta": { owner: "team", "x-review-note": "nested secret" } }) };
+  it.each(["json-schema", "openapi3", "avro"] as const)("%s: the nested internal key never reaches the output; the rest of the value does", async (t) => {
+    const leaky = await emitOfficialTypeSpecTargetFromData(entity, [...fields, nestedField], t);
+    // Without a dictionary, the emitter writes the nested value as is (what the projection by top-level key misses).
+    if (t !== "avro") expect(leaky.output).toContain("nested secret");
+    const out = await emitOfficialTypeSpecTargetFromData(entity, [...fields, nestedField], t, { metadata: METADATA });
+    expect(out.validationStatus).not.toBe("INVALID");
+    expect(out.output).not.toContain("nested secret");
+    expect(out.output).not.toContain("x-review-note");
+    if (t !== "avro") expect(out.output).toContain("x-meta");
+  });
+});

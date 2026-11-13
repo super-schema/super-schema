@@ -1,4 +1,5 @@
 import { internalKeySet } from "@/lib/metadata-attributes/emission";
+import { deepStripInternal } from "@/lib/metadata-attributes/deep-strip";
 import { readEntitySnapshot } from "@/lib/entity-versioning/entity-snapshot";
 import type { CanonicalDocument } from "./contracts";
 import { GitOpsError } from "./contracts";
@@ -281,15 +282,22 @@ async function renderEvent(
     !Array.isArray(frozen) &&
     typeof frozen.asyncapi === "string"
   ) {
-    const { stringify } = await import("yaml");
+    const [{ stringify }, { loadMetadataEmission }] = await Promise.all([
+      import("yaml"),
+      import("@/services/metadata-emission.service"),
+    ]);
+    // R10: a stored document published before a key became `internal` is stripped on read with the CURRENT dictionary. The same
+    // document (byte-identical output) when nothing matched.
+    const metadata = await loadMetadataEmission(root.scope.tenantId);
+    const served = deepStripInternal(frozen, internalKeySet(metadata?.definitions));
     return [
       {
         path: `${documentSlug(root)}.asyncapi.json`,
-        content: JSON.stringify(frozen, null, 2) + "\n",
+        content: JSON.stringify(served, null, 2) + "\n",
       },
       {
         path: `${documentSlug(root)}.asyncapi.yaml`,
-        content: stringify(frozen),
+        content: stringify(served),
       },
     ];
   }

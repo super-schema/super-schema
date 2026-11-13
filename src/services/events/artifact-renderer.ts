@@ -33,6 +33,7 @@ import { createHash } from "node:crypto";
 import { compileEntity, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { addAvroProperties, attributeKeysIn, itemsTagsFor, moveTagsToItems, type MetadataEmissionContext } from "@/lib/metadata-attributes/emission";
 import { MetadataStripError, modelExtensionsInSource, stripExtensionDecorators } from "@/lib/metadata-attributes/source-attributes";
+import { deepStripInternal } from "@/lib/metadata-attributes/deep-strip";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { loadMetadataEmission } from "@/services/metadata-emission.service";
 
@@ -597,8 +598,11 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
       return err({ code: "ARTIFACT_RENDER_FAILED", message: `${label} → ${format}: ${files.error.message}`, details: { cause: files.error.code } });
     }
     const emitted = metadata ? await withMetadataAttributes(format, files.data, parts, metadata) : files.data;
-    const artifact = pickEmittedArtifact(format, emitted, program.data.root.rootModel);
-    if (!artifact.success) return artifact;
+    const picked = pickEmittedArtifact(format, emitted, program.data.root.rootModel);
+    if (!picked.success) return picked;
+    // R10: the defensive last pass. A key the decorator strip cannot see (nested in another extension's value, e.g. an `items` extension)
+    // never reaches the payload either. The same artifact when nothing matched.
+    const artifact = { ...picked, data: deepStripInternal(picked.data, internalKeys) };
     const notes = (avro?.warnings ?? []).map((message) => ({ code: "AVRO_ENUM_SYMBOL_RENAMED", message }));
     const skipped = metadata && format === "protobuf" ? await protobufSkippedNote(parts, metadata) : undefined;
     if (skipped) notes.push(skipped);

@@ -56,4 +56,33 @@ describe("assembleAsyncApi3: extensions", () => {
     expect(JSON.stringify(assembleAsyncApi3(withEmpty).document)).toBe(JSON.stringify(assembleAsyncApi3(plain).document));
     expect(JSON.stringify(assembleAsyncApi3({ ...plain, internalKeys: new Set(["x-a"]) }).document)).toBe(JSON.stringify(assembleAsyncApi3(plain).document));
   });
+
+  it("drops internal keys from emitted message and operation trait specs (R10, A2)", () => {
+    const traits: ResolvedEventSpec["traits"] = [
+      { id: "mt", name: "Audit", kind: "MESSAGE" as const, ownerSlug: "checkout", spec: { "x-review-note": "secret-mt", "x-owner": "ok", contentType: "application/json" } },
+      { id: "mth", name: "Hdr", kind: "MESSAGE" as const, ownerSlug: "checkout", spec: { "x-review-note": "secret-mth" }, headers: { format: "json-schema" as const, dialect: "draft-07" as const, schema: { type: "object", properties: { a: { type: "string", "x-review-note": "secret-h" } } } } },
+      { id: "ot", name: "Sec", kind: "OPERATION" as const, ownerSlug: "checkout", spec: { "x-review-note": "secret-ot", bindings: { kafka: { "x-review-note": "secret-nested" } } } },
+    ];
+    const input = spec({
+      channels: [channel({ id: "ch", name: "orders" })],
+      messages: [message({ id: "m", name: "Created", traitRefs: ["mt", "mth"] })],
+      operations: [operation({ key: "p", channelRef: "ch", messageRefs: ["m"], traitRefs: ["ot"] })],
+      traits,
+    });
+    const { document } = assembleAsyncApi3({ ...input, internalKeys: new Set(["x-review-note"]) });
+    const text = JSON.stringify(document);
+    expect(text).not.toContain("secret");
+    expect(text).not.toContain("x-review-note");
+    expect(at(document, "components", "messageTraits", "Audit", "x-owner")).toBe("ok");
+    expect(at(document, "components", "messageTraits", "Audit", "contentType")).toBe("application/json");
+    // without internal keys, the traits are emitted verbatim
+    expect(JSON.stringify(assembleAsyncApi3(input).document)).toContain("secret-ot");
+  });
+
+  it("drops an internal key nested anywhere in the document, e.g. inside a payload schema (R10 deep strip)", () => {
+    const msg = message({ id: "m", name: "Created", payloads: [{ format: "json-schema", dialect: "draft-07", schema: { type: "object", properties: { t: { type: "array", items: { type: "string", "x-review-note": "secret" } } } } }], profile: { format: "json-schema" } });
+    const input = spec({ channels: [channel({ id: "ch", name: "orders", profile: { format: "json-schema" } })], messages: [msg], operations: [operation({ key: "p", channelRef: "ch", messageRefs: ["m"] })] });
+    const { document } = assembleAsyncApi3({ ...input, internalKeys: new Set(["x-review-note"]) });
+    expect(JSON.stringify(document)).not.toContain("secret");
+  });
 });

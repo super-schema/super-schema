@@ -26,6 +26,8 @@ export interface EventCodeSource {
   versionLabels: ReadonlyMap<string, string>;
   /** libraryTraitId → the trait's stored definition, so the instant code shows the real message properties of a built-in / library trait (absent = stubs). */
   libraryTraits?: ReadonlyMap<string, InstantLibraryTrait>;
+  /** The tenant's `internal` metadata attribute keys, from the dictionary the editors get: the instant code drops them (R10). */
+  internalKeys?: ReadonlySet<string>;
 }
 
 export interface EventCodeSourceStore {
