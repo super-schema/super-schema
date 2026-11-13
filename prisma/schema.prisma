@@ -113,6 +113,7 @@ model Tenant {
   entities       Entity[]
   sharedEnums    SharedEnum[]
   customScalars  CustomScalar[]
+  metadataAttributes MetadataAttributeDefinition[]
   unionTypes     UnionType[]
   services       ServiceDefinition[]
   traits         Trait[]
@@ -1509,4 +1510,31 @@ model GitWebhookDelivery {
   event String
   receivedAt DateTime @default(now())
   @@map("git_webhook_deliveries")
+}
+
+// ---------------------------------------------------------------------------
+// Metadata Attribute Dictionary (tenant-defined x-* attributes)
+// ---------------------------------------------------------------------------
+
+model MetadataAttributeDefinition {
+  id           String   @id @default(cuid())
+  tenantId     String
+  key          String   // x-…
+  label        String
+  description  String   @default("")
+  valueSchema  Json     // JSON Schema subset
+  targets      String[] // field | entity | operation | channel | message
+  scope        String   @default("schema")   // schema | internal
+  placement    String   @default("field")    // field | abc-primitive
+  derive       Json?    // { member: template }
+  requiredWhen String   @default("never")    // never | always | primitive
+  pack         String?
+  protobufOptionNumber Int? // assigned on create, 50000–99999, never reused within the tenant (Task 16)
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenantId, key])
+  @@unique([tenantId, protobufOptionNumber])
+  @@map("metadata_attribute_definitions")
 }
