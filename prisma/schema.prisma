@@ -779,6 +779,8 @@ model ClassificationLevel {
   description  String   @default("")
   sortOrder    Int      @default(0)
   isSystem     Boolean  @default(false)
+  /// Position on the fixed 1-5 class scale (1 = most restrictive). Constrained to 1..5 in SQL.
+  classNumber  Int      @default(3)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

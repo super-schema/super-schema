@@ -32,6 +32,7 @@ function toClassificationLevel(row: {
   description: string;
   sortOrder: number;
   isSystem: boolean;
+  classNumber: number;
   createdAt: Date;
   updatedAt: Date;
 }): ClassificationLevel {
@@ -44,6 +45,7 @@ function toClassificationLevel(row: {
     description: row.description || null,
     sortOrder: row.sortOrder,
     isSystem: row.isSystem,
+    classNumber: row.classNumber,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -70,6 +72,7 @@ export async function _seedClassifications(levels: ClassificationLevel[]): Promi
         description: level.description ?? "",
         sortOrder: level.sortOrder,
         isSystem: level.isSystem,
+        classNumber: level.classNumber,
       },
     });
   }
@@ -147,6 +150,7 @@ export async function createClassification(
       textColor: parsed.data.textColor,
       description: parsed.data.description ?? "",
       sortOrder: parsed.data.sortOrder,
+      classNumber: parsed.data.classNumber,
       isSystem: false,
     },
   });
@@ -191,12 +195,25 @@ export async function updateClassification(
     });
   }
 
+  if (
+    existing.isSystem &&
+    parsed.data.classNumber !== undefined &&
+    parsed.data.classNumber !== existing.classNumber
+  ) {
+    return err({
+      code: "SYSTEM_CLASS_FIXED",
+      message: `The class of system level "${existing.name}" is fixed`,
+      suggestedFix: "Only custom classification levels can change class.",
+    });
+  }
+
   const data: Record<string, unknown> = {};
   if (parsed.data.displayColor !== undefined) data.displayColor = parsed.data.displayColor;
   if (parsed.data.bgColor !== undefined) data.bgColor = parsed.data.bgColor;
   if (parsed.data.textColor !== undefined) data.textColor = parsed.data.textColor;
   if (parsed.data.description !== undefined) data.description = parsed.data.description ?? "";
   if (parsed.data.sortOrder !== undefined) data.sortOrder = parsed.data.sortOrder;
+  if (parsed.data.classNumber !== undefined) data.classNumber = parsed.data.classNumber;
 
   const updated = await prisma.classificationLevel.update({
     where: { id: parsed.data.id },

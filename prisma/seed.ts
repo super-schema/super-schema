@@ -126,10 +126,10 @@ async function main() {
 
   // Seed default classification levels (idempotent)
   const defaultClassifications = [
-    { name: "PII", displayColor: "#DC2626", bgColor: "#DC262620", textColor: "#DC2626", description: "Personally Identifiable Information", sortOrder: 1 },
-    { name: "SENSITIVE", displayColor: "#D97706", bgColor: "#D9770620", textColor: "#D97706", description: "Sensitive business data", sortOrder: 2 },
-    { name: "INTERNAL", displayColor: "#2563EB", bgColor: "#2563EB20", textColor: "#2563EB", description: "Internal use only", sortOrder: 3 },
-    { name: "PUBLIC", displayColor: "#16A34A", bgColor: "#16A34A20", textColor: "#16A34A", description: "Public data", sortOrder: 4 },
+    { name: "PII", displayColor: "#DC2626", bgColor: "#DC262620", textColor: "#DC2626", description: "Personally Identifiable Information", sortOrder: 1, classNumber: 2 },
+    { name: "SENSITIVE", displayColor: "#D97706", bgColor: "#D9770620", textColor: "#D97706", description: "Sensitive business data", sortOrder: 2, classNumber: 3 },
+    { name: "INTERNAL", displayColor: "#2563EB", bgColor: "#2563EB20", textColor: "#2563EB", description: "Internal use only", sortOrder: 3, classNumber: 4 },
+    { name: "PUBLIC", displayColor: "#16A34A", bgColor: "#16A34A20", textColor: "#16A34A", description: "Public data", sortOrder: 4, classNumber: 5 },
   ];
 
   for (const cls of defaultClassifications) {

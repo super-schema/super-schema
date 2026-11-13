@@ -11,6 +11,7 @@ let classificationStore: Array<{
   textColor: string;
   description: string;
   sortOrder: number;
+  classNumber: number;
   isSystem: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -31,6 +32,7 @@ vi.mock("@/lib/db", () => ({
           textColor: args.data.textColor as string,
           description: (args.data.description as string) ?? "",
           sortOrder: (args.data.sortOrder as number) ?? 0,
+          classNumber: (args.data.classNumber as number) ?? 3,
           isSystem: (args.data.isSystem as boolean) ?? false,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -154,6 +156,7 @@ describe("Classification Taxonomy Service", () => {
           bgColor: "#8B5CF620",
           textColor: "#8B5CF6",
           description: "Confidential data",
+          classNumber: 3,
           sortOrder: 5,
         },
         adminCtx
@@ -174,6 +177,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#DC2626",
           bgColor: "#DC262620",
           textColor: "#DC2626",
+          classNumber: 3,
           sortOrder: 6,
         },
         adminCtx
@@ -193,6 +197,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#FF0000",
           bgColor: "#FF000020",
           textColor: "#FF0000",
+          classNumber: 3,
           sortOrder: 10,
         },
         adminCtx
@@ -210,6 +215,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#000000",
           bgColor: "#00000020",
           textColor: "#000000",
+          classNumber: 3,
           sortOrder: 10,
         },
         viewerCtx
@@ -227,6 +233,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "not-a-color",
           bgColor: "#00000020",
           textColor: "#000000",
+          classNumber: 3,
           sortOrder: 10,
         },
         adminCtx
@@ -235,6 +242,46 @@ describe("Classification Taxonomy Service", () => {
       if (!result.success) {
         expect(result.error.code).toBe("VALIDATION_ERROR");
       }
+    });
+  });
+
+  describe("class number", () => {
+    const base = { displayColor: "#8B5CF6", bgColor: "#8B5CF620", textColor: "#8B5CF6", sortOrder: 20 };
+
+    it("stores the chosen class on create", async () => {
+      const r = await createClassification({ ...base, name: "secret", classNumber: 2 }, adminCtx);
+      expect(r.success).toBe(true);
+      if (r.success) expect(r.data.classNumber).toBe(2);
+    });
+
+    it("rejects a missing class number", async () => {
+      const r = await createClassification({ ...base, name: "nonum" } as never, adminCtx);
+      expect(r.success).toBe(false);
+      if (!r.success) expect(r.error.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("rejects class 6", async () => {
+      const r = await createClassification({ ...base, name: "six", classNumber: 6 } as never, adminCtx);
+      expect(r.success).toBe(false);
+      if (!r.success) expect(r.error.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("refuses to change the class of a system level", async () => {
+      const r = await updateClassification({ id: "sys-1", classNumber: 4 }, adminCtx);
+      expect(r.success).toBe(false);
+      if (!r.success) expect(r.error.code).toBe("SYSTEM_CLASS_FIXED");
+    });
+
+    it("changes the class of a custom level", async () => {
+      const c = await createClassification({ ...base, name: "movable", classNumber: 3 }, adminCtx);
+      if (!c.success) throw new Error("create failed");
+      const r = await updateClassification({ id: c.data.id, classNumber: 5 }, adminCtx);
+      expect(r.success).toBe(true);
+      if (r.success) expect(r.data.classNumber).toBe(5);
+    });
+
+    it("system defaults carry the fixed scale", () => {
+      expect(Object.fromEntries(SYSTEM_CLASSIFICATION_DEFAULTS.map((d) => [d.name, d.classNumber]))).toEqual({ PII: 2, SENSITIVE: 3, INTERNAL: 4, PUBLIC: 5 });
     });
   });
 
@@ -287,6 +334,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#000000",
           bgColor: "#00000020",
           textColor: "#000000",
+          classNumber: 3,
           sortOrder: 10,
         },
         adminCtx
@@ -313,6 +361,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#000000",
           bgColor: "#00000020",
           textColor: "#000000",
+          classNumber: 3,
           sortOrder: 99,
         },
         adminCtx
@@ -344,6 +393,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#000000",
           bgColor: "#00000020",
           textColor: "#000000",
+          classNumber: 3,
           sortOrder: 99,
         },
         adminCtx
@@ -379,6 +429,7 @@ describe("Classification Taxonomy Service", () => {
           displayColor: "#FF0000",
           bgColor: "#FF000020",
           textColor: "#FF0000",
+          classNumber: 3,
           sortOrder: 0, // lower than PII (1)
         },
         adminCtx
