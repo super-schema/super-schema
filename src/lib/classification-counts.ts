@@ -1,14 +1,10 @@
+import { CLASS_SCALE } from "@/lib/classification-scale";
+
 /** The field classification scale, as shown on entity cards. */
 export const CLASSIFICATIONS = ["NEVER_STORED", "PII", "SENSITIVE", "INTERNAL", "PUBLIC"] as const;
 
 /** The labels of the standard scale (a level outside it is shown as itself). */
-export const CLASSIFICATION_LABELS: Record<(typeof CLASSIFICATIONS)[number], string> = {
-  NEVER_STORED: "Never Stored",
-  PII: "PII",
-  SENSITIVE: "Sensitive",
-  INTERNAL: "Internal",
-  PUBLIC: "Public",
-};
+export const CLASSIFICATION_LABELS = Object.fromEntries(CLASS_SCALE.map((c) => [c.level, c.label])) as Record<(typeof CLASSIFICATIONS)[number], string>;
 
 /** The five standard levels always, plus one key per other level present (e.g. an imported vendor level `class4`), under its own name. */
 export type ClassificationCounts = Record<(typeof CLASSIFICATIONS)[number], number> & Record<string, number>;
