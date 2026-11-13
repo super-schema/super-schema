@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined, loadInternalKeys: async () => undefined }));
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 import { emptyEventDocument, type EventDocument } from "@/lib/events/document/types";
 import type { EntityPin } from "@/lib/events/types";

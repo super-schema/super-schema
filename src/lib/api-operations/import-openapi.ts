@@ -33,6 +33,7 @@ import {
   type ApiRequestBody,
   type ApiResponse,
 } from "@/types/schemas/api-operation";
+import { METADATA_ATTRIBUTE_KEY_REGEX } from "@/types/schemas/metadata-attribute";
 import { checkAgainstSiblings, checkApiOperation, formatIssues, parseApiOperation, pathPlaceholders } from "./validate";
 
 /** At most this many operations are taken from one document; the rest are reported. */
@@ -583,7 +584,14 @@ function mapOperation(
     parameters: kept,
     requestBody,
     responses,
+    ...operationExtensions(op),
   };
+}
+
+/** The operation's own `x-*` keys that follow the attribute key rule, as `{ extensions }` (nothing when there are none). */
+function operationExtensions(op: Json): Pick<ApiOperation, "extensions"> {
+  const kept = Object.entries(op).filter(([k, v]) => METADATA_ATTRIBUTE_KEY_REGEX.test(k) && k.length <= 64 && v !== undefined);
+  return kept.length > 0 ? { extensions: Object.fromEntries(kept) as NonNullable<ApiOperation["extensions"]> } : {};
 }
 
 /**

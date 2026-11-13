@@ -116,6 +116,7 @@ function compareOperations(c: Ctx): void {
     for (const key of missingFrom(n.traitKeys, p.traitKeys)) c.minor.push(`Operation "${p.key}" trait "${key}" added`);
     if (!same(operationDetails(p), operationDetails(n))) c.minor.push(`Operation "${p.key}" details changed`);
     if (!same(docsOf(p), docsOf(n))) c.patch.push(`Operation "${p.key}" documentation changed`);
+    if (!same(p.extensions, n.extensions)) c.patch.push(`Operation "${p.key}" extensions changed`);
   }
   for (const n of c.next.doc.operations) if (!prevOps.has(n.key)) c.minor.push(`Operation "${n.key}" added`);
 }
@@ -147,6 +148,7 @@ function compareChannels(c: Ctx): void {
     }
     if (!same(channelDetails(p), channelDetails(n))) c.minor.push(`Channel "${p.key}" details changed`);
     if (!same(docsOf(p), docsOf(n))) c.patch.push(`Channel "${p.key}" documentation changed`);
+    if (!same(p.extensions, n.extensions)) c.patch.push(`Channel "${p.key}" extensions changed`);
   }
   for (const n of c.next.doc.channels) if (!prevChannels.has(n.key)) c.minor.push(`Channel "${n.key}" added`);
 }
@@ -189,6 +191,7 @@ function compareMessages(c: Ctx): void {
     }
     if (!same(p.correlationId, n.correlationId)) c.major.push(`Message "${p.key}" correlationId changed`);
     if (!same(docsOf(p), docsOf(n))) c.patch.push(`Message "${p.key}" documentation changed`);
+    if (!same(p.extensions, n.extensions)) c.patch.push(`Message "${p.key}" extensions changed`);
     if (!same(p.name, n.name)) c.minor.push(`Message "${p.key}" name changed`);
     if (!same(p.deprecated, n.deprecated)) c.minor.push(`Message "${p.key}" deprecation changed`);
     if (!same(p.examples, n.examples)) c.patch.push(`Message "${p.key}" examples changed`);

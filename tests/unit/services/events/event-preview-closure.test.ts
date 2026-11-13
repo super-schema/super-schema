@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 // The tenant has no metadata attribute dictionary (renders unchanged); the stubbed client has no table for it.
-vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined, loadInternalKeys: async () => undefined }));
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 import { entityReader } from "@/lib/access/entity-reader";
 import { emptyEventDocument, type EventDocument } from "@/lib/events/document/types";

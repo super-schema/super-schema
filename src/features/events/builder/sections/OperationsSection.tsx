@@ -19,6 +19,8 @@ import { TEMPLATES } from "@/lib/events/templates";
 import { autoRenameKey, leftForm, newKey } from "../auto-key";
 import { Field, selectClass } from "../controls";
 import type { SectionProps } from "../EventBuilder";
+import { AttributesSection } from "@/components/custom/metadata/AttributesSection";
+import { extensionCount, hasAttributes, withExtensions } from "../attributes";
 import { IdentifierDisclosure } from "../Identifier";
 import { externalItemLabel, operationMessagesEmpty, operationMessagesHint, operationPropertiesTitle, replyMessagesEmpty } from "../labels";
 import { problemMessage, problemsByField, uniqueProblems } from "../problems";
@@ -435,6 +437,17 @@ function OperationForm({ draft, options, index, operation, problems, context, pa
     },
     { id: "docs", title: "Docs & tags", count: (operation.tags?.length ?? 0) + (operation.externalDocs ? 1 : 0), body: cardForm(DOCS_KEYS) },
     { id: "security", title: "Security", count: operation.security?.length ?? 0, body: cardForm(SECURITY_KEYS) },
+    ...(hasAttributes(options.metadataAttributes, "operation", operation)
+      ? [{
+        id: "attributes", title: "Metadata", count: extensionCount(operation),
+        body: (
+          <AttributesSection
+            target="operation" definitions={options.metadataAttributes ?? []} extensions={operation.extensions}
+            onChange={(next) => patch((o) => withExtensions(o, next))}
+          />
+        ),
+      }]
+      : []),
   ].map((p) => ({ ...p, broken: errored.has(p.id) }));
 
   return (

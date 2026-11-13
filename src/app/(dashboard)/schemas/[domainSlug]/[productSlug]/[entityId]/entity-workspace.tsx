@@ -1,4 +1,5 @@
 "use client";
+import { itemAttributeAlerts } from "@/lib/metadata-attributes/alerts";
 import { fieldPolicyContext } from "@/lib/field-policy-context";
 import { evolutionVersions } from "@/lib/field-attributes";
 
@@ -503,10 +504,11 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, metadataA
     const completenessReqs = (domainPolicy?.completenessRequirements as CompletenessRequirements) ?? undefined;
     return [
       ...generateEntityAlerts(entity, fields, completenessReqs, metadataAttributes),
+      ...itemAttributeAlerts("operation", apiOperations.map((o) => ({ id: o.id, name: o.name, extensions: o.extensions })), metadataAttributes ?? []),
       ...generateReferenceStalenessAlerts(referenceStaleness ?? []),
       ...generateTargetDriftAlerts(entity, fields),
     ];
-  }, [entity, fields, domainPolicy, referenceStaleness, metadataAttributes]);
+  }, [entity, fields, domainPolicy, referenceStaleness, metadataAttributes, apiOperations]);
 
   const alertCount = entityAlerts.length;
 
@@ -1254,6 +1256,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, metadataA
             initialOperations={apiOperations}
             fields={fields.map((f) => ({ name: f.name, type: f.type, isKey: f.isKey }))}
             typeNames={referenceTargets?.map((t) => t.name)}
+            metadataAttributes={metadataAttributes}
             isReadOnly={readOnly_}
           />
         )}

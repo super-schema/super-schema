@@ -32,7 +32,7 @@ import type { ServiceContext } from "@/types/service-context";
 import { admitCompilerRuns, compilerBusyError, shareInUseError } from "@/lib/emission/emission-admission";
 import { getSharedArtifactRenderer } from "./artifact-renderer";
 import { auditedWrite } from "./audited";
-import { emitResolved, type EmitDeps } from "./event-emit.service";
+import { emitResolved, withInternalKeys, type EmitDeps } from "./event-emit.service";
 import { gatherPublishFacts, parseFrozenTraits, type PublishFacts } from "./event-publish-facts";
 import { eventRenderShare, loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
 import { isConcurrentWriteFailure } from "./publish-concurrency";
@@ -108,7 +108,7 @@ async function prepare(db: Db, eventId: string, requested: BumpKind | undefined,
     if (draft.busy) return err(compilerBusyError());
     diagnostics = normalizeDiagnostics(draft.diagnostics);
     if (draft.resolved) {
-      const out = await emitResolved(draft.resolved, snapshot.data.event.specType, deps);
+      const out = await emitResolved(draft.resolved, snapshot.data.event.specType, await withInternalKeys(deps, snapshot.data.event.tenantId, ctx.prisma));
       if (!out.success) return emitFailure(eventId, out.error);
       output = out.data;
       diagnostics = normalizeDiagnostics([...draft.diagnostics, ...out.data.diagnostics]);

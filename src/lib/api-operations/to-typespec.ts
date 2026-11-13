@@ -30,7 +30,9 @@ import {
   type ApiParameter,
   type ApiResponse,
 } from "@/types/schemas/api-operation";
+import { tryTypeSpecValueLiteral } from "@/lib/compiler/governance-decorators";
 import { escapeString, propertyName, sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
+import { METADATA_ATTRIBUTE_KEY_REGEX } from "@/types/schemas/metadata-attribute";
 
 // ---------------------------------------------------------------------------
 // Adapter: rows (legacy or Phase A) / contract objects -> ApiOperation
@@ -75,6 +77,10 @@ export interface ApiOperationRowLike {
   requestBody?: unknown;
   parameters?: ReadonlyArray<ApiParameterRowLike> | null;
   responses?: ReadonlyArray<ApiResponseRowLike> | null;
+  /** A contract operation's attributes (`x-*` -> value). */
+  extensions?: unknown;
+  /** A Prisma row's `decorators` Json: its `extensions` map holds the attributes. */
+  decorators?: unknown;
 }
 
 export interface ReadApiOperationsOptions {
@@ -149,6 +155,16 @@ const bySortOrder = <T extends { sortOrder?: number | null }>(rows: ReadonlyArra
     .sort((a, b) => (a.row.sortOrder ?? a.index) - (b.row.sortOrder ?? b.index) || a.index - b.index)
     .map(({ row }) => row);
 
+/** The attribute map of a row: its own `extensions` (a contract operation) or `decorators.extensions`; only keys that follow the attribute key rule. */
+function extensionsOf(row: ApiOperationRowLike): Record<string, unknown> | undefined {
+  const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+  const fromDecorators = isObj(row.decorators) ? row.decorators.extensions : undefined;
+  const map = isObj(row.extensions) ? row.extensions : isObj(fromDecorators) ? fromDecorators : undefined;
+  if (!map) return undefined;
+  const kept = Object.entries(map).filter(([k, v]) => METADATA_ATTRIBUTE_KEY_REGEX.test(k) && k.length <= 64 && v !== undefined);
+  return kept.length > 0 ? Object.fromEntries(kept) : undefined;
+}
+
 /** The contract-shaped candidate of one row (not validated yet). */
 function candidateOf(row: ApiOperationRowLike, opts: ReadApiOperationsOptions): unknown {
   const parameters: unknown[] = [];
@@ -189,6 +205,7 @@ function candidateOf(row: ApiOperationRowLike, opts: ReadApiOperationsOptions): 
     parameters,
     requestBody,
     responses,
+    ...(extensionsOf(row) ? { extensions: extensionsOf(row) } : {}),
   };
 }
 
@@ -407,6 +424,11 @@ export function apiOperationsTypeSpec(operations: ReadonlyArray<ApiOperation>, o
       decorators.push(`@TypeSpec.OpenAPI.operationId("${escapeString(operationId)}")`);
     }
     if (op.deprecated) decorators.push('#deprecated "This operation is deprecated."');
+    for (const [key, value] of Object.entries(op.extensions ?? {})) {
+      const literal = tryTypeSpecValueLiteral(value);
+      if (literal === undefined) continue; // nested past the literal depth limit: omit the key rather than truncate
+      decorators.push(`@TypeSpec.OpenAPI.extension("${escapeString(key)}", ${literal})`);
+    }
     decorators.push(`@route("${escapeString(op.httpPath)}")`, `@${verb}`);
 
     ops.push(...decorators, `op ${opIdent}(${params.join(", ")}): ${returns};`, "");

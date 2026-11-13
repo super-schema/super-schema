@@ -29,6 +29,7 @@ import {
   type OperationDraft,
 } from "./api-tab-model";
 import { useOperationAutosave } from "./useOperationAutosave";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import { ApiOperationRow } from "./ApiOperationEditor";
 import { ApiNewOperationForm } from "./ApiNewOperationForm";
 import { ApiServiceSettings, type ApiServiceInfo } from "./ApiServiceSettings";
@@ -56,6 +57,8 @@ interface ApiTabProps {
   fields: { name: string; type: string; isKey?: boolean }[];
   /** Other entity / data-type names the type pickers offer (beyond primitives and this entity). */
   typeNames?: string[];
+  /** The tenant's metadata attribute dictionary, for each operation's "Metadata" section. */
+  metadataAttributes?: readonly MetadataAttributeDefinition[];
   isReadOnly?: boolean;
 }
 
@@ -77,6 +80,7 @@ export function ApiTab({
   initialOperations,
   fields,
   typeNames = [],
+  metadataAttributes,
   isReadOnly = false,
 }: ApiTabProps) {
   const [serviceId, setServiceId] = useState(initialServiceId);
@@ -407,6 +411,7 @@ export function ApiTab({
               warnings={warningsById[op.id] ?? NO_WARNINGS}
               groups={groups}
               readOnly={isReadOnly}
+              definitions={metadataAttributes}
               onToggle={toggle}
               onChange={edit}
               onDelete={remove}

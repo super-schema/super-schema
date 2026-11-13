@@ -95,3 +95,73 @@ export function metadataAttributeAlerts(
   }
   return alerts;
 }
+
+/** An API operation, event channel, message or event operation, as the item alerts read it. */
+export interface AttributeItemInput {
+  /** Identifies the item in an alert id (a database id, or a document key). */
+  id: string;
+  /** What the alert calls it. */
+  name: string;
+  /** The item's stored extension map. */
+  extensions?: Record<string, unknown> | null;
+}
+
+export type AttributeItemTarget = "operation" | "channel" | "message";
+
+const NOUN: Record<AttributeItemTarget, string> = { operation: "Operation", channel: "Channel", message: "Message" };
+
+/**
+ * Alerts for the items of one target (API operations, event channels, messages or event operations): a `requiredWhen: "always"`
+ * attribute that is not set, and a value outside its schema. Definitions that do not list `target` are ignored.
+ */
+export function itemAttributeAlerts(target: AttributeItemTarget, items: readonly AttributeItemInput[], defs: readonly MetadataAttributeDefinition[]): EntityAlert[] {
+  const targetDefs = defs.filter((d) => d.targets.includes(target));
+  if (targetDefs.length === 0) return [];
+  const noun = NOUN[target];
+  const alerts: EntityAlert[] = [];
+  for (const item of items) {
+    const values = item.extensions ?? {};
+    for (const d of targetDefs) {
+      if (!Object.prototype.hasOwnProperty.call(values, d.key)) {
+        if (d.requiredWhen === "always") {
+          alerts.push({
+            id: `${target}-attr-METADATA_ATTRIBUTE_MISSING-${d.key}-${item.id}`,
+            severity: "warning",
+            category: "entity",
+            title: `${noun} "${item.name}" is missing ${d.key}`,
+            description: `${d.label} (${d.key}) is required on every ${target}. Set a value.`,
+            action: `Edit ${target}`,
+          });
+        }
+        continue;
+      }
+      const problems = validateValue(values[d.key], d.valueSchema);
+      if (problems.length > 0) {
+        alerts.push({
+          id: `${target}-attr-METADATA_ATTRIBUTE_INVALID-${d.key}-${item.id}`,
+          severity: "warning",
+          category: "entity",
+          title: `${noun} "${item.name}" has an invalid ${d.key}`,
+          description: `${d.key} value ${show(values[d.key])}: ${problems[0].message}`,
+          action: `Edit ${target}`,
+        });
+      }
+    }
+  }
+  return alerts;
+}
+
+type KeyedItem = { key: string; extensions?: Record<string, unknown> };
+
+/** The attribute alerts of an event document: its channels, messages and operations (named by their document key). */
+export function eventAttributeAlerts(
+  doc: { channels: readonly KeyedItem[]; messages: readonly KeyedItem[]; operations: readonly KeyedItem[] },
+  defs: readonly MetadataAttributeDefinition[],
+): EntityAlert[] {
+  const named = (items: readonly KeyedItem[]): AttributeItemInput[] => items.map((i) => ({ id: i.key, name: i.key, extensions: i.extensions }));
+  return [
+    ...itemAttributeAlerts("channel", named(doc.channels), defs),
+    ...itemAttributeAlerts("message", named(doc.messages), defs),
+    ...itemAttributeAlerts("operation", named(doc.operations), defs),
+  ];
+}

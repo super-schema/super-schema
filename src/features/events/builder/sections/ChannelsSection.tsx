@@ -19,6 +19,9 @@ import { TEMPLATES } from "@/lib/events/templates";
 import { autoRenameKey, leftForm, newKey } from "../auto-key";
 import { Field, ProtocolInput, selectClass } from "../controls";
 import type { SectionProps } from "../EventBuilder";
+import { AttributesSection } from "@/components/custom/metadata/AttributesSection";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
+import { withExtensions } from "../attributes";
 import { IdentifierDisclosure } from "../Identifier";
 import { externalItemLabel } from "../labels";
 import { problemMessage, problemsByField, uniqueProblems } from "../problems";
@@ -185,7 +188,7 @@ export function ChannelsSection({ draft, options, selectedItem, onSelectItem }: 
             }))}
           />
           <ChannelForm
-            key={activeIndex} draft={draft} index={activeIndex} channel={active} problems={problems} context={context} onSelectItem={onSelectItem}
+            key={activeIndex} draft={draft} index={activeIndex} channel={active} problems={problems} context={context} definitions={options.metadataAttributes ?? []} onSelectItem={onSelectItem}
           />
         </div>
       )}
@@ -195,9 +198,9 @@ export function ChannelsSection({ draft, options, selectedItem, onSelectItem }: 
   );
 }
 
-function ChannelForm({ draft, index, channel, problems, context, onSelectItem }: {
+function ChannelForm({ draft, index, channel, problems, context, definitions, onSelectItem }: {
   draft: DraftState; index: number; channel: DocChannel; problems: DocumentProblem[];
-  context: TemplateFormContext; onSelectItem: (key: string | null) => void;
+  context: TemplateFormContext; definitions: readonly MetadataAttributeDefinition[]; onSelectItem: (key: string | null) => void;
 }) {
   const { doc, update } = draft;
   const [blocked, setBlocked] = useState<string | null>(null);
@@ -394,6 +397,11 @@ function ChannelForm({ draft, index, channel, problems, context, onSelectItem }:
           </div>
         </section>
       </div>
+
+      <AttributesSection
+        target="channel" definitions={definitions} extensions={channel.extensions}
+        onChange={(next) => patch((c) => withExtensions(c, next))}
+      />
 
       <IdentifierDisclosure
         id="channel-key" value={channel.key} error={errorAt("/key")}

@@ -413,15 +413,17 @@ describe("sanitising: what the document model rejects is removed and reported, n
     expect(byCode(info.warnings, "SANITIZED_VALUE").map((w) => w.pointer).sort()).toEqual(["/info/contact/phone", "/info/license/spdx"]);
   });
 
-  it("x- extensions are kept where the model keeps them (tags, externalDocs, …) and reported where it has no place for them", () => {
+  it("x- extensions are kept where the model keeps them (tags, externalDocs, channel/message/operation extensions) and reported where it has no place for them", () => {
     const { document, warnings } = mapRaw(tiny({
       message: { "x-owner": "team-a", tags: [{ name: "t", "x-color": "red" }] },
       channel: { "x-internal": true }, server: { "x-region": "eu" }, operation: { "x-slo": "99.9" },
     }));
     expect(document.messages[0].tags).toEqual([{ name: "t", "x-color": "red" }]);
-    expect(byCode(warnings, "UNSUPPORTED_EXTENSION").map((w) => w.pointer).sort()).toEqual([
-      "/channels/c/x-internal", "/components/messages/m/x-owner", "/operations/o/x-slo", "/servers/s/x-region",
-    ]);
+    // a channel's, message's and operation's x- keys are kept as its `extensions`; only a server has no place for one
+    expect(document.channels[0].extensions).toEqual({ "x-internal": true });
+    expect(document.messages[0].extensions).toEqual({ "x-owner": "team-a" });
+    expect(document.operations[0].extensions).toEqual({ "x-slo": "99.9" });
+    expect(byCode(warnings, "UNSUPPORTED_EXTENSION").map((w) => w.pointer).sort()).toEqual(["/servers/s/x-region"]);
   });
 
   it("a property that is not part of a message, server, channel or operation is reported as a dropped construct", () => {

@@ -4,7 +4,7 @@
 
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
-import type { MetadataEmissionContext } from "@/lib/metadata-attributes/emission";
+import { internalKeySet, type MetadataEmissionContext } from "@/lib/metadata-attributes/emission";
 import { listMetadataAttributes } from "@/services/metadata-attribute.service";
 
 /**
@@ -19,4 +19,15 @@ export async function loadMetadataEmission(
   if (!listed.success) throw new Error(`The metadata attribute dictionary could not be read: ${listed.error.message}`);
   if (listed.data.length === 0) return undefined;
   return { definitions: listed.data };
+}
+
+/**
+ * The `internal`-scope keys of `tenantId`'s dictionary (what the AsyncAPI assembler drops from an emitted document), or `undefined` when
+ * there are none. Throws when the dictionary cannot be read, like {@link loadMetadataEmission}.
+ */
+export async function loadInternalKeys(
+  tenantId: string,
+  db: Pick<Prisma.TransactionClient, "metadataAttributeDefinition"> = prisma,
+): Promise<ReadonlySet<string> | undefined> {
+  return internalKeySet((await loadMetadataEmission(tenantId, db))?.definitions);
 }

@@ -1,3 +1,4 @@
+import { internalKeySet } from "@/lib/metadata-attributes/emission";
 import { readEntitySnapshot } from "@/lib/entity-versioning/entity-snapshot";
 import type { CanonicalDocument } from "./contracts";
 import { GitOpsError } from "./contracts";
@@ -342,7 +343,11 @@ async function renderEvent(
         prisma: db,
       },
       // Its compiles share the process-wide limit: N GitOps renders never run more than it at once.
-      { renderer: createArtifactRenderer({ db, loadMetadata: async () => metadata, queue: getSharedRenderQueue() }) },
+      {
+        renderer: createArtifactRenderer({ db, loadMetadata: async () => metadata, queue: getSharedRenderQueue() }),
+        // The projection DB holds no dictionary: the tenant's `internal` keys come from the one loaded above.
+        internalKeys: internalKeySet(metadata?.definitions) ?? new Set<string>(),
+      },
     );
     if (
       !output.success ||

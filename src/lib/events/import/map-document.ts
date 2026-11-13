@@ -8,7 +8,8 @@
 import { err, ok, type Result, type ServiceError } from "@/types/result";
 import { jsonPointer } from "@/lib/event-specs/json-pointer";
 import { setOwn } from "@/lib/event-specs/own-property";
-import type { EventSpecInfo, JsonObject, TraitKind } from "@/lib/event-specs/types";
+import type { EventSpecInfo, JsonObject, JsonValue, TraitKind } from "@/lib/event-specs/types";
+import { isAttributeKey, isJsonValue } from "@/lib/events/document/extensions";
 import { slugKey } from "@/lib/events/document/keys";
 import type { Reader } from "@/lib/events/document/parse-objects";
 import { parseEventDocument } from "@/lib/events/document/parse";
@@ -116,9 +117,28 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     const pointer = at(base, key);
     return readEach(item, inline(node[key], pointer), pointer);
   };
-  const noteUnknown = (node: Record<string, unknown>, known: ReadonlySet<string>, base: string, what: string): void => {
+  /**
+   * The `x-…` keys of a channel, message or operation, kept as its `extensions` (metadata attributes). A key outside the attribute key rule,
+   * or a value that is not JSON, has no place there: it is reported as an unsupported extension, like every other `x-…` the model cannot hold.
+   */
+  const extensionsOf = (node: Record<string, unknown>, base: string, what: string): Record<string, JsonValue> | undefined => {
+    const kept: Record<string, JsonValue> = {};
+    for (const key of Object.keys(node)) {
+      if (!key.startsWith("x-")) continue;
+      const pointer = at(base, key);
+      const value = inline(node[key], pointer);
+      if (!isAttributeKey(key) || !isJsonValue(value)) {
+        warn(pointer, "UNSUPPORTED_EXTENSION", `The extension "${boundText(key)}" on ${what} has no place in an event, so it was not imported`);
+        continue;
+      }
+      setOwn(kept, key, value);
+    }
+    return Object.keys(kept).length > 0 ? kept : undefined;
+  };
+  const noteUnknown = (node: Record<string, unknown>, known: ReadonlySet<string>, base: string, what: string, keepExtensions = false): void => {
     for (const key of Object.keys(node)) {
       if (known.has(key)) continue;
+      if (keepExtensions && key.startsWith("x-")) continue; // read by `extensionsOf`
       if (key.startsWith("x-")) warn(at(base, key), "UNSUPPORTED_EXTENSION", `The extension "${boundText(key)}" on ${what} has no place in an event, so it was not imported`);
       else warn(at(base, key), "DROPPED_CONSTRUCT", `"${boundText(key)}" is not a property of ${what}, so it was not imported`);
     }
@@ -393,7 +413,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     const key = assignedChannelKeys.get(def.sourceKey) as string;
     channelKeyOf.set(def.sourceKey, key);
     const { node, pointer } = def;
-    noteUnknown(node, CHANNEL_KEYS, pointer, "a channel");
+    noteUnknown(node, CHANNEL_KEYS, pointer, "a channel", true);
 
     let address: string | null = null;
     if (node.address !== undefined && node.address !== null) {
@@ -468,6 +488,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       key, address, protocol: channelProtocolName(protocolSource), serverKeys, bindings,
       title: field(node, "title", pointer, ax.str), summary: field(node, "summary", pointer, ax.str), description: field(node, "description", pointer, ax.str),
       parameters, tags: listField(node, "tags", pointer, ax.tag), externalDocs: field(node, "externalDocs", pointer, ax.externalDocs), messageKeys,
+      extensions: extensionsOf(node, pointer, "a channel"),
     });
     sources.channels.push(pointer);
   }
@@ -475,7 +496,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   // ── messages ──
   const messages = messageIndex.messages.map((message) => {
     const { node, pointer, key } = message;
-    noteUnknown(node, MESSAGE_KEYS, pointer, "a message");
+    noteUnknown(node, MESSAGE_KEYS, pointer, "a message", true);
     const schemas = must(describeMessageSchemas(refs, message));
     const noteSchema = (role: "payload" | "headers", description: PayloadDescription): void => {
       const place = at(pointer, role);
@@ -510,6 +531,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       externalDocs: field(node, "externalDocs", pointer, ax.externalDocs), deprecated: field(node, "deprecated", pointer, ax.bool),
       bindings: field(node, "bindings", pointer, ax.jsonObject), examples: listField(node, "examples", pointer, ax.example),
       payload: { ...payload }, headers: headers ? { ...headers } : undefined, traitKeys: traitKeysOf(node.traits, at(pointer, "traits"), "MESSAGE"),
+      extensions: extensionsOf(node, pointer, "a message"),
     };
   });
 
@@ -557,7 +579,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   const operations: DocOperation[] = [];
   for (const def of operationDefs) {
     const { node, pointer } = def;
-    noteUnknown(node, OPERATION_KEYS, pointer, "an operation");
+    noteUnknown(node, OPERATION_KEYS, pointer, "an operation", true);
     const channel = channelRef(node.channel);
     if (!channel) {
       throw new Stop({
@@ -591,6 +613,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       title: field(node, "title", pointer, ax.str), summary: field(node, "summary", pointer, ax.str), description: field(node, "description", pointer, ax.str),
       security: securityKeys(node.security, at(pointer, "security")), tags: listField(node, "tags", pointer, ax.tag),
       externalDocs: field(node, "externalDocs", pointer, ax.externalDocs), bindings: field(node, "bindings", pointer, ax.jsonObject), reply,
+      extensions: extensionsOf(node, pointer, "an operation"),
     });
     sources.operations.push(pointer);
   }

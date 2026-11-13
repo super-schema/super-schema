@@ -134,6 +134,7 @@ function toLocalChannel(c: DocChannel, productSlug: string, engine: Representati
     serverRefs: emitServers && c.serverKeys.length > 0 ? [...c.serverKeys] : undefined,
     messageRefs: emitAll && c.messageKeys.length > 0 ? [...c.messageKeys] : undefined,
     messageProfiles: differing.length > 0 ? Object.fromEntries(differing) : undefined,
+    extensions: clone(c.extensions),
   });
 }
 
@@ -145,6 +146,7 @@ const toLocalMessage = (m: DocMessage, productSlug: string, artifacts: MessageAr
   payloads: [...artifacts.payloads], headers: artifacts.headers,
   keys: artifacts.keys.length > 0 ? [...artifacts.keys] : undefined,
   profile,
+  extensions: clone(m.extensions),
 });
 
 type ExternalResolved = { channel?: ResolvedChannel; message?: ResolvedMessage; traits: ResolvedTrait[] };
@@ -292,6 +294,7 @@ export function resolveDocument(input: ResolveDocumentInput): Result<ResolvedEve
     if (op.tags !== undefined) resolved.tags = clone(op.tags);
     if (op.externalDocs !== undefined) resolved.externalDocs = clone(op.externalDocs);
     if (op.bindings !== undefined) resolved.bindings = clone(op.bindings);
+    if (op.extensions !== undefined) resolved.extensions = clone(op.extensions);
     if (op.reply) {
       resolved.reply = {};
       if (op.reply.address !== undefined) resolved.reply.address = clone(op.reply.address);

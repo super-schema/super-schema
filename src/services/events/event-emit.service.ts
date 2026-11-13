@@ -15,6 +15,7 @@ import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import { getSharedArtifactRenderer, type ArtifactRenderer } from "./artifact-renderer";
 import { DRAFT_VERSION, eventRenderShare, loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
+import { loadInternalKeys } from "@/services/metadata-emission.service";
 import { validatePinRefs } from "./pin-refs";
 import { assertOwnedEvent, guardRead, requireId } from "./service-guards";
 
@@ -26,6 +27,18 @@ export interface EmitDeps {
   renderer?: ArtifactRenderer;
   validators?: EventSpecValidator[];
   signal?: AbortSignal;
+  /**
+   * Keys of the tenant's `internal`-scope metadata attributes, dropped from the emitted AsyncAPI document (the stored draft keeps them).
+   * Absent = the emission loads them from the event's tenant (`loadInternalKeys`).
+   */
+  internalKeys?: ReadonlySet<string>;
+}
+
+/** `deps` with the tenant's internal attribute keys loaded (unless the caller supplied them). */
+export async function withInternalKeys(deps: EmitDeps, tenantId: string, db: Parameters<typeof loadInternalKeys>[1]): Promise<EmitDeps> {
+  if (deps.internalKeys !== undefined) return deps;
+  const internalKeys = await loadInternalKeys(tenantId, db);
+  return internalKeys ? { ...deps, internalKeys } : deps;
 }
 
 let sharedValidators: EventSpecValidator[] | undefined;
@@ -40,7 +53,8 @@ export function defaultEventSpecValidators(): EventSpecValidator[] {
 export async function emitResolved(resolved: ResolvedEventSpec, specType: string, deps: EmitDeps = {}): Promise<Result<EmitOutput>> {
   const adapter = getEventSpecAdapter(specType, { validators: deps.validators ?? defaultEventSpecValidators() });
   if (!adapter.success) return adapter;
-  return adapter.data.emit(resolved);
+  // `internal` attributes are stripped by the assembler: the resolved spec itself (stored by a publish) keeps them.
+  return adapter.data.emit(deps.internalKeys ? { ...resolved, internalKeys: deps.internalKeys } : resolved);
 }
 
 /**
@@ -67,7 +81,7 @@ async function emitSnapshot(ctx: ServiceContext, snapshot: EventSnapshot, deps: 
     const draft = await resolveEventSnapshot(snapshot, deps.renderer ?? getSharedArtifactRenderer(ctx.prisma), DRAFT_VERSION, canRead, { signal: deps.signal });
     if (draft.busy) return err(compilerBusyError());
     if (!draft.resolved) return ok({ document: null, json: null, yaml: null, diagnostics: normalizeDiagnostics(draft.diagnostics) });
-    const out = await emitResolved(draft.resolved, snapshot.event.specType, deps);
+    const out = await emitResolved(draft.resolved, snapshot.event.specType, await withInternalKeys(deps, snapshot.event.tenantId, ctx.prisma));
     if (!out.success) return out;
     return ok({
       document: out.data.document,

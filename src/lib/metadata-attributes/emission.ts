@@ -32,6 +32,12 @@ const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.i
 
 const internalKeys = (defs: Defs): string[] => defs.filter((d) => d.scope === "internal").map((d) => d.key);
 
+/** The keys of the dictionary's `internal` attributes, as a Set for an emitter that drops them itself; undefined when there are none. */
+export function internalKeySet(defs: Defs | undefined): ReadonlySet<string> | undefined {
+  const keys = defs ? internalKeys(defs) : [];
+  return keys.length > 0 ? new Set(keys) : undefined;
+}
+
 /** `decorators` without the internal keys of its field extension map; the same reference when it holds none. */
 function stripFieldDecorators<T>(decorators: T, keys: readonly string[]): T {
   const present = keys.filter((k) => k in readFieldAttributes(decorators));
@@ -50,7 +56,22 @@ function stripEntityMetadata<T>(metadata: T, keys: readonly string[]): T {
   return next as unknown as T;
 }
 
-/** The model without the `internal` keys on its fields and entity. The same reference when there is nothing to strip. */
+/** `operations` without the internal keys of their extension maps; the same reference when none holds one. */
+function stripOperations<T extends { extensions?: Record<string, unknown> }>(operations: T[] | undefined, keys: readonly string[]): T[] | undefined {
+  if (!operations) return operations;
+  let changed = false;
+  const out = operations.map((op) => {
+    const map = op.extensions;
+    if (!map || !keys.some((k) => k in map)) return op;
+    changed = true;
+    const { extensions: _dropped, ...rest } = op;
+    const kept = Object.fromEntries(Object.entries(map).filter(([k]) => !keys.includes(k)));
+    return (Object.keys(kept).length > 0 ? { ...rest, extensions: kept } : rest) as T;
+  });
+  return changed ? out : operations;
+}
+
+/** The model without the `internal` keys on its fields, entity and API operations. The same reference when there is nothing to strip. */
 export function stripInternal(model: SuperSchemaModel, defs: Defs): SuperSchemaModel {
   const keys = internalKeys(defs);
   if (keys.length === 0) return model;
@@ -62,13 +83,14 @@ export function stripInternal(model: SuperSchemaModel, defs: Defs): SuperSchemaM
     return { ...f, decorators };
   });
   const metadata = stripEntityMetadata(model.entity.metadata, keys);
-  if (!changed && metadata === model.entity.metadata) return model;
-  return { ...model, entity: { ...model.entity, metadata }, fields: fieldsOut };
+  const apiOperations = stripOperations(model.apiOperations, keys);
+  if (!changed && metadata === model.entity.metadata && apiOperations === model.apiOperations) return model;
+  return { ...model, entity: { ...model.entity, metadata }, fields: fieldsOut, ...(apiOperations ? { apiOperations } : {}) };
 }
 
 interface ClosureMemberLike {
   entityId: string;
-  entity: { metadata?: unknown };
+  entity: { metadata?: unknown; apiOperations?: Array<{ extensions?: Record<string, unknown> }> };
   fields: Array<{ decorators?: unknown }>;
 }
 
@@ -89,9 +111,10 @@ export function stripInternalFromClosure<C extends { entities: M[]; root?: M }, 
       fieldsChanged = true;
       return { ...f, decorators };
     });
-    if (!fieldsChanged && metadata === member.entity.metadata) return member;
+    const apiOperations = stripOperations(member.entity.apiOperations, keys);
+    if (!fieldsChanged && metadata === member.entity.metadata && apiOperations === member.entity.apiOperations) return member;
     changed = true;
-    return { ...member, entity: { ...member.entity, metadata }, fields: fieldsOut };
+    return { ...member, entity: { ...member.entity, metadata, ...(apiOperations ? { apiOperations } : {}) }, fields: fieldsOut };
   });
   if (!changed) return closure;
   const root = closure.root ? (entities.find((e) => e.entityId === closure.root?.entityId) ?? closure.root) : undefined;
