@@ -95,6 +95,17 @@ describe("artifact renderer with a metadata attribute dictionary", () => {
     expect(record.fields[1]["x-securityClassification"]).toEqual(CLASS3);
   });
 
+  it("refuses the render (no emitter run) when a source's internal key cannot be removed safely", async () => {
+    const db = fakeDb();
+    // Valid TypeSpec, but the key of this extension is not a literal the strip can read: fail closed.
+    const broken = SOURCE.replace("  email: string;", '  @extension(KEY_CONST, "x-review-note")\n  email: string;');
+    db.entityVersion.findUnique.mockImplementation(async () => ({ ...(await fakeDb().entityVersion.findUnique()), resolvedSource: broken }));
+    const emitFiles = emitter();
+    const r = await createArtifactRenderer({ db: db as never, emitFiles, loadMetadata: async () => ({ definitions: [SECURITY, REVIEW] }) }).render(subject, "json-schema");
+    expect(!r.success && r.error).toMatchObject({ code: "ARTIFACT_RENDER_FAILED", details: { cause: "INTERNAL_ATTRIBUTE_STRIP_FAILED" } });
+    expect(emitFiles).not.toHaveBeenCalled();
+  });
+
   it("keys a version's cached render on the dictionary state: a changed dictionary renders again", async () => {
     const emitFiles = emitter();
     let definitions: MetadataAttributeDefinition[] | undefined = [SECURITY, REVIEW];

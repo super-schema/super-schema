@@ -309,6 +309,13 @@ async function renderEvent(
     import("@/services/events/event-emit.service"),
     import("yaml"),
   ]);
+  // The projection DB holds no metadata attribute dictionary: the tenant's comes from the live DB, injected into a renderer of this call only
+  // (never the process-wide one, which keeps the first client it was given).
+  const [{ loadMetadataEmission }, { createArtifactRenderer }] = await Promise.all([
+    import("@/services/metadata-emission.service"),
+    import("@/services/events/artifact-renderer"),
+  ]);
+  const metadata = await loadMetadataEmission(root.scope.tenantId);
   const pg = new PGlite();
   let db: InstanceType<typeof PrismaClient> | undefined;
   try {
@@ -334,6 +341,7 @@ async function renderEvent(
         ],
         prisma: db,
       },
+      { renderer: createArtifactRenderer({ db, loadMetadata: async () => metadata }) },
     );
     if (
       !output.success ||

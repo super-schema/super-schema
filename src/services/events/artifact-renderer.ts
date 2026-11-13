@@ -32,7 +32,7 @@ import { ok, err, type Result } from "@/types/result";
 import { createHash } from "node:crypto";
 import { compileEntity, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { addAvroProperties, itemsTagsFor, moveTagsToItems, type MetadataEmissionContext } from "@/lib/metadata-attributes/emission";
-import { modelExtensionsInSource, stripExtensionDecorators } from "@/lib/metadata-attributes/source-attributes";
+import { MetadataStripError, modelExtensionsInSource, stripExtensionDecorators } from "@/lib/metadata-attributes/source-attributes";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { loadMetadataEmission } from "@/services/metadata-emission.service";
 
@@ -536,7 +536,17 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
     }
     // `internal` metadata attributes never reach a payload: their extension decorators are removed from the text that is compiled.
     const internalKeys = metadata?.definitions.filter((d) => d.scope === "internal").map((d) => d.key) ?? [];
-    const combined = combineTypeSpecSources(parts.map((p) => ({ label: p.label, source: toRealCompilable(stripExtensionDecorators(p.source, internalKeys)) })));
+    const stripped: Array<{ label: string; source: string }> = [];
+    for (const p of parts) {
+      try {
+        stripped.push({ label: p.label, source: toRealCompilable(stripExtensionDecorators(p.source, internalKeys)) });
+      } catch (error) {
+        if (!(error instanceof MetadataStripError)) throw error;
+        // Fail closed: a source whose internal attributes cannot be removed is never compiled into a payload.
+        return err({ code: "ARTIFACT_RENDER_FAILED", message: `${p.label} → ${format}: ${error.message}`, details: { cause: "INTERNAL_ATTRIBUTE_STRIP_FAILED" } });
+      }
+    }
+    const combined = combineTypeSpecSources(stripped);
     if (!combined.success) {
       return err({
         code: "ARTIFACT_RENDER_FAILED",
