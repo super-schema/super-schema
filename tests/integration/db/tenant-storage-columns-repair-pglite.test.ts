@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it } from "vitest";
-import { applyPgliteMigrations } from "@/lib/pglite-migrate";
+import { applyPgliteMigrations, MigrationChecksumError } from "@/lib/pglite-migrate";
 
 const REPO_MIGRATIONS = path.join(process.cwd(), "prisma", "migrations");
 const DRIFTED = "20261114000000_tenant_content_storage";
@@ -40,11 +40,23 @@ describe("repair of the tenant content storage columns", () => {
     try {
       await applyPgliteMigrations(db, draftMigrationsDir());
       expect(await hasColumn(db, "tenant_git_bindings", "workflowDefaults")).toBe(false);
+      // Those databases applied the draft before checksums were recorded.
+      await db.exec(`UPDATE "_pglite_migrations" SET checksum = NULL`);
 
       await applyPgliteMigrations(db, REPO_MIGRATIONS);
 
       expect(await hasColumn(db, "tenant_git_bindings", "workflowDefaults")).toBe(true);
       expect(await hasColumn(db, "gitops_oauth_states", "returnTo")).toBe(true);
+    } finally {
+      await db.close();
+    }
+  }, 120_000);
+
+  it("would now be refused instead of skipped: the draft's recorded checksum no longer matches the committed file", async () => {
+    const db = new PGlite();
+    try {
+      await applyPgliteMigrations(db, draftMigrationsDir());
+      await expect(applyPgliteMigrations(db, REPO_MIGRATIONS)).rejects.toBeInstanceOf(MigrationChecksumError);
     } finally {
       await db.close();
     }
