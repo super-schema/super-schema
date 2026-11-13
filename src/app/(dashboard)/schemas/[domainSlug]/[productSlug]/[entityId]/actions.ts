@@ -2233,9 +2233,24 @@ export async function updateEntityMetadataAction(
  * source (ENTITY_STORED_ONLY_EXTENSION_KEYS: `$id`, `$schema`) are not `x-` keys, so the key rule refuses them. The edit marks the draft changed and
  * the source stale, so the next regeneration writes the attribute into the source (the generator emits `custom.extensions`).
  */
+const MAX_ATTRIBUTE_VALUE_BYTES = 64 * 1024;
+
 export async function updateEntityAttributeAction(entityId: string, key: string, value: unknown | undefined) {
   if (typeof key !== "string" || !METADATA_ATTRIBUTE_KEY_REGEX.test(key) || key.length > 64) {
     return { error: "The attribute key must start with x- followed by letters, digits, _, . or -", code: "VALIDATION_ERROR" };
+  }
+  if (value !== undefined) {
+    let serialized: string | undefined;
+    try {
+      serialized = JSON.stringify(value, (_k, v) => {
+        if (typeof v === "number" && !Number.isFinite(v)) throw new Error("non-finite number");
+        return v;
+      });
+    } catch {
+      serialized = undefined;
+    }
+    if (serialized === undefined) return { error: "The attribute value must be JSON (no functions, cycles or non-finite numbers)", code: "VALIDATION_ERROR" };
+    if (serialized.length > MAX_ATTRIBUTE_VALUE_BYTES) return { error: "The attribute value is too large (64 KB at most)", code: "VALIDATION_ERROR" };
   }
   try {
     const access = await guardSubject("entity.write", { kind: "entity", id: entityId }, { label: "Entity" });

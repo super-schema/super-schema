@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { ExtensionsPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/fields/[fieldId]/panels/ExtensionsPanel";
 import type { Extensions } from "@/types/schemas/typespec-decorator.schema";
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
-import { RETENTION, SECURITY } from "./fixtures";
+import { ENTITY_ONLY, RETENTION, SECURITY } from "./fixtures";
 
 afterEach(cleanup);
 
@@ -40,6 +40,29 @@ describe("ExtensionsPanel with a dictionary", () => {
     expect(stored()["x-retentionDays"]).toBe(-2);
     fireEvent.change(screen.getByLabelText("Extension name"), { target: { value: "x-raw" } });
     expect((screen.getByRole("button", { name: "Add extension" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("clearing a number keeps the key and its editor, typing '-' too; only Remove deletes", () => {
+    render(<Harness initial={{ openapi: { "x-retentionDays": 5 } }} />);
+    const box = () => screen.getByRole("spinbutton") as HTMLInputElement;
+    fireEvent.change(box(), { target: { value: "" } });
+    expect(box().value).toBe("");
+    expect(stored()).toEqual({ "x-retentionDays": 5 });
+    fireEvent.change(box(), { target: { value: "12" } });
+    expect(stored()).toEqual({ "x-retentionDays": 12 });
+    fireEvent.click(screen.getByRole("button", { name: "Remove Retention days" }));
+    expect(stored()).toEqual({});
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+  });
+
+  it("clearing a string keeps the key (as an empty string) and its editor", () => {
+    const owner = { ...ENTITY_ONLY, targets: ["field" as const] };
+    render(<Harness initial={{ openapi: { "x-owner-team": "data" } }} defs={[owner]} />);
+    fireEvent.change(screen.getByLabelText("Owner team", { selector: "input" }), { target: { value: "" } });
+    expect(stored()).toEqual({ "x-owner-team": "" });
+    expect(screen.getByLabelText("Owner team", { selector: "input" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove Owner team" }));
+    expect(stored()).toEqual({});
   });
 
   it("removes a dictionary attribute", () => {

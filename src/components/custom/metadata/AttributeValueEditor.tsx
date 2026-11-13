@@ -119,15 +119,17 @@ function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disa
 
   if (schema.type === "number" || schema.type === "integer") {
     return (
-      <AttributeControl label={label} error={error}>
-        <Input
-          type="number"
-          disabled={disabled}
-          step={schema.type === "integer" ? 1 : "any"}
-          value={typeof value === "number" && Number.isFinite(value) ? String(value) : ""}
-          onChange={(e) => onChange(e.target.value === "" ? undefined : Number(e.target.value))}
-        />
-      </AttributeControl>
+      <NumberControl
+        label={label}
+        error={error}
+        disabled={disabled}
+        integer={schema.type === "integer"}
+        value={value}
+        // A top-level value is never un-set by clearing the box (only the Remove button deletes the attribute); a property is.
+        onChange={(n) => {
+          if (n !== undefined || path !== "") onChange(n);
+        }}
+      />
     );
   }
 
@@ -138,7 +140,7 @@ function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disa
           disabled={disabled}
           spellCheck={false}
           value={typeof value === "string" ? value : ""}
-          onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
+          onChange={(e) => onChange(e.target.value === "" && path !== "" ? undefined : e.target.value)}
         />
       </AttributeControl>
     );
@@ -149,6 +151,56 @@ function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disa
   }
 
   return <JsonValue label={label} value={value} error={error} disabled={disabled} onChange={onChange} />;
+}
+
+/**
+ * A number box that keeps what is typed: a half-typed number ("-", "1e") reports "" from the browser and is not a value yet, so it emits nothing
+ * and the last number stands; a cleared box emits `undefined` (the caller decides what that means).
+ */
+function NumberControl({ label, error, disabled, integer, value, onChange }: { label: string; error?: string; disabled?: boolean; integer: boolean; value: unknown; onChange: (n: number | undefined) => void }) {
+  const [text, setText] = useState(typeof value === "number" && Number.isFinite(value) ? String(value) : "");
+  const current = typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  const [emitted, setEmitted] = useState<number | undefined>(current);
+  // An outside change of the number (not one this box emitted) wins over the typed text.
+  const shown = current !== emitted && current !== undefined ? String(current) : text;
+  return (
+    <AttributeControl label={label} error={error}>
+      <Input
+        type="number"
+        disabled={disabled}
+        step={integer ? 1 : "any"}
+        value={shown}
+        onChange={(e) => {
+          setText(e.target.value);
+          if (e.target.value === "") {
+            onChange(undefined);
+            return;
+          }
+          const n = Number(e.target.value);
+          if (Number.isFinite(n)) {
+            setEmitted(n);
+            onChange(n);
+          }
+        }}
+      />
+    </AttributeControl>
+  );
+}
+
+/** What a freshly picked attribute starts as, so its editor has something to show. */
+export function initialAttributeValue(def: { valueSchema: ValueSchema }): unknown {
+  switch (def.valueSchema.type) {
+    case "object":
+      return {};
+    case "array":
+      return [];
+    case "boolean":
+      return false;
+    case "string":
+      return "";
+    default:
+      return def.valueSchema.minimum ?? 0;
+  }
 }
 
 function TagList({ label, value, error, disabled, onChange }: { label: string; value: string[]; error?: string; disabled?: boolean; onChange: (v: unknown) => void }) {

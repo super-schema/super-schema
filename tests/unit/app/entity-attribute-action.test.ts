@@ -55,6 +55,19 @@ describe("updateEntityAttributeAction", () => {
     });
   });
 
+  it("rejects an oversized or non-JSON value without reading or writing", async () => {
+    expect(await updateEntityAttributeAction("ent-1", "x-big", "a".repeat(64 * 1024 + 1))).toMatchObject({ code: "VALIDATION_ERROR", error: expect.stringContaining("too large") });
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(await updateEntityAttributeAction("ent-1", "x-c", cyclic)).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await updateEntityAttributeAction("ent-1", "x-n", Number.NaN)).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await updateEntityAttributeAction("ent-1", "x-f", () => 1)).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(mockPrisma.entity.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.entity.update).not.toHaveBeenCalled();
+    stored({});
+    expect(await updateEntityAttributeAction("ent-1", "x-ok", "a".repeat(1000))).toEqual({ success: true });
+  });
+
   it("rejects a key that breaks the attribute key rule, before reading anything", async () => {
     for (const key of ["owner", "x-", "x-bad key", "$id", "$schema", "__proto__", `x-${"a".repeat(70)}`, "x-a/b"]) {
       expect(await updateEntityAttributeAction("ent-1", key, 1), key).toMatchObject({ code: "VALIDATION_ERROR" });

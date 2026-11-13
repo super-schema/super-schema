@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field";
 import { AttributeKeyCombobox } from "@/components/custom/metadata/AttributeKeyCombobox";
-import { AttributeValueEditor } from "@/components/custom/metadata/AttributeValueEditor";
+import { AttributeValueEditor, initialAttributeValue } from "@/components/custom/metadata/AttributeValueEditor";
 import { readEntityAttributes } from "@/lib/metadata-attributes/values";
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 
@@ -15,21 +15,6 @@ interface Props {
   isReadOnly: boolean;
   /** Persists one attribute (`undefined` removes it). Resolves with an error message, or nothing on success. */
   onSave: (key: string, value: unknown | undefined) => Promise<{ error?: string } | void>;
-}
-
-function initialValue(def: MetadataAttributeDefinition): unknown {
-  switch (def.valueSchema.type) {
-    case "object":
-      return {};
-    case "array":
-      return [];
-    case "boolean":
-      return false;
-    case "string":
-      return "";
-    default:
-      return def.valueSchema.minimum ?? 0;
-  }
 }
 
 /** The entity's "Metadata" section: dictionary attributes (target entity) with typed editors; other stored x- keys are shown raw. */
@@ -108,7 +93,7 @@ export function EntityAttributesSection({ metadata, definitions, isReadOnly, onS
           existingKeys={present.map((d) => d.key)}
           allowFreeKey={false}
           onPick={(key, def) => {
-            if (def) setDrafts((cur) => ({ ...cur, [key]: initialValue(def) }));
+            if (def) setDrafts((cur) => ({ ...cur, [key]: initialAttributeValue(def) }));
           }}
         />
       )}

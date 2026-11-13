@@ -16,7 +16,7 @@ import type { Extensions } from "@/types/schemas/typespec-decorator.schema";
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import { writeFieldAttribute } from "@/lib/metadata-attributes/values";
 import { AttributeKeyCombobox } from "@/components/custom/metadata/AttributeKeyCombobox";
-import { AttributeValueEditor } from "@/components/custom/metadata/AttributeValueEditor";
+import { AttributeValueEditor, initialAttributeValue } from "@/components/custom/metadata/AttributeValueEditor";
 
 type ValueKind = "string" | "number" | "boolean" | "null" | "json";
 function valueKind(v: unknown): ValueKind {
@@ -26,22 +26,6 @@ function valueKind(v: unknown): ValueKind {
       ? "json"
       : (typeof v as ValueKind);
 }
-/** What a freshly picked attribute starts as, so its editor has something to show. */
-function initialValue(def: MetadataAttributeDefinition): unknown {
-  switch (def.valueSchema.type) {
-    case "object":
-      return {};
-    case "array":
-      return [];
-    case "boolean":
-      return false;
-    case "string":
-      return "";
-    default:
-      return def.valueSchema.minimum ?? 0;
-  }
-}
-
 export function ExtensionsPanel({
   extensions,
   onChange,
@@ -157,7 +141,7 @@ export function ExtensionsPanel({
             definitions={defs}
             existingKeys={Object.keys(extensions.openapi ?? {})}
             onPick={(picked, def) => {
-              if (def) setAttribute(picked, initialValue(def));
+              if (def) setAttribute(picked, initialAttributeValue(def));
               else {
                 setKey(picked);
                 setEditing(null);
