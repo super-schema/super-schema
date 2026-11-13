@@ -187,6 +187,59 @@ describe("moveTagsToItems", () => {
     expect(out.content).toBe(expected);
   });
 
+  it("finds the one array branch of a nullable array (anyOf / oneOf, JSON and YAML)", () => {
+    const file = jsonFile({ properties: { tags: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }], "x-securityClassification": CLASS2 } } });
+    const parsed = JSON.parse(moveTagsToItems(file, { tags: ["x-securityClassification"] }).content);
+    expect(parsed.properties.tags).toEqual({ anyOf: [{ type: "array", items: { type: "string", "x-securityClassification": CLASS2 } }, { type: "null" }] });
+
+    const typeList = jsonFile({ properties: { tags: { type: ["array", "null"], items: { type: "string" }, "x-securityClassification": CLASS2 } } });
+    expect(JSON.parse(moveTagsToItems(typeList, { tags: ["x-securityClassification"] }).content).properties.tags.items["x-securityClassification"]).toEqual(CLASS2);
+
+    const yaml = [
+      "components:",
+      "  schemas:",
+      "    Customer:",
+      "      properties:",
+      "        tags:",
+      "          oneOf:",
+      "            - type: array",
+      "              items:",
+      "                type: string",
+      "            - type: \"null\"",
+      "          x-securityClassification:",
+      "            data_class: class3",
+      "",
+    ].join("\n");
+    expect(moveTagsToItems({ path: "a.yaml", content: yaml }, { tags: ["x-securityClassification"] }).content).toBe(
+      [
+        "components:",
+        "  schemas:",
+        "    Customer:",
+        "      properties:",
+        "        tags:",
+        "          oneOf:",
+        "            - type: array",
+        "              items:",
+        "                type: string",
+        "                x-securityClassification:",
+        "                  data_class: class3",
+        "            - type: \"null\"",
+        "",
+      ].join("\n")
+    );
+    // Two array branches: no way to tell which one is the field's, so nothing moves.
+    const two = jsonFile({ properties: { tags: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "array", items: { type: "integer" } }], "x-securityClassification": CLASS2 } } });
+    expect(moveTagsToItems(two, { tags: ["x-securityClassification"] }).content).toBe(two.content);
+  });
+
+  it("with schema names, looks only at the named $defs entries (a JSON Schema bundle)", () => {
+    const tags = { type: "array", items: { type: "string" }, "x-securityClassification": CLASS2 };
+    const file = jsonFile({ $id: "Order", $defs: { Order: { properties: { tags } }, Other: { properties: { tags } } } });
+    const parsed = JSON.parse(moveTagsToItems(file, { tags: ["x-securityClassification"] }, ["Order"]).content);
+    expect(parsed.$defs.Order.properties.tags.items["x-securityClassification"]).toEqual(CLASS2);
+    expect(parsed.$defs.Other.properties.tags["x-securityClassification"]).toEqual(CLASS2);
+  });
+
   it("returns the identical content string when nothing matched", () => {
     const file = jsonFile({ properties: { tags: { type: "array", items: { type: "string" } } } });
     expect(moveTagsToItems(file, { tags: ["x-securityClassification"] }).content).toBe(file.content);
@@ -217,6 +270,32 @@ describe("addAvroProperties", () => {
     const m = model([field("note", "string", { "x-review-note": "c", "x-free": 1 })]);
     const file = { path: "Customer.avsc", content: avsc };
     expect(addAvroProperties(file, m, [SECURITY, REVIEW]).content).toBe(avsc);
+  });
+});
+
+describe("addAvroProperties: full-name matching", () => {
+  const m = model([field("email", "string", { "x-securityClassification": CLASS2 })]);
+  const nested = JSON.stringify(
+    {
+      type: "record", name: "Order", namespace: "a",
+      fields: [
+        { name: "buyer", type: { type: "record", name: "Customer", namespace: "b", fields: [{ name: "email", type: "string" }] } },
+        { name: "seller", type: { type: "record", name: "Customer", fields: [{ name: "email", type: "string" }] } },
+      ],
+    },
+    null,
+    2
+  );
+  it("tags only the record with the given namespace and name; a namespace is inherited from the enclosing record", () => {
+    const inB = JSON.parse(addAvroProperties({ path: "o.avsc", content: nested }, m, [SECURITY], { namespace: "b", name: "Customer" }).content);
+    expect(inB.fields[0].type.fields[0]["x-securityClassification"]).toEqual(CLASS2);
+    expect(inB.fields[1].type.fields[0]["x-securityClassification"]).toBeUndefined();
+    const inA = JSON.parse(addAvroProperties({ path: "o.avsc", content: nested }, m, [SECURITY], { namespace: "a", name: "Customer" }).content);
+    expect(inA.fields[0].type.fields[0]["x-securityClassification"]).toBeUndefined();
+    expect(inA.fields[1].type.fields[0]["x-securityClassification"]).toEqual(CLASS2);
+  });
+  it("without a full name, only the file's top-level record named after the entity", () => {
+    expect(addAvroProperties({ path: "o.avsc", content: nested }, m, [SECURITY]).content).toBe(nested);
   });
 });
 

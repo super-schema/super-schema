@@ -12,6 +12,7 @@ import { emitOfficialTypeSpecTargetFromData, type OfficialTypeSpecTargetResult }
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import { assembleAsyncApi3 } from "@/lib/event-specs/assemble";
 import type { JsonObject, ResolvedEventSpec } from "@/lib/event-specs/types";
+import { createArtifactRenderer } from "@/services/events/artifact-renderer";
 
 vi.mock("server-only", () => ({}));
 vi.setConfig({ testTimeout: 120_000, hookTimeout: 300_000 });
@@ -146,15 +147,44 @@ describe("metadata attributes at emission (real emitters)", () => {
     expect(baseline["json-schema"].output).toContain("x-review-note");
   });
 
-  it("an event spec built from the JSON Schema artifact carries the block in the message payload", () => {
-    const schema = JSON.parse(fileEnding(withMeta["json-schema"].output, "Customer.json")) as JsonObject;
+  it("event payloads (the artifact renderer, real emitters): the block is there, on items for the array, no internal key; an AsyncAPI document carries it", async () => {
+    const versionDb = {
+      entityVersion: {
+        findUnique: async () => ({
+          id: "v1", entityId: entity.id, major: 1, minor: 0, patch: 0, stage: "RELEASED",
+          // The frozen canonical source, overlay and internal key included.
+          resolvedSource: generateTypeSpec(compileEntity(entity, fields)),
+          fieldSnapshot: fields,
+          entity: { name: "Customer", tenantId: "t1", domainId: null, productId: null, product: null },
+        }),
+      },
+      schemaReference: { findMany: async () => [] },
+      entity: { findUnique: async () => ({ tenant: { slug: "acme" }, domain: { slug: "sales" }, product: null }) },
+    };
+    const renderer = createArtifactRenderer({ db: versionDb as never, loadMetadata: async () => METADATA });
+    const subject = { kind: "version" as const, entityVersionId: "v1", tenantId: "t1" };
+    const [json, avro] = await Promise.all([renderer.render(subject, "json-schema"), renderer.render(subject, "avro")]);
+    if (!json.success) throw new Error(json.error.message);
+    if (!avro.success) throw new Error(avro.error.message);
+
+    const schema = json.data.artifact.schema as JsonObject;
+    const props = schema.properties as Record<string, Record<string, unknown>>;
+    expect(props.email["x-securityClassification"]).toEqual({ data_class: "class2", data_category: "ConsumerPersonal" });
+    expect(props.tags["x-securityClassification"]).toBeUndefined();
+    expect((props.tags.items as Record<string, Record<string, unknown>>)["x-securityClassification"].data_class).toBe("class3");
+    expect(JSON.stringify(schema)).not.toContain("x-review-note");
+
+    const record = avro.data.artifact.schema as { fields: Array<Record<string, unknown>> };
+    expect(record.fields.find((f) => f.name === "email")?.["x-securityClassification"]).toEqual({ data_class: "class2", data_category: "ConsumerPersonal" });
+    expect(JSON.stringify(record)).not.toContain("x-review-note");
+
     const spec: ResolvedEventSpec = {
       productSlug: "sales",
       info: { title: "customers", version: "1.0" },
       servers: [],
       operations: [{ key: "publishCustomer", action: "send", channelRef: "ch", messageRefs: ["m"], traitRefs: [] }],
       channels: [{ id: "ch", name: "customers", productSlug: "sales", address: "customers.v1", protocol: "kafka", profile: { format: "json-schema", dialect: "2020-12" } }],
-      messages: [{ id: "m", name: "CustomerChanged", productSlug: "sales", traitRefs: [], payloads: [{ format: "json-schema", dialect: "2020-12", schema }] }],
+      messages: [{ id: "m", name: "CustomerChanged", productSlug: "sales", traitRefs: [], payloads: [json.data.artifact, avro.data.artifact] }],
       traits: [],
       components: {},
     };

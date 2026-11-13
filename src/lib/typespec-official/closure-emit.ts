@@ -47,6 +47,7 @@ import {
   moveTagsToItems,
   skippedAttributeWarning,
   stripInternalFromClosure,
+  type AvroRecordName,
   type MetadataEmissionContext,
 } from "@/lib/metadata-attributes/emission";
 import {
@@ -132,6 +133,8 @@ interface Plan {
    * the attribution to keep it under, `null` to leave it dropped. Repeated until no file is adopted any more.
    */
   adopt?: (file: { path: string; content: string }, kept: readonly EmittedFile[]) => Attribution;
+  /** Avro (combined plan): entity id -> the full name of its record, which the metadata attribute post-pass matches on. */
+  avroRecords?: ReadonlyMap<string, AvroRecordName>;
   /** JSON Schema: entity id -> the stem of the entity's own file (its model name), when the plan knows it. */
   rootStems?: ReadonlyMap<string, string>;
   /** Checks the finished file list; returns what is wrong with it, if anything. */
@@ -280,7 +283,8 @@ async function emitClosureUnguarded(input: Closure, targetKey: TargetId, run: Em
   }
   const entityFiles = Object.fromEntries(entities.map((e) => [e.entityId, [...(served.get(e.entityId) ?? [])].sort(compareCodeUnits)]));
   if (!run.metadata) return ok({ files: finalFiles, warnings: plan.warnings, entityFiles });
-  const projected = projectMetadataAttributes(key, finalFiles, entities.map((e, i) => ({ entityId: e.entityId, model: models[i] })), run.metadata);
+  const members = entities.map((e, i) => ({ entityId: e.entityId, model: models[i], avroRecord: plan.avroRecords?.get(e.entityId) }));
+  const projected = projectMetadataAttributes(key, finalFiles, members, run.metadata);
   return ok({ files: projected.files, warnings: [...plan.warnings, ...projected.warnings], entityFiles });
 }
 
@@ -291,7 +295,7 @@ async function emitClosureUnguarded(input: Closure, targetKey: TargetId, run: Em
 function projectMetadataAttributes(
   key: string,
   files: EmittedFile[],
-  members: Array<{ entityId: string; model: SuperSchemaModel }>,
+  members: Array<{ entityId: string; model: SuperSchemaModel; avroRecord?: AvroRecordName }>,
   metadata: MetadataEmissionContext
 ): { files: EmittedFile[]; warnings: string[] } {
   const defs = metadata.definitions;
@@ -306,7 +310,7 @@ function projectMetadataAttributes(
       return { files: files.map((f) => perModel.reduce((file, m) => moveTagsToItems(file, m.tags, m.names), f)), warnings: [] };
     }
     case "avro":
-      return { files: files.map((f) => members.reduce((file, m) => addAvroProperties(file, m.model, defs), f)), warnings: [] };
+      return { files: files.map((f) => members.reduce((file, m) => addAvroProperties(file, m.model, defs, m.avroRecord), f)), warnings: [] };
     default: {
       const skipped = attributeKeysIn(members.map((m) => m.model), defs);
       return { files, warnings: skipped.length > 0 ? [skippedAttributeWarning(key, skipped)] : [] };
@@ -446,7 +450,8 @@ function combinedPlan(closure: Closure, models: SuperSchemaModel[], key: string)
       warnings.push(...described.warnings);
       errors.push(...described.errors);
       errors.push(...emittedNameCollisions(places, "Avro", avroEmitted));
-      return { ...base, source: projection.source, attribute: emittedAttribution(places, avroEmitted, avroNamespaceOf) };
+      const avroRecords = new Map(places.map((p): [string, AvroRecordName] => [p.entityId, { namespace: avroEmitted(p).directory, name: avroEmitted(p).record }]));
+      return { ...base, source: projection.source, attribute: emittedAttribution(places, avroEmitted, avroNamespaceOf), avroRecords };
     }
     default:
       errors.push(...emittedNameCollisions(places, "Java POJO", javaEmitted));

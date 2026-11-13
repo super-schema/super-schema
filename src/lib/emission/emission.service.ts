@@ -80,7 +80,7 @@ export async function emitTargetsForEntity(
   run: Pick<EmitterRunOptions, "signal"> = {}
 ): Promise<EntityTargetsEmission> {
   // The tenant's metadata attribute dictionary, once for every target of this call (undefined = none: today's output).
-  const metadata = await loadMetadataEmission(entity.tenantId, db);
+  const metadata = targets.length > 0 ? await loadMetadataEmission(entity.tenantId, db) : undefined;
   const targetRun: EmitterRunOptions = metadata ? { ...run, metadata } : run;
   let closure: ReferenceClosure | undefined;
   let refusal: ServiceError | undefined;

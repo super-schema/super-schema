@@ -12,7 +12,7 @@
  * Every function is pure, never mutates its input, and returns its input unchanged (same reference / same string) when nothing applies.
  */
 
-import { parseDocument, isMap, isScalar, type Document, type YAMLMap, type Pair } from "yaml";
+import { parseDocument, isMap, isScalar, isSeq, type Document, type YAMLMap, type Pair } from "yaml";
 import { abcPlacement } from "@/lib/metadata-attributes/placement";
 import { readEntityAttributes, readFieldAttributes, writeEntityAttribute, writeFieldAttribute } from "@/lib/metadata-attributes/values";
 import { toAvroSymbol } from "@/lib/typespec-official/avro-source";
@@ -134,13 +134,31 @@ function reformatJson(content: string, value: unknown): string {
   return JSON.stringify(value, null, jsonIndent(content)) + (content.endsWith("\n") ? "\n" : "");
 }
 
-/** Moves `keys` of a JSON array schema onto its innermost non-array items (a `$ref` items is wrapped in `allOf`). Mutates `schema` (a clone). */
+const isArrayType = (type: unknown): boolean => type === "array" || (Array.isArray(type) && type.includes("array"));
+
+/**
+ * The array schema a property stands for: the property itself, or (a nullable array, `T[] | null`) the ONE branch of its `anyOf` / `oneOf`
+ * that is an array with object `items`. Undefined when there is none, or more than one.
+ */
+function arraySchemaOf(schema: Obj): Obj | undefined {
+  if (isArrayType(schema.type) && isObj(schema.items)) return schema;
+  for (const combinator of ["anyOf", "oneOf"]) {
+    const branches = schema[combinator];
+    if (!Array.isArray(branches)) continue;
+    const arrays = branches.filter((b): b is Obj => isObj(b) && isArrayType(b.type) && isObj(b.items));
+    if (arrays.length === 1) return arrays[0];
+  }
+  return undefined;
+}
+
+/** Moves `keys` of a JSON property onto the innermost non-array items of its array schema (a `$ref` items is wrapped in `allOf`). Mutates `schema` (a clone). */
 function moveJson(schema: Obj, keys: readonly string[]): boolean {
-  if (schema.type !== "array" || !isObj(schema.items)) return false;
+  const array = arraySchemaOf(schema);
+  if (!array) return false;
   const present = keys.filter((k) => k in schema);
   if (present.length === 0) return false;
-  let parent: Obj = schema;
-  while (isObj(parent.items) && parent.items.type === "array" && isObj(parent.items.items)) parent = parent.items;
+  let parent: Obj = array;
+  while (isObj(parent.items) && isArrayType(parent.items.type) && isObj(parent.items.items)) parent = parent.items;
   let items = parent.items as Obj;
   if (typeof items.$ref === "string") {
     const { $ref, ...rest } = items;
@@ -156,6 +174,23 @@ function moveJson(schema: Obj, keys: readonly string[]): boolean {
   return true;
 }
 
+/**
+ * The schemas of a JSON document whose `properties` are looked at. Without `schemaNames`: the root and every `components.schemas` entry.
+ * With them: the named `$defs` / `components.schemas` entries, and the root when its `$id` names one of them.
+ */
+function jsonContainers(doc: Obj, schemaNames?: readonly string[]): Obj[] {
+  const out: Obj[] = [];
+  const rootId = typeof doc.$id === "string" ? doc.$id : undefined;
+  if (!schemaNames || (rootId !== undefined && schemaNames.some((n) => rootId === n || rootId === `${n}.json`))) out.push(doc);
+  const named = (map: unknown, all: boolean) => {
+    if (!isObj(map)) return;
+    for (const [name, s] of Object.entries(map)) if (isObj(s) && (schemaNames ? schemaNames.includes(name) : all)) out.push(s);
+  };
+  named(doc.$defs, false);
+  named(isObj(doc.components) ? doc.components.schemas : undefined, true);
+  return out;
+}
+
 function moveInJson(file: { path: string; content: string }, itemsTags: Record<string, string[]>, schemaNames?: readonly string[]): string {
   let parsed: unknown;
   try {
@@ -165,12 +200,8 @@ function moveInJson(file: { path: string; content: string }, itemsTags: Record<s
   }
   if (!isObj(parsed)) return file.content;
   const doc = structuredClone(parsed);
-  const containers: Obj[] = [];
-  if (isObj(doc.properties)) containers.push(doc);
-  const schemas = isObj(doc.components) && isObj(doc.components.schemas) ? doc.components.schemas : undefined;
-  if (schemas) for (const [name, s] of Object.entries(schemas)) if (isObj(s) && (!schemaNames || schemaNames.includes(name))) containers.push(s);
   let changed = false;
-  for (const container of containers) {
+  for (const container of jsonContainers(doc, schemaNames)) {
     const props = container.properties;
     if (!isObj(props)) continue;
     for (const [fieldName, keys] of Object.entries(itemsTags)) {
@@ -187,15 +218,32 @@ const yamlMapAt = (node: unknown, key: string): YAMLMap | undefined => {
   return isMap(v) ? (v as YAMLMap) : undefined;
 };
 
+function yamlIsArray(map: YAMLMap): boolean {
+  const type: unknown = map.get("type", true);
+  if (isScalar(type)) return type.value === "array";
+  return isSeq(type) && type.items.some((t) => isScalar(t) && t.value === "array");
+}
+
+/** The YAML twin of {@link arraySchemaOf}. */
+function yamlArraySchemaOf(prop: YAMLMap): YAMLMap | undefined {
+  if (yamlIsArray(prop) && yamlMapAt(prop, "items")) return prop;
+  for (const combinator of ["anyOf", "oneOf"]) {
+    const branches = prop.get(combinator, true);
+    if (!isSeq(branches)) continue;
+    const arrays = branches.items.filter((b): b is YAMLMap => isMap(b) && yamlIsArray(b as YAMLMap) && !!yamlMapAt(b, "items"));
+    if (arrays.length === 1) return arrays[0];
+  }
+  return undefined;
+}
+
 function moveYaml(doc: Document, prop: YAMLMap, keys: readonly string[]): boolean {
-  const typeNode = prop.get("type", true);
-  if (!isScalar(typeNode) || typeNode.value !== "array") return false;
-  let parent = prop;
-  let items = yamlMapAt(parent, "items");
-  if (!items) return false;
+  const array = yamlArraySchemaOf(prop);
+  if (!array) return false;
   const present = keys.filter((k) => prop.has(k));
   if (present.length === 0) return false;
-  for (let inner = yamlMapAt(items, "items"); inner && (items.get("type", true) as { value?: unknown } | undefined)?.value === "array"; inner = yamlMapAt(items, "items")) {
+  let parent = array;
+  let items = yamlMapAt(parent, "items") as YAMLMap;
+  for (let inner = yamlMapAt(items, "items"); inner && yamlIsArray(items); inner = yamlMapAt(items, "items")) {
     parent = items;
     items = inner;
   }
@@ -237,9 +285,10 @@ function moveInYaml(file: { path: string; content: string }, itemsTags: Record<s
 }
 
 /**
- * Moves each listed key from the `properties.<field>` array schema to its innermost non-array `items` (a `$ref` items becomes
- * `{allOf: [{$ref}], key}`), in a JSON Schema file (root `properties`) or an OpenAPI document (`components.schemas.*`, JSON or YAML;
- * YAML keeps its formatting). `schemaNames` limits which component schemas are touched. The same content string when nothing matched.
+ * Moves each listed key from the `properties.<field>` array schema (or the one array branch of a nullable `anyOf` / `oneOf`) to its innermost
+ * non-array `items` (a `$ref` items becomes `{allOf: [{$ref}], key}`), in a JSON Schema file or an OpenAPI document (JSON or YAML; YAML keeps
+ * its formatting). Without `schemaNames`: the root schema and every `components.schemas` entry; with them, only the named `$defs` /
+ * `components.schemas` entries (and a root whose `$id` names one). The same content string when nothing matched.
  */
 export function moveTagsToItems<F extends { path: string; content: string }>(file: F, itemsTags: Record<string, string[]>, schemaNames?: readonly string[]): F {
   if (Object.keys(itemsTags).length === 0) return file;
@@ -256,11 +305,36 @@ const pick = (attributes: Obj, keys: readonly string[]): [string, unknown][] => 
 
 const avroName = (name: string): string => toAvroSymbol(name);
 
+/** An Avro full name: `namespace.name`, or `name` alone in the null namespace. */
+export interface AvroRecordName {
+  namespace?: string;
+  name: string;
+}
+
+const fullName = (r: AvroRecordName): string => (r.namespace ? `${r.namespace}.${r.name}` : r.name);
+
+const NAMED_AVRO_TYPES = new Set(["record", "error", "enum", "fixed"]);
+
+/** The full name of a named Avro schema and the namespace it passes on (Avro spec: a dotted name, else its own `namespace`, else the enclosing one). */
+function avroFullName(node: Obj, enclosing: string | undefined): { full: string; namespace: string | undefined } | undefined {
+  if (typeof node.name !== "string") return undefined;
+  if (node.name.includes(".")) return { full: node.name, namespace: node.name.slice(0, node.name.lastIndexOf(".")) };
+  const ns = typeof node.namespace === "string" ? node.namespace || undefined : enclosing;
+  return { full: ns ? `${ns}.${node.name}` : node.name, namespace: ns };
+}
+
 /**
  * Adds the `schema`-scope attribute values of `model` as custom properties on the `.avsc` objects they belong to: the entity's on its
- * record, a field's on the field object of that record. Only keys the dictionary defines; the same content string when nothing matched.
+ * record, a field's on the field object of that record. The record is matched by its full name (namespace and name): `record` when given,
+ * else the full name of the file's top-level record when that record is named after the entity. Only keys the dictionary defines; the same
+ * content string when nothing matched.
  */
-export function addAvroProperties<F extends { path: string; content: string }>(file: F, model: SuperSchemaModel, defs: readonly MetadataAttributeDefinition[]): F {
+export function addAvroProperties<F extends { path: string; content: string }>(
+  file: F,
+  model: SuperSchemaModel,
+  defs: readonly MetadataAttributeDefinition[],
+  record?: AvroRecordName
+): F {
   if (!file.path.endsWith(".avsc") && !file.path.endsWith(".json")) return file;
   const schemaKeys = defs.filter((d) => d.scope === "schema").map((d) => d.key);
   if (schemaKeys.length === 0) return file;
@@ -280,14 +354,21 @@ export function addAvroProperties<F extends { path: string; content: string }>(f
   } catch {
     return file;
   }
-  const recordNames = new Set([model.entity.name, avroName(model.entity.name)]);
+  let target = record ? fullName(record) : undefined;
+  if (target === undefined && isObj(parsed) && parsed.type === "record" && typeof parsed.name === "string") {
+    const short = parsed.name.split(".").pop() as string;
+    if (short === model.entity.name || short === avroName(model.entity.name)) target = avroFullName(parsed, undefined)?.full;
+  }
+  if (target === undefined) return file;
   let changed = false;
-  const visit = (node: unknown): unknown => {
-    if (Array.isArray(node)) return node.map(visit);
+  const visit = (node: unknown, enclosing: string | undefined): unknown => {
+    if (Array.isArray(node)) return node.map((child) => visit(child, enclosing));
     if (!isObj(node)) return node;
+    const named = typeof node.type === "string" && NAMED_AVRO_TYPES.has(node.type) ? avroFullName(node, enclosing) : undefined;
+    const inner = named ? named.namespace : enclosing;
     const out: Obj = {};
-    for (const [k, v] of Object.entries(node)) out[k] = visit(v);
-    if (out.type === "record" && typeof out.name === "string" && recordNames.has(out.name)) {
+    for (const [k, v] of Object.entries(node)) out[k] = visit(v, inner);
+    if (out.type === "record" && named?.full === target) {
       for (const [k, v] of entityValues) if (!(k in out)) {
         out[k] = v;
         changed = true;
@@ -308,7 +389,7 @@ export function addAvroProperties<F extends { path: string; content: string }>(f
     }
     return out;
   };
-  const result = visit(parsed);
+  const result = visit(parsed, undefined);
   if (!changed) return file;
   return { ...file, content: reformatJson(file.content, result) };
 }
