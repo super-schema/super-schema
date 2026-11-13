@@ -230,13 +230,20 @@ export async function renderCanonicalArtifact(
     (t) => t.key === target && t.enabledInSchemaTab,
   );
   if (!definition) throw new GitOpsError(`Target ${target} is not enabled`);
+  // `internal` metadata attributes stay in the canonical GitOps source but not in the emitted artifacts.
+  const { loadMetadataEmission } = await import(
+    "@/services/metadata-emission.service"
+  );
+  const metadata = await loadMetadataEmission(root.scope.tenantId);
+  const run = metadata ? { metadata } : {};
   const closure = frozenClosure(root, all),
     result = definition.closureEmission
-      ? await emitClosureTarget(closure, definition.key)
+      ? await emitClosureTarget(closure, definition.key, run)
       : await emitOfficialTypeSpecTargetFromData(
           closure.root.entity,
           closure.root.fields,
           definition.key,
+          run,
         );
   if (result.validationStatus === "INVALID" || result.busy)
     throw new GitOpsError(

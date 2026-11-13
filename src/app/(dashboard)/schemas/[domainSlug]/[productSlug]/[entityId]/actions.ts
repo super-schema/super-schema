@@ -1742,7 +1742,8 @@ async function generateSchema(entityId: string, target: string, opts: { mode?: R
         // In published mode the ROOT too is read from its latest PUBLISHED version, not from its saved rows: unpublished edits to the
         // entity itself are not in the result (publish the entity first to include them), exactly like its referenced entities.
         const { closureFailure, describeResolution, emitClosureTarget } = await import("@/lib/emission/closure-generation");
-        const loaded = await loadReferenceClosure(prisma, await getActiveTenantId(), entityId, mode, { reader: entityReader(access.principal.assignments) });
+        const tenantId = await getActiveTenantId();
+        const loaded = await loadReferenceClosure(prisma, tenantId, entityId, mode, { reader: entityReader(access.principal.assignments) });
         if (!loaded.success) {
           // A name frozen in a published or pinned member is not a question (a pick cannot change a published version): it is the refusal.
           if (loaded.error.code === "AMBIGUOUS_REFERENCE" && !loaded.error.frozen) {
@@ -1755,7 +1756,9 @@ async function generateSchema(entityId: string, target: string, opts: { mode?: R
         const share = admitCompilerRuns(access.principal.userId, 1);
         if (!share) return { error: SHARE_IN_USE_MESSAGE, code: "RATE_LIMITED" as const };
         try {
-          officialResult = await emitClosureTarget(loaded.data, targetDefinition.key);
+          const { loadMetadataEmission } = await import("@/services/metadata-emission.service");
+          const metadata = await loadMetadataEmission(tenantId);
+          officialResult = await emitClosureTarget(loaded.data, targetDefinition.key, metadata ? { metadata } : {});
         } finally {
           share();
         }

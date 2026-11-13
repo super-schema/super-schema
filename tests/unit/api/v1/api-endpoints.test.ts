@@ -12,6 +12,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 // Mock auth module
+// The tenant has no metadata attribute dictionary (emission unchanged); the stubbed client has no table for it.
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
 vi.mock("@/lib/auth", () => ({
   auth: vi.fn(),
 }));

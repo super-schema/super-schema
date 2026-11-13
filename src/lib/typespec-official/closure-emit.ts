@@ -39,6 +39,16 @@ import { describeNameCollision, findNameCollisions } from "./name-collisions";
 import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "./avro-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
 import { withUnionFieldsAsString } from "@/lib/compiler/union-fields";
+import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
+import {
+  addAvroProperties,
+  attributeKeysIn,
+  itemsTagsFor,
+  moveTagsToItems,
+  skippedAttributeWarning,
+  stripInternalFromClosure,
+  type MetadataEmissionContext,
+} from "@/lib/metadata-attributes/emission";
 import {
   buildEmitterOptions,
   buildSourceForTarget,
@@ -159,7 +169,7 @@ export async function emitClosure(closure: Closure, targetKey: TargetId, run: Em
   }
 }
 
-async function emitClosureUnguarded(closure: Closure, targetKey: TargetId, run: EmitterRunOptions): Promise<Result<ClosureEmission, ServiceError>> {
+async function emitClosureUnguarded(input: Closure, targetKey: TargetId, run: EmitterRunOptions): Promise<Result<ClosureEmission, ServiceError>> {
   const resolved = resolveEmittableTarget(targetKey);
   if ("error" in resolved) return err({ code: "UNSUPPORTED_TARGET", message: resolved.error });
   const target = resolved.target;
@@ -169,6 +179,8 @@ async function emitClosureUnguarded(closure: Closure, targetKey: TargetId, run: 
       message: `Closure emission does not apply to "${target.displayName}": a reference stays a plain column there, so emit the entity on its own.`,
     });
   }
+  // `internal` metadata attributes never reach a target output: strip them from the input both plans compile from.
+  const closure = run.metadata ? stripInternalFromClosure(input, run.metadata.definitions) : input;
   const entities = closure.entities;
   if (entities.length === 0) return err({ code: "EMPTY_CLOSURE", message: "The closure has no entity to emit." });
   if (entities.length > DEFAULT_MAX_CLOSURE_ENTITIES) {
@@ -267,7 +279,39 @@ async function emitClosureUnguarded(closure: Closure, targetKey: TargetId, run: 
     for (const f of finalFiles) if (f.entityId !== undefined) served.get(f.entityId)?.add(f.path);
   }
   const entityFiles = Object.fromEntries(entities.map((e) => [e.entityId, [...(served.get(e.entityId) ?? [])].sort(compareCodeUnits)]));
-  return ok({ files: finalFiles, warnings: plan.warnings, entityFiles });
+  if (!run.metadata) return ok({ files: finalFiles, warnings: plan.warnings, entityFiles });
+  const projected = projectMetadataAttributes(key, finalFiles, entities.map((e, i) => ({ entityId: e.entityId, model: models[i] })), run.metadata);
+  return ok({ files: projected.files, warnings: [...plan.warnings, ...projected.warnings], entityFiles });
+}
+
+/**
+ * The metadata attribute post-passes on the emitted files (paths never change): JSON Schema / OpenAPI move the `abc-primitive` keys of
+ * primitive arrays onto `items`, Avro gets the `schema`-scope values as properties, Protobuf and Java POJO warn that they skip them.
+ */
+function projectMetadataAttributes(
+  key: string,
+  files: EmittedFile[],
+  members: Array<{ entityId: string; model: SuperSchemaModel }>,
+  metadata: MetadataEmissionContext
+): { files: EmittedFile[]; warnings: string[] } {
+  const defs = metadata.definitions;
+  switch (key) {
+    case "json-schema": {
+      const tagsOf = new Map(members.map((m) => [m.entityId, itemsTagsFor(m.model, defs)]));
+      return { files: files.map((f) => (f.entityId === undefined ? f : moveTagsToItems(f, tagsOf.get(f.entityId) ?? {}))), warnings: [] };
+    }
+    case "openapi3": {
+      // Every document inlines the schemas it refers to: each entity's keys apply to that entity's schema (by its declared name).
+      const perModel = members.map((m) => ({ tags: itemsTagsFor(m.model, defs), names: [m.model.entity.name, sanitizeIdentifier(m.model.entity.name)] }));
+      return { files: files.map((f) => perModel.reduce((file, m) => moveTagsToItems(file, m.tags, m.names), f)), warnings: [] };
+    }
+    case "avro":
+      return { files: files.map((f) => members.reduce((file, m) => addAvroProperties(file, m.model, defs), f)), warnings: [] };
+    default: {
+      const skipped = attributeKeysIn(members.map((m) => m.model), defs);
+      return { files, warnings: skipped.length > 0 ? [skippedAttributeWarning(key, skipped)] : [] };
+    }
+  }
 }
 
 /** Checks every target makes of what the emitter wrote (the safety nets behind the source projections). */

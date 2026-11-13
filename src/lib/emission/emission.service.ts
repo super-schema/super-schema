@@ -17,6 +17,7 @@ import { baseNameOf, loadInheritedFields, loadReferenceClosure, withInheritedFie
 import type { ServiceError } from "@/types/result";
 import type { SchemaVersionResolution } from "@/types/schema-version";
 import { closureFailure, describeResolution, emitClosureTarget, type ClosureTargetResult } from "./closure-generation";
+import { loadMetadataEmission } from "@/services/metadata-emission.service";
 
 // Re-export the pure function for convenience
 export { emitFromData } from "./emit-from-data";
@@ -78,6 +79,9 @@ export async function emitTargetsForEntity(
   reader: ClosureReader,
   run: Pick<EmitterRunOptions, "signal"> = {}
 ): Promise<EntityTargetsEmission> {
+  // The tenant's metadata attribute dictionary, once for every target of this call (undefined = none: today's output).
+  const metadata = await loadMetadataEmission(entity.tenantId, db);
+  const targetRun: EmitterRunOptions = metadata ? { ...run, metadata } : run;
   let closure: ReferenceClosure | undefined;
   let refusal: ServiceError | undefined;
   if (targets.some((target) => target.closureEmission)) {
@@ -101,13 +105,13 @@ export async function emitTargetsForEntity(
         if (dbRefusal) return { target, result: { output: "", validationStatus: "INVALID", warnings: [], errors: [{ message: dbRefusal.message }] } };
         // The stored schema versions are never emission input (and can be large): the DB target gets the entity without them.
         const standalone = { ...entity, metadata: withoutSchemaVersions(entity.metadata) };
-        return { target, result: await emitOfficialTypeSpecTargetFromData(standalone, dbFields, target.key, run) };
+        return { target, result: await emitOfficialTypeSpecTargetFromData(standalone, dbFields, target.key, targetRun) };
       }
       if (!closure) {
         const message = refusal?.message ?? "The reference closure could not be built.";
         return { target, result: { output: "", validationStatus: "INVALID", warnings: [], errors: [{ message }] } };
       }
-      return { target, result: await emitClosureTarget(closure, target.key, run) };
+      return { target, result: await emitClosureTarget(closure, target.key, targetRun) };
     })
   );
   const busy = results.some(({ result }) => result.busy === true);

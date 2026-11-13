@@ -51,6 +51,8 @@ const h = vi.hoisted(() => ({
 }));
 
 const webhookReceiver = vi.hoisted(() => ({ postWebhook: vi.fn() }));
+// The tenant has no metadata attribute dictionary (emission unchanged); the stubbed client has no table for it.
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
 vi.mock("@/lib/webhook-transport", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/webhook-transport")>()),
   postWebhook: webhookReceiver.postWebhook,

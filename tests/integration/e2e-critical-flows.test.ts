@@ -65,6 +65,8 @@ const { mockPrisma } = await vi.hoisted(async () => {
   };
 });
 
+// The tenant has no metadata attribute dictionary (emission unchanged); the stubbed client has no table for it.
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 
 // ---------------------------------------------------------------------------

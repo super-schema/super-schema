@@ -10,6 +10,7 @@ import { describe, it, expect, vi } from "vitest";
 
 const entityRow = { id: "e1", tenantId: "t1", name: "Ticket", description: "", status: "DRAFT", version: 1, domainId: "d1", metadata: {}, domain: { id: "d1", name: "Sales" } };
 
+vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
 vi.mock("@/lib/db", () => ({
   prisma: {
     entity: {
