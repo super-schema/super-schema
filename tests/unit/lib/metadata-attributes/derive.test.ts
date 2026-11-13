@@ -87,4 +87,15 @@ describe("recomputeFieldAttributes", () => {
     const settled = withValue({ data_class: "class2" });
     expect(recomputeFieldAttributes({ name: "x", type: "string", classification: "PII", decorators: settled }, [def], none)).toBe(settled);
   });
+
+  it("creates the value on a primitive array (the attribute applies to its items) (C5)", () => {
+    const out = recomputeFieldAttributes({ name: "tags", type: "array", classification: "PII", decorators: { arrayElementType: "string" } }, [def], none);
+    expect(attr(out)).toEqual({ data_class: "class2" });
+  });
+
+  it("does not create one on an array of references or of structured objects (C5)", () => {
+    const refs = { arrayElementType: "reference" };
+    expect(attr(recomputeFieldAttributes({ name: "r", type: "array", classification: "PII", decorators: refs }, [def], none))).toBeUndefined();
+  });
 });
+

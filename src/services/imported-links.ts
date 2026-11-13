@@ -235,7 +235,8 @@ export async function relinkDanglingFields(tx: Prisma.TransactionClient, args: {
   const place = await placeOf(tx, args.productId);
   if (!place?.domainId) return 0;
   const sameName = (await domainEntities(tx, place.domainId)).filter((e) => namesAsset(e, args.entity.name) || (args.entity.sourceRef !== undefined && namesAsset(e, args.entity.sourceRef)));
-  const derivation = await loadDerivationContext(args.actor.tenantId, tx);
+  // Every candidate is a field of this domain: derived with its policy (C6).
+  const derivation = await loadDerivationContext(args.actor.tenantId, tx, { domainId: place.domainId });
   let linked = 0;
   for (const row of named) {
     const ownProduct = row.entity?.productId;

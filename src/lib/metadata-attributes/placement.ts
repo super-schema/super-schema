@@ -48,6 +48,14 @@ export function isPrimitiveField(field: PlacementField): boolean {
 }
 
 /**
+ * Whether a `requiredWhen: "primitive"` attribute applies to the field: a value field, or an array whose elements are primitive (the value
+ * then sits on `items`). The ONE predicate derive, the completeness alerts and the domain-policy defaults share.
+ */
+export function attributeApplies(field: PlacementField): boolean {
+  return isPrimitiveField(field) || abcPlacement(field) === "items";
+}
+
+/**
  * resolved entity reference -> none; dangling reference -> field; array of primitives -> items; array of references -> none;
  * anything else -> field.
  */

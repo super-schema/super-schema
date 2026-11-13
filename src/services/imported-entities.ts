@@ -136,7 +136,8 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
   const { entities, originals } = await renameUnsafeEntities(tx, args);
   // The importer writes field rows itself, so attribute members (e.g. `data_class`) are derived here against each field's final
   // classification. Null (nothing to do) when the tenant has no definitions.
-  const derivation = await loadDerivationContext(productScope.tenantId, tx);
+  // Resolved for the product's domain: its policy's `requiredWhen` overrides apply (C6).
+  const derivation = await loadDerivationContext(productScope.tenantId, tx, productScope.domainId ? { domainId: productScope.domainId } : undefined);
   for (const entity of entities) {
     const name = entity.name.trim();
     if (!(await args.isNameFree(name))) continue;

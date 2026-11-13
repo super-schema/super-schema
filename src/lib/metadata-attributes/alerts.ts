@@ -4,14 +4,13 @@
 
 import type { AlertEntityInput, AlertFieldInput, EntityAlert } from "@/lib/validation/entity-alerts";
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
-import { abcPlacement, isPrimitiveField } from "./placement";
+import { attributeApplies } from "./placement";
 import { readEntityAttributes, readFieldAttributes } from "./values";
 import { validateValue } from "./value-schema";
 
 /** A value field, or an array whose elements are primitive. An entity reference is never subject to `requiredWhen: "primitive"`. */
 function isPrimitiveLike(field: AlertFieldInput): boolean {
-  const shape = { type: field.type ?? "string", decorators: field.decorators };
-  return isPrimitiveField(shape) || abcPlacement(shape) === "items";
+  return attributeApplies({ type: field.type ?? "string", decorators: field.decorators });
 }
 
 function show(value: unknown): string {

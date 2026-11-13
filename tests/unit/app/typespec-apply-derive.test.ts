@@ -27,6 +27,7 @@ vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedV
 import { compileAndApplyTypeSpecSourceAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 import { compileEntity, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { CLEAR_SOURCE_STALE_SQL, MARK_DRAFT_CHANGED_SQL } from "@/lib/entity-versioning/draft-state";
 
 const DEF = {
   key: "x-abc",
@@ -83,5 +84,25 @@ describe("compileAndApplyTypeSpecSourceAction derives attribute members", () => 
     expect(res.applied).toMatchObject({ added: 0, updated: 0 });
     expect(mockPrisma.field.update).not.toHaveBeenCalled();
     expect(mockPrisma.field.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("compileAndApplyTypeSpecSourceAction keeps the source stale when derivation changed a row (C2)", () => {
+  const sqlRun = () => mockPrisma.$executeRawUnsafe.mock.calls.map(([sql]) => sql as string);
+
+  it("a source whose derived literal disagrees with the row it produces stays stale (not cleared, set)", async () => {
+    // The text says class5 for a PII field: derivation stores class2, so the saved text no longer matches the rows.
+    const res = await compileAndApplyTypeSpecSourceAction("ent-1", sourceOf([fld("id", null, 0, { typespec: { extensions: { openapi: { "x-abc": { data_class: "class3" } } } } }), fld("email", "PII", 1, { typespec: { extensions: { openapi: { "x-abc": { data_class: "class5" } } } } })]));
+    expect(res.error).toBeUndefined();
+    const created = Object.fromEntries(mockPrisma.field.create.mock.calls.map(([arg]) => [arg.data.name, arg.data]));
+    expect(created.email.decorators.typespec.extensions.openapi["x-abc"]).toEqual({ data_class: "class2" });
+    expect(sqlRun()).not.toContain(CLEAR_SOURCE_STALE_SQL);
+    expect(sqlRun()).toContain(MARK_DRAFT_CHANGED_SQL);
+  });
+
+  it("a source the derivation agrees with clears the stale mark as before", async () => {
+    const res = await compileAndApplyTypeSpecSourceAction("ent-1", sourceOf([fld("id", null, 0, { typespec: { extensions: { openapi: { "x-abc": { data_class: "class3" } } } } }), fld("email", "PII", 1, { typespec: { extensions: { openapi: { "x-abc": { data_class: "class2" } } } } })]));
+    expect(res.error).toBeUndefined();
+    expect(sqlRun()).toContain(CLEAR_SOURCE_STALE_SQL);
   });
 });

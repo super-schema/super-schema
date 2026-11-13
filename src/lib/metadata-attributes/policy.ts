@@ -5,6 +5,7 @@
 
 import type { PolicyTemplate } from "@/types/schemas/domain-policy";
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
+import { abcPlacement, attributeApplies, type PlacementField } from "./placement";
 import { readFieldAttributes, writeFieldAttribute } from "./values";
 import { validateValue } from "./value-schema";
 
@@ -40,16 +41,23 @@ export function resolveDefinitionsForDomain(
   });
 }
 
-/** The field decorators with the domain's valid defaults filled in for attributes that have no stored value; present values are never overwritten. */
+/**
+ * The field decorators with the domain's valid defaults filled in for attributes that have no stored value; present values are never
+ * overwritten. Given the field's shape, a default is not filled where the attribute does not apply (`attributeApplies` for a
+ * `requiredWhen: "primitive"` one; no place at all for an `abc-primitive` one).
+ */
 export function applyPolicyDefaults(
   decorators: Record<string, unknown> | undefined,
   resolvedDefs: MetadataAttributeDefinition[],
   policy: PolicyTemplate | null | undefined,
+  field?: PlacementField,
 ): Record<string, unknown> {
   const map = overrides(policy);
   let current: Record<string, unknown> = decorators ?? {};
   for (const d of resolvedDefs) {
     if (!d.targets.includes("field") || !Object.prototype.hasOwnProperty.call(map, d.key)) continue;
+    if (field && d.requiredWhen === "primitive" && !attributeApplies(field)) continue;
+    if (field && d.placement === "abc-primitive" && abcPlacement(field) === "none") continue;
     const value = map[d.key]?.default;
     if (!validDefault(d, value)) continue;
     if (Object.prototype.hasOwnProperty.call(readFieldAttributes(current), d.key)) continue;

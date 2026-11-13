@@ -80,6 +80,17 @@ vi.mock("@/lib/db", () => ({
         return 0;
       }),
     },
+    // An interactive transaction: the client itself as `tx`, with a rollback of the level rows when the callback throws.
+    $transaction: vi.fn(async function (this: unknown, fn: (tx: unknown) => Promise<unknown>) {
+      const snapshot = classificationStore.map((c) => ({ ...c }));
+      const { prisma } = await import("@/lib/db");
+      try {
+        return await fn({ ...prisma, isTx: true });
+      } catch (e) {
+        classificationStore = snapshot;
+        throw e;
+      }
+    }),
   },
 }));
 
@@ -304,10 +315,11 @@ describe("Classification Taxonomy Service", () => {
       const r = await updateClassification({ id: level.id, classNumber: 2 }, adminCtx);
       expect(r.success).toBe(true);
       expect(rederiveMock).toHaveBeenCalledTimes(1);
-      expect(rederiveMock).toHaveBeenCalledWith("FINANCIAL");
+      // In the transaction that changed the class (C4).
+      expect(rederiveMock).toHaveBeenCalledWith("FINANCIAL", expect.objectContaining({ isTx: true }));
     });
 
-    it("returns an err Result (and logs) when the re-derivation throws after the class change was stored", async () => {
+    it("rolls the class change back when the re-derivation fails, so saving again repairs it (C4)", async () => {
       const level = await mkCustom(3);
       rederiveMock.mockRejectedValueOnce(new Error("db down"));
       const spy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -315,6 +327,11 @@ describe("Classification Taxonomy Service", () => {
       expect(r).toMatchObject({ success: false, error: { code: "REDERIVE_FAILED" } });
       expect(spy).toHaveBeenCalled();
       spy.mockRestore();
+      // Nothing was stored: the level keeps its class, and the retry re-derives.
+      expect((await _getClassificationStore()).find((c) => c.id === level.id)?.classNumber).toBe(3);
+      const retry = await updateClassification({ id: level.id, classNumber: 2 }, adminCtx);
+      expect(retry.success).toBe(true);
+      expect(rederiveMock).toHaveBeenCalledTimes(2);
     });
 
     it("does not call it when the class number is unchanged or absent from the patch", async () => {

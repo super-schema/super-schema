@@ -95,4 +95,10 @@ describe("dictionaryUsage on PGlite", () => {
     const r = await dictionaryUsage(other.id, e.data.id);
     expect(!r.success && r.error.code).toBe("NOT_FOUND");
   });
+
+  it("indexes fields.dictionaryEntryId, which usage and drift look fields up by (C7)", async () => {
+    const rows = await db().$queryRaw<Array<{ indexdef: string }>>`SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'fields_dictionaryEntryId_idx'`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].indexdef).toContain('("dictionaryEntryId")');
+  });
 });

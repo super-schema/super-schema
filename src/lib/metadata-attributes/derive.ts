@@ -4,7 +4,7 @@
  */
 
 import { classNumberOf } from "@/lib/classification-scale";
-import { abcPlacement, isPrimitiveField, type PlacementField } from "@/lib/metadata-attributes/placement";
+import { abcPlacement, attributeApplies, type PlacementField } from "@/lib/metadata-attributes/placement";
 import { readFieldAttributes, writeFieldAttribute } from "@/lib/metadata-attributes/values";
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 
@@ -34,7 +34,7 @@ export function recomputeFieldAttributes(
     type: field.type,
   };
   const placement = abcPlacement(field);
-  const primitive = isPrimitiveField(field);
+  const primitive = attributeApplies(field);
 
   let current = original;
   let changed = false;

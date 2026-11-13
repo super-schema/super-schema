@@ -336,6 +336,7 @@ model Field {
 
   @@unique([entityId, name])
   @@unique([entityId, slug])
+  @@index([dictionaryEntryId])
   @@map("fields")
 }
 

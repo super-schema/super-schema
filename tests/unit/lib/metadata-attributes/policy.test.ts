@@ -55,3 +55,18 @@ describe("applyPolicyDefaults", () => {
     expect(applyPolicyDefaults({}, [def()], policy({ "x-abc": { requiredWhen: "always" } }))).toEqual({});
   });
 });
+
+describe("applyPolicyDefaults with the field (C5: attributeApplies)", () => {
+  const prim = def({ requiredWhen: "primitive" });
+  const p = policy({ "x-abc": { default: { data_category: "Intrinsic" } } });
+  it("fills a primitive-only default on a primitive array", () => {
+    expect(applyPolicyDefaults({ arrayElementType: "string" }, [prim], p, { type: "array", decorators: { arrayElementType: "string" } })).toEqual({ arrayElementType: "string", ...stored({ data_category: "Intrinsic" }) });
+  });
+  it("does not fill a primitive-only default on a reference field", () => {
+    expect(applyPolicyDefaults({}, [prim], p, { type: "reference", decorators: {} })).toEqual({});
+  });
+  it("still fills a never/always default whatever the field", () => {
+    expect(applyPolicyDefaults({}, [def()], p, { type: "reference", decorators: {} })).toEqual(stored({ data_category: "Intrinsic" }));
+  });
+});
+

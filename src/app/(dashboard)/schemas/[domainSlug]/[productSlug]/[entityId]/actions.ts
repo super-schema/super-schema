@@ -403,7 +403,7 @@ export async function updateFieldAction(
     const normalized = normalizeFieldDocumentation({ ...existing, decorators: editedDecorators ?? existing.decorators }, typeof rest.description === "string" ? rest.description : undefined);
     const editedNext = editedDecorators !== undefined || JSON.stringify(normalized.decorators) !== JSON.stringify(existing.decorators ?? {}) ? normalized.decorators : undefined;
     // Derived attribute members follow the field as it is AFTER this edit (a classification change alone re-derives them).
-    const derivation = await loadDerivationContext(access.resource.tenantId);
+    const derivation = await loadDerivationContext(access.resource.tenantId, prisma, { entityId: existing.entityId });
     let nextDecorators = editedNext;
     if (derivation) {
       const base = (editedNext ?? existing.decorators ?? {}) as Record<string, unknown>;
@@ -1057,6 +1057,11 @@ export interface ApplyTypeSpecResult {
   updated: number;
   removed: string[];
   error?: string;
+  /**
+   * Derivation changed what a written row stores against what the text said (e.g. the text says `data_class: "class5"` of a PII field):
+   * the saved text no longer matches the rows, so the source must stay stale until regeneration reconciles it (C2).
+   */
+  derivedChanged?: boolean;
 }
 
 type TypeSpecParsedField = {
@@ -1174,9 +1179,11 @@ async function applyTypeSpecFields(
 
     let addedCount = 0;
     let updatedCount = 0;
+    let derivedChanged = false;
     const removedNames: string[] = [];
-    // Definitions and the custom class map are loaded once for the whole sync; null (no definitions) skips every derivation.
-    const derivation = await loadDerivationContext(access.resource.tenantId);
+    // Definitions (resolved for the entity's domain) and the custom class map are loaded once for the whole sync; null (no definitions)
+    // skips every derivation.
+    const derivation = await loadDerivationContext(access.resource.tenantId, prisma, { entityId });
 
     // Get max sort order for new fields
     const maxSort = existingFields.reduce((max, f) => Math.max(max, f.sortOrder), -1);
@@ -1217,8 +1224,11 @@ async function applyTypeSpecFields(
         : mergedBase;
       const decoratorsJson = merged.decorators;
       const classification = merged.classification;
+      // What the text says vs what derivation stores (only a row that is actually written counts, below).
+      const derivationMoved = merged.decorators !== mergedBase.decorators && JSON.stringify(merged.decorators) !== JSON.stringify(mergedBase.decorators);
 
       if (!existing) {
+        if (derivationMoved) derivedChanged = true;
         // Create new field
         await withAudit({
           action: "CREATE",
@@ -1247,6 +1257,7 @@ async function applyTypeSpecFields(
       } else {
         // Anything changed? (A re-sync of unchanged source changes nothing.)
         if (fieldNeedsUpdate(existing, merged, pf)) {
+          if (derivationMoved) derivedChanged = true;
           await withAudit({
             action: "UPDATE",
             entityType: "Field",
@@ -1302,7 +1313,7 @@ async function applyTypeSpecFields(
     }
 
     revalidatePath("/schemas");
-    return { added: addedCount, updated: updatedCount, removed: removedNames };
+    return { added: addedCount, updated: updatedCount, removed: removedNames, ...(derivedChanged ? { derivedChanged } : {}) };
   } catch (e: unknown) {
     return { added: 0, updated: 0, removed: [], error: unexpectedFailure("applyTypeSpecAction", e).error };
   }
@@ -1733,7 +1744,7 @@ export async function setFieldReferenceAction(
     });
 
     // A reference that now resolves moves the field's attribute placement (e.g. to none): derived members follow.
-    const derivation = await loadDerivationContext(access.data.resource.tenantId);
+    const derivation = await loadDerivationContext(access.data.resource.tenantId, prisma, { entityId });
     const referenceDecorators = deriveFieldDecorators(derivation, {
       name: field.name,
       type: field.type,
@@ -2043,7 +2054,7 @@ async function upgradeLegacyReferences(entityId: string, principal: Principal, r
       const existing = readFieldReference(current);
       if (!existing || !("legacyName" in existing)) continue;
       const upgraded = upgradeLegacyReference(current, upgrade.ref);
-      const decorators = deriveFieldDecorators(await loadDerivationContext(resource.tenantId), {
+      const decorators = deriveFieldDecorators(await loadDerivationContext(resource.tenantId, prisma, { entityId }), {
         name: field.name,
         type: field.type,
         classification: field.classification,
@@ -2999,7 +3010,8 @@ async function compileAndApplyTypeSpecSource(entityId: string, source: string, p
     beforeState: { typespecSource: entity.typespecSource } as unknown as object,
     fn: async () => {
       // Source + fields were just written consistently: save the source and clear
-      // `sourceStale` (set by applyTypeSpecAction above) in one atomic batch.
+      // `sourceStale` (set by applyTypeSpecAction above) in one atomic batch. When derivation changed what a row stores against the
+      // text (C2), the text is NOT consistent with the rows: the source stays stale, so the next open regenerates it from the rows.
       const [updated] = await prisma.$transaction([
         prisma.entity.update({
           where: { id: entityId },
@@ -3013,7 +3025,7 @@ async function compileAndApplyTypeSpecSource(entityId: string, source: string, p
           : extensionsChange.kind === "clear"
             ? [prisma.$executeRawUnsafe(CLEAR_ENTITY_EXTENSIONS_SQL, entityId)]
             : []),
-        prisma.$executeRawUnsafe(CLEAR_SOURCE_STALE_SQL, entityId),
+        prisma.$executeRawUnsafe(applyResult.derivedChanged ? MARK_DRAFT_CHANGED_SQL : CLEAR_SOURCE_STALE_SQL, entityId),
       ]);
       return updated;
     },

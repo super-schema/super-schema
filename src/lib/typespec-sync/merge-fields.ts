@@ -502,10 +502,14 @@ export function mergeSyncedField(existing: SyncExistingField | null, textSource:
   // --- governance ---
   let governance: Rec | undefined = isRec(out.governance) ? out.governance : undefined;
   if (opts.governanceKnown ?? governanceInfo !== undefined) {
+    // The level itself lives in the classification column (`classification` above). `governance.classification` only mirrors it on a row
+    // that already carries that key: adding the mirror to every classified row would make a no-op save of unchanged source write rows.
+    const mirrorsLevel = governance !== undefined && has(governance, "classification");
     governance = governance ?? {};
     for (const key of GOVERNANCE_SOURCE_OWNED) delete governance[key];
     for (const [key, value] of Object.entries(governanceInfo ?? {})) {
-      if (value !== undefined) governance[key] = value;
+      if (value === undefined || (key === "classification" && !mirrorsLevel)) continue;
+      governance[key] = value;
     }
   }
   // The data class mirrors the level while it did; once the source moves the level it follows, otherwise it is the user's.

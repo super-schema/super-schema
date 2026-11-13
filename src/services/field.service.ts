@@ -183,7 +183,7 @@ export async function updateField(
   });
   // The derived attribute members follow the field as it is AFTER the edit (a classification change alone re-derives them).
   const owner = await prisma.entity.findUnique({ where: { id: existing.entityId }, select: { tenantId: true } });
-  const derivedDecorators = deriveFieldDecorators(await loadDerivationContext(owner?.tenantId), {
+  const derivedDecorators = deriveFieldDecorators(await loadDerivationContext(owner?.tenantId, prisma, { entityId: existing.entityId }), {
     name: parsed.data.name ?? existing.name,
     type: parsed.data.type ?? existing.type,
     classification: parsed.data.classification !== undefined ? parsed.data.classification : existing.classification,

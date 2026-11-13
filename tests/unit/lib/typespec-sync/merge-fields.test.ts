@@ -331,6 +331,19 @@ describe("preserved keys", () => {
     // the regex path knows nothing about governance: untouched
     expect(mergeSyncedField(existing, src()).decorators.governance).toEqual({ dataClass: "c", pii: true, protobufFieldNumber: 3 });
   });
+
+  it("the source's classification is mirrored into governance.classification only on a row that already has it (C1)", () => {
+    // An imported row: the level in the column, no governance mirror. Saving the unchanged source must not add one.
+    const imported = row({ classification: "INTERNAL", decorators: { classification: { level: "INTERNAL" } } });
+    const same = mergeSyncedField(imported, src(), { governance: { classification: "INTERNAL" }, governanceKnown: true });
+    expect(same.decorators.governance).toBeUndefined();
+    expect(fieldNeedsUpdate(imported, same, src())).toBe(false);
+    // A row that carries the mirror keeps following the source.
+    const mirrored = row({ classification: "INTERNAL", decorators: { governance: { classification: "INTERNAL" } } });
+    const moved = mergeSyncedField(mirrored, src(), { governance: { classification: "PII" }, governanceKnown: true });
+    expect(moved.decorators.governance).toEqual({ classification: "PII" });
+    expect(moved.classification).toBe("PII");
+  });
 });
 
 describe("scale", () => {
