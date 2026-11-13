@@ -131,7 +131,7 @@ describe("annotateProto", () => {
   it("appends the field option in text format and imports the options file", () => {
     const out = annotateProto({ path: "main.proto", content: PROTO }, customer, defs);
     expect(out.content).toContain(
-      'string email = 1 [(superschema.metadata.x_security_classification) = { data_class: "class2" data_category: "ConsumerPersonal" }];'
+      'string email = 1 [(.superschema.metadata.x_security_classification) = { data_class: "class2" data_category: "ConsumerPersonal" }];'
     );
     expect(out.content).toContain('syntax = "proto3";\n\nimport "superschema/metadata_options.proto";\n\n// A customer');
     expect(out.content).not.toContain("x_review_note");
@@ -139,11 +139,11 @@ describe("annotateProto", () => {
 
   it("repeated top-level options, nested values, the entity option inside the message", () => {
     const out = annotateProto({ path: "main.proto", content: PROTO }, customer, defs);
-    expect(out.content).toContain('repeated string tags = 2 [(superschema.metadata.x_tags) = "a", (superschema.metadata.x_tags) = "b\\"c"];');
+    expect(out.content).toContain('repeated string tags = 2 [(.superschema.metadata.x_tags) = "a", (.superschema.metadata.x_tags) = "b\\"c"];');
     expect(out.content).toContain(
-      'string first_name = 4 [(superschema.metadata.x_lineage) = { source: { system: "crm" ratio: 0.5 live: true } hops: [{ name: "a" }, { name: "b" }] }];'
+      'string first_name = 4 [(.superschema.metadata.x_lineage) = { source: { system: "crm" ratio: 0.5 live: true } hops: [{ name: "a" }, { name: "b" }] }];'
     );
-    expect(out.content).toContain('message Customer {\n  option (superschema.metadata.x_owner) = { team: "crm" tier: 2 contacts: ["a@x", "b@x"] };\n  string email = 1');
+    expect(out.content).toContain('message Customer {\n  option (.superschema.metadata.x_owner) = { team: "crm" tier: 2 contacts: ["a@x", "b@x"] };\n  string email = 1');
   });
 
   it("a value that fails its value schema is skipped with a warning naming the field and the key", () => {
@@ -162,12 +162,47 @@ describe("annotateProto", () => {
     const options = buildOptionsProto(defs, used);
     const root = parseTogether(options.content, out.content);
     const email = root.lookupType("Customer").fields.email;
-    expect(email.options?.["(superschema.metadata.x_security_classification).data_class"]).toBe("class2");
+    expect(email.options?.["(.superschema.metadata.x_security_classification).data_class"]).toBe("class2");
   });
 
   it("nothing to annotate: the same file object", () => {
     const file = { path: "main.proto", content: PROTO };
     expect(annotateProto(file, model([field("email")]), defs)).toBe(file);
     expect(annotateProto(file, customer, [REVIEW])).toBe(file);
+  });
+
+  it("option names are fully qualified, so a package with a superschema segment still resolves them", () => {
+    const pkg = PROTO.replace('syntax = "proto3";', 'syntax = "proto3";\n\npackage acme.superschema.crm;');
+    const out = annotateProto({ path: "acme/superschema/crm.proto", content: pkg }, customer, defs);
+    expect(out.content).toContain("[(.superschema.metadata.x_security_classification) = ");
+    expect(out.content).not.toMatch(/\((?!\.)superschema\./);
+    expect(() => parseTogether(buildOptionsProto(defs, ["x-securityClassification", "x-owner", "x-tags", "x-lineage"]).content, out.content)).not.toThrow();
+  });
+
+  it("a value whose field or message is not in the file is warned, never dropped silently", () => {
+    const warnings: string[] = [];
+    const ghost = model([field("email", ext({ "x-securityClassification": { data_class: "class2", data_category: "Intrinsic" } })), field("ghost", ext({ "x-tags": ["a"] }))]);
+    const out = annotateProto({ path: "main.proto", content: PROTO }, ghost, defs, { warnings });
+    expect(out.content).toContain("string email = 1 [(.superschema.metadata.x_security_classification)");
+    expect(warnings).toEqual([expect.stringContaining('field "ghost"')]);
+    expect(warnings[0]).toContain("x-tags");
+
+    const noMessage: string[] = [];
+    const file = { path: "other.proto", content: 'syntax = "proto3";\n\nmessage Order {\n  string email = 1;\n}\n' };
+    expect(annotateProto(file, ghost, defs, { warnings: noMessage })).toBe(file);
+    expect(noMessage).toEqual([expect.stringContaining("other.proto has no message Customer")]);
+    expect(noMessage[0]).toContain("x-securityClassification, x-tags");
+  });
+
+  it("integers: written as plain digits; one beyond 2^53 is refused with a warning", () => {
+    const warnings: string[] = [];
+    const big = model([field("email")], { "x-owner": { team: "crm", tier: 1e21 } });
+    const out = annotateProto({ path: "main.proto", content: PROTO }, big, defs, { warnings });
+    expect(out.content).not.toContain("x_owner");
+    expect(out.content).not.toContain("e+21");
+    expect(warnings).toEqual([expect.stringContaining("x-owner")]);
+    expect(warnings[0]).toContain("/tier");
+    const safe = annotateProto({ path: "main.proto", content: PROTO }, model([field("email")], { "x-owner": { tier: 9007199254740991 } }), defs);
+    expect(safe.content).toContain("option (.superschema.metadata.x_owner) = { tier: 9007199254740991 };");
   });
 });

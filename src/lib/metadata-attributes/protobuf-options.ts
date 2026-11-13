@@ -4,8 +4,9 @@
  * - `buildOptionsProto` writes `superschema/metadata_options.proto`: for each `schema`-scope attribute used, a value type (an object value
  *   schema becomes a `<Pascal(key)>Value` message) and an extension of `google.protobuf.FieldOptions` (field attributes) and/or
  *   `google.protobuf.MessageOptions` (entity attributes) at the attribute's `protobufOptionNumber`.
- * - `annotateProto` sets the values on an emitted `.proto`: `[(superschema.metadata.<name>) = <text format>]` on a field line,
- *   `option (superschema.metadata.<name>) = <text format>;` inside the entity's message, and imports the options file.
+ * - `annotateProto` sets the values on an emitted `.proto`: `[(.superschema.metadata.<name>) = <text format>]` on a field line,
+ *   `option (.superschema.metadata.<name>) = <text format>;` inside the entity's message, and imports the options file. Option names are
+ *   fully qualified (leading dot) so an entity package with a `superschema` segment cannot capture them.
  *
  * `internal` attributes never produce anything. A value that fails its value schema is left out with a warning naming the field and the
  * key. A definition Protobuf cannot express (no option number, a nested array, two names that collapse into one) is left out with a
@@ -66,6 +67,13 @@ interface ProtoType {
 }
 
 class Unrepresentable extends Error {}
+
+/** An integer value a JavaScript number cannot hold exactly (beyond 2^53): writing it would put a different number on the wire. */
+class UnsafeInteger extends Error {
+  constructor(readonly path: string) {
+    super(path);
+  }
+}
 
 const SCALARS: Record<string, string> = { string: "string", integer: "int64", number: "double", boolean: "bool" };
 
@@ -212,11 +220,18 @@ function textValue(value: unknown, schema: ValueSchema, extras: string[], path: 
   // An array without `items` is `repeated string`: whatever its elements are, they are written as strings.
   if (typeof value === "string" || schema.type === "string") return quote(typeof value === "string" ? value : JSON.stringify(value));
   if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number") return String(value);
+  if (typeof value === "number") {
+    if (schema.type === "integer") {
+      if (!Number.isSafeInteger(value)) throw new UnsafeInteger(path);
+      // A safe integer: its decimal digits, never an exponent.
+      return BigInt(value).toString();
+    }
+    return String(value);
+  }
   return quote(String(value));
 }
 
-/** The `(superschema.metadata.<name>) = <value>` assignments of one value (several for a repeated option), or the warning. */
+/** The `(.superschema.metadata.<name>) = <value>` assignments (fully qualified: a `superschema` package segment cannot capture it) of one value (several for a repeated option), or the warning. */
 function assignments(
   e: Extract<Emittable, { ok: true }>,
   optionName: string,
@@ -234,7 +249,16 @@ function assignments(
   }
   const extras: string[] = [];
   const values = e.type.repeated ? (value as unknown[]) : [value];
-  const out = values.map((v) => `(${PACKAGE}.${optionName}) = ${textValue(v, e.type.element, extras, "")}`);
+  let out: string[];
+  try {
+    out = values.map((v, i) => `(.${PACKAGE}.${optionName}) = ${textValue(v, e.type.element, extras, e.type.repeated ? `/${i}` : "")}`);
+  } catch (error) {
+    if (!(error instanceof UnsafeInteger)) throw error;
+    warnings.push(
+      `Protobuf: the ${e.def.key} value of ${where} holds an integer too large to write exactly (${error.path || "value"}), so it was not emitted as an option.`
+    );
+    return undefined;
+  }
   if (extras.length > 0) {
     warnings.push(`Protobuf: the ${e.def.key} value of ${where} has properties its value schema does not declare (${extras.join(", ")}); they were left out of the option.`);
   }
@@ -289,7 +313,7 @@ export function annotateProto<F extends { path: string; content: string }>(
     return file;
   }
   const messageNames = new Set([model.entity.name, sanitizeIdentifier(model.entity.name)]);
-  const fieldOptions = new Map<string, { options: string[]; keys: string[] }>();
+  const fieldOptions = new Map<string, { options: string[]; keys: string[]; fieldName: string }>();
   const problemsSeen = new Set<string>();
   const problem = (e: Emittable) => {
     if (!e.ok && !problemsSeen.has(e.def.key)) {
@@ -313,7 +337,7 @@ export function annotateProto<F extends { path: string; content: string }>(
       options.push(...set);
       if (set.length > 0) keys.push(key);
     }
-    if (options.length > 0) fieldOptions.set(protobufFieldName(f.name), { options, keys });
+    if (options.length > 0) fieldOptions.set(protobufFieldName(f.name), { options, keys, fieldName: f.name });
   }
   const messageOptions: string[] = [];
   const messageKeys: string[] = [];
@@ -334,12 +358,15 @@ export function annotateProto<F extends { path: string; content: string }>(
   const lines = file.content.split("\n");
   const out: string[] = [];
   const written = new Set<string>();
+  const annotatedFields = new Set<string>();
+  let messageFound = false;
   let depth = 0;
   let inTarget = false;
   for (const line of lines) {
     const message = depth === 0 ? MESSAGE_LINE.exec(line) : null;
     if (message && messageNames.has(message[2])) {
       inTarget = true;
+      messageFound = true;
       out.push(line);
       depth += braceDelta(line);
       if (messageOptions.length > 0) {
@@ -354,6 +381,7 @@ export function annotateProto<F extends { path: string; content: string }>(
       if (set) {
         out.push(withFieldOptions(line, set.options));
         for (const k of set.keys) written.add(k);
+        annotatedFields.add(fieldMatch![2]);
         depth += braceDelta(line);
         continue;
       }
@@ -361,6 +389,18 @@ export function annotateProto<F extends { path: string; content: string }>(
     out.push(line);
     depth += braceDelta(line);
     if (depth === 0) inTarget = false;
+  }
+  // Values that had a place in the model but found none in the file are said, never dropped silently.
+  if (!messageFound) {
+    const keys = [...new Set([...messageKeys, ...[...fieldOptions.values()].flatMap((f) => f.keys)])].sort();
+    warnings.push(`Protobuf: ${file.path} has no message ${model.entity.name}, so these metadata attributes were not emitted as options: ${keys.join(", ")}.`);
+  } else {
+    for (const [protoName, set] of fieldOptions) {
+      if (annotatedFields.has(protoName)) continue;
+      warnings.push(
+        `Protobuf: field "${set.fieldName}" has no declaration in message ${model.entity.name} of ${file.path}, so its ${set.keys.join(", ")} value was not emitted as an option.`
+      );
+    }
   }
   if (written.size === 0) return file;
   for (const k of written) report.used?.add(k);

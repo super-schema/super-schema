@@ -99,9 +99,9 @@ describe("metadata attributes as Protobuf custom options (real emitter)", () => 
     const [protoPath] = Object.keys(files).filter((p) => p !== "superschema/metadata_options.proto");
     const proto = files[protoPath];
     expect(proto).toContain('import "superschema/metadata_options.proto";');
-    expect(proto).toContain('string email = 1 [(superschema.metadata.x_security_classification) = { data_class: "class2" data_category: "ConsumerPersonal" }];');
-    expect(proto).toContain('repeated string tags = 2 [(superschema.metadata.x_security_classification) = { data_class: "class3" data_category: "Intrinsic" }];');
-    expect(proto).toContain('option (superschema.metadata.x_owner) = { team: "crm" };');
+    expect(proto).toContain('string email = 1 [(.superschema.metadata.x_security_classification) = { data_class: "class2" data_category: "ConsumerPersonal" }];');
+    expect(proto).toContain('repeated string tags = 2 [(.superschema.metadata.x_security_classification) = { data_class: "class3" data_category: "Intrinsic" }];');
+    expect(proto).toContain('option (.superschema.metadata.x_owner) = { team: "crm" };');
     expect(withMeta.output).not.toContain("x-review-note");
     expect(withMeta.output).not.toContain("x_review_note");
   });
@@ -123,11 +123,11 @@ describe("metadata attributes as Protobuf custom options (real emitter)", () => 
     expect(() => root.resolveAll()).not.toThrow();
 
     const customer = root.lookupType("Customer");
-    expect(customer.fields.email.options?.["(superschema.metadata.x_security_classification).data_category"]).toBe("ConsumerPersonal");
-    expect(customer.options?.["(superschema.metadata.x_owner).team"]).toBe("crm");
+    expect(customer.fields.email.options?.["(.superschema.metadata.x_security_classification).data_category"]).toBe("ConsumerPersonal");
+    expect(customer.options?.["(.superschema.metadata.x_owner).team"]).toBe("crm");
     const declared = (name: string) => root.lookup(`superschema.metadata.${name}`) as Field | null;
     for (const content of Object.values(files)) {
-      for (const m of content.matchAll(/\(superschema\.metadata\.(\w+)\)/g)) {
+      for (const m of content.matchAll(/\(\.superschema\.metadata\.(\w+)\)/g)) {
         expect(declared(m[1]), m[1]).toBeInstanceOf(Field);
       }
     }

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { DeliveryError, type ArtifactBundle, type Credentials, type DeliveryReceipt, type WorkflowSettings } from "./contracts";
 import { authHeaders, externalJson } from "./http";
+import { METADATA_OPTIONS_PROTO_PATH } from "@/lib/metadata-attributes/protobuf-options";
 
 interface Registration { id: number; version: number; subject?: string; }
 export interface RegistryNode { path: string; subject: string; schema: string; schemaType: string; dependencies: { name: string; path: string }[]; }
@@ -24,6 +25,19 @@ function avroNames(value: unknown, namespace = "", definitions = new Set<string>
   return { definitions, uses };
 }
 
+/**
+ * The subject of a bundle file: the primary file's is the configured subject; the generated Protobuf metadata options file gets
+ * `<subject>-metadata-options` unless one is configured (its content depends on the keys this entity uses, so it is per entity);
+ * any other file needs a configured reference subject.
+ */
+function subjectOf(filePath: string, bundle: ArtifactBundle, settings: WorkflowSettings): string | undefined {
+  if (filePath === bundle.primaryFile) return settings.subject.trim();
+  const configured = settings.referenceSubjects[filePath];
+  if (configured) return configured;
+  if (bundle.format === "protobuf" && filePath === METADATA_OPTIONS_PROTO_PATH) return `${settings.subject.trim()}-metadata-options`;
+  return undefined;
+}
+
 export function registryNodes(bundle: ArtifactBundle, settings: WorkflowSettings): RegistryNode[] {
   const schemaType = ({ avro: "AVRO", "json-schema": "JSON", protobuf: "PROTOBUF" } as Record<string, string>)[bundle.format];
   if (!schemaType) throw new DeliveryError("This format cannot be submitted to Schema Registry");
@@ -34,14 +48,17 @@ export function registryNodes(bundle: ArtifactBundle, settings: WorkflowSettings
   }
   const avro = new Map([...parsed].map(([key, value]) => [key, avroNames(value)]));
   const nodes = bundle.files.map((file): RegistryNode => {
-    const subject = file.path === bundle.primaryFile ? settings.subject.trim() : settings.referenceSubjects[file.path];
+    const subject = subjectOf(file.path, bundle, settings);
     const dependencies: RegistryNode["dependencies"] = [];
     const add = (name: string, target: string) => { if (target !== file.path && !dependencies.some((d) => d.name === name)) dependencies.push({ name, path: target }); };
-    const resolve = (ref: string) => {
+    // `rootFirst` (Protobuf: import paths are relative to the proto root) tries the path from the bundle root before the importing
+    // file's folder; the folder stays as the fallback so artifacts that relied on it keep resolving.
+    const resolve = (ref: string, rootFirst = false) => {
       const plain = ref.split("#")[0];
       if (!plain) return;
       const relative = path.posix.normalize(path.posix.join(path.posix.dirname(file.path), plain));
-      const target = bundle.files.find((f) => f.path === relative || (parsed.get(f.path) as Record<string, unknown> | undefined)?.$id === plain);
+      const fromRoot = rootFirst ? bundle.files.find((f) => f.path === path.posix.normalize(plain)) : undefined;
+      const target = fromRoot ?? bundle.files.find((f) => f.path === relative || (parsed.get(f.path) as Record<string, unknown> | undefined)?.$id === plain);
       if (!target) throw new DeliveryError(`Referenced schema ${plain} is missing from the frozen artifact`);
       add(plain, target.path);
     };
@@ -52,7 +69,7 @@ export function registryNodes(bundle: ArtifactBundle, settings: WorkflowSettings
         for (const [k, entry] of Object.entries(v)) { if (k === "$ref" && typeof entry === "string") resolve(entry); else walk(entry); }
       }; walk(parsed.get(file.path));
     } else if (schemaType === "PROTOBUF") {
-      for (const match of file.content.matchAll(/\bimport\s+(?:(?:public|weak)\s+)?"([^"\r\n]+)"\s*;/g)) if (!match[1].startsWith("google/protobuf/")) resolve(match[1]);
+      for (const match of file.content.matchAll(/\bimport\s+(?:(?:public|weak)\s+)?"([^"\r\n]+)"\s*;/g)) if (!match[1].startsWith("google/protobuf/")) resolve(match[1], true);
     } else {
       const info = avro.get(file.path)!;
       for (const name of info.uses) if (!info.definitions.has(name)) {
