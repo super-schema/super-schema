@@ -116,6 +116,38 @@ describe("rederiveForLevel on PGlite", () => {
     expect(forLoose?.defs[0].requiredWhen).toBe("never");
   });
 
+  it("re-derives more than one chunk in the caller's transaction, with locked id-ordered chunks (N1)", async () => {
+    const { field, entity } = await seed("FINANCIAL");
+    const more = [];
+    for (let i = 0; i < 4; i++) {
+      more.push(await db().field.create({
+        data: { entityId: entity.id, name: `amount${i}`, slug: `amount${i}`, type: "string", sortOrder: i + 1, classification: i === 3 ? "financial" : "FINANCIAL", decorators: {} },
+      }));
+    }
+    // A field on another level stays out of every chunk.
+    const other = await db().field.create({ data: { entityId: entity.id, name: "other", slug: "other", type: "string", sortOrder: 9, classification: "INTERNAL", decorators: {} } });
+    await db().classificationLevel.create({ data: { name: "FINANCIAL", displayColor: "#000", bgColor: "#fff", textColor: "#000", classNumber: 2 } });
+    const statements: string[] = [];
+    await db().$transaction(async (tx) => {
+      const spy = new Proxy(tx, {
+        get(target, prop, receiver) {
+          const v = Reflect.get(target, prop, receiver);
+          if (prop !== "$queryRaw" || typeof v !== "function") return v;
+          return (q: { sql: string }) => { statements.push(q.sql); return v.call(target, q); };
+        },
+      });
+      await rederiveForLevel("FINANCIAL", spy, { chunkSize: 2 });
+    });
+    const locks = statements.filter((q) => q.includes("FOR UPDATE"));
+    expect(locks).toHaveLength(3); // 5 fields: 2 + 2 + 1
+    for (const q of locks) expect(q).toMatch(/WHERE f\."id" > \? .*ORDER BY f\."id" LIMIT \? FOR UPDATE/);
+    for (const f of [field, ...more]) {
+      const after = await db().field.findUniqueOrThrow({ where: { id: f.id } });
+      expect((after.decorators as ReturnType<typeof stored>).typespec.extensions.openapi["x-securityClassification"].data_class).toBe("class2");
+    }
+    expect((await db().field.findUniqueOrThrow({ where: { id: other.id } })).decorators).toEqual({});
+  });
+
   it("leaves fields of other levels alone", async () => {
     const { field } = await seed("INTERNAL");
     await db().classificationLevel.create({

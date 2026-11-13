@@ -23,6 +23,16 @@ describe("deepStripInternal", () => {
     expect(doc.a).toHaveProperty("x-review-note");
   });
 
+  it("matches by name, not position: a property or header named like an internal key is removed too (N4, documented)", () => {
+    const doc = {
+      properties: { "x-review-note": { type: "string" }, id: { type: "string" } },
+      components: { messages: { M: { headers: { properties: { "x-review-note": { type: "string" } } } } } },
+    };
+    const out = deepStripInternal(doc, KEYS);
+    expect(out.properties).toEqual({ id: { type: "string" } });
+    expect(out.components.messages.M.headers.properties).toEqual({});
+  });
+
   it("returns the same reference when nothing matched or there are no keys", () => {
     const doc = { a: { b: [1, { c: 2 }] } };
     expect(deepStripInternal(doc, KEYS)).toBe(doc);

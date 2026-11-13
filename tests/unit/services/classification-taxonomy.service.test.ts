@@ -319,6 +319,15 @@ describe("Classification Taxonomy Service", () => {
       expect(rederiveMock).toHaveBeenCalledWith("FINANCIAL", expect.objectContaining({ isTx: true }));
     });
 
+    it("bounds the transaction explicitly instead of Prisma's 5 s default (N1)", async () => {
+      const level = await mkCustom(3);
+      const { prisma } = await import("@/lib/db");
+      const txSpy = vi.mocked(prisma.$transaction);
+      txSpy.mockClear();
+      await updateClassification({ id: level.id, classNumber: 2 }, adminCtx);
+      expect(txSpy).toHaveBeenCalledWith(expect.any(Function), { timeout: 120_000, maxWait: 10_000 });
+    });
+
     it("rolls the class change back when the re-derivation fails, so saving again repairs it (C4)", async () => {
       const level = await mkCustom(3);
       rederiveMock.mockRejectedValueOnce(new Error("db down"));

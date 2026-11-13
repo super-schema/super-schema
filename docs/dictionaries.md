@@ -61,8 +61,9 @@ Patterns run on the server, so they are bounded:
 
 - `schema`: the value is part of the contract and appears in emitted outputs.
 - `internal`: the value is kept in the canonical TypeSpec and the GitOps source but is removed from every emitted output: JSON Schema, OpenAPI, AsyncAPI and the GitOps artifacts. Stored sources are stripped with a parser, not a text replace. A final pass then removes every `internal` key at any depth of each emitted JSON or YAML document, including a key nested inside another attribute's value, an `items` extension, or an AsyncAPI message or operation trait. The AsyncAPI Code panel of the event builder drops them too.
+- The final pass matches by key name only, not by position: it removes a key named like an `internal` attribute wherever it appears, including a JSON Schema property, an AsyncAPI header or a payload member that happens to share the name. Do not name an `internal` attribute after a real header or property name (an `x-` prefix plus a name specific to your organization, such as `x-acme-review-note`, avoids this).
 - Stored documents follow the current dictionary. An AsyncAPI version published before a key became `internal` is stripped when it is read (the version view, the API and the GitOps artifacts of a frozen version). The stored row itself is unchanged. When nothing matches, the output is byte-identical.
-- An `internal` definition cannot be deleted, and its key cannot be changed, while any field, entity, API operation, or event channel, message or operation still holds a value for it. The refusal (`INTERNAL_VALUES_EXIST`) gives the count: "Remove the stored values first; deleting this definition would publish them." Values frozen in already-published versions are not counted, because they cannot be removed. Once the definition is gone, those values are no longer known as internal.
+- An `internal` definition cannot be deleted, and its key cannot be changed, while any field, entity, API operation, event channel, message or operation, or message or operation trait (a top-level key of the trait) still holds a value for it. The refusal (`INTERNAL_VALUES_EXIST`) gives the count: "Remove the stored values first; deleting this definition would publish them." Values frozen in already-published versions are not counted, because they cannot be removed. Once the definition is gone, those values are no longer known as internal. A value nested inside another attribute's value (for example `x-other: { x-review-note: … }`) is not counted either; remove such values before deleting the definition.
 
 ### Placement
 
@@ -81,8 +82,8 @@ Patterns run on the server, so they are bounded:
 
 Derived members are recomputed whenever a field is saved (every field writer does it, using the field's domain policy), and for existing fields when an attribute definition is created or updated or when a custom level's class number changes. User-entered members of the same value are kept.
 
-- The bulk re-derivation locks the field rows it re-derives, one batch per transaction, so an edit saved at the same time is never overwritten.
-- A custom level's class change and its re-derivation are one transaction. If the re-derivation fails, the class change is rolled back and nothing is saved. Saving again retries.
+- The bulk re-derivation walks the fields in id order, 500 at a time: each chunk's rows are locked, read, derived and written before the next, so an edit saved at the same time is never overwritten. No single statement lists every field.
+- A custom level's class change and its re-derivation are one transaction (a level is shared by every tenant, so this covers every field on the level). If the re-derivation fails, the class change is rolled back and nothing is saved. Saving again retries. The transaction may run for up to 2 minutes and waits up to 10 seconds to start.
 - If re-deriving fails after a definition is saved, the admin page shows an error; saving the definition again retries.
 - **TypeSpec source save.** Sometimes derivation stores a different value than the saved text: for example, the text says `data_class: "class5"` for a PII field, and the row stores `class2`. In that case the source stays marked stale, and the next time the Source tab is opened it is regenerated from the rows. A save whose text agrees with the derivation clears the mark, as before.
 

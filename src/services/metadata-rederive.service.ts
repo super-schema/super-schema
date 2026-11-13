@@ -5,8 +5,8 @@
  * - Every derive path derives with the DOMAIN-resolved definitions (a domain policy may tighten `requiredWhen`): a writer that knows the
  *   field's entity or domain passes it to `loadDerivationContext`; the bulk re-derivation resolves each field's domain itself, once per
  *   domain.
- * - The bulk re-derivation reads and writes inside one interactive transaction per batch, with the field rows locked (`FOR UPDATE`) and
- *   re-derived from what the lock returned, so an edit committed meanwhile is never overwritten. Every query of a batch runs on its
+ * - The bulk re-derivation walks the fields in id-ordered chunks: each chunk's rows are locked (`SELECT … FOR UPDATE … LIMIT n`), then
+ *   re-derived from what the lock returned, so an edit committed meanwhile is never overwritten. Every query of a chunk runs on its
  *   transaction (PGlite has one connection: a query on the global client inside it would wait forever).
  */
 
@@ -131,19 +131,34 @@ const FIELD_SELECT = {
   },
 } as const;
 
-/** Fields re-derived per transaction: each batch locks its rows for as long as it runs. */
-export const REDERIVE_BATCH_SIZE = 200;
+/** Fields locked, read and written per chunk: inside the caller's transaction, or in a transaction of its own per chunk. */
+export const REDERIVE_BATCH_SIZE = 500;
+
+export interface RederiveOptions {
+  /** Fields per chunk; defaults to {@link REDERIVE_BATCH_SIZE} (tests inject a small one). */
+  chunkSize?: number;
+}
 
 type RederiveDb = Pick<Prisma.TransactionClient, "$queryRaw" | "$executeRawUnsafe" | "field" | "metadataAttributeDefinition" | "classificationLevel">;
 
 /**
- * Re-derives the fields `ids` on `tx`: locks the rows, reads them under the lock and writes the ones whose derived members moved, with the
+ * Locks the next chunk of fields matching `predicate` (keyset: ids after `after`, in id order) and returns their ids. Selection and lock are
+ * one statement, so no list of every matching id is ever built, and rows are always locked in id order.
+ */
+async function lockNextChunk(tx: RederiveDb, predicate: Prisma.Sql, after: string, limit: number): Promise<string[]> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>(
+    Prisma.sql`SELECT f."id" FROM "fields" f WHERE f."id" > ${after} AND ${predicate} ORDER BY f."id" LIMIT ${limit} FOR UPDATE OF f`,
+  );
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Re-derives the fields `ids` (already locked on `tx`): reads them under the lock and writes the ones whose derived members moved, with the
  * draft mark of their entities. Definitions are loaded once per tenant and resolved once per domain. Returns the entities touched.
  */
 async function rederiveLocked(tx: RederiveDb, ids: string[]): Promise<Set<string>> {
   const touched = new Set<string>();
   if (ids.length === 0) return touched;
-  await tx.$queryRaw`SELECT "id" FROM "fields" WHERE "id" IN (${Prisma.join(ids)}) ORDER BY "id" FOR UPDATE`;
   const rows = (await tx.field.findMany({ where: { id: { in: ids } }, select: FIELD_SELECT })) as unknown as FieldRow[];
   if (rows.length === 0) return touched;
   const custom = await loadCustomClassMap(tx);
@@ -170,32 +185,42 @@ async function rederiveLocked(tx: RederiveDb, ids: string[]): Promise<Set<string
   return touched;
 }
 
+/** Locks the next chunk after `after` and re-derives it: the chunk's ids and the entities touched. */
+async function rederiveNextChunk(tx: RederiveDb, predicate: Prisma.Sql, after: string, limit: number) {
+  const ids = await lockNextChunk(tx, predicate, after, limit);
+  return { ids, touched: await rederiveLocked(tx, ids) };
+}
+
 /**
- * Re-derives the fields `where` selects. With `tx`, everything runs in the caller's transaction (it commits or rolls back with it); without,
- * the ids are read first and each batch of {@link REDERIVE_BATCH_SIZE} runs in a transaction of its own. Returns the entities touched.
+ * Re-derives the fields `predicate` selects (SQL over the `fields` row aliased `f`) in id-ordered chunks: each chunk is locked
+ * (`SELECT … FOR UPDATE … LIMIT n`), read, derived and written before the next. With `tx`, every chunk runs in the caller's transaction (all
+ * commit or roll back with it); without, each chunk runs in a transaction of its own. Returns the number of entities touched.
  */
-async function rederiveWhere(where: Prisma.FieldWhereInput, tx?: RederiveDb): Promise<number> {
-  const db = tx ?? prisma;
-  const ids = (await db.field.findMany({ where, select: { id: true }, orderBy: { id: "asc" } })).map((f) => f.id);
-  if (tx) return (await rederiveLocked(tx, ids)).size;
+async function rederiveWhere(predicate: Prisma.Sql, tx?: RederiveDb, opts: RederiveOptions = {}): Promise<number> {
+  const limit = Math.max(1, Math.floor(opts.chunkSize ?? REDERIVE_BATCH_SIZE));
   const touched = new Set<string>();
-  for (let i = 0; i < ids.length; i += REDERIVE_BATCH_SIZE) {
-    const batch = ids.slice(i, i + REDERIVE_BATCH_SIZE);
-    const entities = await prisma.$transaction((batchTx) => rederiveLocked(batchTx, batch));
-    for (const e of entities) touched.add(e);
+  let after = "";
+  for (;;) {
+    const from = after;
+    const chunk = tx
+      ? await rederiveNextChunk(tx, predicate, from, limit)
+      : await prisma.$transaction((chunkTx) => rederiveNextChunk(chunkTx, predicate, from, limit));
+    for (const e of chunk.touched) touched.add(e);
+    if (chunk.ids.length < limit) break;
+    after = chunk.ids[chunk.ids.length - 1];
   }
   return touched.size;
 }
 
 /**
- * Re-derive every field classified with `level` (a custom level's class number changed). Pass the transaction that changed the class: the
- * re-derivation then commits or rolls back with it. Returns the number of entities touched.
+ * Re-derive every field classified with `level` (a custom level's class number changed), in every tenant. Pass the transaction that changed
+ * the class: the re-derivation then commits or rolls back with it. Returns the number of entities touched.
  */
-export async function rederiveForLevel(level: string, tx?: RederiveDb): Promise<number> {
-  return rederiveWhere({ classification: { equals: level, mode: "insensitive" } }, tx);
+export async function rederiveForLevel(level: string, tx?: RederiveDb, opts?: RederiveOptions): Promise<number> {
+  return rederiveWhere(Prisma.sql`lower(f."classification") = lower(${level})`, tx, opts);
 }
 
 /** Re-derive every field of a tenant (an attribute definition changed). Returns the number of entities touched. */
-export async function rederiveTenant(tenantId: string, tx?: RederiveDb): Promise<number> {
-  return rederiveWhere({ entity: { tenantId } }, tx);
+export async function rederiveTenant(tenantId: string, tx?: RederiveDb, opts?: RederiveOptions): Promise<number> {
+  return rederiveWhere(Prisma.sql`f."entityId" IN (SELECT e."id" FROM "entities" e WHERE e."tenantId" = ${tenantId})`, tx, opts);
 }

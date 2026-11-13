@@ -35,7 +35,17 @@ const h = vi.hoisted(() => {
   const tx = {
     ...dictionary("tx"),
     field: fieldDelegate("tx"),
-    $queryRaw: vi.fn(async (strings: TemplateStringsArray) => { state.log.push(`tx.$queryRaw ${strings.join("?")}`); return []; }),
+    // The keyset lock: `id > $after … ORDER BY id LIMIT $n FOR UPDATE` over every row (the predicate is not evaluated by the mock).
+    $queryRaw: vi.fn(async (q: { sql: string; values: unknown[] }) => {
+      state.log.push(`tx.$queryRaw ${q.sql}`);
+      // A concurrent save that commits while the lock waits: the read under the lock must see it.
+      const hook = state.afterFirstRead;
+      state.afterFirstRead = undefined;
+      hook?.();
+      const after = String(q.values[0]);
+      const limit = Number(q.values[q.values.length - 1]);
+      return state.rows.filter((r) => r.id > after).sort((a, b) => a.id.localeCompare(b.id)).slice(0, limit).map((r) => ({ id: r.id }));
+    }),
     $executeRawUnsafe: vi.fn(async () => { state.log.push("tx.mark"); return 1; }),
   };
   const prisma = {
@@ -48,7 +58,7 @@ const h = vi.hoisted(() => {
 
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
 
-import { rederiveTenant } from "@/services/metadata-rederive.service";
+import { rederiveForLevel, rederiveTenant } from "@/services/metadata-rederive.service";
 
 const KEY = "x-securityClassification";
 const ext = (v: Record<string, unknown>) => ({ typespec: { extensions: { openapi: { [KEY]: v } } } });
@@ -68,9 +78,9 @@ beforeEach(() => {
 });
 
 describe("rederiveTenant (C3: rows locked and re-read inside the transaction)", () => {
-  it("keeps an edit committed after the field ids were read", async () => {
+  it("keeps an edit committed before the chunk lock was granted (no id list is read outside the lock)", async () => {
     h.state.rows = [{ id: "f1", entityId: "e1", name: "email", type: "string", classification: "PII", decorators: ext({ data_class: "class3", data_category: "ConsumerPersonal" }), entity: entityIn("dA") }];
-    // A concurrent save lands between the first read and the write: PUBLIC, a new category, another attribute.
+    // A concurrent save lands before the lock is granted: PUBLIC, a new category, another attribute.
     h.state.afterFirstRead = () => {
       h.state.rows[0].classification = "PUBLIC";
       h.state.rows[0].decorators = { typespec: { extensions: { openapi: { [KEY]: { data_class: "class5", data_category: "Intrinsic" }, "x-other": 1 } } } };
@@ -107,5 +117,32 @@ describe("rederiveTenant (C6: domain-resolved definitions)", () => {
     expect(value(0)).toEqual({ data_class: "class2" });
     expect(value(1)).toBeUndefined();
     expect(value(2)).toEqual({ data_class: "class5" });
+  });
+});
+
+describe("chunked re-derivation (N1: bounded, id-ordered locked chunks)", () => {
+  const rows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `f${i}`, entityId: `e${i}`, name: `n${i}`, type: "string", classification: "PII", decorators: {}, entity: entityIn("dA"),
+    }));
+
+  it("walks the fields in chunks inside the caller's transaction: one lock statement per chunk, never one list of every field", async () => {
+    h.state.rows = rows(5);
+    await rederiveForLevel("PII", h.tx as never, { chunkSize: 2 });
+    const locks = h.state.log.filter((l) => l.startsWith("tx.$queryRaw"));
+    expect(locks).toHaveLength(3); // 2 + 2 + 1
+    for (const l of locks) expect(l).toMatch(/"id" > \? .*ORDER BY f\."id" LIMIT \? FOR UPDATE/);
+    const reads = vi.mocked(h.tx.field.findMany).mock.calls.map((c) => (c[0] as { where: { id: { in: string[] } } }).where.id.in);
+    expect(reads).toEqual([["f0", "f1"], ["f2", "f3"], ["f4"]]);
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+    expect(h.state.log.some((l) => l.startsWith("prisma."))).toBe(false);
+    for (const r of h.state.rows) expect((r.decorators as ReturnType<typeof ext>).typespec.extensions.openapi[KEY]).toEqual({ data_class: "class2" });
+  });
+
+  it("without a caller transaction, runs one transaction per chunk", async () => {
+    h.state.rows = rows(4);
+    await rederiveTenant("t1", undefined, { chunkSize: 2 });
+    // 2 full chunks and the empty one that ends the walk.
+    expect(h.prisma.$transaction).toHaveBeenCalledTimes(3);
   });
 });

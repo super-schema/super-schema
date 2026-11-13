@@ -176,8 +176,9 @@ function packOwned(pack: string) {
 
 /**
  * How many items of `tenantId` still hold a value for `key`: fields (`decorators.typespec.extensions.openapi`), entities
- * (`metadata.custom.extensions`), API operations (`decorators.extensions`) and the channels / messages / operations of event drafts
- * (`document.<list>[].extensions`). The JSON columns are searched directly.
+ * (`metadata.custom.extensions`), API operations (`decorators.extensions`), the channels / messages / operations of event drafts
+ * (`document.<list>[].extensions`) and message / operation traits (top-level `x-` keys of `spec`). The JSON columns are searched directly.
+ * A value nested inside another attribute's value is not counted (N2: out of scope, documented in docs/dictionaries.md).
  */
 export async function countStoredAttributeValues(
   tenantId: string,
@@ -199,6 +200,8 @@ export async function countStoredAttributeValues(
             || (CASE WHEN jsonb_typeof(ev."document" -> 'operations') = 'array' THEN ev."document" -> 'operations' ELSE '[]'::jsonb END)
           ) AS item
         WHERE ev."tenantId" = ${tenantId} AND jsonb_typeof(item) = 'object' AND (item -> 'extensions') -> ${key} IS NOT NULL)
+    + (SELECT COUNT(*) FROM "traits" t
+        WHERE t."tenantId" = ${tenantId} AND jsonb_typeof(t."spec") = 'object' AND t."spec" -> ${key} IS NOT NULL)
     ) AS n`;
   return Number(rows[0]?.n ?? 0);
 }

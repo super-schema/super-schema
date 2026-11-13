@@ -163,6 +163,24 @@ describe("metadata attribute service on PGlite", () => {
       expect(await db().metadataAttributeDefinition.count({ where: { id: c.data.id } })).toBe(1);
     });
 
+    it.each([["MESSAGE"], ["OPERATION"]] as const)("refuses delete and key change while a %s trait spec holds the key at its top level (N2)", async (kind) => {
+      const a = await mkTenant();
+      const b = await mkTenant();
+      const c = await createMetadataAttribute(a.id, input(NOTE, { scope: "internal", targets: ["message", "operation"] }));
+      if (!c.success) throw new Error(c.error.message);
+      await db().trait.create({ data: { tenantId: a.id, kind, name: `t${++n}`, spec: { summary: "s", [NOTE]: "t" } } });
+      // Out of scope: the key nested inside another value, and a trait of another tenant.
+      await db().trait.create({ data: { tenantId: a.id, kind, name: `t${++n}`, spec: { "x-other": { [NOTE]: "nested" } } } });
+      await db().trait.create({ data: { tenantId: b.id, kind, name: `t${++n}`, spec: { [NOTE]: "b" } } });
+      const del = await deleteMetadataAttribute(a.id, c.data.id);
+      expect(!del.success && del.error).toMatchObject({ code: "INTERNAL_VALUES_EXIST", details: { count: 1 } });
+      const rename = await updateMetadataAttribute(a.id, c.data.id, { key: "x-renamed" });
+      expect(!rename.success && rename.error.code).toBe("INTERNAL_VALUES_EXIST");
+      // Only the nested value is left: the delete goes through (nested values are documented as out of scope).
+      await db().trait.deleteMany({ where: { tenantId: a.id, spec: { path: [NOTE], equals: "t" } } });
+      expect((await deleteMetadataAttribute(a.id, c.data.id)).success).toBe(true);
+    });
+
     it("counts every holder, ignores other tenants and non-internal definitions, and allows delete once none is left", async () => {
       const a = await mkTenant();
       const b = await mkTenant();

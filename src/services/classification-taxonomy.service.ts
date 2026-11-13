@@ -20,6 +20,9 @@ import {
   type UpdateClassificationInput,
 } from "@/types/schemas/classification-taxonomy";
 
+/** Bounds of the class-change transaction (level update + re-derivation of every field on the level, across tenants). */
+export const CLASS_CHANGE_TX_OPTIONS = { timeout: 120_000, maxWait: 10_000 } as const;
+
 // ---------------------------------------------------------------------------
 // Prisma row → app ClassificationLevel mapper
 // ---------------------------------------------------------------------------
@@ -224,13 +227,18 @@ export async function updateClassification(
   }
 
   // A custom level's class moved: the derived attribute values of every field classified with it follow, in the SAME transaction (C4). A
-  // failed re-derivation rolls the class change back, so saving the level again repairs it (the class still differs then).
+  // failed re-derivation rolls the class change back, so saving the level again repairs it (the class still differs then). A level spans
+  // every tenant, so the transaction is bounded explicitly (Prisma's default 5 s would abort a large one) and the re-derivation walks the
+  // fields in locked, id-ordered chunks rather than one list of every field (N1).
   try {
-    const updated = await prisma.$transaction(async (tx) => {
-      const row = await tx.classificationLevel.update({ where: { id: parsed.data.id }, data });
-      await rederiveForLevel(existing.name, tx);
-      return row;
-    });
+    const updated = await prisma.$transaction(
+      async (tx) => {
+        const row = await tx.classificationLevel.update({ where: { id: parsed.data.id }, data });
+        await rederiveForLevel(existing.name, tx);
+        return row;
+      },
+      CLASS_CHANGE_TX_OPTIONS,
+    );
     return ok(toClassificationLevel(updated));
   } catch (e: unknown) {
     console.error(`[updateClassification] re-deriving the fields of level "${existing.name}" failed`, e);
