@@ -311,7 +311,7 @@ async function renderEvent(
   ]);
   // The projection DB holds no metadata attribute dictionary: the tenant's comes from the live DB, injected into a renderer of this call only
   // (never the process-wide one, which keeps the first client it was given).
-  const [{ loadMetadataEmission }, { createArtifactRenderer }] = await Promise.all([
+  const [{ loadMetadataEmission }, { createArtifactRenderer, getSharedRenderQueue }] = await Promise.all([
     import("@/services/metadata-emission.service"),
     import("@/services/events/artifact-renderer"),
   ]);
@@ -341,7 +341,8 @@ async function renderEvent(
         ],
         prisma: db,
       },
-      { renderer: createArtifactRenderer({ db, loadMetadata: async () => metadata }) },
+      // Its compiles share the process-wide limit: N GitOps renders never run more than it at once.
+      { renderer: createArtifactRenderer({ db, loadMetadata: async () => metadata, queue: getSharedRenderQueue() }) },
     );
     if (
       !output.success ||

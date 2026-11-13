@@ -48,6 +48,11 @@ vi.mock("@/generated/prisma/client", async (importOriginal) => {
   }
   return { ...(await importOriginal<object>()), PrismaClient: ProjectionClient };
 });
+// Spied on: the per-call renderer must run in the process-wide compile limiter.
+vi.mock("@/services/events/artifact-renderer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/events/artifact-renderer")>();
+  return { ...actual, getSharedRenderQueue: vi.fn(actual.getSharedRenderQueue) };
+});
 vi.mock("@/services/events/event-emit.service", async () => {
   const { assembleAsyncApi3 } = await import("@/lib/event-specs/assemble");
   const { createArtifactRenderer } = await import("@/services/events/artifact-renderer");
@@ -69,6 +74,7 @@ vi.mock("@/services/events/event-emit.service", async () => {
 });
 
 import { renderCanonicalArtifact } from "@/lib/gitops/render";
+import { getSharedRenderQueue } from "@/services/events/artifact-renderer";
 
 const REVIEW = {
   key: "x-review-note", label: "Review note", description: "", valueSchema: { type: "string" }, targets: ["field"],
@@ -84,6 +90,7 @@ describe("GitOps renderEvent with a projection DB", () => {
     };
     const files = await renderCanonicalArtifact(root as never, "asyncapi", [root as never], "user-1");
     expect(h.live).toHaveBeenCalledWith("t1");
+    expect(getSharedRenderQueue).toHaveBeenCalled();
     expect(files.map((f) => f.path)).toEqual(["customer-changed.asyncapi.json", "customer-changed.asyncapi.yaml"]);
     for (const f of files) {
       expect(f.content).toContain("x-securityClassification");

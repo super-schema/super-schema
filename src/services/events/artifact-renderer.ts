@@ -422,6 +422,11 @@ export interface ArtifactRendererOptions {
   maxWaitMs?: number;
   /** A `tsp` run is killed after this long (default 120 000 ms); the render then fails with `EMITTER_TIMEOUT`. */
   emitTimeoutMs?: number;
+  /**
+   * The compile limiter to run in (default: one of its own, from `concurrency` / `maxWaiting`). Renderers built per call (GitOps) pass the
+   * process-wide one (`getSharedRenderQueue`), so N of them still run at most its limit of compiles at once.
+   */
+  queue?: Semaphore;
   /** The tenant's metadata attribute dictionary (default: `loadMetadataEmission` on `db`); undefined = none, the render is today's. */
   loadMetadata?: (tenantId: string) => Promise<MetadataEmissionContext | undefined>;
 }
@@ -474,7 +479,7 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
   const emitFiles = options.emitFiles ?? runTypeSpecEmitterFiles;
   const maxEntries = options.maxEntries ?? 256;
   const timeoutMs = options.emitTimeoutMs ?? DEFAULT_EMITTER_TIMEOUT_MS;
-  const queue = new Semaphore(options.concurrency ?? 2, { maxWaiting: options.maxWaiting ?? TSP_MAX_WAITING_RUNS });
+  const queue = options.queue ?? new Semaphore(options.concurrency ?? 2, { maxWaiting: options.maxWaiting ?? TSP_MAX_WAITING_RUNS });
   const maxWaitMs = options.maxWaitMs ?? TSP_MAX_WAIT_MS;
   const cache = new Map<string, Promise<Result<RenderedArtifact>>>();
 
@@ -674,9 +679,16 @@ function avroTopNamespace(content: string): string | undefined {
 }
 
 let shared: ArtifactRenderer | undefined;
+let sharedQueue: Semaphore | undefined;
+
+/** The process-wide render limiter (the shared renderer's, with its defaults), for renderers built per call. */
+export function getSharedRenderQueue(): Semaphore {
+  sharedQueue ??= new Semaphore(2, { maxWaiting: TSP_MAX_WAITING_RUNS });
+  return sharedQueue;
+}
 
 /** Process-wide renderer (D9 cache) for server code; tests construct their own. */
 export function getSharedArtifactRenderer(db: PrismaClient): ArtifactRenderer {
-  shared ??= createArtifactRenderer({ db });
+  shared ??= createArtifactRenderer({ db, queue: getSharedRenderQueue() });
   return shared;
 }

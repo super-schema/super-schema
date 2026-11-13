@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 import { createArtifactRenderer, type EmitFiles } from "@/services/events/artifact-renderer";
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
+import { Semaphore } from "@/lib/concurrency/semaphore";
 
 const TENANT = "tenant-acme";
 const CLASS2 = { data_class: "class2", data_category: "ConsumerPersonal" };
@@ -104,6 +105,24 @@ describe("artifact renderer with a metadata attribute dictionary", () => {
     const r = await createArtifactRenderer({ db: db as never, emitFiles, loadMetadata: async () => ({ definitions: [SECURITY, REVIEW] }) }).render(subject, "json-schema");
     expect(!r.success && r.error).toMatchObject({ code: "ARTIFACT_RENDER_FAILED", details: { cause: "INTERNAL_ATTRIBUTE_STRIP_FAILED" } });
     expect(emitFiles).not.toHaveBeenCalled();
+  });
+
+  it("renderers given one shared limiter never run more compiles at once than its limit", async () => {
+    let active = 0;
+    let peak = 0;
+    const emitFiles = vi.fn<EmitFiles>(async (...args) => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active--;
+      return emitter()(...args);
+    });
+    const queue = new Semaphore(1, { maxWaiting: 10 });
+    const renderers = [0, 1, 2].map(() => createArtifactRenderer({ db: fakeDb() as never, emitFiles, loadMetadata: async () => undefined, queue }));
+    const results = await Promise.all(renderers.map((r) => r.render(subject, "json-schema")));
+    expect(results.every((r) => r.success)).toBe(true);
+    expect(emitFiles).toHaveBeenCalledTimes(3);
+    expect(peak).toBe(1);
   });
 
   it("keys a version's cached render on the dictionary state: a changed dictionary renders again", async () => {

@@ -57,8 +57,8 @@ describe("stripExtensionDecorators: augment decorators and failing closed", () =
   });
 
   it("reads a triple-quoted string that ends in an escaped quote as one string", () => {
-    // `"""say \""""`: the escaped quote is content, the next three close the string.
-    const doc = '@doc("""say \\"""")';
+    // The escaped quote before the closing `"""` is content (TypeSpec's own reading of the string).
+    const doc = '@doc("""\n  say \\"\n  """)';
     const source = [doc, '@TypeSpec.JsonSchema.extension("x-review-note", "c")', "model A { a: string; }"].join("\n");
     expect(stripExtensionDecorators(source, KEYS)).toBe([doc, "model A { a: string; }"].join("\n"));
   });
@@ -76,6 +76,33 @@ describe("stripExtensionDecorators: augment decorators and failing closed", () =
     // A non-internal key whose VALUE mentions the internal key is fine.
     const fine = '@extension("x-other", #{see: "x-review-note"})\nmodel A {}';
     expect(stripExtensionDecorators(fine, KEYS)).toBe(fine);
+  });
+});
+
+describe("stripExtensionDecorators: forms a text scanner missed (found with the TypeSpec parser)", () => {
+  const wrap = (decorator: string) => ["model A {", `  ${decorator}`, "  note: string;", "}", ""].join("\n");
+  const stripped = ["model A {", "  note: string;", "}", ""].join("\n");
+
+  it.each([
+    ["a line break before the arguments", '@extension\n  ("x-review-note", "v")'],
+    ["a comment before the arguments", '@extension /*c*/ ("x-review-note", "v")'],
+    ["spaces around the qualifying dots", '@TypeSpec . JsonSchema . extension("x-review-note", "v")'],
+  ])("strips %s", (_label, decorator) => {
+    expect(stripExtensionDecorators(wrap(decorator), KEYS)).toBe(stripped);
+  });
+
+  it("refuses a key given as a constant", () => {
+    const source = ['const K = "x-review-note";', wrap('@extension(K, "v")')].join("\n");
+    expect(() => stripExtensionDecorators(source, KEYS)).toThrow(MetadataStripError);
+  });
+
+  it("refuses a key given as a string template (even one that never spells the key out)", () => {
+    expect(() => stripExtensionDecorators(wrap('@extension("x-review-${"note"}", "v")'), KEYS)).toThrow(MetadataStripError);
+  });
+
+  it("does not parse at all when the tenant has no internal key (byte-identical, even for a constant key)", () => {
+    const source = ['const K = "x-review-note";', wrap('@extension(K, "v")')].join("\n");
+    expect(stripExtensionDecorators(source, [])).toBe(source);
   });
 });
 
