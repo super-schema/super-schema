@@ -181,7 +181,9 @@ describe("edits change only what they say", () => {
     expect(decorators.danglingRef).toBeUndefined();
     expect(decorators.referencedEntityName).toBeUndefined();
     expect(decorators.governance).toBeUndefined();
-    expect((decorators as any).typespec.extensions.openapi["x-securityClassification"]).toEqual({ data_class: "class4", data_category: "Intrinsic" });
+    expect(decorators).toMatchObject({
+      typespec: { extensions: { openapi: { "x-securityClassification": { data_class: "class4", data_category: "Intrinsic" } } } },
+    });
   }, 60_000);
 
   it("renaming the $ref value updates the marker's raw ref", async () => {
