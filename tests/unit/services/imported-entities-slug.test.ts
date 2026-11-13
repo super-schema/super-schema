@@ -11,6 +11,7 @@ async function importEntities(names: string[]) {
   const create = vi.fn(async ({ data }: { data: { name: string; slug: string } }) => ({ id: `id-${data.name}` }));
   const tx = {
     field: { findMany: vi.fn(async () => []) },
+    metadataAttributeDefinition: { findMany: vi.fn(async () => []) },
     entity: { create, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) },
     auditLog: { create: auditCreate },
   } as unknown as Prisma.TransactionClient;

@@ -9,6 +9,7 @@ describe("createImportedEntities: the creation of each entity is audited", () =>
     const tx = {
       auditLog: { create: auditCreate },
       field: { findMany: vi.fn(async () => []) },
+      metadataAttributeDefinition: { findMany: vi.fn(async () => []) },
       entity: { create: entityCreate, findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn(async () => []) },
     } as unknown as Prisma.TransactionClient;
 
@@ -39,6 +40,7 @@ describe("createImportedEntities: the creation of each entity is audited", () =>
     const tx = {
       auditLog: { create: auditCreate },
       field: { findMany: vi.fn(async () => []) },
+      metadataAttributeDefinition: { findMany: vi.fn(async () => []) },
       entity: {
         create: vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}`, name: data.name, productId: "p" })),
         findFirst: vi.fn().mockResolvedValue(null),

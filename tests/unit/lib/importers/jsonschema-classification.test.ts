@@ -44,10 +44,29 @@ describe("classification import: default key", () => {
   it("(1) maps data_class to classification, keeps category, and keeps the block in extensions", () => {
     const block = { data_class: "class4", data_category: "Intrinsic" };
     const f = field(importProps({ a: { type: "string", [KEY]: block } }), "a");
-    expect(f.classification).toBe("class4");
-    expect(f.governance?.dataClass).toBe("class4");
-    expect(f.governance?.dataCategory).toBe("Intrinsic");
+    expect(f.classification).toBe("INTERNAL");
     expect(f.extensions?.[KEY]).toEqual(block);
+  });
+
+  it("maps a raw classN level onto the system level of its class", () => {
+    const block = { data_class: "class2", data_category: "ConsumerPersonal" };
+    const f = field(importProps({ a: { type: "string", [KEY]: block } }), "a");
+    expect(f.classification).toBe("PII");
+    expect(f.extensions?.[KEY]).toEqual(block);
+    const levels = ["class1", "CLASS3", "Class5", "restricted", "class6", "class"].map(
+      (data_class, i) => field(importProps({ [`p${i}`]: { type: "string", [KEY]: { data_class } } }), `p${i}`).classification,
+    );
+    expect(levels).toEqual(["NEVER_STORED", "SENSITIVE", "PUBLIC", "restricted", "class6", "class"]);
+  });
+
+  it("an explicit value-map entry wins over the classN mapping; an unmapped level stays raw", () => {
+    vi.stubEnv("SCHEMA_CLASSIFICATION_VALUE_MAP", '{"class2":"SENSITIVE"}');
+    const doc = importProps({
+      a: { type: "string", [KEY]: { data_class: "class2" } },
+      b: { type: "string", [KEY]: { data_class: "restricted" } },
+    });
+    expect(field(doc, "a").classification).toBe("SENSITIVE");
+    expect(field(doc, "b").classification).toBe("restricted");
   });
 
   it("trims the level and works for $defs entity properties", () => {
@@ -62,7 +81,6 @@ describe("classification import: default key", () => {
     );
     const inner = doc.entities.find((e) => e.name === "Inner");
     expect(inner?.fields[0]?.classification).toBe("c1");
-    expect(inner?.fields[0]?.governance?.dataCategory).toBeUndefined();
   });
 
   it("(5) malformed blocks never throw and yield no classification", () => {
@@ -118,7 +136,6 @@ describe("classification import: configuration", () => {
       b: { type: "string", [KEY]: { data_class: "other" } },
     });
     expect(field(doc, "a").classification).toBe("PII");
-    expect(field(doc, "a").governance?.dataClass).toBe("class4");
     expect(field(doc, "b").classification).toBe("other");
   });
 
@@ -139,7 +156,7 @@ describe("classification import: configuration", () => {
     vi.stubEnv("SCHEMA_CLASSIFICATION_CATEGORY_FIELD", "category");
     const f = field(importProps({ a: { type: "string", [KEY]: { level: "c3", category: "Cat" } } }), "a");
     expect(f.classification).toBe("c3");
-    expect(f.governance).toMatchObject({ dataClass: "c3", dataCategory: "Cat" });
+    expect(f.extensions?.[KEY]).toEqual({ level: "c3", category: "Cat" });
   });
 
   it("a configured key equal to a reserved key is not read (reserved keys win)", () => {
@@ -243,9 +260,7 @@ describe("classification import: allOf and x-classification", () => {
       },
     });
     expect(field(doc, "viaMember").classification).toBe("m1");
-    expect(field(doc, "viaMember").governance?.dataCategory).toBe("M");
     expect(field(doc, "both").classification).toBe("own");
-    expect(field(doc, "both").governance?.dataCategory).toBe("Own");
   });
 
   it("(9) a plain-string x-classification (the app's own export) maps to the classification", () => {
@@ -259,7 +274,7 @@ describe("classification import: allOf and x-classification", () => {
     expect(field(doc, "b").classification).toBeUndefined();
     expect(field(doc, "c").classification).toBeUndefined();
     // The vendor block is explicit data classification; it wins over the app's own export key.
-    expect(field(doc, "d").classification).toBe("class4");
+    expect(field(doc, "d").classification).toBe("INTERNAL");
     // Still not duplicated into the extensions bag.
     expect(field(doc, "a").extensions).toBeUndefined();
   });
@@ -273,14 +288,11 @@ describe("the user's `user event` schema", () => {
   it("(7) classifies component, tenant and created_time; user_links stays unclassified", () => {
     const e = doc.entities[0];
     const get = (n: string) => e.fields.find((f) => f.name === n)!;
-    expect(get("component").classification).toBe("class4");
-    expect(get("component").governance?.dataCategory).toBe("Intrinsic");
-    expect(get("created_time").classification).toBe("class4");
-    expect(get("created_time").governance?.dataCategory).toBe("Intrinsic");
-    expect(get("tenant").classification).toBe("class4");
-    expect(get("tenant").governance?.dataCategory).toBe("OrgCompany");
+    expect(get("component").classification).toBe("INTERNAL");
+    expect(get("created_time").classification).toBe("INTERNAL");
+    expect(get("tenant").classification).toBe("INTERNAL");
+    expect(get("tenant").extensions?.[KEY]).toEqual({ data_class: "class4", data_category: "OrgCompany" });
     expect(get("user_links").classification).toBeUndefined();
-    expect(get("user_links").governance?.dataClass).toBeUndefined();
   });
 
   it("(8) the classification reaches the persisted field input through the payload chain", () => {
@@ -297,9 +309,12 @@ describe("the user's `user event` schema", () => {
     });
     const fields = payload.entities?.[0]?.fields ?? [];
     const tenant = fields.find((f) => f.name === "tenant")!;
-    expect(tenant.classification).toBe("class4");
-    const governance = (tenant.decorators as { governance?: Record<string, unknown> }).governance;
-    expect(governance).toMatchObject({ dataClass: "class4", dataCategory: "OrgCompany" });
+    expect(tenant.classification).toBe("INTERNAL");
+    const decorators = tenant.decorators as { governance?: Record<string, unknown>; typespec?: { extensions?: { openapi?: Record<string, unknown> } } };
+    // The block is the field's extension (the only place the value lives); it no longer leaks into governance.
+    expect(decorators.governance?.dataClass).toBeUndefined();
+    expect(decorators.governance?.dataCategory).toBeUndefined();
+    expect(decorators.typespec?.extensions?.openapi?.[KEY]).toEqual({ data_class: "class4", data_category: "OrgCompany" });
     const unclassified = fields.find((f) => f.name === "user_links")!;
     expect(unclassified.classification).toBeNull();
   });

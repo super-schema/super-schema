@@ -77,7 +77,7 @@ async function persist(): Promise<void> {
   });
   payload.entities[0].name = "UserEvent";
   const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-  const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
+  const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null) }, metadataAttributeDefinition: { findMany: vi.fn(async () => []) }, product: { findUnique: vi.fn(async () => null) }, field: { findMany: vi.fn(async () => []) }, auditLog: { create: vi.fn(async () => ({})) } } as unknown as Prisma.TransactionClient;
   await createImportedEntities(tx, {
     entities: [payload.entities[0] as unknown as ImportedEntityInput],
     productScope: { tenantId: "t", domainId: "d", productId: "p" },
@@ -126,9 +126,10 @@ describe("user event schema: import", () => {
 
   it("maps x-securityClassification to classification + data category", () => {
     for (const [name, category] of [["component", "Intrinsic"], ["tenant", "OrgCompany"], ["created_time", "Intrinsic"]]) {
-      expect(row(name).classification).toBe("class4");
-      expect(row(name).decorators.classification).toEqual({ level: "class4" });
-      expect(row(name).decorators.governance).toEqual({ dataClass: "class4", dataCategory: category });
+      expect(row(name).classification).toBe("INTERNAL");
+      expect(row(name).decorators.classification).toEqual({ level: "INTERNAL" });
+      expect(row(name).decorators.governance).toBeUndefined();
+      expect(row(name).decorators.typespec.extensions.openapi["x-securityClassification"]).toEqual({ data_class: "class4", data_category: category });
     }
     expect(row("user_links").classification ?? null).toBeNull();
   });

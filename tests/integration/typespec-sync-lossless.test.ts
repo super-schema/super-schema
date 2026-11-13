@@ -76,7 +76,7 @@ async function persist(): Promise<void> {
   });
   payload.entities[0].name = "UserEvent";
   const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-  const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
+  const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null) }, metadataAttributeDefinition: { findMany: vi.fn(async () => []) }, product: { findUnique: vi.fn(async () => null) }, field: { findMany: vi.fn(async () => []) }, auditLog: { create: vi.fn(async () => ({})) } } as unknown as Prisma.TransactionClient;
   await createImportedEntities(tx, {
     entities: [payload.entities[0] as unknown as ImportedEntityInput],
     productScope: { tenantId: "t", domainId: "d", productId: "p" },
@@ -180,7 +180,8 @@ describe("edits change only what they say", () => {
     expect(u.f2).toMatchObject({ type: "utcDateTime" });
     expect(decorators.danglingRef).toBeUndefined();
     expect(decorators.referencedEntityName).toBeUndefined();
-    expect(decorators.governance).toEqual({ dataClass: "class4", dataCategory: "Intrinsic" });
+    expect(decorators.governance).toBeUndefined();
+    expect((decorators as any).typespec.extensions.openapi["x-securityClassification"]).toEqual({ data_class: "class4", data_category: "Intrinsic" });
   }, 60_000);
 
   it("renaming the $ref value updates the marker's raw ref", async () => {
