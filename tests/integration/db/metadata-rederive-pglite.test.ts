@@ -14,7 +14,7 @@ import { rederiveForLevel } from "@/services/metadata-rederive.service";
 const db = () => holder.db!.prisma;
 let n = 0;
 
-const stored = (v: unknown) => ({ typespec: { extensions: { openapi: { "x-securityClassification": v } } } });
+const stored = (v: Record<string, string>) => ({ typespec: { extensions: { openapi: { "x-securityClassification": v } } } });
 
 afterAll(async () => {
   await holder.db?.close();

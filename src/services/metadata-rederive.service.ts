@@ -6,9 +6,29 @@
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { MARK_DRAFT_CHANGED_SQL } from "@/lib/entity-versioning/draft-state";
-import { recomputeFieldAttributes } from "@/lib/metadata-attributes/derive";
+import { recomputeFieldAttributes, type DerivableField } from "@/lib/metadata-attributes/derive";
+import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import { listMetadataAttributes } from "@/services/metadata-attribute.service";
 import { loadCustomClassMap } from "@/services/classification-scale.service";
+
+export interface DerivationContext {
+  defs: MetadataAttributeDefinition[];
+  custom: ReadonlyMap<string, number>;
+}
+
+/** The tenant's field-target definitions and the custom class map, loaded once per action; null when there are no definitions (skip all work). */
+export async function loadDerivationContext(tenantId: string | undefined): Promise<DerivationContext | null> {
+  if (!tenantId) return null;
+  const listed = await listMetadataAttributes(tenantId, "field");
+  if (!listed.success || listed.data.length === 0) return null;
+  return { defs: listed.data, custom: await loadCustomClassMap() };
+}
+
+/** The field's decorators with derived members applied; the input decorators untouched when there is no context. */
+export function deriveFieldDecorators(ctx: DerivationContext | null, field: DerivableField): Record<string, unknown> | undefined {
+  if (!ctx) return (field.decorators && typeof field.decorators === "object" ? field.decorators : undefined) as Record<string, unknown> | undefined;
+  return recomputeFieldAttributes(field, ctx.defs, ctx.custom);
+}
 
 type FieldRow = {
   id: string;

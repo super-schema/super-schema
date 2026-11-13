@@ -36,6 +36,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
+vi.mock("@/services/metadata-rederive.service", async () => (await import("../../helpers/no-derivation")).noDerivationModule);
 // The tenant guard of the override actions is under test, not which targets apply overrides (none does today, catalog.ts): BigQuery plays one.
 vi.mock("@/lib/schema-targets/catalog", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/schema-targets/catalog")>();

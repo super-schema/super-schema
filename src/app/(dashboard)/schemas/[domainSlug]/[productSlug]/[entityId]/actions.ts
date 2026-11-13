@@ -78,6 +78,7 @@ import {
   type GovernanceDiagnostic,
 } from "@/lib/compiler/typespec-compiler";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { loadDerivationContext, deriveFieldDecorators } from "@/services/metadata-rederive.service";
 import { fieldNeedsUpdate, mergeSyncedField, entityExtensionsChange } from "@/lib/typespec-sync/merge-fields";
 import { isDecimalType } from "@/lib/data-types";
 import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
@@ -233,6 +234,12 @@ export async function addFieldAction(
     const normalizedDocumentation = normalizeFieldDocumentation({ description: opts?.description, decorators: opts?.decorators });
     const attributeErrors = fieldAttributeErrors({ type, precision: opts?.precision, scale: opts?.scale, fieldNumber: assignedFieldNumber, decorators: normalizedDocumentation.decorators });
     if (attributeErrors.length) return { error: attributeErrors.join(" "), code: "VALIDATION_ERROR" as const };
+    // Derived attribute members (e.g. data_class from the classification); nothing happens for a tenant without field attributes.
+    const derivation = await loadDerivationContext(access.resource.tenantId);
+    const createClassification = opts?.classification !== undefined ? opts.classification : "SENSITIVE";
+    const createDecorators = derivation
+      ? deriveFieldDecorators(derivation, { name: fieldName.name, type, classification: createClassification, decorators: normalizedDocumentation.decorators ?? {} })
+      : normalizedDocumentation.decorators;
     const field = await withAudit({
       action: "CREATE",
       entityType: "Field",
@@ -251,14 +258,14 @@ export async function addFieldAction(
               type,
               sortOrder: maxField ? maxField.sortOrder + 1 : 0,
               description: normalizedDocumentation.description,
-              classification: opts?.classification !== undefined ? opts.classification : "SENSITIVE",
+              classification: createClassification,
               ...(opts?.nullable != null && { nullable: opts.nullable }),
               ...(opts?.isKey != null && { isKey: opts.isKey }),
               ...(opts?.precision !== undefined && { precision: opts.precision }),
               ...(opts?.scale !== undefined && { scale: opts.scale }),
               fieldNumber: assignedFieldNumber,
               ...(opts?.aliases && { aliases: opts.aliases }),
-              ...(opts?.decorators && { decorators: normalizedDocumentation.decorators as Prisma.InputJsonValue }),
+              ...((opts?.decorators || derivation) && { decorators: createDecorators as Prisma.InputJsonValue }),
             },
           }),
           prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
@@ -383,7 +390,20 @@ export async function updateFieldAction(
     // An edit that resolves an unresolved external reference (the type changes away from it, or its target changes) clears the marker.
     const editedDecorators = decoratorsAfterFieldEdit(existing, { type: typeof rest.type === "string" ? rest.type : undefined, decorators });
     const normalized = normalizeFieldDocumentation({ ...existing, decorators: editedDecorators ?? existing.decorators }, typeof rest.description === "string" ? rest.description : undefined);
-    const nextDecorators = editedDecorators !== undefined || JSON.stringify(normalized.decorators) !== JSON.stringify(existing.decorators ?? {}) ? normalized.decorators : undefined;
+    const editedNext = editedDecorators !== undefined || JSON.stringify(normalized.decorators) !== JSON.stringify(existing.decorators ?? {}) ? normalized.decorators : undefined;
+    // Derived attribute members follow the field as it is AFTER this edit (a classification change alone re-derives them).
+    const derivation = await loadDerivationContext(access.resource.tenantId);
+    let nextDecorators = editedNext;
+    if (derivation) {
+      const base = (editedNext ?? existing.decorators ?? {}) as Record<string, unknown>;
+      const derived = deriveFieldDecorators(derivation, {
+        name: typeof rest.name === "string" ? rest.name : existing.name,
+        type: typeof rest.type === "string" ? rest.type : existing.type,
+        classification: rest.classification !== undefined ? (rest.classification as string | null) : existing.classification,
+        decorators: base,
+      });
+      if (derived !== undefined && derived !== base) nextDecorators = derived;
+    }
     if (rest.description !== undefined || normalized.description !== (existing.description ?? "")) rest.description = normalized.description;
     const errorsBefore = fieldAttributeErrors(existing);
     const errorsAfter = fieldAttributeErrors({ ...existing, ...rest, decorators: nextDecorators ?? existing.decorators });
@@ -1047,6 +1067,8 @@ async function applyTypeSpecFields(
     let addedCount = 0;
     let updatedCount = 0;
     const removedNames: string[] = [];
+    // Definitions and the custom class map are loaded once for the whole sync; null (no definitions) skips every derivation.
+    const derivation = await loadDerivationContext(access.resource.tenantId);
 
     // Get max sort order for new fields
     const maxSort = existingFields.reduce((max, f) => Math.max(max, f.sortOrder), -1);
@@ -1066,13 +1088,25 @@ async function applyTypeSpecFields(
       // The row the source means: the stored decorators MERGED with what the text can express (never replaced), see
       // `@/lib/typespec-sync/merge-fields` for which keys the source owns and which are preserved. `fieldGovernance` is only
       // given on the real-compiler path; a field without governance decorators there is still "known to have none".
-      const merged = mergeSyncedField(existing ?? null, pf, {
+      const mergedBase = mergeSyncedField(existing ?? null, pf, {
         governance,
         governanceKnown: fieldGovernance !== undefined,
         enums,
         reference: references?.get(pf.name),
         declared,
       });
+      const merged = derivation
+        ? {
+            ...mergedBase,
+            decorators:
+              deriveFieldDecorators(derivation, {
+                name: pf.name,
+                type: mergedBase.type,
+                classification: mergedBase.classification,
+                decorators: mergedBase.decorators,
+              }) ?? mergedBase.decorators,
+          }
+        : mergedBase;
       const decoratorsJson = merged.decorators;
       const classification = merged.classification;
 
