@@ -117,4 +117,32 @@ describe("dictionary admin actions: behavior", () => {
     expect(await actions.installPackAction("nope")).toEqual({ error: "Unknown pack" });
     expect(h.install).not.toHaveBeenCalled();
   });
+
+  describe("a failed re-derivation is an error result, never a throw (D2)", () => {
+    const quiet = () => vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    it("create and update: the definition change is audited, the rederive failure is answered as an error", async () => {
+      const spy = quiet();
+      h.rederive.mockRejectedValue(new Error("db down"));
+      h.createAttr.mockResolvedValue({ success: true, data: { id: "a1" } });
+      h.updateAttr.mockResolvedValue({ success: true, data: { id: "a1" } });
+      const created = await actions.createAttributeAction({ key: "x-a" });
+      const updated = await actions.updateAttributeAction("a1", { label: "B" });
+      for (const r of [created, updated]) {
+        expect(r).toEqual({ error: expect.stringContaining("derived attribute values could not be updated") });
+        expect(JSON.stringify(r)).not.toContain("db down");
+      }
+      expect(h.withAudit.mock.calls.map((c) => c[0].action)).toEqual(["CREATE", "UPDATE"]);
+      spy.mockRestore();
+    });
+
+    it("any unexpected failure inside an audited write (e.g. a pack install's rederive) is an error result", async () => {
+      const spy = quiet();
+      h.install.mockRejectedValue(new Error("timeout"));
+      const r = await actions.installPackAction("paypal-security-classification");
+      expect(r).toEqual({ error: expect.any(String) });
+      expect(JSON.stringify(r)).not.toContain("timeout");
+      spy.mockRestore();
+    });
+  });
 });

@@ -26,7 +26,7 @@ Import: a vendor level written `class1` to `class5` (case-insensitive) in the cl
 An entry has a name (unique per tenant, case-sensitive), aliases (matched case-insensitively), a type, a description, a classification, and default values for `x-` attributes.
 
 - **Autocomplete.** The field editor suggests entries by name or alias.
-- **Save to dictionary.** A field can be saved as a dictionary entry from the field itself. Only `schema`-scope attribute values are copied, with derived members removed, so an entry holds what the author chose, not what is computed. When an alias-matched entry is overwritten the entry keeps its name, and the prompt names it.
+- **Save to dictionary.** A field can be saved as a dictionary entry from the field itself. Only `schema`-scope attribute values are copied, with derived members removed, so an entry holds what the author chose, not what is computed. Creating an entry needs edit access to the field. When the name or an alias already exists, overwriting that entry is a tenant-wide change: it needs a tenant administrator, and it is audited. An author without that right is told to ask a tenant admin to update the dictionary entry, with no overwrite button. When an alias-matched entry is overwritten the entry keeps its name, and the prompt names it.
 - **Usage.** Each entry shows how many fields are linked to it. The usage list names each field with its entity, domain and product.
 - **Drift.** For each linked field, usage lists which of `type`, `description`, `classification` and `attributes` differ from the entry (the entry is the reference). Nothing is synced: drift is information only. A derived member that differs is not drift.
 - **Deleting** an entry leaves the fields created from it untouched; they only lose the link.
@@ -50,10 +50,19 @@ A definition describes one tenant attribute. Values are stored in the existing e
 
 Supported keywords: `type` (`string`, `number`, `integer`, `boolean`, `array`, `object`), `enum`, `format`, `pattern`, `minimum`, `maximum`, `minLength`, `maxLength`, `items`, `properties`, `required`. Any other keyword is rejected when the definition is saved, as is an invalid `pattern`. Validation problems are reported with JSON pointer paths.
 
+Patterns run on the server, so they are bounded:
+
+- a `pattern` is at most 256 characters;
+- a `pattern` with a nested quantifier is rejected: a group repeated by `*`, `+` or `{n,m}` that itself contains a quantifier or an alternation, such as `(a+)+`, `(a*)*` or `(a|aa)+`. The check is a simple heuristic, and it errs on the strict side (`(foo|bar)+` is refused too). Rewrite such a pattern without the repeated group;
+- a string value longer than 10,000 characters is not tested against its pattern; validation reports "value too long to check pattern" instead;
+- a value schema nests at most 10 levels deep (`items` / `properties`).
+
 ### Scope
 
 - `schema`: the value is part of the contract and appears in emitted outputs.
-- `internal`: the value is kept in the canonical TypeSpec and the GitOps source but is removed from every emitted output: JSON Schema, OpenAPI, AsyncAPI and the GitOps artifacts. Stored sources are stripped with a parser, not a text replace.
+- `internal`: the value is kept in the canonical TypeSpec and the GitOps source but is removed from every emitted output: JSON Schema, OpenAPI, AsyncAPI and the GitOps artifacts. Stored sources are stripped with a parser, not a text replace. A final pass then removes every `internal` key at any depth of each emitted JSON or YAML document, including a key nested inside another attribute's value, an `items` extension, or an AsyncAPI message or operation trait. The AsyncAPI Code panel of the event builder drops them too.
+- Stored documents follow the current dictionary. An AsyncAPI version published before a key became `internal` is stripped when it is read (the version view, the API and the GitOps artifacts of a frozen version). The stored row itself is unchanged. When nothing matches, the output is byte-identical.
+- An `internal` definition cannot be deleted, and its key cannot be changed, while any field, entity, API operation, or event channel, message or operation still holds a value for it. The refusal (`INTERNAL_VALUES_EXIST`) gives the count: "Remove the stored values first; deleting this definition would publish them." Values frozen in already-published versions are not counted, because they cannot be removed. Once the definition is gone, those values are no longer known as internal.
 
 ### Placement
 
@@ -70,7 +79,12 @@ Supported keywords: `type` (`string`, `number`, `integer`, `boolean`, `array`, `
 | `{name}` | The field name |
 | `{type}` | The field type |
 
-Derived members are recomputed whenever a field is saved (every field writer does it), and for existing fields when an attribute definition is created or updated or when a custom level's class number changes. User-entered members of the same value are kept.
+Derived members are recomputed whenever a field is saved (every field writer does it, using the field's domain policy), and for existing fields when an attribute definition is created or updated or when a custom level's class number changes. User-entered members of the same value are kept.
+
+- The bulk re-derivation locks the field rows it re-derives, one batch per transaction, so an edit saved at the same time is never overwritten.
+- A custom level's class change and its re-derivation are one transaction. If the re-derivation fails, the class change is rolled back and nothing is saved. Saving again retries.
+- If re-deriving fails after a definition is saved, the admin page shows an error; saving the definition again retries.
+- **TypeSpec source save.** Sometimes derivation stores a different value than the saved text: for example, the text says `data_class: "class5"` for a PII field, and the row stores `class2`. In that case the source stays marked stale, and the next time the Source tab is opened it is regenerated from the rows. A save whose text agrees with the derivation clears the mark, as before.
 
 ### Required attributes and alerts
 
@@ -78,7 +92,7 @@ Derived members are recomputed whenever a field is saved (every field writer doe
 
 ### Domain-policy overrides
 
-A domain policy can set `metadataAttributes` per key: `{ "x-key": { "requiredWhen": "...", "default": ... } }`. `requiredWhen` replaces the definition's value for that domain. `default` fills in a field that has no value for the attribute; a stored value is never overwritten, and a default that fails the value schema is ignored with a warning. Overrides for unknown keys, and malformed entries, are ignored.
+A domain policy can set `metadataAttributes` per key: `{ "x-key": { "requiredWhen": "...", "default": ... } }`. `requiredWhen` replaces the definition's value for that domain, on every derive path (create, edit, TypeSpec save, imports, re-derivation), not only on create. `default` fills in a field that has no value for the attribute; a stored value is never overwritten, and a default that fails the value schema is ignored with a warning. Overrides for unknown keys, and malformed entries, are ignored.
 
 ### Conversion by target
 

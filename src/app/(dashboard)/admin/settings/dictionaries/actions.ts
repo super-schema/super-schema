@@ -85,7 +85,23 @@ async function audited<T extends { id?: string }>(
     return { data };
   } catch (e) {
     if (e instanceof Refused) return fail(e.message);
-    throw e;
+    // D2: an action never throws past its result (the page would show nothing). The cause is logged, never shown.
+    console.error(`[dictionaries] ${action} ${entityType} ${entityId} failed`, e);
+    return fail("The change could not be completed. Try again.");
+  }
+}
+
+/**
+ * Re-derives the tenant's field values after a definition change that is already stored (and audited). A failure is answered as an error
+ * result, never thrown: the page shows it, and saving the definition again re-derives.
+ */
+async function rederiveAfterChange(tenantId: string): Promise<{ error: string } | undefined> {
+  try {
+    await rederiveTenant(tenantId);
+    return undefined;
+  } catch (e) {
+    console.error(`[dictionaries] re-deriving the fields of tenant ${tenantId} failed`, e);
+    return fail("The attribute was saved, but the derived attribute values could not be updated. Save it again to retry.");
   }
 }
 
@@ -172,13 +188,12 @@ function withoutPack(input: unknown): unknown {
 export async function createAttributeAction(input: unknown) {
   const g = await gate();
   if (!g.ok) return fail(g.error);
-  const answer = await audited(g, "CREATE", "MetadataAttributeDefinition", "pending", async () => {
-    const result = await createMetadataAttribute(g.tenantId, { ...(withoutPack(input) as object), pack: null });
-    if (result.success) await rederiveTenant(g.tenantId);
-    return result;
-  });
-  if ("data" in answer) refresh();
-  return answer;
+  const answer = await audited(g, "CREATE", "MetadataAttributeDefinition", "pending", () =>
+    createMetadataAttribute(g.tenantId, { ...(withoutPack(input) as object), pack: null }),
+  );
+  if (!("data" in answer)) return answer;
+  refresh();
+  return (await rederiveAfterChange(g.tenantId)) ?? answer;
 }
 
 export async function updateAttributeAction(id: string, patch: unknown) {
@@ -189,15 +204,12 @@ export async function updateAttributeAction(id: string, patch: unknown) {
     "UPDATE",
     "MetadataAttributeDefinition",
     id,
-    async () => {
-      const result = await updateMetadataAttribute(g.tenantId, id, withoutPack(patch) as Parameters<typeof updateMetadataAttribute>[2]);
-      if (result.success) await rederiveTenant(g.tenantId);
-      return result;
-    },
+    () => updateMetadataAttribute(g.tenantId, id, withoutPack(patch) as Parameters<typeof updateMetadataAttribute>[2]),
     { id, tenantId: g.tenantId },
   );
-  if ("data" in answer) refresh();
-  return answer;
+  if (!("data" in answer)) return answer;
+  refresh();
+  return (await rederiveAfterChange(g.tenantId)) ?? answer;
 }
 
 export async function deleteAttributeAction(id: string) {

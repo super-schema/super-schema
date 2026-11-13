@@ -11,6 +11,7 @@ import { assetHref } from "@/lib/navigation/asset-href";
 import { checkValueSchema } from "@/lib/metadata-attributes/value-schema";
 import type { DictionaryUsageRow } from "@/services/field-dictionary.service";
 import { METADATA_ATTRIBUTE_TARGETS } from "@/types/schemas/metadata-attribute";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 import {
   createAttributeAction,
   createFieldEntryAction,
@@ -75,6 +76,10 @@ export function DictionariesAdmin({ initial }: { initial: DictionariesOverview }
       if ("error" in fresh) setError(fresh.error);
       else setData(fresh.data);
       return true;
+    } catch {
+      // A rejected server action (network drop, an unexpected server failure): shown, never swallowed; the cause is not printed.
+      setError(GENERIC_ACTION_ERROR);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -121,9 +126,14 @@ function UsageDrawer({ entry, onClose }: { entry: DictionariesOverview["fields"]
   useEffect(() => {
     if (!entryId) return;
     let live = true;
-    fieldEntryUsageAction(entryId).then((a) => {
-      if (live) setState("error" in a ? { id: entryId, error: a.error } : { id: entryId, rows: a.data });
-    });
+    fieldEntryUsageAction(entryId)
+      .then((a) => {
+        if (live) setState("error" in a ? { id: entryId, error: a.error } : { id: entryId, rows: a.data });
+      })
+      .catch(() => {
+        // A rejected action would leave "Loading..." forever: say it failed instead.
+        if (live) setState({ id: entryId, error: "The usage could not be loaded. Close and try again." });
+      });
     return () => {
       live = false;
     };
