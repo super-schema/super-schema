@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Zap, ZapOff, Clock, Hash, RefreshCw } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import {
   getEmitterConfigsAction,
@@ -129,35 +130,26 @@ export function EmitterCardGrid() {
               className="border border-border rounded-lg p-space-4"
             >
               {/* Header */}
-              <div className="flex items-center justify-between mb-space-3">
-                <div className="flex items-center gap-space-2">
+              <div className="flex items-center justify-between gap-space-3 mb-space-3">
+                <div className="flex min-w-0 items-center gap-space-2">
                   {emitter.enabled ? (
                     <Zap className="w-5 h-5 text-primary" />
                   ) : (
                     <ZapOff className="w-5 h-5 text-muted-foreground" />
                   )}
-                  <h3 className="text-heading-4 text-foreground capitalize">
+                  <h3 className="min-w-0 break-words text-heading-4 text-foreground capitalize">
                     {emitter.emitterName}
                   </h3>
                 </div>
 
                 {/* Toggle */}
-                <button
+                <Switch
                   data-testid="emitter-toggle"
-                  onClick={() => toggleEmitter(emitter.emitterName, !emitter.enabled)}
+                  aria-label={emitter.emitterName + " emitter"}
+                  checked={emitter.enabled}
+                  onCheckedChange={(checked) => void toggleEmitter(emitter.emitterName, checked)}
                   disabled={busy === emitter.emitterName}
-                  className={`relative w-10 h-5 rounded-full transition-colors disabled:opacity-50 ${
-                    emitter.enabled ? "bg-success" : "bg-muted"
-                  }`}
-                  title={emitter.enabled ? "Disable emitter" : "Enable emitter"}
-                  aria-pressed={emitter.enabled}
-                >
-                  <span
-                    className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-                      emitter.enabled ? "translate-x-5" : "translate-x-0.5"
-                    }`}
-                  />
-                </button>
+                />
               </div>
 
               {/* Info */}
@@ -165,7 +157,7 @@ export function EmitterCardGrid() {
                 {emitter.description}
               </p>
 
-              <div className="flex items-center gap-space-4 text-caption text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-space-2 text-caption text-muted-foreground">
                 <span>v{emitter.version}</span>
                 <span className="px-1.5 py-0.5 rounded bg-muted">{emitter.targetFormat}</span>
                 <span className="px-1.5 py-0.5 rounded bg-muted/60">{emitter.sourceLabel}</span>

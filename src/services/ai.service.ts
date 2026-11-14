@@ -154,6 +154,43 @@ export class VllmClient implements AiClient {
   }
 }
 
+/** An enterprise gateway exposing the OpenAI Chat Completions request and response format. */
+export class CustomAiClient implements AiClient {
+  constructor(private endpoint: string, private model: string, private apiKey: string | null = null, private headers: Record<string, string> = {}) {}
+  async complete(prompt: string, options?: AiOptions): Promise<Result<string>> {
+    try {
+      const headers = new Headers(requestHeaders(this.apiKey));
+      for (const [name, value] of Object.entries(this.headers)) headers.set(name, value);
+      const response = await fetch(this.endpoint, {
+        method: "POST",
+        headers,
+        redirect: "manual",
+        signal: AbortSignal.timeout(30_000),
+        body: JSON.stringify({
+          model: this.model, messages: [{ role: "user", content: prompt }], stream: false,
+          temperature: options?.temperature ?? 0.3, max_tokens: options?.maxTokens ?? 2048,
+        }),
+      });
+      if (!response.ok) return err({
+        code: "AI_REQUEST_FAILED", message: "Custom AI endpoint returned HTTP " + response.status,
+        suggestedFix: "Check the endpoint, model, API key, and integration headers in Admin > AI.",
+      });
+      const data = await response.json();
+      const content = data?.choices?.[0]?.message?.content;
+      if (typeof content !== "string" || !content.trim()) return err({
+        code: "AI_RESPONSE_INVALID", message: "The custom endpoint did not return a chat completion",
+        suggestedFix: "Use an endpoint that implements the OpenAI Chat Completions format.",
+      });
+      return ok(content);
+    } catch {
+      return err({
+        code: "AI_CONNECTION_ERROR", message: "Could not complete the request to the custom AI endpoint",
+        suggestedFix: "Check the endpoint and credentials in Admin > AI.",
+      });
+    }
+  }
+}
+
 // ── Factory ────────────────────────────────────────────────────────────
 
 /** The client for a resolved configuration (see `resolveAiConfig`), or null when there is none. Pure: it reads nothing from the environment. */
@@ -167,6 +204,8 @@ export function createAiClient(config: ResolvedAiConfig | null): AiClient | null
       return new OllamaClient(config.baseUrl, config.model, config.apiKey);
     case "vllm":
       return new VllmClient(config.baseUrl, config.model, config.apiKey);
+    case "custom":
+      return new CustomAiClient(config.baseUrl, config.model, config.apiKey, config.headers);
     default:
       return null;
   }

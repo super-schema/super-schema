@@ -1,9 +1,11 @@
 # Dictionaries and the class scale
 
-Each tenant has two dictionaries, managed by tenant administrators at **Admin > Settings > Dictionaries** (`/admin/settings/dictionaries`, tabs *Fields* and *Metadata attributes*):
+Each tenant has two dictionaries, managed by tenant administrators under **Admin > Tenant**:
 
-- the **Field Dictionary**: canonical fields (name, aliases, type, classification, default attribute values) that authors reuse;
-- the **Metadata Attribute Dictionary**: definitions of tenant `x-` attributes (what they are called, where they apply, what values they accept, how they are emitted).
+- **Dictionaries**: reusable enterprise fields at /admin/tenant/dictionaries.
+- **Custom attributes**: metadata definitions, including classification and tag attributes, at /admin/tenant/attributes.
+
+Domains and Storage & onboarding have their own sections under Tenant. The old Settings dictionary and Classifications URLs redirect to the tenant sections. The retired Classifications page only kept edits in browser state. The fixed built-in class scale below remains shared.
 
 ## The class scale
 

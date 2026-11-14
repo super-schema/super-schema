@@ -5,11 +5,12 @@
  *   1. the stored override (the `ai_config` row), when it names a provider AND a base URL: it wins entirely (its model, else AI_MODEL, else llama3);
  *   2. the environment: AI_PROVIDER with AI_BASE_URL;
  *   3. the standard names of the providers' own tools, when AI_BASE_URL is unset: OLLAMA_HOST (provider ollama) or OPENAI_BASE_URL (provider vllm).
- * A provider has no fallback: AI_PROVIDER or the stored override must name one. AI_API_KEY applies whatever the source (env only, never stored).
+ * A provider has no fallback: AI_PROVIDER or the stored override must name one. AI_API_KEY supplies the environment credential; a saved endpoint can have encrypted credentials.
  *
- * The API key is never stored, returned, or logged: the views below carry only whether it is set.
+ * Credentials are encrypted at rest and never returned or logged; views carry only presence flags.
  */
 
+import { openSecret, sealSecret, SecretBoxError } from "@/lib/crypto/secret-box";
 import { prisma } from "@/lib/db";
 import { ctxCan } from "@/lib/access";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
@@ -28,12 +29,13 @@ export type AiProviderId = (typeof AI_PROVIDER_IDS)[number];
 
 export type AiConfigSource = "db" | "env" | "legacy" | "none";
 
-/** What an AI call uses. `apiKey` is the server's AI_API_KEY (or null): it goes to the provider and to no one else. */
+/** Server-internal resolved configuration. Credentials go only to the selected endpoint. */
 export interface ResolvedAiConfig {
   provider: AiProviderId;
   baseUrl: string;
   model: string;
   apiKey: string | null;
+  headers?: Record<string, string>;
   source: Exclude<AiConfigSource, "none">;
 }
 
@@ -44,6 +46,8 @@ export interface AiSettingsView {
   /** What AI calls use right now, and where it comes from; null when no provider is configured at all. */
   effective: { provider: AiProviderId; baseUrl: string; model: string; source: AiConfigSource } | null;
   apiKeyConfigured: boolean;
+  credentialsConfigured?: boolean;
+  headersConfigured?: boolean;
   /** What the environment says, for the page's hints: AI_PROVIDER, the base URL it gives (AI_BASE_URL, or the OLLAMA_HOST / OPENAI_BASE_URL fallback), AI_MODEL. */
   envHint: { providerEnv: string | null; baseUrlEnv: string | null; modelEnv: string | null };
 }
@@ -55,6 +59,7 @@ export interface AiConnectionResult {
 
 /** The stored override, as the service reads it: every field normalized, or null when it is not set (or was not valid). */
 interface StoredAiConfig {
+  credentials?: string | null;
   provider: AiProviderId | null;
   baseUrl: string | null;
   model: string | null;
@@ -78,7 +83,7 @@ const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
  * A base URL the clients can append their paths to: the server root, with trailing slashes and a trailing `/v1` removed (the OpenAI convention
  * includes `/v1`; the clients add it themselves). Only http and https, no query string or fragment, no credentials. Null when it is not usable.
  */
-export function normalizeAiBaseUrl(raw: string): string | null {
+export function normalizeAiBaseUrl(raw: string, provider?: AiProviderId | null): string | null {
   const value = raw.trim();
   if (value === "") return null;
   let url: URL;
@@ -88,9 +93,11 @@ export function normalizeAiBaseUrl(raw: string): string | null {
     return null;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  if (url.search !== "" || url.hash !== "" || url.username !== "" || url.password !== "") return null;
-  const path = url.pathname.replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
-  return `${url.protocol}//${url.host}${path}`;
+  if ((provider !== "custom" && url.search !== "") || url.hash !== "" || url.username !== "" || url.password !== "") return null;
+  if (provider === "custom" && [...url.searchParams.keys()].some((key) => /^(api[-_]?key|access[-_]?token|token|secret|password)$/i.test(key))) return null;
+  const trimmedPath = url.pathname.replace(/\/+$/, "");
+  const path = provider === "custom" ? url.pathname : trimmedPath.replace(/\/v1$/i, "").replace(/\/+$/, "");
+  return `${url.protocol}//${url.host}${path}${provider === "custom" ? url.search : ""}`;
 }
 
 /**
@@ -112,7 +119,7 @@ export function ollamaHostToBaseUrl(raw: string): string | null {
 
 function providerFrom(raw: string | null | undefined): AiProviderId | null {
   const value = raw?.trim().toLowerCase();
-  return value === "ollama" || value === "vllm" ? value : null;
+  return value === "ollama" || value === "vllm" || value === "custom" ? value : null;
 }
 
 function trimmedOrNull(raw: string | null | undefined): string | null {
@@ -153,12 +160,12 @@ function readEnv(): EnvAiSettings {
 /** The base URL the standard name gives for `provider`, when AI_BASE_URL is unset. */
 function legacyBaseUrl(env: EnvAiSettings, provider: AiProviderId): string | null {
   if (provider === "ollama") return env.ollamaHost ? ollamaHostToBaseUrl(env.ollamaHost) : null;
-  return env.openaiBaseUrl ? normalizeAiBaseUrl(env.openaiBaseUrl) : null;
+  return provider === "vllm" && env.openaiBaseUrl ? normalizeAiBaseUrl(env.openaiBaseUrl) : null;
 }
 
 /** The base URL the environment gives, as the page shows it (AI_BASE_URL, else the standard name for the environment's provider). */
 function envBaseUrlHint(env: EnvAiSettings): string | null {
-  if (env.aiBaseUrl) return normalizeAiBaseUrl(env.aiBaseUrl);
+  if (env.aiBaseUrl) return normalizeAiBaseUrl(env.aiBaseUrl, env.provider);
   return env.provider ? legacyBaseUrl(env, env.provider) : null;
 }
 
@@ -166,14 +173,21 @@ function envBaseUrlHint(env: EnvAiSettings): string | null {
 async function readStoredConfig(): Promise<StoredAiConfig | null> {
   const row = await prisma.aiConfig.findUnique({
     where: { id: CONFIG_ID },
-    select: { provider: true, baseUrl: true, model: true },
+    select: { provider: true, baseUrl: true, model: true, credentials: true },
   });
   if (!row) return null;
   return {
     provider: providerFrom(row.provider),
-    baseUrl: row.baseUrl ? normalizeAiBaseUrl(row.baseUrl) : null,
+    baseUrl: row.baseUrl ? normalizeAiBaseUrl(row.baseUrl, providerFrom(row.provider)) : null,
+    ...(row.credentials ? { credentials: row.credentials } : {}),
     model: trimmedOrNull(row.model),
   };
+}
+
+interface AiCredentials { apiKey: string | null; headers: Record<string, string> }
+function readCredentials(stored: StoredAiConfig | null): AiCredentials | null {
+  if (!stored?.credentials) return null;
+  return JSON.parse(openSecret(stored.credentials, "AiConfig.credentials")) as AiCredentials;
 }
 
 /** The resolution itself, over the values already read (pure, so the views and the calls cannot disagree). */
@@ -182,13 +196,17 @@ function resolveConfig(stored: StoredAiConfig | null, env: EnvAiSettings): Resol
 
   // 1. The stored override: a provider and a base URL, both set, and it wins entirely.
   if (stored?.provider && stored.baseUrl) {
-    return { provider: stored.provider, baseUrl: stored.baseUrl, model: stored.model ?? env.model ?? DEFAULT_AI_MODEL, apiKey, source: "db" };
+    const credentials = readCredentials(stored);
+    if (stored.provider === "custom" && !stored.model) return null;
+    return { provider: stored.provider, baseUrl: stored.baseUrl, model: stored.model ?? env.model ?? DEFAULT_AI_MODEL,
+      apiKey: credentials ? credentials.apiKey : stored.provider === "custom" ? null : apiKey,
+      ...(credentials ? { headers: credentials.headers } : {}), source: "db" };
   }
 
   // 2. The environment's provider and AI_BASE_URL. A set AI_BASE_URL that is not usable is an answer of its own: no fallback behind it.
-  if (!env.provider) return null;
+  if (!env.provider || (env.provider === "custom" && !env.model)) return null;
   if (env.aiBaseUrl) {
-    const baseUrl = normalizeAiBaseUrl(env.aiBaseUrl);
+    const baseUrl = normalizeAiBaseUrl(env.aiBaseUrl, env.provider);
     return baseUrl ? { provider: env.provider, baseUrl, model: env.model ?? DEFAULT_AI_MODEL, apiKey, source: "env" } : null;
   }
 
@@ -211,7 +229,12 @@ export async function resolveAiConfig(): Promise<ResolvedAiConfig | null> {
   } catch (e) {
     console.error("[ai-config] could not read the stored AI settings; the environment decides", e);
   }
-  return resolveConfig(stored, env);
+  try {
+    return resolveConfig(stored, env);
+  } catch {
+    console.error("[ai-config] could not open the saved AI credentials");
+    return null;
+  }
 }
 
 function settingsView(stored: StoredAiConfig | null): AiSettingsView {
@@ -220,7 +243,8 @@ function settingsView(stored: StoredAiConfig | null): AiSettingsView {
   return {
     stored: { provider: stored?.provider ?? null, baseUrl: stored?.baseUrl ?? null, model: stored?.model ?? null },
     effective: effective ? { provider: effective.provider, baseUrl: effective.baseUrl, model: effective.model, source: effective.source } : null,
-    apiKeyConfigured: env.apiKey !== null,
+    apiKeyConfigured: effective ? effective.apiKey !== null : env.apiKey !== null,
+    ...(stored?.credentials ? { credentialsConfigured: true, headersConfigured: Object.keys(readCredentials(stored)?.headers ?? {}).length > 0 } : {}),
     envHint: { providerEnv: env.providerEnv, baseUrlEnv: envBaseUrlHint(env), modelEnv: env.model },
   };
 }
@@ -249,7 +273,7 @@ export async function getAiSettings(ctx: ServiceContext): Promise<Result<AiSetti
 }
 
 /**
- * Saves the AI provider settings (the override row; audited, without the key). All three fields empty clears the override. Platform administrators only.
+ * Saves the AI provider settings (the override row; audited, without credentials). All three fields empty clears the override. Platform administrators only.
  */
 export async function updateAiSettings(input: unknown, ctx: ServiceContext): Promise<Result<AiSettingsView>> {
   if (!ctxCan(ctx, "ai.manage")) return notPlatformAdmin();
@@ -263,18 +287,35 @@ export async function updateAiSettings(input: unknown, ctx: ServiceContext): Pro
     });
   }
 
-  const baseUrl = parsed.data.baseUrl === null ? null : normalizeAiBaseUrl(parsed.data.baseUrl);
+  const baseUrl = parsed.data.baseUrl === null ? null : normalizeAiBaseUrl(parsed.data.baseUrl, parsed.data.provider);
   if (parsed.data.baseUrl !== null && baseUrl === null) {
     return err({
       code: "VALIDATION_ERROR",
-      message: "Base URL must be an http:// or https:// address with no query string or credentials",
+      message: parsed.data.provider === "custom" ? "Enter an HTTP(S) endpoint without URL credentials, fragments, or secret query parameters" : "Base URL must be an http:// or https:// address with no query string or credentials",
       suggestedFix: "Enter the server address, for example http://localhost:11434.",
     });
+  }
+  if (parsed.data.provider === "custom" && (!baseUrl || !parsed.data.model)) {
+    return err({ code: "VALIDATION_ERROR", message: "Custom providers require a chat completions endpoint and model", suggestedFix: "Enter the full endpoint URL and model identifier." });
   }
   const next: StoredAiConfig = { provider: parsed.data.provider, baseUrl, model: parsed.data.model };
 
   try {
     const before = await readStoredConfig();
+    const sameEndpoint = before?.provider === next.provider && before?.baseUrl === next.baseUrl;
+    const hasNewCredentials = parsed.data.apiKey !== undefined || parsed.data.headers !== undefined;
+    if (parsed.data.clearCredentials || !next.provider || !next.baseUrl || (!sameEndpoint && !hasNewCredentials)) {
+      if (before?.credentials) next.credentials = null;
+    } else if (hasNewCredentials) {
+      const previous = sameEndpoint ? readCredentials(before) : null;
+      const credentials: AiCredentials = {
+        apiKey: parsed.data.apiKey !== undefined ? trimmedOrNull(parsed.data.apiKey) : previous?.apiKey ?? null,
+        headers: parsed.data.headers ?? previous?.headers ?? {},
+      };
+      next.credentials = sealSecret(JSON.stringify(credentials), "AiConfig.credentials");
+    } else if (before?.credentials) {
+      next.credentials = before.credentials;
+    }
     await withAudit({
       action: "UPDATE",
       entityType: "AiConfig",
@@ -289,12 +330,13 @@ export async function updateAiSettings(input: unknown, ctx: ServiceContext): Pro
           create: { id: CONFIG_ID, ...next, updatedBy: ctx.userId },
           update: { ...next, updatedBy: ctx.userId },
         });
-        // The entry's state: the three stored fields and nothing else (never a key, which is not stored at all).
+        // The entry's state: the three stored fields and nothing else (never credentials).
         return { provider: next.provider, baseUrl: next.baseUrl, model: next.model };
       },
     });
     return ok(settingsView(next));
   } catch (e) {
+    if (e instanceof SecretBoxError) return err({ code: "CONFIG_ERROR", message: e.message, suggestedFix: "Check the server secrets encryption configuration." });
     if (e instanceof AuditUserMissingError) {
       return err({ code: "UNAUTHORIZED", message: "Your session is stale. Sign out and sign in again, then retry.", suggestedFix: "Sign out and sign in again." });
     }
@@ -322,26 +364,42 @@ function listedModels(provider: AiProviderId, body: unknown): string[] | null {
 }
 
 /**
- * One GET to the provider's model listing, with a short timeout, no redirects and the key when one is set. The detail names the outcome: the
+ * A model-list GET or custom chat POST to the provider's model listing, with a short timeout, no redirects and the key when one is set. The detail names the outcome: the
  * status, the model count, and whether the model is among them. Never the key, never the body.
  */
-async function probeProvider(target: { provider: AiProviderId; baseUrl: string; model: string; apiKey: string | null }): Promise<AiConnectionResult> {
+async function probeProvider(target: { provider: AiProviderId; baseUrl: string; model: string; apiKey: string | null; headers?: Record<string, string> }): Promise<AiConnectionResult> {
   const path = target.provider === "ollama" ? "/api/tags" : "/v1/models";
-  const headers: Record<string, string> = target.apiKey ? { Authorization: `Bearer ${target.apiKey}` } : {};
+  const headers: Record<string, string> = Object.fromEntries(new Headers({
+    ...(target.apiKey ? { Authorization: "Bearer " + target.apiKey } : {}),
+  }).entries());
+  for (const [name, value] of Object.entries(target.headers ?? {})) headers[name.toLowerCase()] = value;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
+  const timeoutMs = target.provider === "custom" ? 30_000 : TEST_TIMEOUT_MS;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(`${target.baseUrl}${path}`, { method: "GET", headers, redirect: "manual", signal: controller.signal });
+    const response = await fetch(target.provider === "custom" ? target.baseUrl : target.baseUrl + path, {
+      method: target.provider === "custom" ? "POST" : "GET",
+      headers: target.provider === "custom" ? { ...headers, "Content-Type": "application/json" } : (target.apiKey ? { Authorization: "Bearer " + target.apiKey } : {}),
+      ...(target.provider === "custom" ? { body: JSON.stringify({ model: target.model, messages: [{ role: "user", content: "Reply OK." }], max_tokens: 16, stream: false }) } : {}),
+      redirect: "manual", signal: controller.signal,
+    });
     if (response.status >= 300 && response.status < 400) {
       return { reachable: false, detail: `The server answered with a redirect (HTTP ${response.status}). Redirects are not followed: use the address it redirects to.` };
     }
     if (!response.ok) {
-      const hint = response.status === 401 || response.status === 403 ? " Check AI_API_KEY." : "";
+      const hint = response.status === 401 || response.status === 403 ? " Check the API key and integration headers." : "";
       return { reachable: false, detail: `The server answered HTTP ${response.status}.${hint}` };
     }
 
-    const names = listedModels(target.provider, await response.json());
+    const body = await response.json();
+    if (target.provider === "custom") {
+      const content = body?.choices?.[0]?.message?.content;
+      return typeof content === "string" && content.trim()
+        ? { reachable: true, detail: "The endpoint returned a chat completion for the selected model." }
+        : { reachable: false, detail: "The endpoint did not return an OpenAI-compatible chat completion." };
+    }
+    const names = listedModels(target.provider, body);
     if (names === null) {
       return { reachable: false, detail: "The server answered, but not with the model list this provider type returns. Check the provider." };
     }
@@ -353,7 +411,7 @@ async function probeProvider(target: { provider: AiProviderId; baseUrl: string; 
     };
   } catch (e) {
     if (controller.signal.aborted) {
-      return { reachable: false, detail: `No answer within ${TEST_TIMEOUT_MS / 1000} seconds.` };
+      return { reachable: false, detail: `No answer within ${timeoutMs / 1000} seconds.` };
     }
     // A body that is not JSON (the server answered, but is not this provider's API).
     if (e instanceof SyntaxError) {
@@ -399,15 +457,29 @@ export async function testAiConnection(input: unknown, ctx: ServiceContext): Pro
       suggestedFix: "Fill in both fields, or clear both.",
     });
   }
-  const normalized = normalizeAiBaseUrl(baseUrl);
+  const normalized = normalizeAiBaseUrl(baseUrl, provider);
   if (normalized === null) {
     return err({
       code: "VALIDATION_ERROR",
-      message: "Base URL must be an http:// or https:// address with no query string or credentials",
+      message: parsed.data.provider === "custom" ? "Enter an HTTP(S) endpoint without URL credentials, fragments, or secret query parameters" : "Base URL must be an http:// or https:// address with no query string or credentials",
       suggestedFix: "Enter the server address, for example http://localhost:11434.",
     });
   }
 
-  const env = readEnv();
-  return ok(await probeProvider({ provider, baseUrl: normalized, model: model ?? env.model ?? DEFAULT_AI_MODEL, apiKey: env.apiKey }));
+  if (provider === "custom" && !model) {
+    return err({ code: "VALIDATION_ERROR", message: "Enter the model identifier to test a custom provider", suggestedFix: "Enter the model required by your integration." });
+  }
+  try {
+    const env = readEnv();
+    const stored = await readStoredConfig();
+    const sameEndpoint = stored?.provider === provider && stored?.baseUrl === normalized;
+    const saved = sameEndpoint && !parsed.data.clearCredentials ? readCredentials(stored) : null;
+    return ok(await probeProvider({
+      provider, baseUrl: normalized, model: model ?? env.model ?? DEFAULT_AI_MODEL,
+      apiKey: parsed.data.clearCredentials ? null : parsed.data.apiKey !== undefined ? trimmedOrNull(parsed.data.apiKey) : saved ? saved.apiKey : provider === "custom" ? null : env.apiKey,
+      headers: parsed.data.clearCredentials ? {} : parsed.data.headers ?? saved?.headers,
+    }));
+  } catch {
+    return err({ code: "CONFIG_ERROR", message: "Could not read the saved AI credentials", suggestedFix: "Check the server secrets encryption configuration." });
+  }
 }

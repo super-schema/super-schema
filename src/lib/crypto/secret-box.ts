@@ -20,7 +20,7 @@ import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:cr
 import { resolveAuthSecret } from "@/lib/auth-secret";
 
 /** The stored fields that are sealed. The name is part of the seal (the additional authenticated data). */
-export type SecretField = "GitConfig.authCredential" | "WebhookEndpoint.secret" | "DeploymentConnection.credentials" | "GitProviderApp.privateKey" | "GitProviderApp.webhookSecret" | "GitProviderApp.clientSecret" | "GitUserLink.accessToken" | "GitUserLink.refreshToken" | "GitOpsOAuthState.verifier";
+export type SecretField = "AiConfig.credentials" | "GitConfig.authCredential" | "WebhookEndpoint.secret" | "DeploymentConnection.credentials" | "GitProviderApp.privateKey" | "GitProviderApp.webhookSecret" | "GitProviderApp.clientSecret" | "GitUserLink.accessToken" | "GitUserLink.refreshToken" | "GitOpsOAuthState.verifier";
 
 type Env = Record<string, string | undefined>;
 

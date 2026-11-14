@@ -67,12 +67,6 @@ const ID = {
   healthService: "health-service",
   healthUsage: "health-usage",
   healthRun: "health-run-check",
-  classificationRow: "classification-row",
-  classificationOpen: "classification-add-open",
-  classificationName: "classification-name",
-  classificationDescription: "classification-description",
-  classificationCreate: "classification-create",
-  classificationError: "classification-error",
   settingsPanel: "settings-panel",
   localeSelect: "locale-select",
 } as const;
@@ -517,7 +511,7 @@ test.describe("emitters", () => {
     try {
       await afterServerAction(page, () => card.getByTestId(ID.emitterToggle).click(), { body: "openapi" });
       await expect(card.getByTestId(ID.emitterStatus)).toHaveText("Disabled");
-      await expect(card.getByTestId(ID.emitterToggle)).toHaveAttribute("aria-pressed", "false");
+      await expect(card.getByTestId(ID.emitterToggle)).toHaveAttribute("aria-checked", "false");
 
       await openEmitters(page);
       await expect(emitterCard(page, "openapi").getByTestId(ID.emitterStatus)).toHaveText("Disabled");
@@ -586,81 +580,33 @@ test.describe("health", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Classifications
+// Tenant configuration
 // ---------------------------------------------------------------------------
 
-async function openClassifications(page: Page): Promise<void> {
-  await page.goto("/admin/classifications");
-  await expect(centerPanel(page).getByRole("heading", { name: "Classifications", level: 2 })).toBeVisible();
-  await waitForHydration(centerPanel(page).getByTestId(ID.classificationOpen));
-}
-
-const classificationRow = (page: Page, name: string): Locator =>
-  centerPanel(page).locator(`[data-testid="${ID.classificationRow}"][data-name="${name}"]`);
-
-async function addClassification(page: Page, name: string, description: string): Promise<void> {
-  await centerPanel(page).getByTestId(ID.classificationOpen).click();
-  await centerPanel(page).getByTestId(ID.classificationName).fill(name);
-  await centerPanel(page).getByTestId(ID.classificationDescription).fill(description);
-  await centerPanel(page).getByTestId(ID.classificationCreate).click();
-}
-
-test.describe("classifications", () => {
-  test("the four system levels are listed, marked System, and cannot be deleted", { tag: ["@regression"] }, async ({ authedPage: page }) => {
-    await openClassifications(page);
-
-    for (const [name, description] of [
-      ["PII", "Personally Identifiable Information"],
-      ["SENSITIVE", "Sensitive business data"],
-      ["INTERNAL", "Internal use only"],
-      ["PUBLIC", "Public data"],
-    ] as const) {
-      const row = classificationRow(page, name);
-      await expect(row).toBeVisible();
-      await expect(row).toHaveAttribute("data-system", "true");
-      await expect(row).toContainText(description);
-      await expect(row).toContainText("System");
-      await expect(row.getByTitle("Delete classification")).toHaveCount(0);
+test.describe("tenant configuration", () => {
+  test("tenant configuration has dedicated domains, storage, dictionary, and attribute sections", { tag: ["@regression"] }, async ({ authedPage: page }) => {
+    await page.goto("/admin/tenant");
+    await expect(centerPanel(page).getByTestId("admin-tab-tenant")).toHaveAttribute("aria-selected", "true");
+    const navigation = page.getByRole("navigation", { name: "Tenant configuration" });
+    for (const name of ["Domains", "Storage & onboarding", "Dictionaries", "Custom attributes"]) {
+      await expect(navigation.getByRole("link", { name, exact: true })).toBeVisible();
     }
+    await navigation.getByRole("link", { name: "Custom attributes", exact: true }).click();
+    await expect(page).toHaveURL(/\/admin\/tenant\/attributes$/);
+    await expect(centerPanel(page).getByRole("heading", { name: "Custom attributes" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Metadata attribute dictionary" })).toBeVisible();
   });
-
-  test("a level is added (its name in capitals, after the system levels, deletable) and a duplicate name is refused", { tag: ["@regression"] }, async ({
-    authedPage: page,
-  }) => {
-    await openClassifications(page);
-    const name = unique("E2E").toUpperCase();
-
-    await addClassification(page, name.toLowerCase(), "Added by the test");
-    const row = classificationRow(page, name);
-    await expect(row).toBeVisible();
-    await expect(row).toHaveAttribute("data-system", "false");
-    await expect(row).toContainText("Added by the test");
-    await expect(row.getByTitle("Delete classification")).toBeVisible();
-    await expect(centerPanel(page).getByTestId(ID.classificationRow).last()).toHaveAttribute("data-name", name);
-
-    await addClassification(page, "pii", "again");
-    await expect(centerPanel(page).getByTestId(ID.classificationError)).toHaveText('Classification "PII" already exists');
-    await expect(classificationRow(page, "PII")).toHaveCount(1);
-  });
-
-  // KD-014: ClassificationList keeps its levels in component state, seeded from constants; the persisted levels (the service, the tRPC
-  // router, the seeded rows) are never read or written by the page.
-  test.fail("[KD-014 the Classifications tab keeps its levels in page state] a level that was added is still listed after a reload", { tag: ["@regression"] }, async ({
-    authedPage: page,
-  }) => {
-    await openClassifications(page);
-    const name = unique("E2E").toUpperCase();
-    await addClassification(page, name, "Should be saved");
-    await expect(classificationRow(page, name)).toBeVisible();
-
-    await openClassifications(page);
-    // The page has rendered after the reload (a level that is always there is listed) before the added one is expected: the pin can only
-    // fail because the added level is gone.
-    await expect(classificationRow(page, "PII")).toBeVisible();
-    await expect(classificationRow(page, name)).toBeVisible();
+  test("the classifications bookmark opens tenant attributes and settings holds personal preferences", { tag: ["@regression"] }, async ({ authedPage: page }) => {
+    await page.goto("/admin/classifications");
+    await expect(page).toHaveURL(/\/admin\/tenant\/attributes$/);
+    await expect(centerPanel(page).getByRole("heading", { name: "Custom attributes" })).toBeVisible();
+    await page.goto("/admin/settings");
+    await expect(centerPanel(page).getByTestId("settings-panel")).toBeVisible();
+    await expect(centerPanel(page).getByRole("heading", { name: "Tenant storage and onboarding" })).toHaveCount(0);
   });
 });
 
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------

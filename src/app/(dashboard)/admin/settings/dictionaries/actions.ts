@@ -111,6 +111,8 @@ async function rederiveAfterChange(tenantId: string): Promise<{ error: string } 
 
 function refresh() {
   revalidatePath("/admin/settings/dictionaries");
+  revalidatePath("/admin/tenant/dictionaries");
+  revalidatePath("/admin/tenant/attributes");
   revalidatePath("/schemas", "layout");
 }
 

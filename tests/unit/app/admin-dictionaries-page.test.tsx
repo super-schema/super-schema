@@ -34,7 +34,8 @@ vi.mock("@/app/(dashboard)/admin/settings/dictionaries/actions", () => ({
   fieldEntryUsageAction: h.usage,
 }));
 
-import DictionariesPage from "@/app/(dashboard)/admin/settings/dictionaries/page";
+import DictionariesPage from "@/app/(dashboard)/admin/tenant/dictionaries/page";
+import AttributesPage from "@/app/(dashboard)/admin/tenant/attributes/page";
 
 const PACK_ID = "paypal-security-classification";
 const pack = (installed: boolean) => ({
@@ -66,14 +67,11 @@ describe("the dictionaries admin page", () => {
     expect(screen.queryByRole("tab", { name: "Fields" })).toBeNull();
   });
 
-  it("shows both tabs to an admin, installs the pack and marks it Installed with the entry read-only", async () => {
+  it("shows tenant attributes to an admin, installs the pack and marks it Installed with the entry read-only", async () => {
     signInAs(tenantMember("ADMIN", "tenant-1"));
     h.install.mockResolvedValue({ data: { id: PACK_ID, keys: ["x-securityClassification"] } });
-    render(await DictionariesPage());
-
-    expect(screen.getByRole("tab", { name: "Fields" })).toBeInTheDocument();
-    const attrsTab = screen.getByRole("tab", { name: "Metadata attributes" });
-    fireEvent.click(attrsTab);
+    render(await AttributesPage());
+    expect(screen.getByRole("heading", { name: "Custom attributes" })).toBeInTheDocument();
 
     const packs = screen.getByRole("region", { name: "Packs" });
     expect(within(packs).queryByText("Installed")).toBeNull();
@@ -112,8 +110,7 @@ describe("the dictionaries admin page", () => {
 
   it("shows value-schema errors inline and blocks saving", async () => {
     signInAs(tenantMember("ADMIN", "tenant-1"));
-    render(await DictionariesPage());
-    fireEvent.click(screen.getByRole("tab", { name: "Metadata attributes" }));
+    render(await AttributesPage());
     fireEvent.change(screen.getByLabelText("Value schema (JSON)"), { target: { value: '{"type":"string","oneOf":[]}' } });
     expect(screen.getByRole("alert", { name: "Value schema problems" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add attribute" })).toBeDisabled();

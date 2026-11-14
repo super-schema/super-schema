@@ -101,7 +101,7 @@ export function levelOptionLabel(level: { name: string; classNumber: number }): 
 
 const STANDARD_LEVELS = CLASS_SCALE.map((c) => ({ name: c.level as string, classNumber: c.classNumber as number }));
 
-export function DictionariesAdmin({ initial }: { initial: DictionariesOverview }) {
+export function DictionariesAdmin({ initial, section }: { initial: DictionariesOverview; section?: "fields" | "attributes" }) {
   const [data, setData] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -132,9 +132,9 @@ export function DictionariesAdmin({ initial }: { initial: DictionariesOverview }
   return (
     <div className="space-y-space-4">
       <div>
-        <h2 className="text-heading-3 text-foreground">Dictionaries</h2>
+        <h2 className="text-heading-3 text-foreground">{section === "attributes" ? "Custom attributes" : "Dictionaries"}</h2>
         <p className="text-body-small text-muted-foreground">
-          Reusable fields and metadata attributes for this tenant. Pick them when adding fields and attributes.
+          {section === "attributes" ? "Define classification, tag, and other metadata attributes for this tenant. Install attribute packs or create your own definitions." : "Define reusable enterprise fields for this tenant. Pick them from the dictionary when adding fields."}
         </p>
       </div>
       {error && (
@@ -152,6 +152,12 @@ export function DictionariesAdmin({ initial }: { initial: DictionariesOverview }
           if (action) void run(action);
         }}
       />
+      {section === "fields" ? (
+        <FieldsTab entries={data.fields} usage={data.usage ?? {}} levels={data.formOptions?.levels ?? STANDARD_LEVELS}
+          customTypes={data.formOptions?.customTypes ?? []} busy={busy} run={run} confirm={setPending} />
+      ) : section === "attributes" ? (
+        <AttributesTab data={data} busy={busy} run={run} confirm={setPending} />
+      ) : (
       <Tabs defaultValue="fields">
         <TabsList>
           <TabsTrigger value="fields">Fields</TabsTrigger>
@@ -172,6 +178,7 @@ export function DictionariesAdmin({ initial }: { initial: DictionariesOverview }
           <AttributesTab data={data} busy={busy} run={run} confirm={setPending} />
         </TabsContent>
       </Tabs>
+      )}
     </div>
   );
 }

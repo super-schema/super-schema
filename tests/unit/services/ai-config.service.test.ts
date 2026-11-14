@@ -9,7 +9,7 @@ import { assign } from "../../helpers/access-mocks";
 import type { ServiceContext } from "@/types/service-context";
 
 const h = vi.hoisted(() => ({
-  row: null as null | { id: string; provider: string | null; baseUrl: string | null; model: string | null; updatedBy: string | null; updatedAt: Date },
+  row: null as null | { id: string; provider: string | null; baseUrl: string | null; model: string | null; updatedBy: string | null; updatedAt: Date; credentials?: string | null },
   findUnique: vi.fn(),
   upsert: vi.fn(),
   userFindUnique: vi.fn(),
@@ -488,7 +488,7 @@ describe("testAiConnection", () => {
 
     const result = await testAiConnection({ provider: "vllm", baseUrl: "http://gpu:8000", model: null }, admin());
 
-    expect(result).toEqual({ success: true, data: { reachable: false, detail: "The server answered HTTP 401. Check AI_API_KEY." } });
+    expect(result).toEqual({ success: true, data: { reachable: false, detail: "The server answered HTTP 401. Check the API key and integration headers." } });
     expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 
@@ -545,5 +545,98 @@ describe("testAiConnection", () => {
     const result = await testAiConnection({ provider: "ollama", baseUrl: "http://localhost:11434", model: null }, tenantAdmin());
     expect(result).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("custom provider credentials and transport", () => {
+  const endpoint = "https://gateway.example.test/team/v1/chat/completions";
+  const config = { provider: "custom", baseUrl: endpoint, model: "customer-model" };
+  beforeEach(() => { process.env.AUTH_SECRET = "a-test-only-encryption-secret-at-least-32-characters"; });
+  it("encrypts credentials and excludes them from views and audit entries", async () => {
+    const result = await updateAiSettings({ ...config, apiKey: SECRET, headers: { "api-key": "header-secret" } }, admin());
+    expect(result).toMatchObject({ success: true, data: { credentialsConfigured: true, headersConfigured: true, apiKeyConfigured: true } });
+    const ciphertext = h.upsert.mock.calls[0][0].update.credentials;
+    expect(ciphertext).toMatch(/^enc:v1:/);
+    expect(ciphertext).not.toContain(SECRET);
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+    expect(JSON.stringify(result)).not.toContain("header-secret");
+    expect(JSON.stringify(h.auditCreate.mock.calls)).not.toContain(SECRET);
+    expect(JSON.stringify(h.auditCreate.mock.calls)).not.toContain(ciphertext);
+    expect(await resolveAiConfig()).toMatchObject({ ...config, apiKey: SECRET, headers: { "api-key": "header-secret" } });
+  });
+  it("retains saved credentials on model edits and sends them in a chat test", async () => {
+    await updateAiSettings({ ...config, apiKey: SECRET, headers: { "x-project-id": "project-a" } }, admin());
+    await updateAiSettings({ ...config, model: "updated-model" }, admin());
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { choices: [{ message: { content: "OK" } }] }));
+    const result = await testAiConnection({ ...config, model: "updated-model" }, admin());
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(endpoint);
+    expect(init.method).toBe("POST");
+    expect(init.redirect).toBe("manual");
+    const headers = new Headers(init.headers);
+    expect(headers.get("authorization")).toBe("Bearer " + SECRET);
+    expect(headers.get("x-project-id")).toBe("project-a");
+    expect(JSON.parse(init.body as string)).toMatchObject({ model: "updated-model", messages: [{ role: "user", content: "Reply OK." }] });
+    expect(result).toMatchObject({ success: true, data: { reachable: true } });
+  });
+  it("does not forward saved or environment credentials to a different custom endpoint", async () => {
+    process.env.AI_API_KEY = "environment-secret";
+    await updateAiSettings({ ...config, apiKey: SECRET, headers: { "api-key": "saved-header-secret" } }, admin());
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { choices: [{ message: { content: "OK" } }] }));
+    const other = { ...config, baseUrl: "https://other.example.test/chat" };
+    await testAiConnection(other, admin());
+    const headers = new Headers(fetchMock.mock.calls[0][1].headers);
+    expect(headers.has("authorization")).toBe(false);
+    expect(headers.has("api-key")).toBe(false);
+    await updateAiSettings(other, admin());
+    expect(h.row?.credentials).toBeNull();
+    expect(await resolveAiConfig()).toMatchObject({ apiKey: null });
+  });
+  it("clears saved credentials explicitly", async () => {
+    await updateAiSettings({ ...config, apiKey: SECRET }, admin());
+    await updateAiSettings({ ...config, clearCredentials: true }, admin());
+    expect(h.row?.credentials).toBeNull();
+    expect(await resolveAiConfig()).toMatchObject({ apiKey: null });
+  });
+  it("requires an endpoint and model for custom providers", async () => {
+    for (const input of [{ provider: "custom", model: "m" }, { provider: "custom", baseUrl: endpoint }]) {
+      expect(await updateAiSettings(input, admin())).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR" } });
+      expect(await testAiConnection(input, admin())).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR" } });
+    }
+    expect(h.upsert).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("rejects header injection and managed transport headers", async () => {
+    for (const headers of [{ "x-key": "bad\r\nvalue" }, { Host: "another-host" }, { "content-type": "text/plain" }]) {
+      expect(await updateAiSettings({ ...config, headers }, admin())).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR" } });
+    }
+    expect(h.upsert).not.toHaveBeenCalled();
+  });
+  it("custom authentication headers override bearer auth case-insensitively", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { choices: [{ message: { content: "OK" } }] }));
+    await testAiConnection({ ...config, apiKey: SECRET, headers: { authorization: "Custom customer-token" } }, admin());
+    expect(new Headers(fetchMock.mock.calls[0][1].headers).get("authorization")).toBe("Custom customer-token");
+  });
+  it("does not treat a model listing as a successful custom test", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { data: [{ id: "customer-model" }] }));
+    expect(await testAiConnection(config, admin())).toMatchObject({ success: true, data: { reachable: false } });
+  });
+  it("fails closed when saved credentials cannot be decrypted", async () => {
+    await updateAiSettings({ ...config, apiKey: SECRET }, admin());
+    process.env.AUTH_SECRET = "another-test-encryption-secret-at-least-32-characters";
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await resolveAiConfig()).toBeNull();
+    expect(JSON.stringify(log.mock.calls)).not.toContain(SECRET);
+  });
+});
+
+describe("custom endpoint URLs", () => {
+  it("preserves endpoint paths, trailing slash, and non-secret query parameters", () => {
+    expect(normalizeAiBaseUrl("https://customer.test/v1/chat/?api-version=2026-01-01", "custom")).toBe("https://customer.test/v1/chat/?api-version=2026-01-01");
+  });
+  it("rejects credentials in custom URL query parameters", () => {
+    for (const key of ["api-key", "api_key", "token", "access_token"]) {
+      expect(normalizeAiBaseUrl("https://customer.test/chat?" + key + "=secret", "custom")).toBeNull();
+    }
   });
 });

@@ -10,7 +10,7 @@ export default function AdminAiPage() {
       <div>
         <h2 className="text-heading-3 text-foreground">AI</h2>
         <p className="text-body-small text-muted-foreground">
-          Choose the local LLM server used for natural-language entity creation and field suggestions. Values saved here take precedence over the
+          Choose the AI provider or custom integration used for natural-language entity creation and field suggestions. Values saved here take precedence over the
           server environment.
         </p>
       </div>

@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Users, Globe, Zap, Activity, Tags, Settings, ShieldOff, Sparkles, Workflow } from "lucide-react";
+import { Users, Building2, Zap, Activity, Settings, ShieldOff, Sparkles, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AdminCapabilities } from "@/lib/access/capabilities";
 
-type TabId = "settings" | "users" | "domains" | "workflows" | "emitters" | "health" | "classifications" | "ai";
+type TabId = "settings" | "users" | "tenant" | "workflows" | "emitters" | "health" | "ai";
 
 /**
  * The tabs of the Admin area, each with the capability that lets a person use it (`null`: every signed-in person, personal settings). The capabilities are
@@ -15,19 +15,20 @@ type TabId = "settings" | "users" | "domains" | "workflows" | "emitters" | "heal
 const ADMIN_TABS: ReadonlyArray<{ id: TabId; label: string; icon: typeof Users; href: string; needs: keyof AdminCapabilities | null }> = [
   { id: "settings", label: "Settings", icon: Settings, href: "/admin/settings", needs: null },
   { id: "users", label: "Users", icon: Users, href: "/admin", needs: "users" },
-  { id: "domains", label: "Domains", icon: Globe, href: "/admin/domains", needs: "domains" },
+  { id: "tenant", label: "Tenant", icon: Building2, href: "/admin/tenant", needs: "domains" },
   { id: "workflows", label: "Workflows", icon: Workflow, href: "/admin/workflows", needs: "workflows" },
   { id: "emitters", label: "Emitters", icon: Zap, href: "/admin/emitters", needs: "emitters" },
   { id: "health", label: "Health", icon: Activity, href: "/admin/health", needs: "health" },
-  { id: "classifications", label: "Classifications", icon: Tags, href: "/admin/classifications", needs: "classifications" },
   { id: "ai", label: "AI", icon: Sparkles, href: "/admin/ai", needs: "ai" },
 ];
 
 /** The tab a path belongs to, whether or not the person may use it (an unknown path under /admin is the Users tab, as it always was). */
 export function tabOfPath(pathname: string): TabId {
   if (pathname === "/admin") return "users";
+  // Bookmarked configuration routes belong to Tenant while Next redirects them.
+  if (["/admin/domains", "/admin/classifications", "/admin/settings/storage", "/admin/settings/dictionaries"].some((path) => pathname === path || pathname.startsWith(path + "/"))) return "tenant";
   for (const tab of ADMIN_TABS) {
-    if (tab.href !== "/admin" && pathname.startsWith(tab.href)) return tab.id;
+    if (tab.href !== "/admin" && (pathname === tab.href || pathname.startsWith(tab.href + "/"))) return tab.id;
   }
   return "users";
 }
@@ -75,7 +76,7 @@ export function AdminShell({ capabilities, children }: { capabilities: AdminCapa
         <h1 className="text-heading-2 text-foreground mb-space-3">Administration</h1>
 
         {/* Tab navigation */}
-        <nav aria-label="Administration" className="flex gap-space-1" role="tablist">
+        <nav aria-label="Administration" className="flex flex-wrap gap-space-1" role="tablist">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = allowed && activeTab === tab.id;
@@ -88,7 +89,7 @@ export function AdminShell({ capabilities, children }: { capabilities: AdminCapa
                 data-testid={`admin-tab-${tab.id}`}
                 onClick={() => router.push(tab.href)}
                 className={cn(
-                  "flex items-center gap-space-2 px-space-3 py-space-2 rounded-md text-body-small transition-colors",
+                  "flex shrink-0 items-center gap-space-2 px-space-3 py-space-2 rounded-md text-body-small transition-colors",
                   isActive ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
                 )}
               >

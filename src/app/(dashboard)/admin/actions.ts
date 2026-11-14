@@ -219,7 +219,7 @@ export async function updateEmitterConfigAction(input: UpdateEmitterConfigInput)
 }
 
 /** The fields of the AI form as typed: the service validates them (an empty string is "not set"). */
-type AiSettingsFormInput = { provider?: string | null; baseUrl?: string | null; model?: string | null };
+type AiSettingsFormInput = { provider?: string | null; baseUrl?: string | null; model?: string | null; apiKey?: string; headers?: Record<string, string>; clearCredentials?: boolean };
 
 /** The AI provider settings (Admin > AI): a platform administrator's (`ai.manage`). The view never carries the API key. */
 export async function getAiSettingsAction() {
@@ -283,5 +283,6 @@ export async function updateDomainPolicyAction(id: string, policyTemplate: Polic
   if (!result.success) return { error: result.error.message };
   revalidateSchemas();
   revalidatePath("/admin/domains", "page");
+  revalidatePath("/admin/tenant", "page");
   return { success: true as const, data: result.data };
 }

@@ -511,3 +511,27 @@ describe("AI Service", () => {
     });
   });
 });
+
+describe("custom AI client", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("sends a chat request to the exact endpoint with the model and credentials", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: "suggestion" } }] })));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createAiClient({ provider: "custom", baseUrl: "https://gateway.test/chat", model: "model-a", apiKey: "key", headers: { "api-key": "customer-key" }, source: "db" });
+    expect(await client?.complete("Suggest a field", { maxTokens: 100 })).toEqual({ success: true, data: "suggestion" });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://gateway.test/chat");
+    expect(init.redirect).toBe("manual");
+    expect(new Headers(init.headers).get("api-key")).toBe("customer-key");
+    expect(JSON.parse(init.body as string)).toMatchObject({ model: "model-a", messages: [{ role: "user", content: "Suggest a field" }], max_tokens: 100 });
+  });
+  it("reports malformed responses and HTTP failures without echoing provider secrets", async () => {
+    for (const response of [new Response(JSON.stringify({ private: "provider-secret" })), new Response("provider-secret", { status: 401 }), new Response(null, { status: 302 })]) {
+      vi.stubGlobal("fetch", vi.fn(async () => response));
+      const client = createAiClient({ provider: "custom", baseUrl: "https://gateway.test/chat", model: "model-a", apiKey: null, source: "db" });
+      const result = await client?.complete("hi");
+      expect(result?.success).toBe(false);
+      expect(JSON.stringify(result)).not.toContain("provider-secret");
+    }
+  });
+});

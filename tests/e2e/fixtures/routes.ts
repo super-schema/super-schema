@@ -44,10 +44,9 @@ export const DASHBOARD_ROUTES: readonly DashboardRoute[] = [
 
   // The admin tabs (src/app/(dashboard)/admin/layout.tsx), without the Users one above.
   { path: "/admin/settings", name: "Admin Settings", heading: "Settings", level: 2, from: "admin-tab", adminTab: { testId: "admin-tab-settings" }, smoke: false },
-  { path: "/admin/domains", name: "Admin Domains", heading: "Domains", level: 2, from: "admin-tab", adminTab: { testId: "admin-tab-domains" }, smoke: false },
+  { path: "/admin/tenant", name: "Admin Tenant", heading: "Tenant", level: 2, from: "admin-tab", adminTab: { testId: "admin-tab-tenant" }, smoke: false },
   { path: "/admin/emitters", name: "Admin Emitters", heading: "Emitters", level: 2, from: "admin-tab", adminTab: { testId: "admin-tab-emitters" }, smoke: false },
   { path: "/admin/health", name: "Admin Health", heading: "System Health", level: 2, from: "admin-tab", adminTab: { testId: "admin-tab-health" }, smoke: false },
-  { path: "/admin/classifications", name: "Admin Classifications", heading: "Classifications", level: 2, from: "admin-tab", adminTab: { testId: "admin-tab-classifications" }, smoke: false },
 
   // Pages linked from other pages: the Governance page, the notification bell, the Domains page, the explorer.
   { path: "/governance/retention", name: "Retention Policies", heading: "Retention Policies", level: 1, from: "link", smoke: false },
@@ -59,8 +58,8 @@ export const DASHBOARD_ROUTES: readonly DashboardRoute[] = [
 /** The ActivityBar items, in order. */
 export const ACTIVITY_BAR_ROUTES: readonly DashboardRoute[] = DASHBOARD_ROUTES.filter((route) => route.from === "activity-bar");
 
-/** The admin tabs in the order of the tab bar (Settings, Users, Domains, Emitters, Health, Classifications). */
-const ADMIN_TAB_ORDER = ["admin-tab-settings", "admin-tab-users", "admin-tab-domains", "admin-tab-emitters", "admin-tab-health", "admin-tab-classifications"];
+/** The admin tabs in the order of the tab bar (Settings, Users, Tenant, Emitters, Health). */
+const ADMIN_TAB_ORDER = ["admin-tab-settings", "admin-tab-users", "admin-tab-tenant", "admin-tab-emitters", "admin-tab-health"];
 export const ADMIN_TAB_ROUTES: readonly DashboardRoute[] = DASHBOARD_ROUTES.filter((route) => route.adminTab !== undefined).sort(
   (a, b) => ADMIN_TAB_ORDER.indexOf(a.adminTab!.testId) - ADMIN_TAB_ORDER.indexOf(b.adminTab!.testId),
 );

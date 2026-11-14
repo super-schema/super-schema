@@ -974,6 +974,8 @@ model EmitterConfig {
 // The admin's override of the AI provider settings (`resolveAiConfig`, src/services/ai-config.service.ts). One row, id "default"; a null field
 // falls back to the environment. The API key is NEVER stored here: it is read from AI_API_KEY only.
 model AiConfig {
+  /// Encrypted API key and integration headers; never returned to clients or audit logs.
+  credentials String?
   id        String   @id
   provider  String?
   baseUrl   String?

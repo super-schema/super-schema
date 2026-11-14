@@ -1,38 +1,23 @@
 import { z } from "zod";
 
-/** The AI providers the app speaks to: Ollama's own API, and any OpenAI-compatible server under /v1 (vLLM and the like). */
-export const AI_PROVIDER_IDS = ["ollama", "vllm"] as const;
+/** Custom providers speak OpenAI-compatible Chat Completions at an exact endpoint. */
+export const AI_PROVIDER_IDS = ["ollama", "vllm", "custom"] as const;
+const blankAsNull = (value: unknown) => value === undefined || (typeof value === "string" && value.trim() === "") ? null : value;
+const httpUrl = z.string().trim().max(2048).refine((value) => {
+  try { return ["http:", "https:"].includes(new URL(value).protocol); } catch { return false; }
+}, "Base URL must be an http:// or https:// address");
+const headerName = z.string().regex(/^[!#$%&'*+.^_\x60|~0-9a-z-]+$/i, "Invalid header name")
+  .refine((name) => !["host", "content-length", "connection", "transfer-encoding", "cookie", "set-cookie", "content-type"].includes(name.toLowerCase()), "This header is managed by the application");
+const headerValue = z.string().max(8192).refine((value) => !/[\r\n]/.test(value), "Header values must not contain line breaks");
 
-/** A field the admin left empty is the same as one that is not set: `null`. A missing key counts as empty too. */
-const blankAsNull = (value: unknown) => (value === undefined || (typeof value === "string" && value.trim() === "") ? null : value);
-
-/** An http or https address (the service then normalizes it: trims it, drops trailing slashes and a trailing `/v1`). */
-const httpUrl = z
-  .string()
-  .trim()
-  .max(2048)
-  .refine((value) => {
-    try {
-      const url = new URL(value);
-      return url.protocol === "http:" || url.protocol === "https:";
-    } catch {
-      return false;
-    }
-  }, "Base URL must be an http:// or https:// address");
-
-/**
- * The AI provider settings an administrator saves (Admin > AI). Every field is nullable: all three empty clears the stored override, and the
- * environment decides again. The API key is not a field: it is read from AI_API_KEY and never stored or returned.
- */
 export const UpdateAiSettingsInputSchema = z.object({
   provider: z.preprocess(blankAsNull, z.enum(AI_PROVIDER_IDS).nullable()),
   baseUrl: z.preprocess(blankAsNull, httpUrl.nullable()),
   model: z.preprocess(blankAsNull, z.string().trim().max(200).nullable()),
+  apiKey: z.string().trim().max(8192).refine((value) => !/[\r\n]/.test(value), "API key must not contain line breaks").optional(),
+  headers: z.record(headerName, headerValue).refine((headers) => Object.keys(headers).length <= 20, "Use at most 20 integration headers").optional(),
+  clearCredentials: z.boolean().optional(),
 });
-
 export type UpdateAiSettingsInput = z.infer<typeof UpdateAiSettingsInputSchema>;
-
-/** The connection test takes the same fields (the values in the form, not yet saved). Leaving provider and base URL empty tests the saved configuration. */
 export const TestAiConnectionInputSchema = UpdateAiSettingsInputSchema;
-
 export type TestAiConnectionInput = z.infer<typeof TestAiConnectionInputSchema>;

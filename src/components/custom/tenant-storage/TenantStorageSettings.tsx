@@ -704,10 +704,10 @@ export function TenantStorageSettings({ initial }: { initial: Snapshot }) {
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-1.5">
           <Link
-            href="/admin/settings"
+            href="/admin/tenant"
             className="text-xs text-muted-foreground hover:text-foreground"
           >
-            Settings / Tenant storage
+            Tenant / Storage
           </Link>
           <h1 className="text-2xl font-semibold tracking-tight">
             Tenant storage

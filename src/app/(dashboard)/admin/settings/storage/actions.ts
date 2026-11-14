@@ -29,6 +29,7 @@ async function call<T>(
       ctx = { ...contextOf(access.principal), tenantId: id };
     const data = await run(id, ctx);
     revalidatePath("/admin/settings/storage");
+    revalidatePath("/admin/tenant/storage");
     revalidatePath("/admin/workflows/gitops");
     revalidatePath("/", "layout");
     return { data };

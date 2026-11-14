@@ -609,7 +609,7 @@ export async function beginGitHubLink(
       userId,
       returnTo:
         destination === "settings"
-          ? "/admin/settings/storage"
+          ? "/admin/tenant/storage"
           : "/admin/workflows/gitops",
       verifier: sealSecret(verifier, "GitOpsOAuthState.verifier"),
       expiresAt: new Date(Date.now() + 10 * 60000),
@@ -680,7 +680,7 @@ export async function finishGitHubLink(
       ...tokenData(token, app.revision),
     },
   });
-  return saved.returnTo === "/admin/settings/storage"
-    ? saved.returnTo
+  return ["/admin/settings/storage", "/admin/tenant/storage"].includes(saved.returnTo ?? "")
+    ? "/admin/tenant/storage"
     : "/admin/workflows/gitops?connected=github";
 }
