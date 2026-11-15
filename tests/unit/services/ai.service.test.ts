@@ -23,6 +23,7 @@ import {
   SUPPORTED_TYPES,
   CLASSIFICATION_OPTIONS,
 } from "@/services/ai.service";
+import { SUPER_SCHEMA_MODELING_CONTEXT } from "@/lib/ai/super-schema-context";
 
 describe("AI Service", () => {
   // ── isAiConfigured ───────────────────────────────────────────────────
@@ -182,6 +183,16 @@ describe("AI Service", () => {
       }
     });
 
+    it("includes the shared modeling context and its own operation contract", () => {
+      const prompt = buildEntityPrompt("test", {
+        domainName: "test",
+        existingEntityNames: [],
+      });
+      expect(prompt).toContain(SUPER_SCHEMA_MODELING_CONTEXT);
+      expect(prompt).toContain("Suggest one business entity for human review.");
+      expect(prompt).toContain("do not return an AsyncAPI document");
+    });
+
     it("handles empty existing entities", () => {
       const prompt = buildEntityPrompt("test", {
         domainName: "test",
@@ -194,6 +205,15 @@ describe("AI Service", () => {
   // ── buildFieldSuggestionsPrompt (Story 11.3) ────────────────────────
 
   describe("buildFieldSuggestionsPrompt", () => {
+    it("includes the shared modeling context and its own operation contract", () => {
+      const prompt = buildFieldSuggestionsPrompt("Customer", {
+        domainName: "test",
+        existingEntityNames: [],
+      });
+      expect(prompt).toContain(SUPER_SCHEMA_MODELING_CONTEXT);
+      expect(prompt).toContain("Suggest business fields for the named entity only.");
+    });
+
     it("includes entity name and domain context", () => {
       const prompt = buildFieldSuggestionsPrompt("Customer", {
         domainName: "fintech",

@@ -2,9 +2,9 @@
  * AI Service — Story 11.1: Natural Language Entity Creation
  * Story 11.3: AI-Assisted Field Suggestions from Domain Context
  *
- * Provides AI client abstraction with configurable local LLM backend.
- * Communicates ONLY with configured local/self-hosted LLM (Ollama/vLLM).
- * Zero external calls at runtime.
+ * Provides an AI client abstraction over the configured provider (Ollama,
+ * vLLM, or a custom OpenAI-compatible endpoint). Prompts go only to that
+ * provider; a custom provider may be hosted outside this deployment.
  */
 
 import { ok, err } from "@/types/result";
@@ -464,7 +464,7 @@ export function parseFieldSuggestions(
 
 /**
  * Generate an entity schema from a natural language description.
- * Uses the configured local LLM backend.
+ * Uses the configured AI provider.
  */
 export async function generateEntityFromDescription(
   description: string,
@@ -475,7 +475,7 @@ export async function generateEntityFromDescription(
     return err({
       code: "AI_NOT_CONFIGURED",
       message:
-        "AI assistance is not configured. Contact your administrator to set up a local LLM.",
+        "AI assistance is not configured. Contact your administrator to set up an AI provider.",
       suggestedFix:
         "Set a provider in Admin > AI settings, or set the AI_PROVIDER and AI_BASE_URL environment variables to enable AI features.",
     });

@@ -32,8 +32,18 @@ export function ConceptCard({ concept, isSelected, onClick }: ConceptCardProps) 
     <div
       data-testid="concept-card"
       data-name={concept.name}
+      role="button"
+      tabIndex={0}
+      aria-pressed={isSelected ?? false}
       onClick={onClick}
-      className={`min-w-0 rounded-lg border border-border bg-card text-card-foreground p-4 cursor-pointer transition-all ${
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick?.();
+        }
+      }}
+      className={`min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg border border-border bg-card text-card-foreground p-4 cursor-pointer transition-all ${
         isSelected
           ? "ring-1 ring-primary border-primary/50"
           : "hover:ring-1 hover:ring-border hover:border-border/80"
