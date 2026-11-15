@@ -265,7 +265,7 @@ export function baseNameOf(metadata: unknown): string | undefined {
  * saved rows). A name several entities share is settled by place: the owner's own product, then its domain, then the tenant. The entity
  * itself is never its own base. `undefined`: nothing answers to the name; `ambiguous`: the nearest place that has any still has several.
  */
-function resolveBase<T extends Resolvable & { place: ClosurePlace }>(
+export function resolveBase<T extends { id: string; name: string; place: ClosurePlace; ref?: EntityRef }>(
   index: Map<string, T>,
   owner: T,
   name: string
@@ -282,7 +282,7 @@ function resolveBase<T extends Resolvable & { place: ClosurePlace }>(
   for (const within of nearer) {
     const here = matches.filter(within);
     if (here.length === 1) return { target: here[0] };
-    if (here.length > 1) return { ambiguous: here.sort(byQualified) };
+    if (here.length > 1) return { ambiguous: here.sort((a, b) => a.ref && b.ref ? byQualified({ ref: a.ref }, { ref: b.ref }) : compareStr(a.id, b.id)) };
   }
   return undefined;
 }

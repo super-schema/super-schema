@@ -401,16 +401,23 @@ describe("addFieldAction names and input", () => {
 });
 
 describe("updateFieldAction names (F2 guarded the field; names are new)", () => {
+  it("refuses field edits on retired entities before any write", async () => {
+    p.field.findUnique.mockResolvedValue({ ...fieldRow(T), entity: { ...entityRow(T), status: "RETIRED" } });
+    const result = await actions.updateFieldAction("fld-1", { description: "changed" });
+    expect(result).toMatchObject({ code: "FORBIDDEN" });
+    expect(p.field.update).not.toHaveBeenCalled();
+  });
+
   const update = (data: unknown) => actions.updateFieldAction("fld-1", asAny(data));
 
   it("stores a TRIMMED rename and slugs the trimmed text", async () => {
     expect(await update({ name: "  email_address  " })).toEqual({ success: true });
-    expect(p.field.update).toHaveBeenCalledWith({ where: { id: "fld-1" }, data: { name: "email_address", slug: "email-address" } });
+    expect(p.field.update).toHaveBeenCalledWith({ where: { id: "fld-1", entity: { status: { not: "RETIRED" } } }, data: { name: "email_address", slug: "email-address" } });
   });
 
   it("a padded name that equals the stored one after trimming is no rename (no slug churn)", async () => {
     expect(await update({ name: " email " })).toEqual({ success: true });
-    expect(p.field.update).toHaveBeenCalledWith({ where: { id: "fld-1" }, data: { name: "email" } });
+    expect(p.field.update).toHaveBeenCalledWith({ where: { id: "fld-1", entity: { status: { not: "RETIRED" } } }, data: { name: "email" } });
   });
 
   it.each([[""], ["   "], ["\t\n"]])("rejects the blank name %j with VALIDATION_ERROR before any read or write", async (name) => {
@@ -422,7 +429,7 @@ describe("updateFieldAction names (F2 guarded the field; names are new)", () => 
 
   it("an update without a name is untouched by the name rule", async () => {
     expect(await update({ description: "d" })).toEqual({ success: true });
-    expect(p.field.update).toHaveBeenCalledWith({ where: { id: "fld-1" }, data: { description: "d" } });
+    expect(p.field.update).toHaveBeenCalledWith({ where: { id: "fld-1", entity: { status: { not: "RETIRED" } } }, data: { description: "d" } });
   });
 
   it("rejects non-plain objects (a Date has no own keys: it used to be a no-op update that still marked the draft changed)", async () => {

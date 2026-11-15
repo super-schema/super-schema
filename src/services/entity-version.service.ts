@@ -25,6 +25,7 @@ import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
 import { toFieldSnapshot } from "@/lib/diff/field-snapshot";
+import { withModelBase } from "@/lib/events/inheritance-source";
 import { resolveEntityReferences } from "@/lib/entity-versioning/line-references";
 import {
   analyzePublish,
@@ -401,6 +402,14 @@ export async function publishEntity(
               if (!confirmed.success) throw new ServiceErrorRejection(confirmed.error);
               source = precompiled;
               writeBack = true;
+            }
+
+            const baseEntityId = state.data.closure?.root.baseEntityId;
+            const base = baseEntityId ? state.data.closure?.entities.find((member) => member.entityId === baseEntityId) : undefined;
+            if (base) {
+              const inherited = withModelBase(source, state.data.entity.name, base.entity.name);
+              writeBack ||= inherited !== source;
+              source = inherited;
             }
 
             // What a save writes into the snapshot, created or updated alike. The owner and the sequence are set when it is

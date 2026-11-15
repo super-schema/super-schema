@@ -11,6 +11,7 @@ import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import { findEmptyEnumFields, generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { resolveEntityReferences } from "@/lib/entity-versioning/line-references";
+import { flattenModelInheritance, withModelBase, type FlattenedField } from "@/lib/events/inheritance-source";
 import { isSourceStale } from "@/lib/entity-versioning/draft-state";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
@@ -77,6 +78,7 @@ export type EmitFiles = (
 ) => Promise<Result<EmittedFile[]>>;
 
 export interface ProgramPart {
+  versionStage?: string;
   label: string;
   entityId: string;
   /** null for a draft root. */
@@ -153,6 +155,7 @@ async function loadVersionPart(
       label,
       entityId: v.entityId,
       versionId: v.id,
+      versionStage: v.stage,
       rootModel: rootModel.data,
       source: v.resolvedSource,
       fields: snapshot.map((f) => ({ name: f.name, fieldNumber: f.fieldNumber ?? null })),
@@ -272,6 +275,8 @@ export async function loadProgram(db: Db, subject: ArtifactSubject, canRead?: Pl
   }
   // Read before anything is named: an unpublished reference's name is as much its content as a published one's schema (KD-045).
   if (canRead && refs.some((r) => !canRead(entityPlaceOf(r)))) return unreadableReference();
+  const base = refs.find((r) => r.id === resolved.baseEntityId);
+  if (base) root.source = withModelBase(root.source, entity.name, base.name);
   const unpublished = refs.filter((r) => !r.latestVersionId).map((r) => r.name);
   if (unpublished.length > 0) {
     return err({ code: "UNPUBLISHED_REFERENCE", message: `${entity.name} references unpublished ${unpublished.join(", ")}; publish them to preview this payload` });
@@ -307,10 +312,32 @@ export function buildTargetSource(format: PayloadFormat, combined: CombinedSourc
   const header = FORMAT_HEADER[format];
   const imports = [...new Set([...header.imports, ...combined.imports])];
   const usings = [...new Set([...header.usings, ...combined.usings])];
-  let body = combined.body;
+  const inheritedFields = new Map<string, FlattenedField[]>();
+  let body = format === "avro" || format === "protobuf"
+    ? flattenModelInheritance(combined.body, (name, fields) => inheritedFields.set(name, fields))
+    : combined.body;
   if (format === "protobuf") {
     body = projectTypeSpecSourceForProtobuf(body);
-    for (const part of [program.root, ...program.deps]) body = injectProtobufFieldNumbers(body, part.rootModel, part.fields);
+    for (const part of [program.root, ...program.deps]) {
+      let fields = part.fields;
+      const flattened = inheritedFields.get(part.rootModel);
+      if (flattened) {
+        // An inherited tag belongs to the pinned base, not the child's current field count.
+        // Never silently move it when a child gains a field; conflicting explicit tags must be corrected.
+        const used = new Map<number, string>();
+        fields = flattened.map(({ name, owner, index }) => {
+          const declared = [program.root, ...program.deps].find((candidate) => candidate.rootModel === owner)?.fields;
+          const fieldIndex = declared?.findIndex((field) => field.name === name) ?? -1;
+          const declaredField = declared?.[fieldIndex];
+          const fieldNumber = declaredField ? (declaredField.fieldNumber ?? fieldIndex + 1) : index + 1;
+          const previous = used.get(fieldNumber);
+          if (previous !== undefined) throw new Error(`Protobuf fields "${previous}" and "${name}" share field number ${fieldNumber}. Assign unique field numbers before emitting Protobuf.`);
+          used.set(fieldNumber, name);
+          return { name, fieldNumber };
+        });
+      }
+      body = injectProtobufFieldNumbers(body, part.rootModel, fields);
+    }
   }
   // An Avro enum symbol must be [A-Za-z_][A-Za-z0-9_]*: the canonical source keeps wire values (`in-progress`).
   if (format === "avro") body = projectTypeSpecSourceForAvro(body).source;
@@ -618,18 +645,14 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
     }
   }
 
-  /**
-   * The level-derived namespace is part of the key: an immutable version renders differently if its entity moves. The version is looked up
-   * inside the subject's tenant BEFORE the cache is consulted, so a render cached for one tenant is never handed to another.
-   */
-  async function versionCacheKey(subject: Extract<ArtifactSubject, { kind: "version" }>, format: PayloadFormat): Promise<Result<string>> {
-    const version = await options.db.entityVersion.findUnique({
-      where: { id: subject.entityVersionId, entity: { tenantId: subject.tenantId } },
-      select: { entityId: true },
-    });
-    if (!version) return err({ code: "NOT_FOUND", message: `Entity version "${subject.entityVersionId}" not found` });
-    const namespace = await namespaceFor(options.db, version.entityId);
-    return namespace.success ? ok(`${subject.entityVersionId}:${format}:${namespace.data}`) : namespace;
+  /** Authorize the entire closure before consulting the cache. Snapshot rows, including dependencies, can change under the same ID. */
+  async function versionCacheKey(subject: Extract<ArtifactSubject, { kind: "version" }>, format: PayloadFormat, canRead?: PlaceReader): Promise<Result<string | null>> {
+    const program = await loadProgram(options.db, subject, canRead);
+    if (!program.success) return program;
+    const parts = [program.data.root, ...program.data.deps];
+    if (parts.some((part) => part.versionStage !== "RELEASED")) return ok(null);
+    // Placement still affects the namespace of a released version.
+    return ok(`${subject.entityVersionId}:${format}:${program.data.namespace}`);
   }
 
   return {
@@ -647,17 +670,12 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
       if (subject.kind === "draft") return renderSafely(subject, format, canRead, run, metadata);
       let key: string;
       try {
-        const keyed = await versionCacheKey(subject, format);
+        const keyed = await versionCacheKey(subject, format, canRead);
         if (!keyed.success) return keyed;
+        if (keyed.data === null) return await renderSafely(subject, format, canRead, run, metadata);
         // Decision: a frozen version is rendered with the tenant's CURRENT dictionary; its state is part of the key, so a changed
         // dictionary renders again instead of serving a payload projected with the old one.
         key = `${keyed.data}:${dictionaryFingerprint(metadata)}`;
-        // The caller's read scope is checked before the cache is consulted: a render cached for a caller whose roles cover the closure is never
-        // handed to one whose roles do not. The closure of a frozen version does not change, so the check reads the same rows a render would.
-        if (canRead) {
-          const reach = await loadProgram(options.db, subject, canRead);
-          if (!reach.success) return reach;
-        }
       } catch (error) {
         return renderFailure(subject, format, error);
       }

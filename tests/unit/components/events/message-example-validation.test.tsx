@@ -31,6 +31,7 @@ beforeAll(async () => {
 }, 60_000);
 
 const h = vi.hoisted(() => ({ pinJsonSchemaAction: vi.fn(), listPinnableVersionsAction: vi.fn() }));
+vi.mock("@/features/events/preview-requests", () => ({ requestPinJsonSchema: h.pinJsonSchemaAction }));
 vi.mock("@/features/events/pin-actions", () => ({ listPinnableVersionsAction: h.listPinnableVersionsAction }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({
   getExternalRefStatusesAction: () => Promise.resolve({ success: false, error: "unavailable" }),
@@ -97,8 +98,9 @@ async function renderMessages(doc: EventDocument, open = true) {
   await screen.findByLabelText("Payload entity");
   await act(async () => {});
   // An example with neither headers nor payload (just added) is a problem of the document, and a pane that holds a problem shows by itself.
-  const toggle = screen.getByTestId("message-card-examples-toggle");
-  if (open && toggle.getAttribute("aria-selected") !== "true") fireEvent.click(toggle);
+  const toggle = screen.queryByTestId("message-card-examples-toggle");
+  if (open && !toggle) fireEvent.change(screen.getByTestId("message-card-add-section"), { target: { value: "examples" } });
+  else if (open && toggle?.getAttribute("aria-selected") !== "true") fireEvent.click(toggle!);
   return rendered;
 }
 

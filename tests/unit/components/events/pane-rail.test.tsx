@@ -71,6 +71,24 @@ function Rail({ keepMounted = [] as string[], start = "payload" }: { keepMounted
 const tab = (id: string) => screen.getByTestId(`x-card-${id}-toggle`);
 
 describe("PaneRail", () => {
+  it("falls back to a keyboard-reachable pane when the selected optional pane disappears", () => {
+    function DynamicRail() {
+      const [active, setActive] = useState("attributes");
+      const [metadata, setMetadata] = useState(true);
+      const panes = [
+        PANES[0],
+        ...(metadata ? [{ id: "attributes", title: "Metadata", body: <button onClick={() => setMetadata(false)}>Remove last attribute</button> }] : []),
+      ];
+      return <PaneRail idPrefix="x-card" panes={panes} active={active} onSelect={setActive} corePanes={["payload"]} />;
+    }
+    render(<DynamicRail />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove last attribute" }));
+    expect(tab("payload").getAttribute("aria-selected")).toBe("true");
+    expect(tab("payload").getAttribute("tabindex")).toBe("0");
+    expect(screen.getByTestId("x-card-payload-body").hidden).toBe(false);
+    expect(screen.queryByRole("tab", { name: "Metadata" })).toBeNull();
+  });
+
   it("renders a vertical tab list with one tab per pane, wired to a tab panel", () => {
     render(<Rail />);
     const list = screen.getByRole("tablist");
@@ -162,4 +180,22 @@ describe("PaneRail", () => {
     expect(wrapper.className).toContain("@container");
     expect(screen.getByRole("tablist").className).toContain("@xl:flex-col");
   });
+});
+
+it("offers empty optional sections through Add section while keeping populated and invalid ones visible", () => {
+  function OptionalRail() {
+    const [active, setActive] = useState("payload");
+    return <PaneRail idPrefix="x-card" panes={PANES} active={active} onSelect={setActive} corePanes={["payload"]} />;
+  }
+  render(<OptionalRail />);
+  expect(screen.getByRole("tablist").getAttribute("aria-orientation")).toBe("horizontal");
+  expect(screen.queryByTestId("x-card-more-toggle")).toBeNull();
+  expect(tab("details")).toBeDefined();
+  expect(tab("examples")).toBeDefined();
+  fireEvent.change(screen.getByRole("combobox", { name: "Add section" }), { target: { value: "more" } });
+  expect(tab("more").getAttribute("aria-selected")).toBe("true");
+  fireEvent.click(tab("payload"));
+  expect(tab("more")).toBeDefined();
+  fireEvent.keyDown(tab("payload"), { key: "End" });
+  expect(tab("more").getAttribute("aria-selected")).toBe("true");
 });

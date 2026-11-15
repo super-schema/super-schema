@@ -10,6 +10,17 @@ describe("summarizeSchemaFields", () => {
     });
   });
 
+  it("keeps referenced descriptions and attributes, with field annotations taking precedence", () => {
+    const schema = {
+      properties: { email: { $ref: "#/$defs/Email", description: "Contact address", "x-classification": "Restricted" } },
+      $defs: { Email: { type: "string", description: "Email", "x-classification": "Public", "x-securityClassification": { data_class: 3 } } },
+    };
+    expect(summarizeSchemaFields(schema).rows).toEqual([{
+      name: "email", type: "Email", required: false, description: "Contact address",
+      attributes: [{ name: "classification", value: "Restricted" }, { name: "security Classification", value: '{"data_class":3}' }],
+    }]);
+  });
+
   it("appends the format and joins a type list", () => {
     const schema = { properties: { at: { type: "string", format: "date-time" }, note: { type: ["string", "null"] } } };
     expect(summarizeSchemaFields(schema).rows).toEqual([

@@ -168,7 +168,9 @@ export class CustomAiClient implements AiClient {
         signal: AbortSignal.timeout(30_000),
         body: JSON.stringify({
           model: this.model, messages: [{ role: "user", content: prompt }], stream: false,
-          temperature: options?.temperature ?? 0.3, max_tokens: options?.maxTokens ?? 2048,
+          // Some models reject sampling controls; leave their defaults unless explicitly requested.
+          ...(options?.temperature === undefined ? {} : { temperature: options.temperature }),
+          max_tokens: options?.maxTokens ?? 2048,
         }),
       });
       if (!response.ok) return err({

@@ -16,6 +16,7 @@ import { entityValue, pickEntity } from "./helpers/pick-entity";
 // The picker's default version loader is a server action: keep it out of the test process.
 const h = vi.hoisted(() => ({ listPinnableVersionsAction: vi.fn(), pinJsonSchemaAction: vi.fn(), toast: vi.fn(), toastDismiss: vi.fn() }));
 // The undo toast of "Remove message": the tests read what it offers and press its action themselves.
+vi.mock("@/features/events/preview-requests", () => ({ requestPinJsonSchema: h.pinJsonSchemaAction }));
 vi.mock("sonner", () => ({ toast: Object.assign(h.toast, { dismiss: h.toastDismiss }) }));
 vi.mock("@/features/events/pin-actions", () => ({ listPinnableVersionsAction: h.listPinnableVersionsAction }));
 // So are the actions the external-reference card uses, and the one that renders an entity's schema (the payload preview asks for it).
@@ -49,13 +50,15 @@ const missing = (testId: string) => screen.queryByTestId(testId) === null;
 const optionValues = (el: HTMLElement) => Array.from(el.querySelectorAll("option")).map((o) => o.getAttribute("value"));
 
 /** The panes of the message form (a rail of tabs, one pane showing). */
-const CARDS = ["payload", "properties", "details", "channels", "examples", "bindings", "docs", "correlation", "more"] as const;
+const CARDS = ["details", "payload", "properties", "headers", "key", "channels", "examples", "bindings", "docs", "correlation", "more"] as const;
 type Card = (typeof CARDS)[number];
 /** Is this the pane that is showing? */
-const isOpen = (card: Card) => screen.getByTestId(`message-card-${card}-toggle`).getAttribute("aria-selected") === "true";
+const isOpen = (card: Card) => screen.queryByTestId(`message-card-${card}-toggle`)?.getAttribute("aria-selected") === "true";
 /** Show a pane, leaving it alone when it shows already. A pane, once shown, stays in the DOM (hidden) when another one shows. */
 const openCard = (card: Card) => {
-  if (!isOpen(card)) fireEvent.click(screen.getByTestId(`message-card-${card}-toggle`));
+  if (!screen.queryByTestId(`message-card-${card}-toggle`)) {
+    fireEvent.change(screen.getByTestId("message-card-add-section"), { target: { value: card } });
+  } else if (!isOpen(card)) fireEvent.click(screen.getByTestId(`message-card-${card}-toggle`));
 };
 /** Show every pane in turn, so that all their fields are in the DOM. */
 const openAllCards = () => CARDS.forEach(openCard);
@@ -67,7 +70,8 @@ async function settle() {
 }
 /** Headers and Message key are `+ Add` links until set: show their pickers (a picker that is on screen already is left alone). */
 const showOptionalPins = () => {
-  for (const id of ["headers-add", "key-pin-add"]) if (screen.queryByTestId(id)) click(id);
+  openCard("headers");
+  openCard("key");
 };
 async function renderMessages(opts: Parameters<typeof renderSection>[1] = {}) {
   const rendered = renderSection(MessagesSection, opts);
@@ -235,6 +239,7 @@ describe("MessagesSection: payload, headers and key pins", () => {
   it("an unpinned payload version is allowed: the entity stays, there is no problem, and Save works", async () => {
     const { probe } = renderBuilder({ section: "messages" });
     await settle();
+    openCard("payload");
     await screen.findByRole("option", { name: "v0.9" });
     type(field("Payload version"), "");
     expect(probe.draft.doc.messages[0].payload).toEqual({ entityId: "ent-1", entityVersionId: null });
@@ -319,6 +324,7 @@ describe("MessagesSection: the payload request while passing over messages", () 
   it("sends nothing while the user is only passing over a message, and asks once for the one they stop on", async () => {
     h.pinJsonSchemaAction.mockResolvedValue({ success: true, data: { schema: { properties: { id: { type: "string" } } } } });
     await renderMessages({ doc: docWithReply() });
+    openCard("payload");
     click("message-row-RefundIssued");
     click("message-row-OrderCreated");
     click("message-row-RefundIssued");
@@ -345,9 +351,10 @@ describe("MessagesSection: payload preview", () => {
   it("shows the fields of the chosen payload entity under the picker, with a link to the entity", async () => {
     h.pinJsonSchemaAction.mockResolvedValue({ success: true, data: { schema: ORDER_SCHEMA } });
     await renderMessages();
+    openCard("payload");
     await screen.findByTestId("payload-preview-required-orderId");
     const preview = screen.getByTestId("payload-preview");
-    expect(within(preview).getByText("quantity")).toBeDefined();
+    expect(within(preview).getByTestId("payload-preview-field-quantity")).toBeDefined();
     expect(within(preview).getByRole("link", { name: /open entity/i }).getAttribute("href")).toBe("/schemas/payments/checkout/ordercreated");
     expect(h.pinJsonSchemaAction).toHaveBeenCalledWith("p1", PIN);
   });
@@ -356,10 +363,11 @@ describe("MessagesSection: payload preview", () => {
     h.pinJsonSchemaAction.mockImplementation((_product: string, pin: { entityId: string }) =>
       Promise.resolve({ success: true, data: { schema: { properties: pin.entityId === "ent-1" ? { orderId: { type: "string" } } : { reason: { type: "string" } } } } }));
     await renderMessages();
-    await screen.findByText("orderId");
+    openCard("payload");
+    await screen.findByTestId("payload-preview-field-orderId");
     pickEntity("Payload", "ent-2");
-    await screen.findByText("reason");
-    expect(screen.queryByText("orderId")).toBeNull();
+    await screen.findByTestId("payload-preview-field-reason");
+    expect(screen.queryByTestId("payload-preview-field-orderId")).toBeNull();
   });
 
   it("asks for the schema only once the Payload pane shows", async () => {
@@ -381,18 +389,17 @@ describe("MessagesSection: payload preview", () => {
 });
 
 describe("MessagesSection: optional pins", () => {
-  it("shows Headers and Message key as add links until they are set", async () => {
+  it("offers Headers and Message key through Add section until they are set", async () => {
     await renderMessages();
-    expect(text("headers-add")).toBe("+ Add headers");
-    expect(text("key-pin-add")).toBe("+ Add message key");
-    expect(missing("headers-picker")).toBe(true);
-    expect(missing("key-pin-picker")).toBe(true);
+    expect(optionValues(screen.getByTestId("message-card-add-section"))).toEqual(expect.arrayContaining(["headers", "key"]));
+    expect(missing("message-card-headers-toggle")).toBe(true);
+    expect(missing("message-card-key-toggle")).toBe(true);
     expect(screen.queryByLabelText("Headers entity")).toBeNull();
   });
 
-  it("shows the picker when its link is clicked, and the link is gone", async () => {
+  it("shows the picker when its section is added", async () => {
     await renderMessages();
-    click("headers-add");
+    openCard("headers");
     expect(screen.getByLabelText("Headers entity")).toBeDefined();
     expect(missing("headers-add")).toBe(true);
     expect(missing("key-pin-picker")).toBe(true);
@@ -402,9 +409,10 @@ describe("MessagesSection: optional pins", () => {
     const doc = sampleDocument();
     doc.messages[0] = { ...doc.messages[0], headers: { entityId: "ent-2", entityVersionId: "ver-2" } };
     await renderMessages({ doc });
+    expect(screen.getByTestId("message-card-headers-toggle")).toBeDefined();
+    openCard("headers");
     expect(screen.getByLabelText("Headers entity")).toBeDefined();
-    expect(missing("headers-add")).toBe(true);
-    expect(text("key-pin-add")).toBe("+ Add message key");
+    expect(optionValues(screen.getByTestId("message-card-add-section"))).toContain("key");
   });
 
   it("shows a pin that holds a problem without a click", async () => {
@@ -423,7 +431,7 @@ describe("MessagesSection: optional pins", () => {
 
   it("keeps the picker on screen after the entity is cleared again, until the message changes", async () => {
     await renderMessages();
-    click("headers-add");
+    openCard("headers");
     pickEntity("Headers", "ent-2");
     pickEntity("Headers", "");
     expect(screen.getByLabelText("Headers entity")).toBeDefined();
@@ -549,6 +557,7 @@ describe("MessagesSection: payload representation", () => {
       doc.messages.push({ key: "Loose", payload: PIN, traitKeys: [] });
       await renderMessages({ doc, item: "Loose" });
       expect(text("message-representation-explanation")).toContain("no channel carries this message yet");
+      openCard("channels");
       fireEvent.click(box("message-channels-option-refunds"));
       expect(text("message-representation-explanation")).toBe("Auto → JSON Schema (draft-07) — AMQP channels default to JSON Schema");
     });
@@ -644,10 +653,10 @@ describe("MessagesSection: AsyncAPI message properties", () => {
     expect("examples" in probe.draft.doc.messages[0]).toBe(false);
   });
 
-  it("starts on the Payload pane, and holds examples, bindings, docs & tags, the correlation id and 'More' back until they are shown", async () => {
+  it("starts on Info and holds optional sections back until added", async () => {
     await renderMessages({ doc: docWithTraits() });
-    expect(isOpen("payload")).toBe(true);
-    for (const card of ["properties", "details", "channels", "examples", "bindings", "docs", "correlation", "more"] as const) expect(isOpen(card), card).toBe(false);
+    expect(isOpen("details")).toBe(true);
+    for (const card of ["properties", "payload", "channels", "examples", "bindings", "docs", "correlation", "more"] as const) expect(isOpen(card), card).toBe(false);
     for (const card of ["examples", "bindings", "docs", "correlation", "more"] as const) expect(missing(`message-card-${card}-body`), card).toBe(true);
     for (const key of ["examples", "tags", "externalDocs", "deprecated", "correlationId"]) expect(missing(`message-${key}`) && missing(`message-${key}-location`), key).toBe(true);
     expect(missing("message-bindings")).toBe(true);
@@ -711,20 +720,20 @@ describe("MessagesSection: AsyncAPI message properties", () => {
 });
 
 describe("MessagesSection: pane rail", () => {
-  it("lists the panes in the order Payload, Message properties (Trait), Details, Sent on channels, Examples, Bindings, Docs & tags, Correlation id, More", async () => {
+  it("shows Info first with the core sections and populated channel section", async () => {
     await renderMessages();
     const titles = within(screen.getByRole("tablist", { name: "Message parts" })).getAllByRole("tab").map((t) => t.textContent?.replace(/\d+\s*set$/, "").trim());
     expect(titles).toEqual([
-      "Payload", "Message properties (Trait)", "Details", "Sent on channels", "Examples", "Bindings", "Docs & tags", "Correlation id", "More",
+      "Info", "Payload", "Message traits", "Sent on channels",
     ]);
   });
 
   it("shows a pane from its tab, with aria-selected and aria-controls, and hides the one it replaces", async () => {
     await renderMessages();
-    const toggle = screen.getByTestId("message-card-examples-toggle");
-    expect(toggle.getAttribute("aria-selected")).toBe("false");
+    expect(missing("message-card-examples-toggle")).toBe(true);
     expect(missing("message-card-examples-body")).toBe(true);
-    fireEvent.click(toggle);
+    openCard("examples");
+    const toggle = screen.getByTestId("message-card-examples-toggle");
     expect(toggle.getAttribute("aria-selected")).toBe("true");
     expect(toggle.getAttribute("aria-controls")).toBe(screen.getByTestId("message-card-examples-body").id);
     expect(screen.getByTestId("message-card-examples-body").hasAttribute("hidden")).toBe(false);
@@ -969,14 +978,22 @@ describe("MessagesSection: generated key", () => {
     expect(probe.draft.doc.messages[0].key).toBe("OrderCreated");
   });
 
-  it("the Identifier shows the key, collapsed", async () => {
+  it("shows the identifier in the tab and edits it there without a separate section", async () => {
     await renderMessages();
-    expect((screen.getByTestId("message-key-disclosure") as HTMLDetailsElement).open).toBe(false);
+    expect(screen.queryByTestId("message-key-disclosure")).toBeNull();
+    expect(screen.queryByTestId("message-key")).toBeNull();
+    expect(text("message-key-value")).toBe("OrderCreated");
+    fireEvent.doubleClick(screen.getByTestId("message-row-OrderCreated"));
     expect(box("message-key").value).toBe("OrderCreated");
+    expect(document.activeElement).toBe(box("message-key"));
+    fireEvent.keyDown(box("message-key"), { key: "Escape" });
+    expect(screen.queryByTestId("message-key")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByTestId("message-row-OrderCreated"));
   });
 
-  it("renaming through the Identifier rewrites channel and operation references, keeps the message selected and the document valid", async () => {
+  it("renaming through the tab rewrites channel and operation references, keeps the message selected and the document valid", async () => {
     const { probe } = await renderMessages({ doc: docWithReply(), item: "RefundIssued" });
+    fireEvent.click(screen.getByRole("button", { name: "Rename message" }));
     type(box("message-key"), "RefundCompleted");
     fireEvent.blur(box("message-key"));
     expect(probe.draft.doc.messages[1].key).toBe("RefundCompleted");
@@ -987,8 +1004,9 @@ describe("MessagesSection: generated key", () => {
     expect(probe.draft.problems).toEqual([]);
   });
 
-  it("renaming through the Identifier rewrites the messageKeys of operations", async () => {
+  it("renaming through the tab rewrites the messageKeys of operations", async () => {
     const { probe } = await renderMessages();
+    fireEvent.click(screen.getByRole("button", { name: "Rename message" }));
     type(box("message-key"), "OrderPlaced");
     fireEvent.blur(box("message-key"));
     expect(probe.draft.doc.operations[0].messageKeys).toEqual(["OrderPlaced"]);
@@ -998,6 +1016,7 @@ describe("MessagesSection: generated key", () => {
 
   it("rejects a key another message already uses and a key with a space", async () => {
     const { probe } = await renderMessages({ doc: docWithReply() });
+    fireEvent.click(screen.getByRole("button", { name: "Rename message" }));
     type(box("message-key"), "RefundIssued");
     fireEvent.blur(box("message-key"));
     expect(text("message-key-error")).toBe('The key "RefundIssued" is already used.');
@@ -1010,10 +1029,16 @@ describe("MessagesSection: generated key", () => {
 });
 
 describe("MessagesSection: sent on channels", () => {
+
+  const renderChannels = async (opts: Parameters<typeof renderMessages>[0] = {}) => {
+    const rendered = await renderMessages(opts);
+    openCard("channels");
+    return rendered;
+  };
   it("renders one checkbox per channel, labelled by title or address, mirroring channels[].messageKeys", async () => {
     const doc = sampleDocument();
     doc.channels[1] = { ...doc.channels[1], title: "Refunds" };
-    await renderMessages({ doc });
+    await renderChannels({ doc });
     expect(box("message-channels-option-orders").checked).toBe(true);
     expect(box("message-channels-option-refunds").checked).toBe(false);
     expect(box("message-channels-option-orders").closest("label")?.textContent).toContain("orders.v1");
@@ -1021,7 +1046,7 @@ describe("MessagesSection: sent on channels", () => {
   });
 
   it("checking a channel adds the message to that channel's messageKeys, unchecking removes it", async () => {
-    const { probe } = await renderMessages();
+    const { probe } = await renderChannels();
     fireEvent.click(box("message-channels-option-refunds"));
     expect(probe.draft.doc.channels[1].messageKeys).toEqual(["OrderCreated"]);
     expect(box("message-channels-option-refunds").checked).toBe(true);
@@ -1032,7 +1057,7 @@ describe("MessagesSection: sent on channels", () => {
   });
 
   it("refuses to take the message off a channel where an operation uses it, and names the operation", async () => {
-    const { probe } = await renderMessages();
+    const { probe } = await renderChannels();
     fireEvent.click(box("message-channels-option-orders"));
     const notice = text("message-channels-blocked") ?? "";
     expect(notice).toContain('"publishOrder"');
@@ -1043,14 +1068,14 @@ describe("MessagesSection: sent on channels", () => {
   });
 
   it("also refuses when the message is an operation's reply on that channel", async () => {
-    const { probe } = await renderMessages({ doc: docWithReply(), item: "RefundIssued" });
+    const { probe } = await renderChannels({ doc: docWithReply(), item: "RefundIssued" });
     fireEvent.click(box("message-channels-option-refunds"));
     expect(text("message-channels-blocked")).toContain('"askRefund"');
     expect(probe.draft.doc.channels[1].messageKeys).toEqual(["RefundIssued"]);
   });
 
   it("clears the notice after the next successful toggle", async () => {
-    await renderMessages();
+    await renderChannels();
     fireEvent.click(box("message-channels-option-orders"));
     expect(missing("message-channels-blocked")).toBe(false);
     fireEvent.click(box("message-channels-option-refunds"));
@@ -1061,7 +1086,7 @@ describe("MessagesSection: sent on channels", () => {
     const doc = sampleDocument();
     doc.channels = [];
     doc.operations = [];
-    await renderMessages({ doc });
+    await renderChannels({ doc });
     expect(text("message-channels-empty")).toContain("No channels");
   });
 });
@@ -1291,16 +1316,26 @@ describe("MessagesSection: the item tab strip", () => {
     expect(probe.item).toBe(probe.draft.doc.messages[before].key);
   });
 
-  it("keeps the section description in an info tip beside the heading", async () => {
+  it("starts directly with the message tabs without a duplicate section heading", async () => {
     await renderMessages();
-    const tip = screen.getByTestId("messages-help");
-    expect(tip.hasAttribute("hidden")).toBe(true);
-    expect(tip.textContent).toContain("What is sent");
-    expect(screen.getByTestId("messages-help-button").getAttribute("aria-label")).toBe("About messages");
+    expect(screen.queryByRole("heading", { name: "Messages" })).toBeNull();
+    expect(screen.getByRole("tablist", { name: "Messages" })).toBeDefined();
   });
 
   it("puts what the list row used to show under its name in the tab's title", async () => {
     await renderMessages();
     expect(screen.getByTestId("message-row-OrderCreated").getAttribute("title")).toContain("OrderCreated");
   });
+});
+
+it("explains where channels are configured and can navigate there", async () => {
+  const doc = sampleDocument();
+  doc.channels = [];
+  doc.operations = [];
+  const { probe } = renderBuilder({ doc, section: "messages" });
+  await settle();
+  click("message-sent-on-choose");
+  expect(text("message-channels-empty")).toContain("Channels in the event outline");
+  click("message-configure-channels");
+  expect(probe.section).toBe("channels");
 });

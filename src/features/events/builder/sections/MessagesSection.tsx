@@ -1,15 +1,8 @@
 "use client";
 
 // src/features/events/builder/sections/MessagesSection.tsx
-// Messages: a tab strip of the messages (`ItemTabs`) and, under it, the message as a rail of panes (`PaneRail`) so the form is not one long
-// wall of fields and the pane being worked on gets the whole height:
-//   Payload (entity + version, payload representation, headers, message key) · Message properties (Trait) · Details (name, title,
-//   summary, description, content type) · Sent on channels · Examples · Bindings · Docs & tags · Correlation id · More
-// Above the rail one line says which channels the message is sent on. Every pane with something in it shows how many fields are set; the
-// pane that shows is kept while switching from one message to another, and a pane that holds a problem shows by itself. The key is
-// generated: a placeholder until the user leaves the form, then named from the name or title; the "Identifier" below the rail is the
-// only place it shows. Every edit goes through `draft.update(fn)`.
-// Under the list sits the card of EXTERNAL messages (messages another published event defines and this one uses): `ExternalRefsCard`.
+// Messages start with Info, Payload and Message traits. Optional sections are added on demand.
+// Populated sections and sections with problems stay visible; pane selection survives message switches.
 import { lazy, Suspense, useMemo, useState } from "react";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,8 +16,6 @@ import { withDefaultMessageTraits } from "../traits";
 import type { SectionProps } from "../EventBuilder";
 import { AttributesSection } from "@/components/custom/metadata/AttributesSection";
 import { extensionCount, hasAttributes, withExtensions } from "../attributes";
-import { IdentifierDisclosure } from "../Identifier";
-import { messagePropertiesTitle } from "../labels";
 import { problemMessage, problemsByField, uniqueProblems } from "../problems";
 import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
@@ -40,12 +31,10 @@ import { ItemTabs } from "./ItemTabs";
 import { duplicateMessage, removeMessageAt } from "./message-actions";
 import { useAfterDelay } from "./use-after-delay";
 import { useUndoToast } from "./use-undo-toast";
-import { OptionalPin } from "./OptionalPin";
 import { PayloadPreview } from "./PayloadPreview";
 import { PaneRail, usePaneState, type PaneDef, type PaneState } from "./PaneRail";
 import { representationNote } from "./representation-note";
 import { RepresentationSelect } from "./RepresentationSelect";
-import { SectionHeading } from "./SectionHeading";
 
 // The picker pulls in a server-action module (versions are loaded through it). Loading it lazily keeps that chain out of every
 // module graph that merely imports the builder, and out of the first paint of the other sections.
@@ -69,7 +58,9 @@ const MORE_KEYS = ["deprecated"] as const;
 
 /** Which part of the message each pane draws, for showing the pane that holds a problem. */
 const CARD_POINTERS: Record<string, readonly string[]> = {
-  payload: ["payload", "representation", "headers", "keyPin"],
+  payload: ["payload", "representation"],
+  headers: ["headers"],
+  key: ["keyPin"],
   properties: ["traitKeys"],
   details: DETAILS_KEYS,
   examples: EXAMPLES_KEYS,
@@ -83,8 +74,9 @@ const CARD_POINTERS: Record<string, readonly string[]> = {
 const PREVIEW_DELAY_MS = 300;
 
 /** The pane that shows on first sight, and the panes built up front (the others are built the first time they show). */
-const DEFAULT_PANE = "payload";
-const KEEP_MOUNTED = ["payload", "properties", "details", "channels"] as const;
+const DEFAULT_PANE = "details";
+const CORE_PANES = ["details", "payload", "properties"] as const;
+const KEEP_MOUNTED = CORE_PANES;
 
 function toFormValue(m: DocMessage): Record<string, unknown> {
   const source = m as unknown as Record<string, unknown>;
@@ -163,11 +155,7 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
   const entityName = (pin: EntityPin) => options.entityOptions.find((e) => e.id === pin.entityId)?.name;
 
   return (
-    <section aria-labelledby="messages-heading" data-testid="section-messages" className="space-y-space-6">
-      <SectionHeading section="messages" title="Messages">
-        What is sent. Each message carries one entity as its payload and is allowed on one or more channels.
-      </SectionHeading>
-
+    <section aria-label="Messages" data-testid="section-messages" className="flex min-w-0 flex-col gap-space-4">
       {!active ? (
         <div data-testid="message-empty" className="space-y-space-3 rounded-lg border border-dashed border-border p-space-6 text-center">
           <p className="text-heading-3 text-foreground">No messages yet</p>
@@ -179,8 +167,14 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
           <ItemTabs
             label="Messages" prefix="message" activeIndex={activeIndex} onSelect={selectMessage}
             onAdd={addMessage} addLabel="Add message" addTestId="message-add" focusSignal={stripFocus}
+            rename={{
+              id: "message-key", label: "Message identifier", actionLabel: "Rename message",
+              taken: allMessageKeys({ ...doc, messages: messages.filter((_, index) => index !== activeIndex) }),
+              error: problemMessage(problemsByField(problems, `/messages/${activeIndex}/key`)),
+              onCommit: (to) => renameAndSelect(draft, "message", active.key, to, onSelectItem),
+            }}
             items={messages.map((m, i) => ({
-              key: m.key, label: messageLabel(m), subtitle: (m.payload.entityId && entityName(m.payload)) || "No payload",
+              key: m.key, label: m.key, subtitle: `${messageLabel(m)} · ${(m.payload.entityId && entityName(m.payload)) || "No payload"}`,
               broken: problemsByField(problems, `/messages/${i}`).length > 0,
             }))}
           />
@@ -328,16 +322,16 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
 
   const payloadBody = (
     <>
-      <div data-testid="payload-row" className="flex flex-wrap items-start gap-x-space-4 gap-y-space-3">
-        <div className="min-w-0 flex-1 basis-64">
+      <div data-testid="payload-row" className="grid min-w-0 grid-cols-1 gap-space-4 @3xl:grid-cols-[minmax(0,1fr)_minmax(12rem,0.65fr)]">
+        <div className="min-w-0">
           <PinField
-            id="payload" label="Payload" entities={options.entityOptions} scope={options.scope} error={errorAt("/payload")} autoFocus={autoFocusPayload}
+            id="payload" label="Payload" entities={options.entityOptions} scope={options.scope} error={errorAt("/payload")} autoFocus={autoFocusPayload && pane.active === "payload"}
             hint="Required. The entity this message carries."
             value={message.payload.entityId ? message.payload : null}
             onChange={(pin) => patch((m) => ({ ...m, payload: pin ?? NO_PAYLOAD }))}
           />
         </div>
-        <div className="min-w-0 flex-1 basis-48">
+        <div className="min-w-0">
           <RepresentationSelect
             id="message-representation" value={message.representation ?? ""} note={note} error={errorAt("/representation")}
             onChange={setRepresentation}
@@ -347,19 +341,6 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
       <PayloadPreview
         schema={payloadSchema.schema} loading={payloadSchema.loading} entity={entityOf(message.payload)} hasPayload={message.payload.entityId !== ""}
       />
-      <OptionalPin id="headers" addLabel="Add headers" value={message.headers ?? null} error={errorAt("/headers")}>
-        <PinField
-          id="headers" label="Headers" optional entities={options.entityOptions} scope={options.scope} error={errorAt("/headers")}
-          value={message.headers ?? null} onChange={(pin) => setOptionalPin("headers", pin)}
-        />
-      </OptionalPin>
-      <OptionalPin id="key-pin" addLabel="Add message key" value={message.keyPin ?? null} error={errorAt("/keyPin")}>
-        <PinField
-          id="key-pin" label="Message key" optional entities={options.entityOptions} scope={options.scope} error={errorAt("/keyPin")}
-          hint="Optional. The entity describing the record key, for example a Kafka key."
-          value={message.keyPin ?? null} onChange={(pin) => setOptionalPin("keyPin", pin)}
-        />
-      </OptionalPin>
     </>
   );
 
@@ -368,17 +349,23 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
       <CheckboxGroup
         id="message-channels" label="Sent on channels" checked={sentOn} onToggle={toggleChannel}
         options={doc.channels.map((c) => ({ value: c.key, label: channelLabel(c) }))}
-        empty="No channels yet. Add a channel first, then choose it here."
-        hint="Operations can only use a message on the channels that allow it."
+        empty="No channels yet. Open Channels in the event outline, add a channel, then return to Messages to select it here."
+        hint="Channels are configured in the event's Channels section. Operations can use a message only on channels that allow it."
       />
+      {onSectionChange && (
+        <Button type="button" variant="outline" size="sm" data-testid="message-configure-channels" onClick={() => onSectionChange("channels")}>
+          Configure channels
+        </Button>
+      )}
       {blocked && <Notice id="message-channels-blocked">{blocked}</Notice>}
     </>
   );
 
   const panes: PaneDef[] = [
+    { id: "details", title: "Info", count: setFieldCount(template, DETAILS_KEYS, formValue), body: cardForm(DETAILS_KEYS) },
     { id: "payload", title: "Payload", body: payloadBody },
     {
-      id: "properties", title: messagePropertiesTitle(), count: message.traitKeys.length,
+      id: "properties", title: "Message traits", count: message.traitKeys.length,
       body: (
         <MessagePropertiesCard
           draft={draft} options={options} message={message} index={index} problems={problems}
@@ -386,7 +373,17 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
         />
       ),
     },
-    { id: "details", title: "Details", count: setFieldCount(template, DETAILS_KEYS, formValue), body: cardForm(DETAILS_KEYS) },
+    {
+      id: "headers", title: "Headers", count: message.headers ? 1 : 0,
+      body: <PinField id="headers" label="Headers" optional entities={options.entityOptions} scope={options.scope}
+        error={errorAt("/headers")} value={message.headers ?? null} onChange={(pin) => setOptionalPin("headers", pin)} />,
+    },
+    {
+      id: "key", title: "Message key", count: message.keyPin ? 1 : 0,
+      body: <PinField id="key-pin" label="Message key" optional entities={options.entityOptions} scope={options.scope}
+        hint="Optional. A protocol binding's record key, for example a Kafka key."
+        error={errorAt("/keyPin")} value={message.keyPin ?? null} onChange={(pin) => setOptionalPin("keyPin", pin)} />,
+    },
     { id: "channels", title: "Sent on channels", count: sentOn.length, body: channelsBody },
     { id: "examples", title: "Examples", count: message.examples?.length ?? 0, body: cardForm(EXAMPLES_KEYS, exampleContext) },
     {
@@ -415,7 +412,7 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
   ].map((p) => ({ ...p, broken: errored.has(p.id) }));
 
   return (
-    <div className="max-w-4xl space-y-space-4" data-testid="message-form">
+    <div className="min-w-0 space-y-space-4" data-testid="message-form">
       <div data-testid="message-sent-on" className="flex flex-wrap items-center gap-space-2 text-body-small">
         {sentOnChannels.length > 0 ? (
           <>
@@ -441,14 +438,8 @@ function MessageForm({ draft, options, index, message, problems, context, pane, 
       </div>
 
       <div onBlur={(e) => { if (leftForm(e)) nameKeyFromContent(); }}>
-        <PaneRail idPrefix="message-card" label="Message parts" panes={panes} active={pane.active} onSelect={pane.select} keepMounted={KEEP_MOUNTED} />
+        <PaneRail idPrefix="message-card" label="Message parts" panes={panes} active={pane.active} onSelect={pane.select} keepMounted={KEEP_MOUNTED} corePanes={CORE_PANES} />
       </div>
-
-      <IdentifierDisclosure
-        id="message-key" value={message.key} error={errorAt("/key")}
-        taken={allMessageKeys({ ...doc, messages: doc.messages.filter((_, i) => i !== index) })}
-        onRename={(to) => renameAndSelect(draft, "message", message.key, to, onSelectItem)}
-      />
 
       <div className="flex justify-end gap-space-2">
         <Button type="button" variant="outline" onClick={duplicate} data-testid="message-duplicate" aria-label="Duplicate message" className="gap-space-2 text-muted-foreground">

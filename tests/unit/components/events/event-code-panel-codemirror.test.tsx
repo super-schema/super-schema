@@ -7,6 +7,7 @@ import { EditorView } from "@codemirror/view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({ preview: vi.fn(), writeText: vi.fn() }));
+vi.mock("@/features/events/preview-requests", () => ({ requestEventPreview: h.preview }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({ previewEventDocumentAction: h.preview }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 

@@ -13,9 +13,9 @@ interface BreakpointConfig {
 
 const BREAKPOINTS: BreakpointConfig[] = [
   { breakpoint: "compact", sidebar: 0, rightPanel: 0, autoCollapse: true },
-  { breakpoint: "standard", sidebar: 240, rightPanel: 320, autoCollapse: false },
-  { breakpoint: "comfortable", sidebar: 280, rightPanel: 400, autoCollapse: false },
-  { breakpoint: "spacious", sidebar: 320, rightPanel: 480, autoCollapse: false },
+  { breakpoint: "standard", sidebar: 200, rightPanel: 320, autoCollapse: false },
+  { breakpoint: "comfortable", sidebar: 224, rightPanel: 400, autoCollapse: false },
+  { breakpoint: "spacious", sidebar: 240, rightPanel: 480, autoCollapse: false },
 ];
 
 function getBreakpoint(width: number): BreakpointConfig {

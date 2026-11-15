@@ -76,7 +76,7 @@ async function addFromCard(prefix: "message" | "operation", itemId: string) {
 describe("MessagePropertiesCard: the properties where they are used", () => {
   it("is the 'Message properties (Trait)' pane, with an Add button and an empty hint", async () => {
     await renderMessages();
-    expect(screen.getByTestId("message-card-properties-toggle").textContent).toContain("Message properties (Trait)");
+    expect(screen.getByTestId("message-card-properties-toggle").textContent).toContain("Message traits");
     expect(screen.getByTestId("message-card-properties-toggle").getAttribute("aria-selected")).toBe("true");
     expect(text("message-prop-empty")).toContain("No message properties on this message yet");
     expect(screen.getByTestId("message-prop-add").getAttribute("aria-label")).toBe("Add message properties");

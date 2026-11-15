@@ -110,3 +110,7 @@ Expected failures that keep the run green (the `[KD-nnn ...]` tests of the guard
 
 Known defects at this release (`docs/testing/known-defects.md`): **4 open**, each pinned by a test that fails as stated (KD-014, KD-015, KD-017, KD-019), 28 `no-test` (a gap or a design limit that nothing in the suite pins: KD-034, KD-036 to KD-039 are new this wave, KD-043, KD-044 and KD-047 came with the access-control work) and 3 `dead-code` (KD-004, KD-005, KD-022).
 <!-- final-run:end -->
+
+Subsequent fixes: KD-014 is now `dead-code` because its page redirects to tenant attributes and its old browser pin is gone.
+KD-044 is closed: save, preview, saved-draft emission and publish enforce scoped reference reads, with regression coverage in
+`tests/unit/services/events/event-preview-pins.test.ts`. The counts and results above describe the historical run, not a new browser run.

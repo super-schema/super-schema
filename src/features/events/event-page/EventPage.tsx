@@ -241,8 +241,8 @@ function EventPageBody({ data }: { data: EventPageData }) {
       <EventBreadcrumb crumbs={crumbs} />
 
       <div className="flex flex-wrap items-start justify-between gap-space-3">
-        <div className="min-w-0 space-y-space-2">
-          <div className="flex flex-wrap items-center gap-space-2">
+        <div className="min-w-0 flex-1 space-y-space-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-space-2">
             <FileCode2 className="size-6 shrink-0" aria-hidden="true" />
             {editing ? (
               <div className="flex items-center gap-space-1">
@@ -261,12 +261,14 @@ function EventPageBody({ data }: { data: EventPageData }) {
               </div>
             ) : (
               <>
-                <h1 className="text-display text-foreground">{name}</h1>
+                <h1 className="min-w-0 break-words text-display text-foreground">{name}</h1>
                 <Button type="button" size="icon-sm" variant="ghost" onClick={startRename} aria-label="Rename event" data-testid="event-rename">
                   <Pencil className="size-4" />
                 </Button>
               </>
             )}
+          </div>
+          <div data-testid="event-badges" className="flex flex-wrap items-center gap-space-2">
             <Badge variant="secondary" data-testid="event-spec-badge">{specLabel(event.specType)}</Badge>
             <Badge variant="secondary" data-testid="event-version-badge">{event.latestVersionLabel ? `v${event.latestVersionLabel}` : "Unpublished"}</Badge>
             {event.hasUnpublishedChanges && <Badge variant="outline" data-testid="event-draft-badge">Draft</Badge>}
@@ -275,7 +277,7 @@ function EventPageBody({ data }: { data: EventPageData }) {
             <p id="event-rename-error" data-testid="event-rename-error" role="alert" className="text-body-small text-destructive">{renameError}</p>
           )}
         </div>
-        <div className="flex items-center gap-space-2">
+        <div data-testid="event-header-actions" className="ml-auto flex shrink-0 items-center gap-space-2">
           <PublishVersionButton
             subjectName={name} description="Publishing freezes the saved draft as an immutable version that other events can reference."
             loadPreview={loadPublishPreview} publish={publishDraft} disabled={publishBlockedReason !== null}

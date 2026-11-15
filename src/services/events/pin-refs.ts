@@ -1,7 +1,7 @@
 // src/services/events/pin-refs.ts
 // The entity pins of an event document, checked against the database. The save and the preview of an unsaved document apply the same rule to
 // each pin (an entity of the event's tenant, and a version of that entity when pinned), so they cannot disagree about which pin names an entity
-// at all. A preview also applies the caller's read scope; the save does not yet (KD-044).
+// at all. Save, emission and publish also apply the caller's read scope.
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { entityPlaceOf, type PlaceReader } from "@/lib/access/entity-reader";
 import { collectDocumentRefs, collectPinSites } from "@/lib/events/document/edges";

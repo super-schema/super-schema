@@ -1,6 +1,6 @@
 /**
  * U4 / U9: the dictionaries admin page confirms tenant-wide removals (entry delete, definition delete, pack uninstall) before running them,
- * and its Fields form offers the classification levels as a select and the known types as suggestions (free text still accepted).
+ * and its Fields form reuses the schema type picker, including type descriptions and tenant-defined types.
  *
  * @vitest-environment jsdom
  */
@@ -45,6 +45,7 @@ beforeAll(() => {
     unobserve() {}
     disconnect() {}
   };
+  Element.prototype.scrollIntoView ??= () => {};
 });
 beforeEach(() => {
   vi.clearAllMocks();
@@ -102,18 +103,23 @@ describe("DictionariesAdmin Fields form (U9)", () => {
     expect(select.value).toBe("");
   });
 
-  it("Type suggests logical types, custom scalars and shared enums, and still accepts free text", async () => {
+  it("uses the schema type picker with built-in descriptions and selectable tenant-defined types", async () => {
     render(<DictionariesAdmin initial={INITIAL} />);
-    const type = screen.getByLabelText("Type") as HTMLInputElement;
-    const listId = type.getAttribute("list");
-    expect(listId).toBeTruthy();
-    const values = [...document.getElementById(listId!)!.querySelectorAll("option")].map((o) => o.getAttribute("value"));
-    expect(values).toEqual(expect.arrayContaining(["string", "int32", "utcDateTime", "Currency"]));
+    const type = screen.getByLabelText("Type");
+    expect(type.tagName).toBe("BUTTON");
+    fireEvent.click(type);
+    fireEvent.change(screen.getByPlaceholderText("Search types..."), { target: { value: "int32" } });
+    expect(await screen.findByText("32-bit signed integer (most common)")).toBeDefined();
+    fireEvent.click(screen.getByRole("option", { name: /^int32 / }));
+    expect(type.textContent).toMatch(/int32/);
+
+    fireEvent.click(type);
+    fireEvent.change(screen.getByPlaceholderText("Search types..."), { target: { value: "Currency" } });
+    fireEvent.click(await screen.findByRole("option", { name: /Currency/ }));
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "amount" } });
-    fireEvent.change(type, { target: { value: "MyOwnType" } });
     fireEvent.change(screen.getByLabelText("Default classification"), { target: { value: "FINANCIAL" } });
     fireEvent.click(screen.getByRole("button", { name: "Add field" }));
-    await waitFor(() => expect(h.createField).toHaveBeenCalledWith(expect.objectContaining({ type: "MyOwnType", classification: "FINANCIAL" })));
+    await waitFor(() => expect(h.createField).toHaveBeenCalledWith(expect.objectContaining({ type: "Currency", classification: "FINANCIAL" })));
   });
 
   it("an entry whose stored classification is not a known level keeps it as an option", () => {

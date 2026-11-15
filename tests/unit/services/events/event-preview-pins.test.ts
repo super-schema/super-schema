@@ -6,7 +6,9 @@ import type { EntityPin } from "@/lib/events/types";
 import { ok } from "@/types/result";
 import type { Assignment } from "@/types/schemas/rbac";
 import type { ArtifactRenderer, ArtifactSubject } from "@/services/events/artifact-renderer";
-import { emitEventDocumentPreview } from "@/services/events/event-emit.service";
+import { emitEventDocumentPreview, emitEventDraft } from "@/services/events/event-emit.service";
+import { publishEvent } from "@/services/events/event-publish.service";
+import { updateEventDocument } from "@/services/events/event.service";
 
 /**
  * A preview renders the pins of a document the user has not saved, and those pins are the client's words. Each must name an entity of the
@@ -90,6 +92,32 @@ function problemsOf(result: Awaited<ReturnType<typeof preview>>): Problem[] {
   expect(result.error.code).toBe("VALIDATION_ERROR");
   return (result.error.details as { problems: Problem[] }).problems;
 }
+
+describe("event references across save, saved emission, preview and publish", () => {
+  it.each(["save", "emit", "preview", "publish"] as const)("refuses unreadable entity and external-event references during %s", async (mode) => {
+    const prisma = fakePrisma();
+    const doc = document({ key: "secret", payload: { entityId: "E2", entityVersionId: "V2" } });
+    doc.externalRefs = [{ key: "external", kind: "message", eventVersionId: "EV2", itemKey: "msg" }];
+    const event = await prisma.eventSpec.findUnique();
+    prisma.eventSpec.findUnique.mockResolvedValue({ ...event, document: doc });
+    prisma.eventSpecVersion.findMany.mockResolvedValue([{
+      id: "EV2", eventSpecId: "secret-event", major: 1, minor: 0, patch: 0, stage: "RELEASED", resolvedSpec: {},
+      eventSpec: { name: "SECRET EVENT NAME", tenantId: TENANT_A, domainId: "domain-2", productId: "product-2" },
+    }] as never);
+    const { renderer, subjects } = stubRenderer();
+    const ctx = ctxOf(VIEWER_OF_D1, prisma);
+    const result = mode === "save" ? await updateEventDocument(EVENT, doc, { level: "PRODUCT", productId: PRODUCT }, ctx)
+      : mode === "emit" ? await emitEventDraft(EVENT, PRODUCT, ctx, { renderer, validators: [] })
+      : mode === "publish" ? await publishEvent(EVENT, PRODUCT, {}, ctx, { renderer, validators: [] })
+      : await preview(doc, ctx, renderer);
+    expect(result).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR", details: { problems: [
+      { pointer: "/messages/0/payload/entityId", message: 'Entity "E2" not found in this tenant' },
+      { pointer: "/externalRefs/0/eventVersionId", message: 'Event version "EV2" not found' },
+    ] } } });
+    expect(JSON.stringify(result)).not.toContain("SECRET EVENT NAME");
+    expect(subjects).toEqual([]);
+  });
+});
 
 describe("event preview: the pins of an unsaved document", () => {
   it("renders a pinned version of an entity of this tenant that the caller can read", async () => {

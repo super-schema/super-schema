@@ -3,6 +3,7 @@ import { cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({ preview: vi.fn() }));
+vi.mock("@/features/events/preview-requests", () => ({ requestEventPreview: h.preview }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({ previewEventDocumentAction: h.preview }));
 
 import { useEventCode, type UseEventCodeArgs } from "@/features/events/event-page/use-event-code";

@@ -124,7 +124,7 @@ export async function addMessage(page: Page, title: string, payloadEntityName: s
   await main.getByTestId(BUILDER_ID.messageTitle).fill(title);
   await main.getByTestId(BUILDER_ID.messagePane("payload")).click();
   await pickEntity(main.getByTestId(BUILDER_ID.payloadPicker), "Payload", payloadEntityName);
-  await main.getByTestId(BUILDER_ID.messagePane("channels")).click();
+  await main.getByTestId("message-card-add-section").selectOption("channels");
   await main.getByTestId(BUILDER_ID.messageChannelOption(channelKey)).check();
   await leaveForm(page);
   return readKey(main, BUILDER_ID.messageKeyValue, "message");

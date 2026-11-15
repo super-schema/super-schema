@@ -128,7 +128,7 @@ test.describe("message examples against their payload schema", () => {
     });
 
     await test.step("add an example: until the schema is known the button waits, then it is usable", async () => {
-      await main.getByTestId(ID.examplesToggle).click();
+      await main.getByTestId("message-card-add-section").selectOption("examples");
       await main.getByTestId(ID.addExample).click();
       await payloadEditor(main);
       // The schema is rendered by the TypeSpec CLI the first time: allow it well beyond the 5 s default.

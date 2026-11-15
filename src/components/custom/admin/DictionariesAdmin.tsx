@@ -5,11 +5,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CLASS_SCALE } from "@/lib/classification-scale";
-import { ALL_DATA_TYPES } from "@/lib/data-types";
+import { TypePicker } from "@/components/custom/TypePicker";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { checkValueSchema } from "@/lib/metadata-attributes/value-schema";
 import type { DictionaryUsageRow } from "@/services/field-dictionary.service";
@@ -275,7 +276,6 @@ function FieldsTab({
   const current = form.classification.trim();
   const known = levels.find((l) => l.name.toUpperCase() === current.toUpperCase());
   const levelOptions = current && !known ? [...levels, { name: current, classNumber: 0 }] : levels;
-  const typeOptions = [...new Set([...ALL_DATA_TYPES, ...customTypes])];
 
   async function save() {
     const attrs = parseJson(form.attributes || "{}");
@@ -359,15 +359,10 @@ function FieldsTab({
           Name
           <Input id={`${id}-name`} value={form.name} onChange={(e) => set("name", e.target.value)} />
         </label>
-        <label className="space-y-1 text-body-small" htmlFor={`${id}-type`}>
-          Type
-          <Input id={`${id}-type`} list={`${id}-types`} value={form.type} spellCheck={false} onChange={(e) => set("type", e.target.value)} />
-          <datalist id={`${id}-types`}>
-            {typeOptions.map((t) => (
-              <option key={t} value={t} />
-            ))}
-          </datalist>
-        </label>
+        <Field>
+          <FieldLabel htmlFor={`${id}-type`}>Type</FieldLabel>
+          <TypePicker id={`${id}-type`} value={form.type} onChange={(value) => set("type", value)} customTypes={customTypes} disabled={busy} />
+        </Field>
         <label className="space-y-1 text-body-small" htmlFor={`${id}-aliases`}>
           Aliases (comma separated)
           <Input id={`${id}-aliases`} value={form.aliases} onChange={(e) => set("aliases", e.target.value)} />
@@ -470,7 +465,7 @@ function AttributesTab({ data, busy, run, confirm }: { data: DictionariesOvervie
                   <span className="font-mono">{a.key}</span> <span className="text-muted-foreground">{a.label}</span>
                   {a.pack && (
                     <Badge variant="secondary" className="ml-2">
-                      Read-only (pack: {a.pack})
+                      Read-only (pack: {data.packs.find((p) => p.id === a.pack)?.name ?? a.pack})
                     </Badge>
                   )}
                 </div>

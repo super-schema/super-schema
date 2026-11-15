@@ -1,7 +1,9 @@
 // src/services/events/event.service.ts
 // Self-contained Event (spec 2026-10-15-events-self-contained-design): create / update document / rename / delete / get over the v2
 // document. The table is still `event_specs` (E5); the old catalog-id (version 1) documents and their service are gone.
-import type { Prisma } from "@/generated/prisma/client";
+import type { Prisma, PrismaClient } from "@/generated/prisma/client";
+import { ctxCan } from "@/lib/access/context";
+import { entityReader } from "@/lib/access/entity-reader";
 import type { ScopeTarget } from "@/lib/asset-scope";
 import { MAX_DOCUMENT_DEPTH, documentSizeProblem } from "@/lib/event-specs/serialize";
 import type { JsonObject } from "@/lib/event-specs/types";
@@ -90,17 +92,17 @@ function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise
  *    stored `resolvedSpec` is non-null and holds a referenceable item (`isReferenceableItem`: the `channels[]` / `messages[]` entry
  *    whose `id` is the ref's `itemKey`, with the shape the assembler needs).
  */
-async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, eventId: string, doc: EventDocument): Promise<DocumentProblem[]> {
+export async function validateDocumentRefs(ctx: Pick<ServiceContext, "assignments"> & { prisma: PrismaClient | Prisma.TransactionClient }, scope: LevelScope, eventId: string, doc: EventDocument): Promise<DocumentProblem[]> {
   const refs = collectDocumentRefs(doc);
   const { tenantId } = scope;
   const [pinProblems, traits, externals] = await Promise.all([
-    validatePinRefs(ctx.prisma, tenantId, doc),
+    validatePinRefs(ctx.prisma, tenantId, doc, entityReader(ctx.assignments)),
     refs.libraryTraitIds.length === 0 ? [] : ctx.prisma.trait.findMany({ where: { id: { in: refs.libraryTraitIds }, tenantId }, select: { id: true, name: true, kind: true, domainId: true, productId: true } }),
     refs.externalVersionIds.length === 0
       ? []
       : ctx.prisma.eventSpecVersion.findMany({
           where: { id: { in: refs.externalVersionIds }, eventSpec: { tenantId } },
-          select: { id: true, eventSpecId: true, major: true, minor: true, patch: true, stage: true, resolvedSpec: true, eventSpec: { select: { name: true } } },
+          select: { id: true, eventSpecId: true, major: true, minor: true, patch: true, stage: true, resolvedSpec: true, eventSpec: { select: { name: true, tenantId: true, domainId: true, productId: true } } },
         }),
   ]);
   const traitById = new Map(traits.map((t) => [t.id, t]));
@@ -112,7 +114,7 @@ async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, even
     const pointer = `/traits/${i}/libraryTraitId`;
     const library = traitById.get(t.libraryTraitId);
     const sets = propertiesNoun(t.kind); // the user's words for a trait: "message properties" / "operation properties"
-    if (!library) problems.push({ pointer, message: `Library ${sets} "${t.libraryTraitId}" not found` });
+    if (!library || !ctxCan(ctx, "trait.read", { tenantId, domainId: library.domainId, productId: library.productId })) problems.push({ pointer, message: `Library ${sets} "${t.libraryTraitId}" not found` });
     else if (library.productId !== null || (library.domainId !== null && library.domainId !== scope.domainId)) {
       problems.push({ pointer, message: `Library ${sets} "${library.name}" are not available to this event: only tenant-level ${sets} and ${sets} of the event's own domain can be used` });
     } else if (library.kind !== t.kind) {
@@ -123,7 +125,7 @@ async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, even
   doc.externalRefs.forEach((r, i) => {
     const pointer = `/externalRefs/${i}`;
     const version = externalById.get(r.eventVersionId);
-    if (!version) {
+    if (!version || !ctxCan(ctx, "event.read", version.eventSpec)) {
       problems.push({ pointer: `${pointer}/eventVersionId`, message: `Event version "${r.eventVersionId}" not found` });
       return;
     }

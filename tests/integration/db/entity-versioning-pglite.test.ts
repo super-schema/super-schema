@@ -36,6 +36,8 @@ import {
   listEntityVersions,
   loadReferenceStaleness,
 } from "@/services/entity-version.service";
+import { createArtifactRenderer, type EmitFiles } from "@/services/events/artifact-renderer";
+import { ok } from "@/types/result";
 import { readReferencedVersions } from "@/lib/entity-versioning/referenced-versions";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -414,6 +416,64 @@ describe("entity snapshots and promotion (service, PGlite)", () => {
     prisma().entity.findUniqueOrThrow({ where: { id: entityId }, select: { latestVersionId: true, hasUnpublishedChanges: true } });
   const pinEdgesFrom = (versionId: string) =>
     prisma().schemaReference.findMany({ where: { fromKind: "ENTITY_VERSION", fromId: versionId } });
+
+  it.each(["same-domain", "cross-domain"])("freezes %s inheritance with a base-version pin and projects inherited event payload fields", async (placement) => {
+    const sc = await scope();
+    const baseScope = placement === "cross-domain" ? await scope() : sc;
+    const base = await baseScope.entity(`BaseName${n}`);
+    await baseScope.field(base.id, "given_name", { sortOrder: 1 });
+    const baseVersion = unwrap(await publishEntity(base.id, {}, ctx));
+    unwrap(await promoteEntityVersion(base.id, ctx));
+    const child = await sc.entity("ChildName");
+    const suffix = await sc.field(child.id, "suffix", { sortOrder: 1 });
+    await prisma().field.update({ where: { id: suffix.id }, data: { fieldNumber: 3 } });
+    // A fresh stored source must gain the relationship too; do not discard its author-written documentation.
+    await prisma().entity.update({ where: { id: child.id }, data: {
+      metadata: { extends: base.name },
+      typespecSource: '@doc("keep child docs")\nmodel ChildName { id?: string; suffix?: string; }',
+    } });
+    const childVersion = unwrap(await publishEntity(child.id, {}, ctx));
+    const saved = await prisma().entityVersion.findUniqueOrThrow({ where: { id: childVersion.id } });
+    expect(saved.resolvedSource).toContain(`model ChildName extends ${base.name}`);
+    expect(saved.resolvedSource).toContain('keep child docs');
+    expect(await pinEdgesFrom(childVersion.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "FIELD", toKind: "ENTITY_VERSION", toId: baseVersion.id }),
+    ]));
+    const emitFiles = vi.fn<EmitFiles>(async (pkg) => ok(pkg === "@typespec/protobuf"
+      ? [{ relativePath: "payload.proto", content: 'syntax = "proto3";\nmessage ChildName { string id = 1; string suffix = 3; string given_name = 2; }' }]
+      : pkg === "@typespec/avro"
+        ? [{ relativePath: "ChildName.avsc.json", content: '{"type":"record","name":"ChildName","fields":[]}' }]
+        : [{ relativePath: "ChildName.json", content: '{"type":"object","properties":{}}' }]));
+    const renderer = createArtifactRenderer({ db: prisma(), emitFiles, loadMetadata: async () => undefined });
+    const subject = { kind: "version" as const, entityVersionId: childVersion.id, tenantId: TENANT };
+    for (const format of ["json-schema", "avro", "protobuf"] as const) {
+      const rendered = await renderer.render(subject, format);
+      unwrap(rendered);
+      const source = emitFiles.mock.calls.at(-1)![1];
+      if (format === "json-schema") expect(source).toContain(`model ChildName extends ${base.name}`);
+      else {
+        const projected = source.slice(source.indexOf("model ChildName"), source.indexOf("}", source.indexOf("model ChildName")));
+        expect(projected).toContain("given_name");
+        expect(projected).toContain("suffix");
+        expect(projected).not.toContain("extends");
+        if (format === "protobuf") expect(projected).toMatch(/@field\(2\)\s+given_name/);
+      }
+    }
+    const realRenderer = createArtifactRenderer({ db: prisma(), loadMetadata: async () => undefined });
+    for (const format of ["json-schema", "avro", "protobuf"] as const) {
+      const actual = unwrap(await realRenderer.render(subject, format));
+      const artifact = JSON.stringify(actual.artifact);
+      expect(artifact).toContain("given_name");
+      expect(artifact).toContain("suffix");
+    }
+    // Publishing a later base must not move the child's saved dependency.
+    await sc.edit(base.id);
+    const laterBase = unwrap(await publishEntity(base.id, {}, ctx));
+    expect(laterBase.id).not.toBe(baseVersion.id);
+    expect(await pinEdgesFrom(childVersion.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ toId: baseVersion.id }),
+    ]));
+  }, 60_000); // Three real emitter processes also run reliably under a parallel suite.
 
   it("save → save → promote yields one RELEASED 1.0.0 and no snapshot", async () => {
     const sc = await scope();

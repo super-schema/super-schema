@@ -6,7 +6,11 @@
 type Schema = Record<string, unknown>;
 const isRecord = (v: unknown): v is Schema => typeof v === "object" && v !== null && !Array.isArray(v);
 
-export interface SchemaFieldRow { name: string; type: string; required: boolean }
+export interface SchemaFieldRow {
+  name: string; type: string; required: boolean;
+  description?: string;
+  attributes?: Array<{ name: string; value: string }>;
+}
 
 /** How deep `allOf` members are followed (a guard, not a feature: real schemas nest a level or two). */
 const MAX_DEPTH = 8;
@@ -68,6 +72,20 @@ export function summarizeSchemaFields(schema: Schema | null, limit = 8): { rows:
   if (!schema) return { rows: [], more: 0 };
   const found = collect(schema, schema);
   if (!found) return { rows: [], more: 0 };
-  const all = [...found.properties].map(([name, value]): SchemaFieldRow => ({ name, type: typeLabel(value), required: found.required.has(name) }));
+  const all = [...found.properties].map(([name, value]): SchemaFieldRow => {
+    const node = isRecord(value) ? { ...resolve(schema, value), ...value } : {};
+    const description = typeof node.description === "string" ? node.description.trim() : "";
+    const attributes = Object.entries(node)
+      .filter(([key, attribute]) => key.startsWith("x-") && attribute !== undefined)
+      .map(([key, attribute]) => ({
+        name: key.slice(2).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[-_]/g, " "),
+        value: typeof attribute === "string" ? attribute : JSON.stringify(attribute),
+      }));
+    return {
+      name, type: typeLabel(value), required: found.required.has(name),
+      ...(description && { description }),
+      ...(attributes.length > 0 && { attributes }),
+    };
+  });
   return { rows: all.slice(0, limit), more: Math.max(0, all.length - limit) };
 }

@@ -2,17 +2,17 @@
 
 // src/features/events/builder/use-pin-json-schema.ts
 // The JSON Schema of the entity a message pins, for the examples of that message (the editor checks an example against it and
-// "Generate from payload" builds one from it). It asks the server (`pinJsonSchemaAction`, which runs the TypeSpec compiler), so:
+// "Generate from payload" builds one from it). It asks the HTTP preview endpoint (which runs the TypeSpec compiler), so:
 //   - nothing is asked unless `enabled` (the examples are on screen), and never for a pin without an entity;
 //   - the answer belongs to ONE pin (`entityId:entityVersionId`): when the pin changes the previous pin's schema is gone at once,
 //     in the very render that sees the new pin, and an answer that arrives for a pin the message has moved on from is dropped;
 //   - a failed load leaves no schema at all, and is not asked again until the pin changes;
 //   - a published version never changes, so its schema is kept for the page session; an unpinned entity (its current draft) is
 //     asked for again whenever it is needed.
-// The action is imported when first needed (`externalRefActions`), so a builder that never shows an example never loads it.
+// Preview reads bypass the Server Action dispatcher so compilation cannot hold up Save draft.
 import { useEffect, useState } from "react";
 import type { EntityPin } from "@/lib/events/types";
-import { externalRefActions } from "./use-external-ref-status";
+import { requestPinJsonSchema } from "../preview-requests";
 
 type Schema = Record<string, unknown>;
 
@@ -59,8 +59,7 @@ export function usePinJsonSchemaState(
     void (async () => {
       let schema: Schema | null = null;
       try {
-        const actions = await externalRefActions();
-        const result = await actions.pinJsonSchemaAction(productId, { entityId, entityVersionId: versionId });
+        const result = await requestPinJsonSchema(productId, { entityId, entityVersionId: versionId });
         if (result.success) schema = result.data.schema;
       } catch {
         // no schema: the example is simply not checked

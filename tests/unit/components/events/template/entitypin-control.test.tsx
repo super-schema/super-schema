@@ -82,7 +82,7 @@ describe("entityPin control", () => {
     await act(async () => {});
     expect(loadVersions).toHaveBeenCalledWith("ent-1");
     expect(h.listPinnableVersionsAction).not.toHaveBeenCalled();
-    expect(screen.getByRole("option", { name: "v9.0" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "v9.0 (pinned)" })).toBeTruthy();
   });
 
   it("says it is required in text (aria-required is not valid on a group), shows the help and the error", async () => {

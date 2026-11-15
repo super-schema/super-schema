@@ -20,6 +20,8 @@ Ollama and vLLM base URLs have trailing slashes and /v1 removed. Custom endpoint
 4. **Test connection** submits a small chat request using the current form values. It checks endpoint, model, and authentication together and may consume a small number of tokens.
 5. **Save** makes the configuration available to entity creation, field suggestions, and AI import enhancement.
 
+Custom generation omits `temperature` by default, matching the connection test, because some models reject sampling parameters. Internal callers can explicitly supply a temperature for endpoints that support it.
+
 Custom integrations must implement the [OpenAI Chat Completions request and response format](https://developers.openai.com/api/reference/resources/chat). Other protocols or automatic OAuth token exchange require an adapter. Custom requests and their connection tests time out after 30 seconds. Ollama/vLLM model-list tests time out after 3 seconds. Custom requests and connection tests do not follow redirects.
 
 ## Credentials

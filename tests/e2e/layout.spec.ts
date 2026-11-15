@@ -92,7 +92,7 @@ test.describe("IDE Layout", () => {
 
     // The layout effect writes the width to localStorage after the first render: poll for it (no fixed sleep).
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem("panel-width-left-sidebar")), {
+      .poll(() => page.evaluate(() => localStorage.getItem("panel-width-left-sidebar-compact")), {
         message: "the sidebar width was never stored",
       })
       .toBeTruthy();

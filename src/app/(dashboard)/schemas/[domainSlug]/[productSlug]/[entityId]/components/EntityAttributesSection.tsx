@@ -52,7 +52,7 @@ export function EntityAttributesSection({ metadata, definitions, isReadOnly, onS
   }
 
   return (
-    <section aria-label="Metadata" className="mb-space-4 flex min-w-0 flex-col gap-3 rounded-md border border-border p-space-3">
+    <section id="entity-metadata" tabIndex={-1} aria-label="Metadata" className="mb-space-4 flex min-w-0 flex-col gap-3 rounded-md border border-border p-space-3">
       <h2 className="text-sm font-semibold">Metadata</h2>
       {present.map((d) => (
         <div key={d.key} className="flex min-w-0 flex-col gap-2 rounded-md border border-border p-2">

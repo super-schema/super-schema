@@ -5,6 +5,7 @@
 // - a field whose `$ref` points at a file that is not part of the document keeps a dangling marker; when the product has an entity of
 //   that name the marker is replaced by a real reference (and, the other way round, a new entity picks up the dangling fields that name it);
 import { Prisma } from "@/generated/prisma/client";
+import { MARK_DRAFT_CHANGED_SQL } from "@/lib/entity-versioning/draft-state";
 import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { redactCredentials } from "@/lib/audit-redaction";
 import { readDanglingMarker } from "@/lib/field-dangling";
@@ -340,9 +341,9 @@ export async function relinkDanglingFieldsToScalar(tx: Prisma.TransactionClient,
  * the one place its type, format and bounds are edited. Entities whose fields changed are marked as having unpublished changes. Returns
  * the number of fields updated.
  */
-export async function cascadeScalarToFields(tx: Prisma.TransactionClient, args: { domainId: string; scalar: ScalarTarget }): Promise<number> {
+export async function cascadeScalarToFields(tx: Prisma.TransactionClient, args: { domainId: string; productId?: string | null; scalar: ScalarTarget }): Promise<number> {
   const rows = await tx.field.findMany({
-    where: { entity: { domainId: args.domainId }, decorators: { path: ["scalarName"], equals: args.scalar.name } },
+    where: { entity: { domainId: args.domainId, ...(args.productId ? { productId: args.productId } : {}) }, decorators: { path: ["scalarName"], equals: args.scalar.name } },
     select: { id: true, name: true, entityId: true, type: true, classification: true, decorators: true },
   });
   const derivation = rows.length > 0 ? await loadDerivationContextForDomain(args.domainId, tx) : null;
@@ -358,7 +359,7 @@ export async function cascadeScalarToFields(tx: Prisma.TransactionClient, args: 
     touched.add(row.entityId);
     updated += 1;
   }
-  if (touched.size > 0) await tx.entity.updateMany({ where: { id: { in: [...touched] } }, data: { hasUnpublishedChanges: true } });
+  for (const entityId of [...touched].sort()) await tx.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId);
   return updated;
 }
 
@@ -370,10 +371,10 @@ export async function cascadeScalarToFields(tx: Prisma.TransactionClient, args: 
  */
 export async function cascadeEnumToFields(
   tx: Prisma.TransactionClient,
-  args: { domainId: string; enum: { name: string; values: string[]; valueDescriptions?: Record<string, string> | null } },
+  args: { domainId: string; productId?: string | null; enum: { name: string; values: string[]; valueDescriptions?: Record<string, string> | null } },
 ): Promise<number> {
   const rows = await tx.field.findMany({
-    where: { entity: { domainId: args.domainId }, decorators: { path: ["enumName"], equals: args.enum.name } },
+    where: { entity: { domainId: args.domainId, ...(args.productId ? { productId: args.productId } : {}) }, decorators: { path: ["enumName"], equals: args.enum.name } },
     select: { id: true, name: true, entityId: true, type: true, classification: true, aliases: true, decorators: true },
   });
   const derivation = rows.length > 0 ? await loadDerivationContextForDomain(args.domainId, tx) : null;
@@ -403,6 +404,6 @@ export async function cascadeEnumToFields(
     touched.add(row.entityId);
     updated += 1;
   }
-  if (touched.size > 0) await tx.entity.updateMany({ where: { id: { in: [...touched] } }, data: { hasUnpublishedChanges: true } });
+  for (const entityId of [...touched].sort()) await tx.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId);
   return updated;
 }

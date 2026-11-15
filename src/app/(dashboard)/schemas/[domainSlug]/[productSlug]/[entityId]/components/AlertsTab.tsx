@@ -176,6 +176,16 @@ function AlertCard({ alert, onAction }: { alert: EntityAlert; onAction: () => vo
 // ---------------------------------------------------------------------------
 
 function handleEntityAction(alert: EntityAlert, onNavigateToTab: (tab: string) => void) {
+  if (alert.id.startsWith("entity-attr-")) {
+    const editor = document.getElementById("entity-metadata");
+    editor?.scrollIntoView({ behavior: "smooth", block: "center" });
+    editor?.focus({ preventScroll: true });
+    return;
+  }
+  if (alert.id.startsWith("operation-attr-")) {
+    onNavigateToTab("api");
+    return;
+  }
   switch (alert.id) {
     case "entity-retention":
       onNavigateToTab("governance");

@@ -1,52 +1,69 @@
 "use client";
 
-// src/features/events/builder/sections/PayloadPreview.tsx
-// Under the payload picker: the fields of the entity the message carries (name, type, a mark on the required ones) and a link to the
-// entity, so choosing a payload is not choosing a name blind. Presentational: the schema (rendered by the server with the TypeSpec compiler,
-// which takes seconds) is asked for by the message form, which shares one request between this preview and the Examples pane. No schema, or
-// a schema without fields, says so in one line.
 import Link from "next/link";
-import { ExternalLink } from "lucide-react";
+import { ChevronRight, ExternalLink } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
 import { summarizeSchemaFields } from "./schema-fields";
 
-/** `schema` is null while loading, when it could not be loaded, and when the message has no payload entity (`hasPayload` false: nothing shows). */
+/** A compact field list; each row expands to show its complete description and schema attributes. */
 export function PayloadPreview({ schema, loading, entity, hasPayload }: {
   schema: Record<string, unknown> | null; loading: boolean; entity: EntityOption | undefined; hasPayload: boolean;
 }) {
   if (!hasPayload) return null;
-  const { rows, more } = summarizeSchemaFields(schema);
+  const { rows } = summarizeSchemaFields(schema, Infinity);
   return (
-    <div data-testid="payload-preview" className="space-y-space-2 rounded-lg border border-border bg-muted/30 p-space-3">
-      <div className="flex items-center justify-between gap-space-2">
-        <p className="text-caption text-muted-foreground">{entity ? `Fields of ${entity.name}` : "Fields"}</p>
+    <details open data-testid="payload-preview" className="group/preview min-w-0 rounded-lg border border-border bg-muted/30 p-space-3">
+      <summary className="flex cursor-pointer list-none items-center gap-space-2 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
+        <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 transition-transform group-open/preview:rotate-90" />
+        <span className="min-w-0 truncate text-caption text-muted-foreground">{entity ? `Fields of ${entity.name}` : "Fields"}</span>
+        {!loading && rows.length > 0 && <span className="text-caption text-muted-foreground">({rows.length})</span>}
+      </summary>
+      <div className="mt-space-2 flex min-w-0 flex-col gap-space-2">
         {entity?.href && (
-          <Link href={entity.href} className="inline-flex items-center gap-1 text-caption text-primary hover:underline">
+          <Link href={entity.href} className="inline-flex items-center gap-1 self-end text-caption text-primary hover:underline">
             Open entity <ExternalLink aria-hidden="true" className="size-3" />
           </Link>
         )}
+        {loading ? (
+          <p className="text-caption text-muted-foreground">Loading fields…</p>
+        ) : rows.length === 0 ? (
+          <p className="text-caption text-muted-foreground">No field preview</p>
+        ) : (
+          <ul className="flex min-w-0 flex-col divide-y divide-border text-body-small">
+            {rows.map((row) => (
+              <li key={row.name} className="min-w-0">
+                <details className="group/field min-w-0" data-testid={`payload-preview-field-${row.name}`}>
+                  <summary className="flex min-w-0 cursor-pointer list-none items-center gap-space-2 rounded-md py-space-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
+                    <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-muted-foreground transition-transform group-open/field:rotate-90" />
+                    <span className="max-w-[35%] truncate font-medium text-foreground" title={row.name}>{row.name}</span>
+                    {row.required && (
+                      <span data-testid={`payload-preview-required-${row.name}`} title="Required" className="shrink-0 text-caption text-destructive">
+                        <span aria-hidden="true">*</span><span className="sr-only">required</span>
+                      </span>
+                    )}
+                    <span className="max-w-[30%] truncate text-caption text-muted-foreground" title={row.type}>{row.type}</span>
+                    {row.description && <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground" title={row.description}>{row.description}</span>}
+                    {row.attributes?.map((attribute) => (
+                      <Badge key={attribute.name} variant="secondary" className="min-w-0 max-w-[25%] shrink" title={`${attribute.name}: ${attribute.value}`}>
+                        <span className="truncate">{attribute.name}: {attribute.value}</span>
+                      </Badge>
+                    ))}
+                  </summary>
+                  <dl className="mb-space-3 ml-space-5 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-space-3 gap-y-space-1 text-caption">
+                    <dt className="text-muted-foreground">Field</dt><dd className="break-words text-foreground">{row.name}</dd>
+                    <dt className="text-muted-foreground">Type</dt><dd className="break-words text-foreground">{row.type}{row.required ? " (required)" : " (optional)"}</dd>
+                    {row.description && <><dt className="text-muted-foreground">Description</dt><dd className="whitespace-pre-wrap break-words text-foreground">{row.description}</dd></>}
+                    {row.attributes?.map((attribute) => (
+                      <div key={attribute.name} className="contents"><dt className="text-muted-foreground">{attribute.name}</dt><dd className="whitespace-pre-wrap break-words text-foreground">{attribute.value}</dd></div>
+                    ))}
+                  </dl>
+                </details>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
-      {loading ? (
-        <p className="text-caption text-muted-foreground">Loading fields…</p>
-      ) : rows.length === 0 ? (
-        <p className="text-caption text-muted-foreground">No field preview</p>
-      ) : (
-        <ul className="grid gap-x-space-4 gap-y-space-1 text-body-small @md:grid-cols-2">
-          {rows.map((row) => (
-            <li key={row.name} className="flex min-w-0 items-baseline gap-space-2">
-              <span className="truncate font-medium text-foreground">{row.name}</span>
-              <span className="truncate text-caption text-muted-foreground">{row.type}</span>
-              {row.required && (
-                <span data-testid={`payload-preview-required-${row.name}`} title="Required" className="text-caption text-destructive">
-                  <span aria-hidden="true">*</span>
-                  <span className="sr-only">required</span>
-                </span>
-              )}
-            </li>
-          ))}
-          {more > 0 && <li className="text-caption text-muted-foreground">{`+${more} more`}</li>}
-        </ul>
-      )}
-    </div>
+    </details>
   );
 }

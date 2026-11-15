@@ -6,6 +6,15 @@ Dual backend via `DB_PROVIDER` (`pglite` default / `postgresql`). See `docs/data
 
 `@typespec/{avro,bigquery,java-pojo,postgres,spanner}` install from `../typespec` and must be built there first. See `docs/developer-guide.md`.
 
+## UI feedback (Agentation)
+
+The development toolbar syncs to `http://localhost:4747`. The Codex MCP server is named `agentation`.
+
+- When the user requests UI-feedback work, use `agentation_list_sessions` and the pending-feedback tools to select the relevant page; keep unrelated sessions out of scope.
+- Acknowledge actionable annotations, implement the changes, and verify them before resolving with a summary. Leave questions and unverified work open.
+- When the user requests watch mode, loop `agentation_watch_annotations` with `batchWindowSeconds: 5` and `timeoutSeconds: 45`; process each batch and continue until the user stops watching.
+- If Agentation tools are unavailable, check MCP startup and explain the client reload step before claiming the connection is ready.
+
 <!-- gortex:communities:start -->
 <!-- gortex:skills:start -->
 ## Community Skills

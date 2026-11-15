@@ -40,10 +40,11 @@ export function DashboardClientShell({ children, adminArea = false }: { children
   const pathname = usePathname();
 
   const sidebar = useResizablePanel({
-    minWidth: 240,
-    maxWidth: 320,
-    defaultWidth: responsive.sidebar || 240,
-    panelId: "left-sidebar",
+    minWidth: 200,
+    maxWidth: 280,
+    defaultWidth: responsive.sidebar || 200,
+    // A new baseline gives the editor more room; subsequent drag sizes remain remembered.
+    panelId: "left-sidebar-compact",
     side: "left",
   });
 

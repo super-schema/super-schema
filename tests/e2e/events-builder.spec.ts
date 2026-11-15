@@ -157,7 +157,7 @@ async function addMessage(page: Page, title: string, payloadEntityName: string, 
   await titleInput.fill(title);
   await main.getByTestId(ID.messagePane("payload")).click();
   await pickEntity(main.getByTestId(ID.payloadPicker), "Payload", payloadEntityName);
-  await main.getByTestId(ID.messagePane("channels")).click();
+  await main.getByTestId("message-card-add-section").selectOption("channels");
   await main.getByTestId(ID.messageChannelOption(channelKey)).check();
   await leaveForm(page);
   return readKey(main, ID.messageKeyValue, "message");

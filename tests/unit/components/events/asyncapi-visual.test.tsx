@@ -71,3 +71,30 @@ it("shows Avro enum symbols and defaults as possible values", () => {
   expect(text).toMatch(/One ofONOFF/);
   expect(text).toContain("default ON");
 });
+
+it("renders serialized Avro payloads as fields with descriptions and possible values", () => {
+  const schema = {
+    type: "record", name: "Decision",
+    fields: [
+      { name: "accountId", type: "string", doc: "The account being evaluated" },
+      { name: "decision", type: { type: "enum", name: "DecisionValue", symbols: ["APPROVE", "DECLINE"] }, doc: "Activation outcome" },
+      { name: "reasons", type: { type: "array", items: { type: "enum", name: "Reason", symbols: ["VALID", "EXPIRED"] } } },
+    ],
+  };
+  render(<AsyncApiVisual document={{ asyncapi: "3.0.0", components: { messages: { Decision: { payload: { schemaFormat: "application/vnd.apache.avro+json;version=1.9.0", schema: JSON.stringify(schema) } } } } }} />);
+  expect(screen.getByRole("table", { name: "Payload fields" })).toBeDefined();
+  expect(screen.getByTestId("visual-field-accountId").textContent).toContain("The account being evaluated");
+  expect(screen.getByTestId("visual-field-decision").textContent).toContain("Activation outcome");
+  expect(screen.getByTestId("visual-field-decision").textContent).toMatch(/APPROVE.*DECLINE/);
+  expect(screen.getByTestId("visual-field-reasons").textContent).toMatch(/VALID.*EXPIRED/);
+});
+
+it("renders serialized JSON Schema and keeps invalid schema text out of the field preview", () => {
+  const schema = { type: "object", properties: { status: { type: "string", const: "ACTIVE" } } };
+  const { rerender } = render(<AsyncApiVisual document={{ components: { messages: { D: { payload: JSON.stringify(schema) } } } }} />);
+  expect(screen.getByTestId("visual-field-status").textContent).toContain("AlwaysACTIVE");
+  const raw = "unstructured-schema ".repeat(100);
+  rerender(<AsyncApiVisual document={{ components: { messages: { D: { payload: { schemaFormat: "unknown", schema: raw } } } } }} />);
+  expect(screen.queryByText(raw, { exact: false })).toBeNull();
+  expect(screen.getByTestId("visual-message-D").textContent).toContain("Open Code");
+});

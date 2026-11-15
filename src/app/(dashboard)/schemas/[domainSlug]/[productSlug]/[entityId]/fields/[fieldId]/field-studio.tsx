@@ -69,6 +69,7 @@ interface FieldData {
 }
 
 interface FieldStudioProps {
+  initialExpandedPanel?: number;
   isReadOnly?: boolean;
   policyContext?: PolicyContext;
   knownVersions?: string[];
@@ -148,6 +149,7 @@ const UNREACHABLE_MESSAGE =
   "Could not reach the server, so the change is not saved yet.";
 
 export function FieldStudio({
+  initialExpandedPanel,
   field,
   entity,
   domain,
@@ -250,13 +252,14 @@ export function FieldStudio({
     try {
       const stored = localStorage.getItem(PANEL_STORAGE_KEY(field.id));
       const parsed = stored ? JSON.parse(stored) : [0];
-      setExpandedPanels(Array.isArray(parsed) ? parsed : [0]);
+      const panels = Array.isArray(parsed) ? parsed : [0];
+      setExpandedPanels(initialExpandedPanel === undefined ? panels : [...new Set([...panels, initialExpandedPanel])]);
     } catch {
-      setExpandedPanels([0]);
+      setExpandedPanels(initialExpandedPanel === undefined ? [0] : [0, initialExpandedPanel]);
     } finally {
       setPanelsHydrated(true);
     }
-  }, [field.id]);
+  }, [field.id, initialExpandedPanel]);
 
   // Persist panel state after the browser has loaded the stored value.
   useEffect(() => {

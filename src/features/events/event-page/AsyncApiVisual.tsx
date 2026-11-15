@@ -91,9 +91,18 @@ function jsonSchemaFacts(p: Json): string[] {
 
 /** Fields of a schema: JSON Schema `properties` or an Avro record's `fields` (a multi-format `{ schemaFormat, schema }` is unwrapped). */
 function fieldRows(doc: Json, schema: unknown, prefix = "", depth = 0): FieldRow[] | string {
-  let s = deref(doc, schema);
-  if (isObj(s) && "schemaFormat" in s && "schema" in s) s = deref(doc, s.schema);
-  if (!isObj(s)) return typeof s === "string" ? s : JSON.stringify(s);
+  // Multi-format payloads may carry Avro / JSON Schema as serialized JSON rather than an object.
+  const unpack = (value: unknown): unknown => {
+    if (typeof value !== "string") return value;
+    try { return JSON.parse(value); } catch { return value; }
+  };
+  let s = deref(doc, unpack(schema));
+  if (isObj(s) && "schemaFormat" in s && "schema" in s) s = deref(doc, unpack(s.schema));
+  if (!isObj(s)) {
+    return typeof s === "string" && s.length < 120 && !s.includes("\n")
+      ? s
+      : "This representation cannot be shown as fields. Open Code to inspect its schema.";
+  }
   if (depth > 5) return [];
   if (isObj(s.properties)) {
     const required = new Set(Array.isArray(s.required) ? s.required : []);
@@ -130,7 +139,8 @@ function fieldRows(doc: Json, schema: unknown, prefix = "", depth = 0): FieldRow
         if (str(x.logicalType)) return `${str(x.type)} (${x.logicalType})`;
         return str(x.name) ?? str(x.type) ?? "complex";
       };
-      const enumType = real.find((x) => isObj(x) && x.type === "enum") as Json | undefined;
+      const enumType = real.flatMap((x) => isObj(x) && x.type === "array" ? [x.items] : [x])
+        .find((x) => isObj(x) && x.type === "enum") as Json | undefined;
       const record = real.find((x) => isObj(x) && x.type === "record") ?? real.map((x) => (isObj(x) && x.type === "array" && isObj(x.items) && x.items.type === "record" ? x.items : undefined)).find(Boolean);
       const children = record ? fieldRows(doc, record, path, depth + 1) : [];
       return [{
@@ -150,8 +160,15 @@ function Values({ values }: { values: NonNullable<FieldRow["values"]> }) {
   return (
     <div className="flex flex-wrap items-center gap-1">
       <span className="text-caption text-muted-foreground">{values.kind === "always" ? "Always" : "One of"}</span>
-      {shown.map((v) => <Badge key={v} variant="secondary" className="font-mono">{v}</Badge>)}
-      {values.items.length > shown.length && <span className="text-caption text-muted-foreground" title={values.items.slice(8).join(", ")}>+{values.items.length - shown.length} more</span>}
+      {shown.map((v) => <Badge key={v} variant="secondary" className="max-w-full whitespace-normal break-all font-mono">{v}</Badge>)}
+      {values.items.length > shown.length && (
+        <details className="text-caption text-muted-foreground">
+          <summary className="cursor-pointer">+{values.items.length - shown.length} more</summary>
+          <div className="flex flex-wrap gap-1 pt-space-1">
+            {values.items.slice(shown.length).map((v) => <Badge key={v} variant="secondary" className="max-w-full whitespace-normal break-all font-mono">{v}</Badge>)}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -163,8 +180,8 @@ function Rows({ rows, depth, collapsed, toggle }: { rows: FieldRow[]; depth: num
         const open = !collapsed.has(r.path);
         return (
           <Fragment key={r.path}>
-            <tr data-testid={`visual-field-${r.path}`} className="align-top">
-              <td className="py-1.5 pr-space-2">
+            <tr data-testid={`visual-field-${r.path}`} role="row" className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-space-2 py-space-1 align-top @lg/schema:table-row @lg/schema:py-0">
+              <td role="cell" className="min-w-0 py-1.5 pr-space-2">
                 <div className="flex items-start gap-1" style={{ paddingLeft: `${depth * 0.875}rem` }}>
                   {r.children.length > 0 ? (
                     <button type="button" aria-expanded={open} aria-label={`${open ? "Collapse" : "Expand"} ${r.path}`} onClick={() => toggle(r.path)} className="mt-0.5 rounded text-muted-foreground hover:text-foreground">
@@ -175,12 +192,12 @@ function Rows({ rows, depth, collapsed, toggle }: { rows: FieldRow[]; depth: num
                   {r.required && <span className="text-caption text-destructive" title="Required">*</span>}
                 </div>
               </td>
-              <td className="py-1.5 pr-space-2"><span className="break-all font-mono text-caption text-primary">{r.type}</span></td>
-              <td className="py-1.5">
-                <div className="space-y-1">
+              <td role="cell" className="min-w-0 py-1.5 pr-space-2 text-right @lg/schema:text-left"><span className="break-all font-mono text-caption text-primary">{r.type}</span></td>
+              <td role="cell" className="col-span-2 min-w-0 py-1.5">
+                <div className="flex flex-col gap-space-2">
+                  {r.description && <p className="break-words text-caption text-foreground">{r.description}</p>}
                   {r.values && <Values values={r.values} />}
-                  {r.facts.length > 0 && <div className="flex flex-wrap gap-1">{r.facts.map((f) => <span key={f} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{f}</span>)}</div>}
-                  {r.description && <p className="text-caption text-muted-foreground">{r.description}</p>}
+                  {r.facts.length > 0 && <div className="flex flex-wrap gap-1">{r.facts.map((f) => <span key={f} className="max-w-full break-all rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{f}</span>)}</div>}
                   {!r.values && r.facts.length === 0 && !r.description && <span className="text-caption text-muted-foreground/60">—</span>}
                 </div>
               </td>
@@ -206,21 +223,21 @@ function SchemaTable({ doc, schema, label }: { doc: Json; schema: unknown; label
   if (rows.length === 0) return <p className="text-caption text-muted-foreground">No fields</p>;
   const required = rows.filter((r) => r.required).length;
   return (
-    <div className="space-y-1">
+    <div className="@container/schema flex min-w-0 flex-col gap-space-2">
       <div className="flex items-baseline justify-between gap-space-2">
         <p className="text-caption font-medium text-foreground">{label}</p>
         <p className="text-caption text-muted-foreground">{countRows(rows)} fields · {required} required at top level <span className="text-destructive">*</span></p>
       </div>
       <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full min-w-[24rem] border-collapse" aria-label={`${label} fields`}>
-          <thead className="bg-muted/40">
-            <tr className="text-left text-caption text-muted-foreground">
-              <th scope="col" className="w-[34%] px-space-2 py-1 font-medium">Field</th>
-              <th scope="col" className="w-[18%] px-space-2 py-1 font-medium">Type</th>
-              <th scope="col" className="px-space-2 py-1 font-medium">Values &amp; description</th>
+        <table role="table" className="block w-full table-fixed border-collapse @lg/schema:table" aria-label={`${label} fields`}>
+          <thead role="rowgroup" className="block bg-muted/40 @lg/schema:table-header-group">
+            <tr role="row" className="grid grid-cols-[minmax(0,1fr)_auto] text-left text-caption text-muted-foreground @lg/schema:table-row">
+              <th role="columnheader" scope="col" className="px-space-2 py-1 font-medium @lg/schema:w-[30%]">Field</th>
+              <th role="columnheader" scope="col" className="px-space-2 py-1 text-right font-medium @lg/schema:w-[22%] @lg/schema:text-left">Data type</th>
+              <th role="columnheader" scope="col" className="sr-only px-space-2 py-1 font-medium @lg/schema:not-sr-only">Description &amp; possible values</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-border/60 [&_td]:px-space-2">
+          <tbody role="rowgroup" className="block divide-y divide-border/60 @lg/schema:table-row-group [&_td]:px-space-2">
             <Rows rows={rows} depth={0} collapsed={collapsed} toggle={toggle} />
           </tbody>
         </table>

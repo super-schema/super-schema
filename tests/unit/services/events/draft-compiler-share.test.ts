@@ -19,6 +19,7 @@ vi.mock("@/services/events/event-snapshot", async (importOriginal) => ({
   loadEventSnapshot: h.loadEventSnapshot,
   resolveEventSnapshot: h.resolveEventSnapshot,
 }));
+vi.mock("@/services/events/event.service", () => ({ validateDocumentRefs: async () => [] }));
 vi.mock("@/services/events/service-guards", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/services/events/service-guards")>()),
   assertOwnedEvent: async () => ok(undefined),
@@ -92,7 +93,7 @@ describe("draft emissions under the caller's compiler share", () => {
   it("hands the caller's signal to the render, so a client that went away cancels the draft's compiler runs", async () => {
     const controller = new AbortController();
     await emitEventDraft("e1", "p1", ctxOf(OTHER), { renderer, signal: controller.signal });
-    expect(h.resolveEventSnapshot).toHaveBeenCalledWith(expect.anything(), renderer, "draft", undefined, { signal: controller.signal });
+    expect(h.resolveEventSnapshot).toHaveBeenCalledWith(expect.anything(), renderer, "draft", expect.any(Function), { signal: controller.signal });
   });
 });
 

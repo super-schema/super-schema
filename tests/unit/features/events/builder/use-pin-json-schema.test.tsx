@@ -9,6 +9,7 @@ type Schema = Record<string, unknown>;
 type Outcome = { success: true; data: { schema: Schema } } | { success: false; error: string; code: string };
 
 const h = vi.hoisted(() => ({ pinJsonSchemaAction: vi.fn() }));
+vi.mock("@/features/events/preview-requests", () => ({ requestPinJsonSchema: h.pinJsonSchemaAction }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({ pinJsonSchemaAction: h.pinJsonSchemaAction }));
 
 const A: Schema = { type: "object", properties: { a: { type: "string" } } };

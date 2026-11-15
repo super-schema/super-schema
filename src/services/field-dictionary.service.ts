@@ -226,13 +226,14 @@ export interface DictionaryFormOptions {
 
 /**
  * The options of the admin Fields form (U9). Levels are the standard 1-5 scale plus the stored levels (custom ones included), once per name,
- * ordered by class then name. Custom types are the tenant's custom scalar and shared enum names (any domain), once per name, sorted.
+ * ordered by class then name. Custom types are the tenant's scalar, enum and union names (any domain), once per name, sorted.
  */
 export async function dictionaryFormOptions(tenantId: string): Promise<DictionaryFormOptions> {
-  const [rows, scalars, enums] = await Promise.all([
+  const [rows, scalars, enums, unions] = await Promise.all([
     prisma.classificationLevel.findMany({ select: { name: true, classNumber: true } }),
     prisma.customScalar.findMany({ where: { tenantId }, select: { name: true } }),
     prisma.sharedEnum.findMany({ where: { tenantId }, select: { name: true } }),
+    prisma.unionType.findMany({ where: { tenantId }, select: { name: true } }),
   ]);
   const levels = new Map<string, number>(CLASS_SCALE.map((c) => [c.level, c.classNumber]));
   for (const r of rows) if (!levels.has(r.name.toUpperCase())) levels.set(r.name, r.classNumber);
@@ -240,7 +241,7 @@ export async function dictionaryFormOptions(tenantId: string): Promise<Dictionar
     levels: [...levels]
       .map(([name, classNumber]) => ({ name, classNumber }))
       .sort((a, b) => a.classNumber - b.classNumber || a.name.localeCompare(b.name)),
-    customTypes: [...new Set([...scalars, ...enums].map((t) => t.name))].sort((a, b) => a.localeCompare(b)),
+    customTypes: [...new Set([...scalars, ...enums, ...unions].map((t) => t.name))].sort((a, b) => a.localeCompare(b)),
   };
 }
 

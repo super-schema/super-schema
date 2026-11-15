@@ -1,3 +1,4 @@
+import { FIELD_ATTRIBUTE_SECTIONS } from "@/lib/field-attributes";
 import { fieldPolicyContext } from "@/lib/field-policy-context";
 import { prisma } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
@@ -19,6 +20,7 @@ interface Props {
 
 export default async function FieldDetailPage({ params, searchParams }: Props) {
   const { domainSlug, productSlug, entityId, fieldId } = await params;
+  const query = (await searchParams) ?? {};
   const { principal, tenantId: activeTenantId } = await requirePageAccess();
 
   // Resolve the entity within its placement (slug first, then cuid). Slugs repeat
@@ -92,7 +94,7 @@ export default async function FieldDetailPage({ params, searchParams }: Props) {
           domainSlug: isTenantLevel ? null : domainSlug,
           productSlug: isTenantLevel ? null : productSlug,
         },
-        { query: (await searchParams) ?? {} }
+        { query }
       )
     );
   }
@@ -117,9 +119,10 @@ export default async function FieldDetailPage({ params, searchParams }: Props) {
 
   return (
     <FieldStudio
+      initialExpandedPanel={query.panel === "policy" || query.panel === "classification" ? FIELD_ATTRIBUTE_SECTIONS.indexOf("Data Governance") : undefined}
       metadataAttributes={metadataAttributes}
       policyContext={fieldPolicyContext(field.entity.metadata, domainPolicy, domain?.name)}
-      isReadOnly={!can(principal.assignments, "entity.write", { tenantId: entity.tenantId, domainId: entity.domainId ?? entity.product?.domainId ?? null, productId: entity.productId })}
+      isReadOnly={field.entity.status === "RETIRED" || !can(principal.assignments, "entity.write", { tenantId: entity.tenantId, domainId: entity.domainId ?? entity.product?.domainId ?? null, productId: entity.productId })}
       referenceTargets={referenceTargets}
       field={{
         id: field.id,

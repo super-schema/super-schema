@@ -601,7 +601,7 @@ export async function updateSharedEnumAction(
         } as Prisma.SharedEnumUpdateInput,
       });
       return row.domainId
-        ? cascadeEnumToFields(tx, { domainId: row.domainId, enum: { name: row.name, values: row.values, valueDescriptions: readValueDescriptions(row.valueDescriptions) } })
+        ? cascadeEnumToFields(tx, { domainId: row.domainId, productId: row.productId, enum: { name: row.name, values: row.values, valueDescriptions: readValueDescriptions(row.valueDescriptions) } })
         : 0;
     }, IMPORT_TRANSACTION_OPTIONS);
     revalidatePath("/schemas");
@@ -697,7 +697,7 @@ export async function updateCustomScalarAction(
         data: { ...rest, ...(constraints !== undefined ? { constraints: constraints === null ? Prisma.DbNull : (constraints as Prisma.InputJsonObject) } : {}) } as Prisma.CustomScalarUpdateInput,
       });
       return row.domainId
-        ? cascadeScalarToFields(tx, { domainId: row.domainId, scalar: { name: row.name, baseType: row.baseType, logicalType: row.logicalType, format: row.format, pattern: row.pattern, constraints: row.constraints } })
+        ? cascadeScalarToFields(tx, { domainId: row.domainId, productId: row.productId, scalar: { name: row.name, baseType: row.baseType, logicalType: row.logicalType, format: row.format, pattern: row.pattern, constraints: row.constraints } })
         : 0;
     }, IMPORT_TRANSACTION_OPTIONS);
     revalidatePath("/schemas");

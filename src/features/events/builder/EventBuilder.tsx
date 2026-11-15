@@ -49,8 +49,8 @@ const OUTLINE_WIDE_PX = 768;
 
 /** Classes per mode. Below `@lg` (32rem) the outline is a scrolling row above the form whatever the mode. Written out, not computed, so Tailwind sees them. */
 const OUTLINE_GRID: Record<OutlineMode, string> = {
-  auto: "grid-cols-1 @lg:grid-cols-[3rem_minmax(0,1fr)] @3xl:grid-cols-[13rem_minmax(0,1fr)]",
-  open: "grid-cols-1 @lg:grid-cols-[13rem_minmax(0,1fr)]",
+  auto: "grid-cols-1 @lg:grid-cols-[3rem_minmax(0,1fr)] @3xl:grid-cols-[10rem_minmax(0,1fr)]",
+  open: "grid-cols-1 @lg:grid-cols-[10rem_minmax(0,1fr)]",
   compact: "grid-cols-1 @lg:grid-cols-[3rem_minmax(0,1fr)]",
 };
 /** In the icons-only form a problem badge sits on the icon's corner and the item is centred. */
@@ -189,7 +189,7 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
 
   return (
     <div ref={rootRef} data-testid="event-builder" data-outline={mode === "auto" ? undefined : mode} className="@container">
-      <div className={cn("grid gap-space-6", OUTLINE_GRID[mode])}>
+      <div className={cn("grid gap-space-4", OUTLINE_GRID[mode])}>
         <div className="@lg:sticky @lg:top-space-4 @lg:self-start">
           <nav aria-label="Event outline" data-testid="builder-outline">
             <ul className="flex gap-space-1 overflow-x-auto @lg:flex-col">
@@ -211,7 +211,7 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
                         <Icon aria-hidden="true" className="size-4 shrink-0" />
                         <span className={OUTLINE_LABEL[mode]}>{node.label}</span>
                       </span>
-                      <span className="flex items-center gap-space-2">
+                      <span className="ml-auto flex shrink-0 items-center gap-space-2 tabular-nums">
                         {node.count !== null && (
                           <span data-testid={`outline-count-${node.section}`} className={cn("text-caption text-muted-foreground", OUTLINE_LABEL[mode])}>{node.count}</span>
                         )}

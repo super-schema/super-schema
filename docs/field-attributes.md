@@ -50,6 +50,8 @@ Schema evolution generates a version enum from the used labels (natural numeric 
 
 Protobuf numbers must be 1–536870911, excluding reserved values 19000–19999. Automatic assignment skips the reserved interval. Changes to published field numbers require wire-compatibility review.
 
+For event payloads with inheritance, each inherited field keeps the number from its pinned base version (or its declaration-order default when none is set). A child field cannot reuse that number: Protobuf emission refuses the collision instead of silently renumbering inherited fields. Assign distinct numbers in Serialization before emitting again. JSON Schema and Avro emission are unaffected.
+
 ## Verification
 
 Focused tests cover documentation recovery and conflict preservation; all four presence/nullability combinations; typed defaults, examples and extensions; save/discard and reference-selection races; source application; lifecycle visibility; schema evolution and discriminator scope. Generated annotations are compiled with the real TypeSpec compiler. Target checks exercise JSON Schema, OpenAPI, Avro, Protobuf, Java, PostgreSQL, Spanner and BigQuery. JSON Schema assertions inspect actual requiredness, nullable types and deprecation output.

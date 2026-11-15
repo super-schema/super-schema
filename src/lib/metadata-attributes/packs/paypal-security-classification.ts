@@ -1,6 +1,6 @@
 import type { MetadataPack } from "@/lib/metadata-attributes/packs";
 
-/** The data categories of the PayPal security classification pack, in the order the editor offers them. */
+/** The data categories of the security classification pack, in the order the editor offers them. */
 export const SECURITY_DATA_CATEGORIES = [
   "ConsumerPersonal",
   "BusinessPersonal",
@@ -12,11 +12,12 @@ export const SECURITY_DATA_CATEGORIES = [
 
 /**
  * `x-securityClassification`: users pick `data_category`; `data_class` always follows the field's classification through the fixed class number.
- * Nothing PayPal-specific is visible to a tenant until it installs this pack.
+ * Definitions are only added to a tenant when it installs this pack.
  */
 export const PAYPAL_SECURITY_CLASSIFICATION_PACK: MetadataPack = {
+  // Keep the installation ID stable for tenants that already installed this pack.
   id: "paypal-security-classification",
-  name: "PayPal security classification",
+  name: "Security classification",
   description: "Adds x-securityClassification: a data_class derived from the field's classification and a data_category chosen by the author.",
   definitions: [
     {

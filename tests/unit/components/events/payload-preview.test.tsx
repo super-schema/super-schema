@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { PayloadPreview } from "@/features/events/builder/sections/PayloadPreview";
 import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
@@ -32,10 +32,11 @@ describe("PayloadPreview", () => {
     expect(text).not.toContain("Loading fields");
   });
 
-  it("counts the fields it does not list", () => {
+  it("lists every field so expanding the preview never hides additional fields", () => {
     const properties = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`f${i}`, { type: "string" }]));
     preview({ schema: { properties } });
-    expect(screen.getByTestId("payload-preview").textContent).toContain("+2 more");
+    expect(screen.getAllByRole("listitem")).toHaveLength(10);
+    expect(screen.getByTestId("payload-preview-field-f9")).toBeDefined();
   });
 
   it("says there is no preview when there is no schema, or the schema has no fields", () => {
@@ -54,11 +55,24 @@ describe("PayloadPreview", () => {
     expect(screen.queryByRole("link", { name: /open entity/i })).toBeNull();
   });
 
-  it("lists the fields in two columns by the width of the pane, not of the window", () => {
-    preview();
-    const list = screen.getByTestId("payload-preview").querySelector("ul") as HTMLElement;
-    expect(list.className).toContain("@md:grid-cols-2");
-    expect(list.className).not.toMatch(/(^|\s)sm:/);
+  it("shows one field per row with descriptions and configured attributes", () => {
+    preview({ schema: { properties: { email: { type: "string", description: "Contact email address", "x-classification": "Restricted", "x-securityClassification": { data_class: 3 } } } } });
+    const row = screen.getByTestId("payload-preview-field-email");
+    const summary = row.querySelector("summary")!;
+    expect(summary.textContent).toContain("email");
+    expect(summary.textContent).toContain("string");
+    expect(summary.textContent).toContain("Contact email address");
+    expect(summary.textContent).toContain("classification: Restricted");
+    expect(summary.textContent).toContain('security Classification: {"data_class":3}');
+    expect(row).toHaveProperty("open", false);
+    fireEvent.click(summary);
+    expect(row).toHaveProperty("open", true);
+    expect(row.querySelector("dd")?.textContent).toBe("email");
+    const container = screen.getByTestId("payload-preview");
+    fireEvent.click(container.querySelector("summary")!);
+    expect(container).toHaveProperty("open", false);
+    fireEvent.click(container.querySelector("summary")!);
+    expect(container).toHaveProperty("open", true);
   });
 
   it("shows nothing for a message without a payload entity", () => {

@@ -36,11 +36,12 @@ vi.mock("@/app/(dashboard)/admin/settings/dictionaries/actions", () => ({
 
 import DictionariesPage from "@/app/(dashboard)/admin/tenant/dictionaries/page";
 import AttributesPage from "@/app/(dashboard)/admin/tenant/attributes/page";
+import { PAYPAL_SECURITY_CLASSIFICATION_PACK as SECURITY_PACK } from "@/lib/metadata-attributes/packs/paypal-security-classification";
 
-const PACK_ID = "paypal-security-classification";
+const PACK_ID = SECURITY_PACK.id;
 const pack = (installed: boolean) => ({
   id: PACK_ID,
-  name: "PayPal security classification",
+  name: SECURITY_PACK.name,
   description: "Adds x-securityClassification.",
   keys: ["x-securityClassification"],
   installed,
@@ -75,6 +76,7 @@ describe("the dictionaries admin page", () => {
 
     const packs = screen.getByRole("region", { name: "Packs" });
     expect(within(packs).queryByText("Installed")).toBeNull();
+    expect(within(packs).getByRole("button", { name: "Install Security classification" })).toBeInTheDocument();
 
     h.overview.mockResolvedValue({ data: { fields: [], attributes: [packRow], packs: [pack(true)] } });
     fireEvent.click(within(packs).getByRole("button", { name: /^Install/ }));
@@ -82,7 +84,7 @@ describe("the dictionaries admin page", () => {
     await waitFor(() => expect(h.install).toHaveBeenCalledWith(PACK_ID));
     expect(await within(screen.getByRole("region", { name: "Packs" })).findByText("Installed")).toBeInTheDocument();
     expect(screen.getByText("x-securityClassification")).toBeInTheDocument();
-    expect(screen.getByText(/Read-only/)).toBeInTheDocument();
+    expect(screen.getByText("Read-only (pack: Security classification)")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Edit x-securityClassification/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Delete x-securityClassification/ })).toBeNull();
   });

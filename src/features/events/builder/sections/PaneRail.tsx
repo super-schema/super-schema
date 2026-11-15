@@ -7,10 +7,11 @@
 // and the ones that hold a problem, from the start) and then stays mounted, hidden when another part shows, so what it holds (focus order, a half-typed field's
 // validation, an editor's state) is not rebuilt on every switch. Which part shows lives in `usePaneState`, kept by the SECTION so the
 // choice survives switching from one item to another.
-import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { nextTabIndex } from "./tab-nav";
+import { selectClass } from "../controls";
 
 export interface PaneState {
   active: string;
@@ -48,13 +49,25 @@ export interface PaneDef {
  * `idPrefix` builds the test ids: the tab is `${idPrefix}-${id}-toggle`, its count `…-count`, the panel `…-body` and the wrapper
  * `${idPrefix}-rail`. `label` names the tab list.
  */
-export function PaneRail({ idPrefix, panes, active, onSelect, keepMounted = [], label = "Parts" }: {
+export function PaneRail({ idPrefix, panes, active: requestedActive, onSelect, keepMounted = [], label = "Parts", corePanes }: {
   idPrefix: string; panes: PaneDef[]; active: string; onSelect: (id: string) => void; keepMounted?: readonly string[]; label?: string;
+  /** Show core sections as horizontal tabs; other sections are added on demand, or shown when populated / invalid. */
+  corePanes?: readonly string[];
 }) {
+  // Optional panes can disappear when their last value is removed.
+  const active = panes.some((pane) => pane.id === requestedActive) ? requestedActive : panes[0]?.id;
+  useEffect(() => {
+    if (active !== undefined && active !== requestedActive) onSelect(active);
+  }, [active, requestedActive, onSelect]);
   const uid = useId();
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [added, setAdded] = useState<ReadonlySet<string>>(new Set());
+  const visible = corePanes
+    ? panes.filter((pane) => corePanes.includes(pane.id) || added.has(pane.id) || pane.id === active || (pane.count ?? 0) > 0 || pane.broken)
+    : panes;
+  const available = panes.filter((pane) => !visible.includes(pane));
   const [visited, setVisited] = useState<ReadonlySet<string>>(() => new Set(keepMounted));
-  if (!visited.has(active)) setVisited(new Set([...visited, active]));
+  if (active !== undefined && !visited.has(active)) setVisited(new Set([...visited, active]));
   // A pane that holds a problem is built even when it is not showing: its error text must be in the page, and its tab says where to look.
   const mounted = new Set([...visited, active, ...panes.filter((pane) => pane.broken).map((pane) => pane.id)]);
   const tabId = (id: string) => `${uid}-tab-${id}`;
@@ -63,18 +76,19 @@ export function PaneRail({ idPrefix, panes, active, onSelect, keepMounted = [], 
   function onKeyDown(e: KeyboardEvent<HTMLButtonElement>, index: number) {
     // A vertical rail answers up / down, the pills left / right.
     const key = e.key === "ArrowDown" ? "ArrowRight" : e.key === "ArrowUp" ? "ArrowLeft" : e.key;
-    const to = nextTabIndex(index, panes.length, key);
+    const to = nextTabIndex(index, visible.length, key);
     if (to === null) return;
     e.preventDefault();
-    tabs.current[panes[to].id]?.focus();
-    onSelect(panes[to].id);
+    tabs.current[visible[to].id]?.focus();
+    onSelect(visible[to].id);
   }
 
   return (
     <div data-testid={`${idPrefix}-rail`} className="@container">
-      <div className="flex flex-col gap-space-4 @xl:grid @xl:grid-cols-[9rem_minmax(0,1fr)] @xl:items-start">
-        <div role="tablist" aria-label={label} aria-orientation="vertical" className="flex flex-wrap gap-space-1 @xl:flex-col @xl:flex-nowrap">
-          {panes.map((pane, index) => {
+      <div className={cn("flex flex-col gap-space-4", !corePanes && "@xl:grid @xl:grid-cols-[9rem_minmax(0,1fr)] @xl:items-start")}>
+        <div className="flex min-w-0 flex-wrap items-start gap-space-2">
+        <div role="tablist" aria-label={label} aria-orientation={corePanes ? "horizontal" : "vertical"} className={cn("flex min-w-0 flex-wrap gap-space-1", !corePanes && "@xl:flex-col @xl:flex-nowrap")}>
+          {visible.map((pane, index) => {
             const isActive = pane.id === active;
             return (
               <button
@@ -102,6 +116,22 @@ export function PaneRail({ idPrefix, panes, active, onSelect, keepMounted = [], 
               </button>
             );
           })}
+        </div>
+        {corePanes && available.length > 0 && (
+          <select
+            aria-label="Add section" data-testid={idPrefix + "-add-section"} value=""
+            className={cn(selectClass, "ml-auto w-auto max-w-full")}
+            onChange={(event) => {
+              const id = event.target.value;
+              if (!id) return;
+              setAdded((before) => new Set([...before, id]));
+              onSelect(id);
+            }}
+          >
+            <option value="" disabled>Add section…</option>
+            {available.map((pane) => <option key={pane.id} value={pane.id}>{pane.title}</option>)}
+          </select>
+        )}
         </div>
 
         <div className="min-w-0">

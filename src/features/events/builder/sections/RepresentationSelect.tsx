@@ -5,7 +5,6 @@
 // what that means for this message right now (what Auto resolved to and why, or what the user chose). Auto is the absence of the
 // property; the sentence comes from `representationNote`, which asks the same resolver the server uses (round-2 R4).
 import type { PayloadFormat } from "@/lib/event-specs/types";
-import { cn } from "@/lib/utils";
 import { selectClass } from "../controls";
 import type { RepresentationNote } from "./representation-note";
 
@@ -37,7 +36,7 @@ export function RepresentationSelect({ id, value, onChange, note, error }: {
       </select>
       <p
         id={noteId} data-testid={noteId} data-tone={note.tone}
-        className={cn("text-caption", note.tone === "hint" ? "text-muted-foreground" : "text-foreground")}
+        className="text-[11px] leading-relaxed text-muted-foreground"
       >
         {note.text}
       </p>

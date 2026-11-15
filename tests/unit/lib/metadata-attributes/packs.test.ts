@@ -5,7 +5,8 @@ import { MetadataAttributeDefinitionSchema } from "@/types/schemas/metadata-attr
 import { validateValue } from "@/lib/metadata-attributes/value-schema";
 
 describe("metadata packs", () => {
-  it("registers the paypal security classification pack under its id", () => {
+  it("offers a generic security classification name with a stable installation id", () => {
+    expect(PAYPAL_SECURITY_CLASSIFICATION_PACK.name).toBe("Security classification");
     expect(getMetadataPack("paypal-security-classification")).toBe(PAYPAL_SECURITY_CLASSIFICATION_PACK);
     expect(getMetadataPack("nope")).toBeUndefined();
     expect(METADATA_PACKS.map((p) => p.id)).toEqual(["paypal-security-classification"]);

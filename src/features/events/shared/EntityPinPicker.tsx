@@ -87,12 +87,17 @@ export function EntityPinPicker({
   const options = current && "options" in current ? current.options : [];
   const loadError = current && "error" in current ? current.error : null;
   const pinned = value?.entityVersionId ?? null;
+  const pinnedLabel = options.find((option) => option.id === pinned)?.label
+    ?? (pinned === entity?.latestVersionId ? entity.latestVersionLabel : null);
+  const missingPinnedLabel = pinnedLabel
+    ? `v${pinnedLabel} (pinned)`
+    : current ? "Version number unavailable (pinned)" : "Loading version number… (pinned)";
   const behind = pinned !== null && entity?.latestVersionId && pinned !== entity.latestVersionId;
 
   return (
-    <fieldset className="space-y-space-1" data-testid={`${id}-picker`}>
+    <fieldset className="min-w-0 space-y-space-1" data-testid={`${id}-picker`}>
       <legend className="text-caption text-muted-foreground">{label}</legend>
-      <div className="flex flex-wrap gap-space-2">
+      <div className="flex min-w-0 flex-wrap gap-space-2">
         <EntityCombobox
           id={id} label={label} entities={entities} selectedId={entityId} optional={optional} disabled={disabled} autoFocus={autoFocus} scope={scope}
           onSelect={(next) => onChange(next ? { entityId: next.id, entityVersionId: next.latestVersionId } : null)}
@@ -100,15 +105,15 @@ export function EntityPinPicker({
         {entityId && (
           <select
             aria-label={`${label} version`}
-            className={selectClass}
+            className={cn(selectClass, "min-w-0 max-w-full flex-1 basis-40")}
             value={pinned ?? ""}
             disabled={disabled}
             onChange={(e) => onChange({ entityId, entityVersionId: e.target.value || null })}
           >
-            <option value="">Unpinned — preview uses the draft</option>
-            {pinned && !options.some((o) => o.id === pinned) && <option value={pinned}>pinned version</option>}
+            <option value="">Draft (unpinned; preview only)</option>
+            {pinned && !options.some((o) => o.id === pinned) && <option value={pinned} disabled={!pinnedLabel}>{missingPinnedLabel}</option>}
             {options.map((v) => (
-              <option key={v.id} value={v.id}>v{v.label}</option>
+              <option key={v.id} value={v.id}>v{v.label}{v.id === pinned ? " (pinned)" : ""}</option>
             ))}
           </select>
         )}
@@ -205,7 +210,7 @@ function EntityCombobox({ id, label, entities, selectedId, optional, disabled, a
   const wider = scope && level !== "tenant" && q && results.length === 0 ? (["domain", "tenant"] as const).find((l) => l !== level && counts[l] > 0 && (level === "product" || l === "tenant")) : undefined;
 
   return (
-    <div ref={root} className="relative min-w-[16rem] max-w-full">
+    <div ref={root} className="relative min-w-0 max-w-full flex-1 basis-56">
       <button
         type="button" role="combobox" aria-label={`${label} entity`} aria-expanded={open} aria-controls={listId} aria-haspopup="listbox"
         data-testid={`${id}-entity`} data-value={selectedId ?? ""} disabled={disabled} autoFocus={autoFocus} onClick={() => show(!open)}

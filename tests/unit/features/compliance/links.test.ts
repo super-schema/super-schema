@@ -51,19 +51,19 @@ describe("compliance results entityHref", () => {
 describe("compliance gapHref", () => {
   it("opens the matching panel on a placed entity", () => {
     expect(gapHref(gap())).toBe(
-      "/schemas/commerce/orders/customer?fieldId=fld-1&panel=classification"
+      "/schemas/commerce/orders/customer/fields/fld-1?panel=classification"
     );
   });
 
-  it("opens the policy panel for a retention gap on a tenant-level entity", () => {
+  it("opens entity governance for a retention gap on a tenant-level entity", () => {
     expect(gapHref(gap({ domainSlug: null, productSlug: null, gapType: "NO_RETENTION" }))).toBe(
-      "/schemas/enterprise/entities/customer?fieldId=fld-1&panel=policy"
+      "/schemas/enterprise/entities/customer?tab=governance"
     );
   });
 
   it("uses the entity id when the gap has no entity slug", () => {
     expect(gapHref(gap({ entitySlug: undefined }))).toBe(
-      "/schemas/commerce/orders/ent-1?fieldId=fld-1&panel=classification"
+      "/schemas/commerce/orders/ent-1/fields/fld-1?panel=classification"
     );
   });
 });

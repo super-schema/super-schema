@@ -6,12 +6,13 @@
 // appears past six items, and the add button is pinned at the right, outside the scrolling part. A tab keeps the test id and the
 // `aria-current` of the list row it replaces (`${prefix}-row-${key}`); the item's subtitle moves into the tab's `title`.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Pencil, Plus } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Command, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { nextTabIndex, scrollEdges } from "./tab-nav";
+import { KeyInput } from "../controls";
 
 export interface ItemTab { key: string; label?: string; subtitle: string; broken: boolean }
 
@@ -26,11 +27,13 @@ const tabName = (item: ItemTab) => item.label || item.key || "(no key)";
  * form) without the tab, and the focus on it, being thrown away. `onAdd` absent hides the add button; `addDisabled` / `addTitle` are for
  * an add that cannot run yet (an operation needs a channel first).
  */
-export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, addLabel = "Add", addTestId, addDisabled, addTitle, focusSignal }: {
+export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, addLabel = "Add", addTestId, addDisabled, addTitle, focusSignal, rename }: {
   label: string; prefix: string; items: ItemTab[]; activeIndex: number; onSelect: (key: string) => void;
   onAdd?: () => void; addLabel?: string; addTestId?: string; addDisabled?: boolean; addTitle?: string;
   /** A number the host raises to ask for the cursor to go to the active tab (after the item the user was in is removed). Not acted on at first render. */
   focusSignal?: number;
+  /** Optional editing of the active tab's reference key, enabled only by the host that owns its rename operation. */
+  rename?: { id: string; label: string; actionLabel: string; taken: string[]; error?: string; onCommit: (next: string) => void };
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const strip = useRef<HTMLDivElement>(null);
@@ -38,6 +41,20 @@ export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, a
   const [edges, setEdges] = useState({ start: false, end: false });
   const [listOpen, setListOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const editor = useRef<HTMLDivElement>(null);
+  const editing = !!rename && editingKey !== null && editingKey === items[activeIndex]?.key;
+  const wasEditing = useRef(false);
+  useEffect(() => {
+    if (editing) {
+      const input = editor.current?.querySelector("input");
+      input?.focus();
+      input?.select();
+    } else if (wasEditing.current) {
+      tabs.current[activeIndex]?.focus();
+    }
+    wasEditing.current = editing;
+  }, [editing, activeIndex]);
 
   const measure = useCallback(() => {
     const el = scroller.current;
@@ -74,6 +91,11 @@ export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, a
   }
 
   function onTabKeyDown(e: React.KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (rename && index === activeIndex && e.key === "F2") {
+      e.preventDefault();
+      setEditingKey(items[index].key);
+      return;
+    }
     const to = nextTabIndex(index, items.length, e.key);
     if (to === null) return;
     e.preventDefault();
@@ -98,18 +120,32 @@ export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, a
           <div ref={strip} role="tablist" aria-label={label} className="flex w-max min-w-full items-center gap-space-1">
             {items.map((item, index) => {
               const isActive = index === activeIndex;
+              if (isActive && editing && rename) return (
+                <div
+                  key={index} ref={editor} className="w-64 shrink-0 px-space-2 py-space-1"
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") { event.preventDefault(); setEditingKey(null); }
+                  }}
+                >
+                  <KeyInput
+                    id={rename.id} label={rename.label} value={item.key} taken={rename.taken} error={rename.error}
+                    onCommit={(next) => { rename.onCommit(next); setEditingKey(null); }}
+                  />
+                </div>
+              );
               return (
                 <button
                   key={index} ref={(el) => { tabs.current[index] = el; }} type="button" role="tab"
                   data-testid={`${prefix}-row-${item.key}`} aria-selected={isActive} aria-current={isActive ? "true" : undefined}
                   tabIndex={isActive ? 0 : -1} title={`${tabName(item)} — ${item.subtitle}`}
-                  onClick={() => onSelect(item.key)} onKeyDown={(e) => onTabKeyDown(e, index)}
+                  onClick={() => { setEditingKey(null); onSelect(item.key); }} onKeyDown={(e) => onTabKeyDown(e, index)}
+                  onDoubleClick={rename ? () => setEditingKey(item.key) : undefined}
                   className={cn(
                     "flex shrink-0 items-center gap-space-2 border-b-2 px-space-3 py-space-2 text-body-small outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
                     isActive ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  <span className="max-w-[12rem] truncate">{tabName(item)}</span>
+                  <span data-testid={isActive && rename ? `${rename.id}-value` : undefined} className="max-w-[12rem] truncate">{tabName(item)}</span>
                   {item.broken && (
                     <>
                       <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-destructive" />
@@ -127,6 +163,15 @@ export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, a
           </button>
         )}
       </div>
+
+      {rename && activeIndex >= 0 && !editing && (
+        <Button
+          type="button" size="icon-sm" variant="ghost" onClick={() => setEditingKey(items[activeIndex].key)}
+          aria-label={rename.actionLabel} title={`${rename.actionLabel} (F2 or double-click the tab)`}
+        >
+          <Pencil aria-hidden="true" data-icon="inline-start" />
+        </Button>
+      )}
 
       {items.length >= SEARCH_FROM && (
         <Popover open={listOpen} onOpenChange={(open) => { setListOpen(open); if (!open) setQuery(""); }}>

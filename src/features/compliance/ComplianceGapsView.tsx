@@ -44,16 +44,15 @@ function GapPanelForType(gapType: string): string {
   }
 }
 
-/** Entity deep link that opens the panel matching the gap. null slugs = tenant-level entity. */
+/** Retention belongs to the entity; classification and protection belong to Field Studio. */
 export function gapHref(gap: ComplianceGap): string {
+  const placement = { domainSlug: gap.domainSlug, productSlug: gap.productSlug };
+  if (gap.gapType === "NO_RETENTION") {
+    return assetHref({ kind: "entity", slug: gap.entitySlug || gap.entityId, ...placement }, { query: { tab: "governance" } });
+  }
   return assetHref(
-    {
-      kind: "entity",
-      slug: gap.entitySlug || gap.entityId,
-      domainSlug: gap.domainSlug,
-      productSlug: gap.productSlug,
-    },
-    { query: { fieldId: gap.fieldId, panel: GapPanelForType(gap.gapType) } }
+    { kind: "field", entitySlug: gap.entitySlug || gap.entityId, fieldId: gap.fieldId, ...placement },
+    { query: { panel: GapPanelForType(gap.gapType) } },
   );
 }
 

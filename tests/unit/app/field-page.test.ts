@@ -153,6 +153,15 @@ describe("FieldDetailPage for an Enterprise (tenant-level) entity", () => {
   });
 });
 
+describe("FieldDetailPage retirement", () => {
+  it("renders a retired entity's field read-only even for a global administrator", async () => {
+    db.entities = [{ id: "retired", slug: "old", name: "Old", tenantId: "tenant-1", domainId: null, productId: null, status: "RETIRED" }];
+    db.fields = [fieldRow("f-old", "retired")];
+    const element = await FieldDetailPage({ params: params("enterprise", "entities", "old", "f-old") });
+    expect(element.props.isReadOnly).toBe(true);
+  });
+});
+
 describe("FieldDetailPage for a product entity", () => {
   beforeEach(() => {
     db.domains = [{ id: "dom-1", slug: "payments", tenantId: "tenant-1" }];
@@ -176,6 +185,11 @@ describe("FieldDetailPage for a product entity", () => {
     expect(mocks.entityFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { slug: "order", productId: "prod-1", tenantId: "tenant-1" } })
     );
+  });
+
+  it.each(["classification", "policy"])("opens the governance controls for a compliance %s deep link", async (panel) => {
+    const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "f-checkout"), searchParams: Promise.resolve({ panel }) });
+    expect(element.props.initialExpandedPanel).toBe(4);
   });
 
   it("falls back to the entity id within the same product", async () => {

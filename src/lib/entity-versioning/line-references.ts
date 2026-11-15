@@ -1,4 +1,5 @@
 import type { PrismaClient, Prisma } from "@/generated/prisma/client";
+import { baseNameOf, resolveBase } from "@/lib/references/closure";
 import {
   collectReferencedEntityIds,
   collectReferencedEntityNames,
@@ -21,6 +22,8 @@ export async function loadLineEntities(db: Db, entity: NamedEntity): Promise<Nam
 }
 
 export interface ResolvedEntityReferences {
+  /** The resolved inheritance edge, pinned just like a field reference. */
+  baseEntityId?: string;
   /** Referenced entity ids, sorted: ids stored on the fields / relationships plus the by-name references resolved in the line. */
   targetIds: string[];
   /** By-name references that match no (or more than one) entity in the line — they cannot be pinned. */
@@ -36,13 +39,21 @@ export async function resolveEntityReferences(
   db: Db,
   entity: NamedEntity & { metadata: unknown; fields: ReferenceSourceField[] }
 ): Promise<ResolvedEntityReferences> {
+  const baseName = baseNameOf(entity.metadata);
   const names = collectReferencedEntityNames(entity.fields);
-  const byName =
-    names.length > 0
-      ? resolveReferencedEntityNames(entity, names, await loadLineEntities(db, entity))
-      : { entityIds: [], unresolvedNames: [] };
+  // Inheritance prefers the owner's product, then domain, then any unique same-tenant base.
+  // Field references remain line-scoped. Use the closure resolver so the saved pin cannot disagree with its compile gate.
+  const candidates = baseName
+    ? await db.entity.findMany({
+        where: { tenantId: entity.tenantId },
+        select: { id: true, name: true, tenantId: true, domainId: true, productId: true },
+      })
+    : names.length > 0 ? await loadLineEntities(db, entity) : [];
+  const byName = resolveReferencedEntityNames(entity, names, candidates);
+  const base = baseName ? resolveBase(new Map(candidates.map((candidate) => [candidate.id, { ...candidate, place: candidate }])), { ...entity, place: entity }, baseName) : undefined;
+  const baseEntityId = base && "target" in base ? base.target.id : undefined;
   const targetIds = [
-    ...new Set([...collectReferencedEntityIds(entity.id, entity.fields, entity.metadata), ...byName.entityIds]),
+    ...new Set([...collectReferencedEntityIds(entity.id, entity.fields, entity.metadata), ...byName.entityIds, ...(baseEntityId ? [baseEntityId] : [])]),
   ].sort();
-  return { targetIds, unresolvedNames: byName.unresolvedNames };
+  return { targetIds, unresolvedNames: [...byName.unresolvedNames, ...(baseName && !baseEntityId ? [baseName] : [])], ...(baseEntityId ? { baseEntityId } : {}) };
 }

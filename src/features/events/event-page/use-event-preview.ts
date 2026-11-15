@@ -3,7 +3,7 @@
 // src/features/events/event-page/use-event-preview.ts
 // The Preview tab's emission of the CURRENT, possibly unsaved document: debounced, one call per document, the newest answer wins.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { previewEventDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
+import { requestEventPreview } from "../preview-requests";
 import type { EventDocument } from "@/lib/events/document/types";
 import type { EventEmission } from "@/services/events/event-emit.service";
 import { actionErrorText, GENERIC_ACTION_ERROR } from "@/types/action-result";
@@ -33,7 +33,7 @@ export interface EventPreviewState {
 }
 
 /**
- * Emits `doc` through `previewEventDocumentAction` once it has been stable for `PREVIEW_DEBOUNCE_MS`, only while `enabled`.
+ * Emits `doc` through the HTTP preview endpoint once it has been stable for `PREVIEW_DEBOUNCE_MS`, only while `enabled`.
  * A document that already has an answer is not sent again (reopening the tab is free); `refresh()` forces a new call. An answer
  * that arrives after the document changed, the hook was disabled or a newer call started is dropped. Errors are shown through
  * `actionErrorText`, so raw database / driver text never reaches the page. The caller decides what `enabled` means (the page:
@@ -53,10 +53,10 @@ export function useEventPreview(args: { eventId: string; productId: string; doc:
     async function run() {
       let next: Pick<Settled, "output" | "error">;
       try {
-        const result = await previewEventDocumentAction(eventId, productId, doc);
+        const result = await requestEventPreview(eventId, productId, doc);
         next = result.success ? { output: result.data, error: null } : { output: null, error: actionErrorText(result) };
       } catch {
-        // A rejected server action (network drop, serialization error, unwrapped server throw): never print the cause.
+        // A rejected preview request (network drop, serialization error, unwrapped server throw): never print the cause.
         next = { output: null, error: GENERIC_ACTION_ERROR };
       }
       if (!cancelled) setSettled({ eventId, productId, doc, refreshes, ...next });

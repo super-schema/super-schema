@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 // The tenant has no metadata attribute dictionary (renders unchanged); the stubbed client has no table for it.
 vi.mock("@/services/metadata-emission.service", () => ({ loadMetadataEmission: async () => undefined }));
 vi.mock("@/lib/db", () => ({ prisma: {} }));
-import { createArtifactRenderer, type EmitFiles } from "@/services/events/artifact-renderer";
+import { buildTargetSource, createArtifactRenderer, type EmitFiles } from "@/services/events/artifact-renderer";
 import { Semaphore } from "@/lib/concurrency/semaphore";
 
 const TENANT = "tenant-acme";
@@ -24,7 +24,7 @@ const fieldPins: Record<string, string[]> = { vOrder: ["vAddress"], vCustomer: [
 function fakeDb(extraPins: Record<string, string[]> = {}) {
   const pins = { ...fieldPins, ...extraPins };
   return {
-    entityVersion: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => versions[where.id] ?? null) },
+    entityVersion: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => versions[where.id] ? { stage: "RELEASED", ...versions[where.id] } : null) },
     schemaReference: { findMany: vi.fn(async ({ where }: { where: { fromId: string } }) => (pins[where.fromId] ?? []).map((toId) => ({ toId }))) },
     entity: { findUnique: vi.fn(async () => ({ tenant: { slug: "acme" }, domain: { slug: "payments" }, product: { slug: "checkout" } })) },
   };
@@ -33,6 +33,41 @@ function fakeDb(extraPins: Record<string, string[]> = {}) {
 const order = { kind: "version" as const, entityVersionId: "vOrder", tenantId: TENANT };
 
 describe("artifact renderer", () => {
+  it("keeps inherited Protobuf tags stable across child versions and refuses collisions", () => {
+    const root = { label: "Child", entityId: "child", versionId: "v1", entityName: "Child", rootModel: "Child", source: "", fields: [{ name: "x", fieldNumber: 1 }] };
+    const base = { label: "Base", entityId: "base", versionId: "b1", entityName: "Base", rootModel: "Base", source: "", fields: [{ name: "a", fieldNumber: 2 }] };
+    const program = { root, deps: [base], namespace: "Acme" };
+    const first = { imports: [], usings: [], warnings: [], body: "model Base { a: string; }\nmodel Child extends Base { x: string; }" };
+    expect(buildTargetSource("protobuf", first, program).slice(-200)).toMatch(/@field\(2\)\s+a/);
+    const second = { ...first, body: "model Base { a: string; }\nmodel Child extends Base { x: string; y: string; }" };
+    const later = { ...program, root: { ...root, versionId: "v2", fields: [...root.fields, { name: "y", fieldNumber: 3 }] } };
+    expect(buildTargetSource("protobuf", second, later).slice(-250)).toMatch(/@field\(2\)\s+a/);
+    later.root.fields[1].fieldNumber = 2;
+    expect(() => buildTargetSource("protobuf", second, later)).toThrow(/share field number 2/);
+    expect(() => buildTargetSource("avro", second, later)).not.toThrow();
+    expect(() => buildTargetSource("json-schema", second, later)).not.toThrow();
+  });
+
+  it.each(["vOrder", "vAddress"])("does not cache a mutable root or dependency (%s)", async (mutableId) => {
+    const db = fakeDb();
+    let source = versions[mutableId].resolvedSource;
+    db.entityVersion.findUnique.mockImplementation(async ({ where }) => versions[where.id]
+      ? { stage: where.id === mutableId ? "SNAPSHOT" : "RELEASED", ...versions[where.id], ...(where.id === mutableId ? { resolvedSource: source } : {}) }
+      : null);
+    const emitFiles = vi.fn<EmitFiles>(async (_pkg, text) => ({
+      success: true,
+      data: [{ relativePath: "Order.avsc.json", content: JSON.stringify({ type: "record", name: "Order", fields: [], doc: text.includes("updatedField") ? "updated" : "original" }) }],
+    }));
+    const renderer = createArtifactRenderer({ db: db as never, emitFiles });
+    const first = await renderer.render(order, "avro");
+    expect(first.success).toBe(true);
+    source = source.replace("}", "updatedField: string;\n}");
+    const second = await renderer.render(order, "avro");
+    expect(second.success).toBe(true);
+    expect(second).not.toEqual(first);
+    expect(emitFiles).toHaveBeenCalledTimes(2);
+  });
+
   it("renders Avro from the combined program and picks <Root>.avsc.json", async () => {
     const emitFiles = vi.fn<EmitFiles>(async () => ({
       success: true,

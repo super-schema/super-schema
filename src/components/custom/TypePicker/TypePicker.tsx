@@ -25,6 +25,7 @@ export type PromptedComplexType = "array" | "map" | "reference" | "enum";
 const ALL_PROMPTED_TYPES: ReadonlyArray<PromptedComplexType> = ["array", "map", "reference", "enum"];
 
 interface TypePickerProps {
+  id?: string;
   value: string;
   onChange: (value: string) => void;
   className?: string;
@@ -43,6 +44,8 @@ interface TypePickerProps {
    * listed in the type search (choosing one sets the type to the entity's name).
    */
   entities?: PickableEntity[];
+  /** Tenant-defined scalar, enum and union names, offered alongside the built-in types. */
+  customTypes?: string[];
   /** Disable the picker */
   disabled?: boolean;
 }
@@ -62,6 +65,7 @@ function TypePickerBody({
   excludeComplex,
   entities,
   searchEntities,
+  customTypes,
   onSelect,
   onComplexConfirm,
   onComplexBack,
@@ -76,11 +80,25 @@ function TypePickerBody({
   entities?: PickableEntity[];
   /** The entities the type search lists as types (none when the reference prompt is the way to choose one). */
   searchEntities?: PickableEntity[];
+  customTypes?: string[];
   onSelect: (typeId: string) => void;
   onComplexConfirm: (config: ComplexTypeConfig) => void;
   onComplexBack: () => void;
 }) {
   const categories = getTypesByCategory();
+  const matchingCustomTypes = [...new Set(customTypes ?? [])].filter(
+    (name) => !getTypeInfo(name) && name.toLowerCase().includes(searchQuery.trim().toLowerCase()),
+  );
+  const customTypeItems = matchingCustomTypes.length > 0 ? (
+    <CommandGroup heading="Custom types">
+      {matchingCustomTypes.map((name) => (
+        <CommandItem key={name} value={name} onSelect={() => onSelect(name)} data-checked={value === name ? "true" : undefined}>
+          <span className="font-mono text-xs">{name}</span>
+          <span className="text-xs text-muted-foreground">Tenant-defined type</span>
+        </CommandItem>
+      ))}
+    </CommandGroup>
+  ) : null;
 
   function getIndent(type: DataType): string {
     if (!type.parent) return "";
@@ -110,6 +128,7 @@ function TypePickerBody({
             onSelect={onSelect}
             excludeComplex={excludeComplex}
           />
+          {customTypeItems && <CommandList>{customTypeItems}</CommandList>}
         </div>
       ) : (
         <CommandList>
@@ -160,6 +179,7 @@ function TypePickerBody({
               </CommandGroup>
             );
           })}
+          {customTypeItems}
           {/* Entity types */}
           {searchEntities && searchEntities.length > 0 && (() => {
             const matchingEntities = searchQuery.trim()
@@ -191,6 +211,7 @@ function TypePickerBody({
 }
 
 export function TypePicker({
+  id,
   value,
   onChange,
   className,
@@ -199,6 +220,7 @@ export function TypePicker({
   promptTypes = ALL_PROMPTED_TYPES,
   excludeComplex,
   entities,
+  customTypes,
   disabled,
 }: TypePickerProps) {
   const [open, setOpen] = useState(false);
@@ -211,23 +233,19 @@ export function TypePicker({
 
   const selectedType = getTypeInfo(value);
 
-  // Reset view when popover opens/closes
-  useEffect(() => {
-    if (open) {
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (nextOpen) {
       setView("grid");
       setSearchQuery("");
       setComplexType(null);
     }
-  }, [open]);
+  }
 
-  // Switch to search view when user types
-  useEffect(() => {
-    if (searchQuery.trim()) {
-      setView("search");
-    } else if (view === "search") {
-      setView("grid");
-    }
-  }, [searchQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+  function handleSearchQueryChange(query: string) {
+    setSearchQuery(query);
+    setView(query.trim() ? "search" : "grid");
+  }
 
   function handleSelect(typeId: string) {
     if (prompts(typeId)) {
@@ -264,16 +282,17 @@ export function TypePicker({
   }, [open]);
 
   return (
-    <Popover open={open} onOpenChange={disabled ? undefined : setOpen}>
+    <Popover open={open} onOpenChange={disabled ? undefined : handleOpenChange}>
       <PopoverTrigger
         ref={triggerRef}
+        id={id}
         disabled={disabled}
         data-testid="type-picker-trigger"
         className={`flex items-center gap-1 bg-transparent text-body-small outline-none cursor-pointer hover:text-foreground transition-colors ${
           compact ? "text-muted-foreground" : "h-7 bg-muted rounded px-2 text-muted-foreground w-full justify-between"
         } ${disabled ? "opacity-50 cursor-not-allowed" : ""} ${className ?? ""}`}
       >
-        <span className="truncate">{selectedType?.label ?? value}</span>
+        <span className="truncate">{selectedType?.label ?? (value || "Select type...")}</span>
         <ChevronDown className="w-3 h-3 shrink-0 opacity-50" />
       </PopoverTrigger>
       <PopoverContent
@@ -285,9 +304,10 @@ export function TypePicker({
           complexType={complexType}
           value={value}
           searchQuery={searchQuery}
-          onSearchQueryChange={setSearchQuery}
+          onSearchQueryChange={handleSearchQueryChange}
           excludeComplex={excludeComplex}
           entities={entities}
+          customTypes={customTypes}
           // With the reference prompt, choosing an entity goes through it (its id and qualified name); listing entities as TYPES too would set
           // the field's type to an entity's name.
           searchEntities={prompts("reference") ? undefined : entities}

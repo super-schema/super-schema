@@ -101,14 +101,16 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 
 ## KD-014: the Classifications tab keeps its levels in page state
 
-- status: open
-- symptom: Admin > Classifications lists four levels (PII, SENSITIVE, INTERNAL, PUBLIC) from constants. "Add Classification" adds a level to the
+- status: dead-code
+- current state: `/admin/classifications` redirects to tenant attributes. `ClassificationList` is no longer mounted by the application;
+  its former browser pin was removed with that screen. The service and component below remain disconnected, not a reachable persistence defect.
+- former symptom: Admin > Classifications lists four levels (PII, SENSITIVE, INTERNAL, PUBLIC) from constants. "Add Classification" adds a level to the
   page, and a reload removes it: nothing is saved. The Edit and Delete buttons do nothing. The levels the field editor, the compliance filters
   and the glossary offer are fixed lists in their own components, so a level made here would reach none of them.
 - where: `src/components/custom/admin/ClassificationList.tsx` (`useState(SYSTEM_CLASSIFICATION_DEFAULTS...)`). The persisted side exists and is
   not used by the page: `classification-taxonomy.service.ts`, the stub `useAdminClassifications.ts`, the seeded `classification_levels` rows. (The oRPC router
   that used to sit in front of the service, `src/server/api/routers/admin/classifications.ts`, was mounted by nothing and is gone with the rest of `src/server/api`.)
-- pinned by: `admin.spec.ts`, "a level that was added is still listed after a reload".
+- validation: `admin.spec.ts` verifies that the old classifications bookmark redirects to tenant attributes.
 - cost to fix: server actions over the service for list / create / update / delete, the component reading them, then the pickers reading the
   same list (the larger part: each has the four names in code, and `PolicyTemplateSchema` enumerates them).
 
@@ -258,7 +260,7 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   `tests/unit/access/deny-by-default.test.ts` fails for a server action or a route handler that is neither guarded nor on the allow-list, and both pending lists are empty.
   What is left: the choice lives in a cookie of one browser, so a user with roles in two tenants who opens a deep link into the tenant that is not in view gets a 404 until they switch (the same answer as a
   missing page, on purpose: it says nothing about what exists), and a cookie that names a tenant whose role was since revoked falls back to the first accessible tenant without telling the user.
-  Not a boundary either, and recorded on their own: the glossary is one list for every tenant (KD-043), an event document may name an entity its author may not read (KD-044), and an entity's emission, validation,
+  Not a boundary either, and recorded on their own: the glossary is one list for every tenant (KD-043). Event saves, previews, emissions and publication now validate scoped access to entity pins, library traits and external events. An entity's emission, validation,
   preview, generation and publish used to include the entities it references whether or not the caller could read them (KD-045, fixed): the closure now refuses (`REFERENCE_NOT_READABLE`) when it reaches
   an entity no role of the caller covers, before anything is built from it (`entityReader`, `tests/unit/access/closure-reader-scan.test.ts` keeps every caller honest). The stored result of an earlier
   generation by a wider role carried the files of the entities it referenced (KD-046, fixed): every reader of `metadata.schemaVersions` (the Schemas tab, `getSchemaVersionsAction`, `GET /api/v1/schemas/:id`,
@@ -357,15 +359,6 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   caller may read (`business-concept.service.ts`, `getConcepts` / `getConceptById`). The refusal to delete a linked concept still counts links of every tenant.
 - where: `prisma/schema.prisma` (`BusinessConcept`), `src/services/business-concept.service.ts`, `src/app/(dashboard)/glossary/actions.ts`.
 - cost to fix: a `tenantId` on `BusinessConcept` (unique per tenant) and a migration that gives the existing concepts to every tenant that links one; or restricting writes to a global administrator.
-
-## KD-044: an event document can name an entity or an event its author may not read
-
-- status: no-test (the readers are closed, the saved reference is not)
-- symptom: the pin picker, the pinned schema and the external-reference loaders answer only for entities and events the caller's roles cover (access-control Task 5b). Saving an event document whose message pins an
-  entity, or whose reference names an event, of a domain or product outside the author's roles is not refused: the references are validated against the TENANT, not against the author's scope, and publishing resolves
-  the referenced version's stored content into the event's own emission. A domain-scoped author who learns an id from outside their scope can therefore read what the pin resolves to through the event's preview.
-- where: `src/services/events/event.service.ts` (`updateEventDocument`, the reference and pin validation), `src/services/events/event-publish.service.ts`.
-- cost to fix: pass the caller's assignments into the document validation and refuse a pin or reference that no role of theirs covers (`entity.read` / `event.read`), the way the loaders do.
 
 ## KD-047: no in-app screen stores the settings of an identity provider (not built)
 

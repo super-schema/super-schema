@@ -4,7 +4,7 @@
 // The code of the CURRENT, possibly unsaved draft for the Code panel: an instant build in the browser (placeholder schemas) that
 // follows every edit synchronously, and the server's full render (real payload schemas) swapped in once it arrives for the same document.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { previewEventDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
+import { requestEventPreview as previewEventDocumentAction } from "../preview-requests";
 import type { Diagnostic, JsonObject } from "@/lib/event-specs/types";
 import { buildInstantAsyncApi, type InstantAsyncApi, type InstantLibraryTrait } from "@/lib/events/document/instant-asyncapi";
 import type { EventDocument } from "@/lib/events/document/types";

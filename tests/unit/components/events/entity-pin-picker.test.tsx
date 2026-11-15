@@ -29,12 +29,38 @@ describe("EntityPinPicker", () => {
     const { rerender } = render(
       <EntityPinPicker id="payload" label="Payload" entities={entities} value={{ entityId: "e1", entityVersionId: "v20" }} onChange={onChange} loadVersions={loadVersions} />
     );
-    await waitFor(() => expect(screen.getByRole("option", { name: "v2.0" })).toBeDefined());
+    await waitFor(() => expect(screen.getByRole("option", { name: "v2.0 (pinned)" })).toBeDefined());
     expect(screen.getByTestId("payload-newer").textContent).toBe("Newer version available (v2.1)");
     fireEvent.change(screen.getByLabelText("Payload version"), { target: { value: "" } });
     expect(onChange).toHaveBeenCalledWith({ entityId: "e1", entityVersionId: null });
     rerender(<EntityPinPicker id="payload" label="Payload" entities={entities} value={{ entityId: "e1", entityVersionId: null }} onChange={onChange} loadVersions={loadVersions} />);
     expect(screen.getByText(/publishing is blocked/)).toBeDefined();
+  });
+
+  it("shows the latest version number while published versions are loading", () => {
+    const loading = () => new Promise<never>(() => {});
+    render(<EntityPinPicker id="payload" label="Payload" entities={entities} value={{ entityId: "e1", entityVersionId: "v21" }} onChange={vi.fn()} loadVersions={loading} />);
+    expect(screen.getByRole("option", { name: "v2.1 (pinned)" })).toHaveProperty("selected", true);
+    expect(screen.queryByRole("option", { name: "pinned version" })).toBeNull();
+  });
+
+  it("loads an older pin's own number without substituting the latest version", async () => {
+    render(<EntityPinPicker id="payload" label="Payload" entities={entities} value={{ entityId: "e1", entityVersionId: "v20" }} onChange={vi.fn()} loadVersions={loadVersions} />);
+    expect(screen.getByRole("option", { name: "Loading version number… (pinned)" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("option", { name: "v2.1 (pinned)" })).toBeNull();
+    expect(await screen.findByRole("option", { name: "v2.0 (pinned)" })).toHaveProperty("selected", true);
+    expect(screen.getByRole("option", { name: "v2.1" })).toBeDefined();
+  });
+
+  it("keeps an unknown pin when loading fails without inventing a version number", async () => {
+    const failing = async () => { throw new Error("Offline"); };
+    const onChange = vi.fn();
+    render(<EntityPinPicker id="payload" label="Payload" entities={entities} value={{ entityId: "e1", entityVersionId: "v20" }} onChange={onChange} loadVersions={failing} />);
+    const unavailable = await screen.findByRole("option", { name: "Version number unavailable (pinned)" });
+    expect(unavailable).toHaveProperty("selected", true);
+    expect(unavailable).toHaveProperty("disabled", true);
+    expect(screen.getByLabelText("Payload version")).toHaveProperty("value", "v20");
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("allows clearing an optional pin", () => {
@@ -54,8 +80,8 @@ describe("EntityPinPicker", () => {
       <EntityPinPicker id="payload" label="Payload" entities={entities} value={{ entityId: "e1", entityVersionId: "v21" }} onChange={onChange} loadVersions={failing} />
     );
     expect((await screen.findByRole("alert")).textContent).toMatch(/Could not load published versions: Could not load versions/);
-    // The current pin stays selectable as an opaque "pinned version" instead of vanishing.
-    expect(screen.getByRole("option", { name: "pinned version" })).toBeDefined();
+    // The latest pin keeps its known version number even when the loader fails.
+    expect(screen.getByRole("option", { name: "v2.1 (pinned)" })).toBeDefined();
     rerender(
       <EntityPinPicker id="payload" label="Payload" entities={entities} value={{ entityId: "e2", entityVersionId: null }} onChange={onChange} loadVersions={failing} />
     );

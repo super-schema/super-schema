@@ -20,7 +20,7 @@ const TENANT = "tenant-acme";
 const db = {
   entityVersion: {
     findUnique: vi.fn(async () => ({
-      id: "vOrder", entityId: "eOrder", major: 1, minor: 0, entity: { name: "Order" },
+      id: "vOrder", entityId: "eOrder", major: 1, minor: 0, stage: "RELEASED", entity: { name: "Order" },
       resolvedSource: "model Order {\n  id: string;\n}\n", fieldSnapshot: [],
     })),
   },

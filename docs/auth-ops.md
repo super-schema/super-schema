@@ -467,7 +467,7 @@ These are the open items. Each is either a decision recorded in `docs/testing/kn
 - **Page files are not in the deny-by-default scan.** The scan covers server actions and route handlers. KD-034 records how the pages ask the policy.
 - **The REST API's limits are per process** (KD-028): several instances each allow their own 100 a minute per authenticated caller, 16 compiler runs in flight per caller, and 20 a minute of requests that do not authenticate (per address with `AUTH_TRUST_PROXY=1`; one shared allowance without it). The sign-in throttle is in the database and holds across instances.
 - **Password guesses spread over many e-mail addresses are only slowed by this app without `AUTH_TRUST_PROXY=1`, never refused** (see Throttling: a per-process wait that grows with the failures, which also slows correct sign-ins while it runs). The start-up warning says so; a real limit belongs at the proxy.
-- **The glossary is one list for every tenant** (KD-043). **An event document can name an entity its author may not read** (KD-044).
+- **The glossary is one list for every tenant** (KD-043). Event saves, previews, saved-draft emission and publication now check scoped read access to pins, library traits and external event references; unreadable references are answered like missing ones.
 - **A steward can publish a stored draft whose files they cannot see.** This is accepted; see [`auth.md`](auth.md), "Access notes".
 - **Closed registration has no browser test.** Its server behaviour is unit and PGlite tested (`docs/testing/access-control.md`).
 - **The rollback is proved on PGlite only** (see above).
@@ -482,7 +482,7 @@ These are the open items. Each is either a decision recorded in `docs/testing/kn
 - `docs/database.md`: the migrations, the rollback procedure, and the production notes.
 - `docs/testing/access-control.md`: what the browser suite proves about who may see and do what.
 - `docs/testing/e2e.md`, "Access control": how the browser suite sets the access-control scenarios up.
-- `docs/testing/known-defects.md`: KD-028 (the REST rate limit), KD-034 (the tenant in view), KD-038 (the registration and bootstrap risks above), KD-043 and KD-044 (glossary and event documents), KD-047 (no in-app screen for provider secrets).
+- `docs/testing/known-defects.md`: KD-028 (the REST rate limit), KD-034 (the tenant in view), KD-038 (the registration and bootstrap risks above), KD-043 (the shared glossary), KD-047 (no in-app screen for provider secrets).
 - `docs/testing/e2e.md`: the browser suite, which runs with its own throwaway secret and database and never uses a `.env`.
 - `src/lib/auth-secret.ts`, `src/instrumentation.ts`, `src/lib/session-cookie.ts`, `src/middleware.ts`, and for sign-in `src/lib/auth.ts` with `src/lib/auth/` (`credentials.ts`,
   `password-policy.ts`, `password-hash.ts`, `throttle.ts`, `tokens.ts`, `registration-mode.ts`, `trust-host.ts`, and for identity providers `providers.ts`, `provider-signin.ts`,

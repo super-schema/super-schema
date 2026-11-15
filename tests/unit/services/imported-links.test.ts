@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("@/services/metadata-rederive.service", async () => (await import("../../helpers/no-derivation")).noDerivationModule);
+import { MARK_DRAFT_CHANGED_SQL } from "@/lib/entity-versioning/draft-state";
 import { cascadeEnumToFields, cascadeScalarToFields, linkFieldToEnum, linkFields, linkImportedEntity, pickByName, relinkDanglingFields, relinkDanglingFieldsToEnum, relinkDanglingFieldsToScalar } from "@/services/imported-links";
 import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 
@@ -189,11 +190,13 @@ describe("shared scalars", () => {
         update,
       },
       entity: { updateMany },
+      $executeRawUnsafe: vi.fn(),
     };
     await cascadeScalarToFields(db as never, { domainId: "d1", scalar: { name: "CountryCode", baseType: "string", pattern: "^[A-Z]{3}$", constraints: { maxLength: 3 } } });
     expect(update).toHaveBeenCalledTimes(1); // f2 already matches
     expect(update.mock.calls[0][0]).toMatchObject({ where: { id: "f1" } });
-    expect(updateMany).toHaveBeenCalledWith({ where: { id: { in: ["e1"] } }, data: { hasUnpublishedChanges: true } });
+    expect(db.$executeRawUnsafe).toHaveBeenCalledWith(MARK_DRAFT_CHANGED_SQL, "e1");
+    expect(db.$executeRawUnsafe).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -281,6 +284,15 @@ describe("a dangling reference to an enum file", () => {
 });
 
 describe("cascadeEnumToFields", () => {
+  it.each(["enum", "scalar"] as const)("restricts a product-scoped %s cascade to its own product", async (kind) => {
+    const db = { field: { findMany: vi.fn().mockResolvedValue([]) } };
+    if (kind === "enum") await cascadeEnumToFields(db as never, { domainId: "d1", productId: "p-a", enum: { name: "Status", values: ["A"] } });
+    else await cascadeScalarToFields(db as never, { domainId: "d1", productId: "p-a", scalar: { name: "Status", baseType: "string" } });
+    expect(db.field.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ entity: { domainId: "d1", productId: "p-a" } }),
+    }));
+  });
+
   it("re-derives symbols and descriptions on every field that records the enum, and flags the entities", async () => {
     const update = vi.fn().mockResolvedValue({});
     const updateMany = vi.fn().mockResolvedValue({});
@@ -294,12 +306,13 @@ describe("cascadeEnumToFields", () => {
         update,
       },
       entity: { updateMany },
+      $executeRawUnsafe: vi.fn(),
     };
     const n = await cascadeEnumToFields(db as never, { domainId: "d1", enum: { name: "E", values: ["A", "B"], valueDescriptions: { A: "a", Z: "not a symbol" } } });
     expect(n).toBe(2); // f3 already matches
     expect(update.mock.calls[0][0]).toMatchObject({ where: { id: "f1" }, data: { aliases: ["A", "B"], decorators: { enumValueDescriptions: { A: "a" }, typespec: { validation: { pattern: "A|B" } } } } });
     expect(update.mock.calls[1][0]).toMatchObject({ where: { id: "f2" }, data: { decorators: { enumValues: ["A", "B"], enumValueDescriptions: { A: "a" } } } });
-    expect(updateMany).toHaveBeenCalledWith({ where: { id: { in: ["e1", "e2"] } }, data: { hasUnpublishedChanges: true } });
+    expect(db.$executeRawUnsafe.mock.calls).toEqual([[MARK_DRAFT_CHANGED_SQL, "e1"], [MARK_DRAFT_CHANGED_SQL, "e2"]]);
   });
 
   it("clearing every description removes them from the fields", async () => {
@@ -307,6 +320,7 @@ describe("cascadeEnumToFields", () => {
     const db = {
       field: { findMany: vi.fn().mockResolvedValue([{ id: "f1", entityId: "e1", type: "array", aliases: [], decorators: { enumName: "E", enumValues: ["A"], enumValueDescriptions: { A: "x" } } }]), update },
       entity: { updateMany: vi.fn() },
+      $executeRawUnsafe: vi.fn(),
     };
     await cascadeEnumToFields(db as never, { domainId: "d1", enum: { name: "E", values: ["A"], valueDescriptions: null } });
     expect(update.mock.calls[0][0].data.decorators).not.toHaveProperty("enumValueDescriptions");

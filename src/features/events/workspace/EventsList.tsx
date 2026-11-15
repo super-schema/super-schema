@@ -94,9 +94,9 @@ export function EventsList({ productId, domainSlug, productSlug, items, viewMode
             </Button>
           </div>
           {viewMode === "tile" ? (
-            <ul aria-label="Events" className="grid grid-cols-1 gap-space-4 md:grid-cols-2 xl:grid-cols-3">
+            <ul aria-label="Events" className="grid grid-cols-1 gap-space-4 md:grid-cols-2 2xl:grid-cols-3">
               {items.map((item) => (
-                <li key={item.id} data-testid={`event-row-${item.id}`} className="surface-glass flex flex-col gap-space-3 rounded-xl border border-border p-space-4 transition-colors hover:bg-accent/30">
+                <li key={item.id} data-testid={`event-row-${item.id}`} className="surface-glass flex min-w-0 flex-col gap-space-3 rounded-xl border border-border p-space-4 transition-colors hover:bg-accent/30">
                   {/* The full name first (wrapping, never cut off), the status badges on their own line under it. */}
                   <div className="flex min-w-0 flex-col gap-space-2">
                     <Link href={item.href} className="min-w-0 break-words text-heading-2 font-medium text-foreground hover:text-primary hover:underline">{item.name}</Link>

@@ -17,7 +17,7 @@ import { getSharedArtifactRenderer, type ArtifactRenderer } from "./artifact-ren
 import { DRAFT_VERSION, eventRenderShare, loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
 import { loadInternalKeys } from "@/services/metadata-emission.service";
 import { deepStripInternal } from "@/lib/metadata-attributes/deep-strip";
-import { validatePinRefs } from "./pin-refs";
+import { validateDocumentRefs } from "./event.service";
 import { assertOwnedEvent, guardRead, requireId } from "./service-guards";
 
 /**
@@ -102,7 +102,9 @@ export async function emitEventDraft(eventId: string, productId: string, ctx: Se
     if (!owned.success) return owned;
     const snapshot = await loadEventSnapshot(ctx.prisma, eventId);
     if (!snapshot.success) return snapshot;
-    return emitSnapshot(ctx, snapshot.data, deps);
+    const problems = await validateDocumentRefs(ctx, snapshot.data.event, eventId, snapshot.data.document);
+    if (problems.length > 0) return err({ code: "VALIDATION_ERROR", message: "The event references unknown or invalid items", details: { problems } });
+    return emitSnapshot(ctx, snapshot.data, deps, entityReader(ctx.assignments));
   });
 }
 
@@ -125,10 +127,9 @@ export async function emitEventDocumentPreview(
     if (!snapshot.success) return snapshot;
     // The pins are the client's words. One naming an entity outside the event's tenant, or one the caller's roles do not cover, is refused as
     // an unknown id is (the save's message, no render). The entities a pinned schema reaches are read by the caller's roles too (the renderer).
-    // Not read-checked here (KD-044): an external event reference's resolved spec, and a library trait's spec, which the save's domain rule
-    // (`validateDocumentRefs`) does not apply to the preview either.
+    // The same validation also guards external event versions and library traits before their contents are emitted.
     const canRead = entityReader(ctx.assignments);
-    const problems = await validatePinRefs(ctx.prisma, snapshot.data.event.tenantId, parsed.data, canRead);
+    const problems = await validateDocumentRefs(ctx, snapshot.data.event, eventId, parsed.data);
     if (problems.length > 0) {
       // The builder's preview shows the message alone, so the first problems are named in it (the pointers stay in `details`).
       const named = problems.slice(0, 3).map((p) => p.message).join("; ");

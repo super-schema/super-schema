@@ -34,6 +34,8 @@ import { getSharedArtifactRenderer } from "./artifact-renderer";
 import { auditedWrite } from "./audited";
 import { emitResolved, withInternalKeys, type EmitDeps } from "./event-emit.service";
 import { gatherPublishFacts, parseFrozenTraits, type PublishFacts } from "./event-publish-facts";
+import { entityReader } from "@/lib/access/entity-reader";
+import { validateDocumentRefs } from "./event.service";
 import { eventRenderShare, loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
 import { isConcurrentWriteFailure } from "./publish-concurrency";
 import { replaceReferences } from "./schema-references";
@@ -83,6 +85,8 @@ const diagnosticBlocker = (d: Diagnostic): EventPublishBlocker => ({
 async function prepare(db: Db, eventId: string, requested: BumpKind | undefined, ctx: ServiceContext, deps: EmitDeps): Promise<Result<Prepared>> {
   const snapshot = await loadEventSnapshot(db, eventId);
   if (!snapshot.success) return snapshot;
+  const problems = await validateDocumentRefs({ ...ctx, prisma: db }, snapshot.data.event, eventId, snapshot.data.document);
+  if (problems.length > 0) return err({ code: "VALIDATION_ERROR", message: "The event references unknown or invalid items", details: { problems } });
   const facts = await gatherPublishFacts(db, snapshot.data);
   if (!facts.success) return facts;
 
@@ -103,7 +107,7 @@ async function prepare(db: Db, eventId: string, requested: BumpKind | undefined,
   let output: EmitOutput | null = null;
   let diagnostics: ReturnType<typeof normalizeDiagnostics>;
   try {
-    draft = await resolveEventSnapshot(snapshot.data, deps.renderer ?? getSharedArtifactRenderer(ctx.prisma), label);
+    draft = await resolveEventSnapshot(snapshot.data, deps.renderer ?? getSharedArtifactRenderer(ctx.prisma), label, entityReader(ctx.assignments));
     // A busy compiler is a retry, not a blocker of the publish: the plan would be built from missing renders.
     if (draft.busy) return err(compilerBusyError());
     diagnostics = normalizeDiagnostics(draft.diagnostics);

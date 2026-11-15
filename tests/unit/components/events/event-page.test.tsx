@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   refresh: vi.fn(), push: vi.fn(), invalidate: vi.fn(), toastSuccess: vi.fn(),
   update: vi.fn(), rename: vi.fn(), remove: vi.fn(), preview: vi.fn(),
 }));
+vi.mock("@/features/events/preview-requests", () => ({ requestEventPreview: h.preview }));
 vi.mock("next/navigation", () => {
   const router = { refresh: h.refresh, push: h.push };
   return { useRouter: () => router };

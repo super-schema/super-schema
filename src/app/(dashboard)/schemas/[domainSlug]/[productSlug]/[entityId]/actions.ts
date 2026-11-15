@@ -352,8 +352,9 @@ export async function updateFieldAction(
     // The field's place (its entity's tenant, domain and product) is judged BEFORE anything of it is read: the active tenant AND a covering role.
     const access = await guardSubject("entity.write", { kind: "field", id: fieldId }, { label: "Field" });
     if (!access.allowed) return { error: access.refusal.error, code: access.refusal.code };
-    const existing = await prisma.field.findUnique({ where: { id: fieldId } });
+    const existing = await prisma.field.findUnique({ where: { id: fieldId }, include: { entity: { select: { status: true } } } });
     if (!existing) return { ...notFoundFailure("Field") };
+    if (existing.entity?.status === "RETIRED") return { error: "Retired entities are read-only.", code: "FORBIDDEN" as const };
     entityOfField = existing.entityId;
 
     // A RENAME to a name the AsyncAPI parser cannot read is refused. A name that does not change is not looked at: the field studio sends
@@ -454,7 +455,7 @@ export async function updateFieldAction(
         // The field write and the draft + stale-source mark are ONE atomic batch (see addFieldAction).
         const [updated] = await prisma.$transaction([
           prisma.field.update({
-            where: { id: fieldId },
+            where: { id: fieldId, entity: { status: { not: "RETIRED" } } },
             data: {
               ...(rest as Prisma.FieldUpdateInput),
               ...(nextDecorators !== undefined && { decorators: nextDecorators as Prisma.InputJsonValue }),

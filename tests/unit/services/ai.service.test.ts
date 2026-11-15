@@ -496,6 +496,24 @@ describe("AI Service", () => {
       }
     });
 
+    it("generates entities with models that reject the temperature parameter", async () => {
+      h.findUnique.mockResolvedValue({ id: "default", provider: "custom", baseUrl: "https://gateway.test/chat", model: "model-without-sampling", credentials: null });
+      const entity = { entityName: "Customer", fields: [{ name: "id", type: "string", confidence: 0.9 }] };
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        if (Object.hasOwn(body, "temperature")) {
+          return new Response(JSON.stringify({ error: { type: "invalid_request_error", message: "`temperature` is deprecated for this model." } }), { status: 400 });
+        }
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(entity) } }] }));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await generateEntityFromDescription("A customer entity", { domainName: "test", existingEntityNames: [] });
+
+      expect(result).toMatchObject({ success: true, data: { entityName: "Customer" } });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it("calls the provider the stored override names, with the environment's key", async () => {
       h.findUnique.mockResolvedValue({ id: "default", provider: "vllm", baseUrl: "http://gpu:8000/v1", model: "qwen", updatedBy: null, updatedAt: new Date() });
       process.env.AI_API_KEY = "sk-wire";
@@ -518,12 +536,12 @@ describe("custom AI client", () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: "suggestion" } }] })));
     vi.stubGlobal("fetch", fetchMock);
     const client = createAiClient({ provider: "custom", baseUrl: "https://gateway.test/chat", model: "model-a", apiKey: "key", headers: { "api-key": "customer-key" }, source: "db" });
-    expect(await client?.complete("Suggest a field", { maxTokens: 100 })).toEqual({ success: true, data: "suggestion" });
+    expect(await client?.complete("Suggest a field", { maxTokens: 100, temperature: 0 })).toEqual({ success: true, data: "suggestion" });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://gateway.test/chat");
     expect(init.redirect).toBe("manual");
     expect(new Headers(init.headers).get("api-key")).toBe("customer-key");
-    expect(JSON.parse(init.body as string)).toMatchObject({ model: "model-a", messages: [{ role: "user", content: "Suggest a field" }], max_tokens: 100 });
+    expect(JSON.parse(init.body as string)).toMatchObject({ model: "model-a", messages: [{ role: "user", content: "Suggest a field" }], max_tokens: 100, temperature: 0 });
   });
   it("reports malformed responses and HTTP failures without echoing provider secrets", async () => {
     for (const response of [new Response(JSON.stringify({ private: "provider-secret" })), new Response("provider-secret", { status: 401 }), new Response(null, { status: 302 })]) {
