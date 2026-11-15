@@ -96,6 +96,7 @@ const version = (status: string) => ({ version: 1, status, output: "DDL", genera
 /** An entity row as every entity lookup of these actions can read it (a superset of each action's `select`). */
 const entityRow = (tenantId: string, versionStatus = "draft") => ({
   id: "ent-1", tenantId, name: "Order", description: "d", status: "DRAFT", version: 1, domainId: null, productId: null, domain: null,
+  tenant: { deploymentEnvironments: ["production"] },
   typespecSource: "model Order {}", metadata: { schemaVersions: { bigquery: [version(versionStatus)] } },
 });
 const fieldRow = (tenantId: string) => ({ id: "fld-1", entityId: "ent-1", name: "email", slug: "email", type: "string", entity: { tenantId } });
