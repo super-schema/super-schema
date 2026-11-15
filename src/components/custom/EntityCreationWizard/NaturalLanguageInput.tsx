@@ -45,6 +45,16 @@ export function NaturalLanguageInput({
         </p>
       </div>
 
+      <details className="rounded-lg border border-border bg-muted/30 p-space-3" data-testid="nl-modeling-context">
+        <summary className="cursor-pointer text-body-small font-medium text-foreground">How Super Schema models your request</summary>
+        <dl className="mt-space-3 flex flex-col gap-space-2 text-body-small">
+          <div><dt className="font-medium text-foreground">Entities</dt><dd className="text-muted-foreground">Reusable business data with typed fields, descriptions and governance.</dd></div>
+          <div><dt className="font-medium text-foreground">Events</dt><dd className="text-muted-foreground">AsyncAPI specifications with CloudEvents message traits and entity-backed payloads.</dd></div>
+          <div><dt className="font-medium text-foreground">Shared entities and data types</dt><dd className="text-muted-foreground">Common structures reused across your schemas.</dd></div>
+        </dl>
+        <p className="mt-space-3 text-caption text-muted-foreground">This step suggests one entity for review. To build an event, create or select its payload entity, then use New Event to define the event specification.</p>
+      </details>
+
       {!isAiConfigured && (
         <div data-testid="nl-ai-not-configured" role="status" className="flex items-start gap-space-3 p-space-4 rounded-lg border border-amber-500/30 bg-amber-500/5">
           <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
@@ -53,7 +63,7 @@ export function NaturalLanguageInput({
               AI not configured
             </p>
             <p className="text-caption text-muted-foreground mt-1">
-              Natural language entity generation requires a local LLM backend (Ollama or vLLM).
+              Natural language entity generation requires a configured AI provider.
               {canManageAi ? (
                 <>
                   {" "}Set a provider in{" "}

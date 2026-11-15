@@ -33,22 +33,18 @@ export function ConceptCard({ concept, isSelected, onClick }: ConceptCardProps) 
       data-testid="concept-card"
       data-name={concept.name}
       onClick={onClick}
-      className={`rounded-lg border border-border p-4 cursor-pointer transition-all ${
+      className={`min-w-0 rounded-lg border border-border bg-card text-card-foreground p-4 cursor-pointer transition-all ${
         isSelected
           ? "ring-1 ring-primary border-primary/50"
           : "hover:ring-1 hover:ring-border hover:border-border/80"
       }`}
-      style={{
-        background: "rgba(28, 28, 38, 0.8)",
-        backdropFilter: "blur(12px)",
-      }}
     >
       {/* Header */}
-      <div className="flex items-start justify-between mb-2">
-        <h3 className="text-body font-semibold text-foreground">
+      <div className="mb-2 flex min-w-0 flex-wrap items-start justify-between gap-2">
+        <h3 className="min-w-0 break-words text-body font-semibold text-foreground">
           {concept.name}
         </h3>
-        <div className="flex items-center gap-1.5">
+        <div className="flex max-w-full flex-wrap items-center gap-1.5">
           {concept.canonicalType && (
             <span className="inline-flex items-center px-2 py-0.5 rounded text-mono-small font-medium bg-purple-500/20 text-purple-400">
               {concept.canonicalType}
@@ -77,7 +73,7 @@ export function ConceptCard({ concept, isSelected, onClick }: ConceptCardProps) 
           {concept.synonyms.map((syn) => (
             <span
               key={syn}
-              className="inline-flex items-center px-1.5 py-0.5 rounded text-mono-small bg-muted text-muted-foreground"
+              className="inline-flex max-w-full items-center break-all px-1.5 py-0.5 rounded text-mono-small bg-muted text-muted-foreground"
             >
               {syn}
             </span>
@@ -86,8 +82,8 @@ export function ConceptCard({ concept, isSelected, onClick }: ConceptCardProps) 
       )}
 
       {/* Footer: tags + usage */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
           {concept.tags.slice(0, 3).map((tag) => (
             <span
               key={tag}
@@ -102,7 +98,7 @@ export function ConceptCard({ concept, isSelected, onClick }: ConceptCardProps) 
             </span>
           )}
         </div>
-        <span className="text-mono-small text-muted-foreground">
+        <span className="shrink-0 whitespace-nowrap text-mono-small text-muted-foreground">
           {fieldCount} field{fieldCount !== 1 ? "s" : ""} linked
         </span>
       </div>

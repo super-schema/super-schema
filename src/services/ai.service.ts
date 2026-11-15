@@ -15,6 +15,7 @@ import {
   type FieldSuggestion,
 } from "@/types/schemas/ai";
 import { resolveAiConfig, type ResolvedAiConfig } from "@/services/ai-config.service";
+import { SUPER_SCHEMA_MODELING_CONTEXT } from "@/lib/ai/super-schema-context";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -228,6 +229,11 @@ export function buildEntityPrompt(
 ): string {
   return `You are a data modeling assistant. Generate entity schemas in JSON format.
 
+${SUPER_SCHEMA_MODELING_CONTEXT}
+
+## Current operation
+Suggest one business entity for human review. This operation does not create events or shared dependencies. If the description mentions an event, model only its business payload here; do not return an AsyncAPI document or add a CloudEvents envelope to the entity.
+
 ## Type System
 Available field types: ${SUPPORTED_TYPES.join(", ")}
 
@@ -266,6 +272,11 @@ export function buildFieldSuggestionsPrompt(
   description?: string
 ): string {
   return `You are a data modeling assistant. Suggest fields for an entity.
+
+${SUPER_SCHEMA_MODELING_CONTEXT}
+
+## Current operation
+Suggest business fields for the named entity only. This operation does not create related entities, custom types or an event specification.
 
 ## Type System
 Available field types: ${SUPPORTED_TYPES.join(", ")}
