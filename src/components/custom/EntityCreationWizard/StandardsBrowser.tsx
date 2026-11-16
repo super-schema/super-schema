@@ -5,6 +5,8 @@ import { pluralize } from "@/lib/pluralize";
 import { Search, ArrowLeft } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   getAllStandards,
   searchStandards,
@@ -53,13 +55,15 @@ export function StandardsBrowser({ onSelect, onBack }: StandardsBrowserProps) {
     <div className="space-y-space-4">
       {/* Back + Search */}
       <div className="flex items-center gap-space-3">
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onBack}
-          className="flex items-center gap-1 text-body-small text-muted-foreground hover:text-foreground transition-colors"
+          className="text-muted-foreground"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="size-4" />
           Back
-        </button>
+        </Button>
         <div className="flex-1 flex items-center gap-space-2 bg-muted rounded-lg px-space-3 py-1.5">
           <Search className="w-4 h-4 text-muted-foreground shrink-0" />
           <input
@@ -75,21 +79,18 @@ export function StandardsBrowser({ onSelect, onBack }: StandardsBrowserProps) {
       </div>
 
       {/* Category tabs */}
-      <div className="flex items-center gap-space-1 border-b border-border">
-        {SOURCE_TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-space-3 py-space-2 text-body-small transition-colors border-b-2 ${
-              activeTab === tab.id
-                ? "border-primary text-primary font-medium"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => setActiveTab(value as StandardSource | "all")}
+      >
+        <TabsList variant="line" className="w-full justify-start border-b border-border">
+          {SOURCE_TABS.map((tab) => (
+            <TabsTrigger key={tab.id} value={tab.id} className="flex-none px-space-3">
+              {tab.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       {/* Template cards */}
       {templates.length === 0 ? (
@@ -101,11 +102,12 @@ export function StandardsBrowser({ onSelect, onBack }: StandardsBrowserProps) {
           {templates.map((template) => (
             <button
               key={`${template.source}-${template.entityName}`}
+              type="button"
               data-testid="standards-template"
               data-name={template.entityName}
               data-source={template.source}
               onClick={() => onSelect(template)}
-              className="surface-glass rounded-lg border border-border/50 p-space-4 text-left hover:border-primary/40 hover:bg-accent/20 transition-all cursor-pointer"
+              className="surface-glass rounded-lg border border-border/50 p-space-4 text-left hover:border-primary/40 hover:bg-accent/20 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             >
               <div className="flex items-start justify-between mb-space-2">
                 <h4 className="text-body text-foreground font-medium">

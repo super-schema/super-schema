@@ -154,7 +154,7 @@ describe("SchemasTab UI", () => {
     render(<SchemasTab {...baseProps} />);
 
     expect(await screen.findByLabelText("BigQuery v4 — Draft")).toBeDefined();
-    expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-version"))).toEqual(["4", "1"]);
+    expect(screen.getAllByTestId("schema-version-button").map((tab) => tab.getAttribute("data-version"))).toEqual(["4", "1"]);
     fireEvent.click(screen.getByRole("tab", { name: "v1 — Draft" }));
     expect(screen.getByLabelText("BigQuery v4 — Draft")).toBeDefined();
   });
@@ -175,7 +175,7 @@ describe("SchemasTab UI", () => {
 
     const latest = await screen.findByRole("tab", { name: "v3 — Published" });
     expect(latest.getAttribute("aria-selected")).toBe("true");
-    expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-version"))).toEqual(["3", "2", "1"]);
+    expect(screen.getAllByTestId("schema-version-button").map((tab) => tab.getAttribute("data-version"))).toEqual(["3", "2", "1"]);
     expect(screen.queryByTestId("schema-publish")).toBeNull();
     expect(screen.getByLabelText("BigQuery v3 — Published")).toBeDefined();
   });

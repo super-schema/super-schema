@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Grid3x3, Users } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { RoleMatrix } from "@/components/custom/admin/RoleMatrix";
 import { UserDataTable } from "@/components/custom/admin/UserDataTable";
 import { cn } from "@/lib/utils";
@@ -45,20 +46,19 @@ export default function AdminUsersPage() {
         </div>
         <div role="group" aria-label="View" className="flex gap-space-1 rounded-lg bg-muted p-1">
           {VIEWS.map(({ id, label, icon: Icon }) => (
-            <button
+            <Button
               key={id}
               type="button"
+              variant={view === id ? "outline" : "ghost"}
+              size="sm"
               aria-pressed={view === id}
               data-testid={`admin-view-${id}`}
               onClick={() => setView(id)}
-              className={cn(
-                "flex items-center gap-space-2 rounded-md px-space-3 py-1 text-body-small transition-colors outline-none focus-visible:ring-1 focus-visible:ring-primary",
-                view === id ? "bg-background text-foreground font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"
-              )}
+              className={cn(view !== id && "text-muted-foreground")}
             >
               <Icon className="w-4 h-4" aria-hidden="true" />
               {label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>

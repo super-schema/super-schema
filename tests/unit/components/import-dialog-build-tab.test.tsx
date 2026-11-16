@@ -74,7 +74,7 @@ describe("ImportDialog — Build Visually tab", () => {
         domains={[{ id: "domain-1", name: "Domain" }]}
       />
     );
-    expect(screen.getByRole("button", { name: /Build Visually/ })).toBeDefined();
+    expect(screen.getByRole("tab", { name: /Build Visually/ })).toBeDefined();
   });
 
   it("renders the visual schema builder when the tab is clicked", () => {
@@ -86,7 +86,7 @@ describe("ImportDialog — Build Visually tab", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Build Visually/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Build Visually/ }));
 
     expect(screen.getByTestId("visual-schema-builder")).toBeDefined();
     expect(screen.getByTestId("jsonschema-visual-editor")).toBeDefined();

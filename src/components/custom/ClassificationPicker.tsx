@@ -55,8 +55,9 @@ function ClassificationOptions({
       {CLASSIFICATIONS.map((cls) => (
         <button
           key={cls.value}
+          type="button"
           onClick={() => onSelect(cls.value)}
-          className={`flex items-center gap-2 px-2 py-1.5 rounded text-caption hover:bg-accent/50 transition-colors text-left w-full ${
+          className={`flex items-center gap-2 px-2 py-1.5 rounded text-caption hover:bg-accent/50 transition-colors text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
             current === cls.value ? "bg-accent/30" : ""
           }`}
         >

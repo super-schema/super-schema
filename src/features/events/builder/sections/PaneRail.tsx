@@ -7,10 +7,10 @@
 // and the ones that hold a problem, from the start) and then stays mounted, hidden when another part shows, so what it holds (focus order, a half-typed field's
 // validation, an editor's state) is not rebuilt on every switch. Which part shows lives in `usePaneState`, kept by the SECTION so the
 // choice survives switching from one item to another.
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { nextTabIndex } from "./tab-nav";
 
 import { NativeSelect } from "@/components/ui/native-select";
 export interface PaneState {
@@ -59,8 +59,6 @@ export function PaneRail({ idPrefix, panes, active: requestedActive, onSelect, k
   useEffect(() => {
     if (active !== undefined && active !== requestedActive) onSelect(active);
   }, [active, requestedActive, onSelect]);
-  const uid = useId();
-  const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [added, setAdded] = useState<ReadonlySet<string>>(new Set());
   const visible = corePanes
     ? panes.filter((pane) => corePanes.includes(pane.id) || added.has(pane.id) || pane.id === active || (pane.count ?? 0) > 0 || pane.broken)
@@ -70,34 +68,35 @@ export function PaneRail({ idPrefix, panes, active: requestedActive, onSelect, k
   if (active !== undefined && !visited.has(active)) setVisited(new Set([...visited, active]));
   // A pane that holds a problem is built even when it is not showing: its error text must be in the page, and its tab says where to look.
   const mounted = new Set([...visited, active, ...panes.filter((pane) => pane.broken).map((pane) => pane.id)]);
-  const tabId = (id: string) => `${uid}-tab-${id}`;
-  const panelId = (id: string) => `${uid}-panel-${id}`;
 
-  function onKeyDown(e: KeyboardEvent<HTMLButtonElement>, index: number) {
-    // A vertical rail answers up / down, the pills left / right.
-    const key = e.key === "ArrowDown" ? "ArrowRight" : e.key === "ArrowUp" ? "ArrowLeft" : e.key;
-    const to = nextTabIndex(index, visible.length, key);
-    if (to === null) return;
+  // The tabs list answers left / right (and Home / End) itself. The rail also answers up / down, which it hands on as left / right.
+  function onListKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (corePanes || (e.key !== "ArrowDown" && e.key !== "ArrowUp")) return;
     e.preventDefault();
-    tabs.current[visible[to].id]?.focus();
-    onSelect(visible[to].id);
+    e.target.dispatchEvent(new KeyboardEvent("keydown", { key: e.key === "ArrowDown" ? "ArrowRight" : "ArrowLeft", bubbles: true, cancelable: true }));
   }
 
   return (
     <div data-testid={`${idPrefix}-rail`} className="@container">
-      <div className={cn("flex flex-col gap-space-4", !corePanes && "@xl:grid @xl:grid-cols-[9rem_minmax(0,1fr)] @xl:items-start")}>
+      <Tabs
+        value={active ?? null} onValueChange={(id) => { if (typeof id === "string") onSelect(id); }}
+        className={cn("flex-col gap-space-4", !corePanes && "@xl:grid @xl:grid-cols-[9rem_minmax(0,1fr)] @xl:items-start")}
+      >
         <div className="flex min-w-0 flex-wrap items-start gap-space-2">
-        <div role="tablist" aria-label={label} aria-orientation={corePanes ? "horizontal" : "vertical"} className={cn("flex min-w-0 flex-wrap gap-space-1", !corePanes && "@xl:flex-col @xl:flex-nowrap")}>
-          {visible.map((pane, index) => {
-            const isActive = pane.id === active;
-            return (
-              <button
-                key={pane.id} id={tabId(pane.id)} ref={(el) => { tabs.current[pane.id] = el; }} type="button" role="tab"
-                data-testid={`${idPrefix}-${pane.id}-toggle`} aria-selected={isActive} aria-controls={mounted.has(pane.id) ? panelId(pane.id) : undefined}
-                tabIndex={isActive ? 0 : -1} onClick={() => onSelect(pane.id)} onKeyDown={(e) => onKeyDown(e, index)}
+        <TabsList
+          variant="line" activateOnFocus aria-label={label} aria-orientation={corePanes ? "horizontal" : "vertical"} onKeyDown={onListKeyDown}
+          className={cn(
+            "h-auto min-w-0 flex-wrap justify-start gap-space-1 p-0 group-data-horizontal/tabs:h-auto",
+            !corePanes && "@xl:flex-col @xl:flex-nowrap",
+          )}
+        >
+          {visible.map((pane) => (
+              <TabsTrigger
+                key={pane.id} value={pane.id}
+                data-testid={`${idPrefix}-${pane.id}-toggle`}
                 className={cn(
-                  "flex shrink-0 items-center gap-space-2 rounded-lg px-space-3 py-space-2 text-left text-body-small outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
-                  isActive ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                  "h-auto flex-none shrink-0 justify-start gap-space-2 px-3 py-2 text-left group-data-horizontal/tabs:after:bottom-0",
+                  !corePanes && "@xl:w-full",
                 )}
               >
                 <span className="whitespace-nowrap @xl:whitespace-normal">{pane.title}</span>
@@ -113,10 +112,9 @@ export function PaneRail({ idPrefix, panes, active: requestedActive, onSelect, k
                     <span className="sr-only">has problems</span>
                   </>
                 )}
-              </button>
-            );
-          })}
-        </div>
+              </TabsTrigger>
+          ))}
+        </TabsList>
         {corePanes && available.length > 0 && (
           <NativeSelect
             aria-label="Add section" data-testid={idPrefix + "-add-section"} value=""
@@ -136,15 +134,12 @@ export function PaneRail({ idPrefix, panes, active: requestedActive, onSelect, k
 
         <div className="min-w-0">
           {panes.filter((pane) => mounted.has(pane.id)).map((pane) => (
-            <div
-              key={pane.id} id={panelId(pane.id)} role="tabpanel" aria-labelledby={tabId(pane.id)} data-testid={`${idPrefix}-${pane.id}-body`}
-              hidden={pane.id !== active} className="space-y-space-4"
-            >
+            <TabsContent key={pane.id} value={pane.id} keepMounted data-testid={`${idPrefix}-${pane.id}-body`} className="flex-none space-y-space-4 text-[length:inherit]">
               {pane.body}
-            </div>
+            </TabsContent>
           ))}
         </div>
-      </div>
+      </Tabs>
     </div>
   );
 }

@@ -86,9 +86,10 @@ export function CreateDropdown({
     return (
       <button
         key={item.label}
+        type="button"
         role="menuitem"
         onClick={() => { item.action(); setOpen(false); }}
-        className="flex items-start gap-2 w-full text-left py-2 px-3 hover:bg-accent transition-colors"
+        className="flex items-start gap-2 w-full text-left py-2 px-3 hover:bg-accent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
       >
         <item.icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
         <div>

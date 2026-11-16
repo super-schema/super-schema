@@ -355,7 +355,7 @@ function FieldsTab({
         </ul>
       )}
       <div className="grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-2">
-        <h3 className="text-heading-4 sm:col-span-2">{editing ? "Edit field" : "New field"}</h3>
+        <h3 className="text-heading-3 sm:col-span-2">{editing ? "Edit field" : "New field"}</h3>
         <label className="space-y-1 text-body-small" htmlFor={`${id}-name`}>
           Name
           <Input id={`${id}-name`} value={form.name} onChange={(e) => set("name", e.target.value)} />
@@ -513,7 +513,7 @@ function AttributesTab({ data, busy, run, confirm }: { data: DictionariesOvervie
           </ul>
         )}
         <div className="grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-2">
-          <h3 className="text-heading-4 sm:col-span-2">{editing ? "Edit attribute" : "New attribute"}</h3>
+          <h3 className="text-heading-3 sm:col-span-2">{editing ? "Edit attribute" : "New attribute"}</h3>
           <label className="space-y-1 text-body-small" htmlFor={`${id}-key`}>
             Key
             <Input id={`${id}-key`} value={form.key} disabled={!!editing} onChange={(e) => set("key", e.target.value)} />
@@ -609,7 +609,7 @@ function AttributesTab({ data, busy, run, confirm }: { data: DictionariesOvervie
       </section>
 
       <section aria-labelledby={`${id}-packs`} className="space-y-space-3">
-        <h3 id={`${id}-packs`} className="text-heading-4">
+        <h3 id={`${id}-packs`} className="text-heading-3">
           Packs
         </h3>
         <p className="text-body-small text-muted-foreground">A pack is a ready-made set of attributes. Installing one adds its entries to this dictionary.</p>

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { OpenApiPreview, PreviewBody, PreviewOperation } from "@/lib/api-operations/openapi-preview";
 import { previewEntityOpenApiAction, type EntityOpenApiPreview } from "../api-preview-actions";
 import { SchemaCodePreview } from "./SchemaCodePreview";
@@ -53,22 +55,15 @@ export function ApiPreview({ entityId }: ApiPreviewProps) {
   return (
     <div data-testid="api-preview" className="flex flex-col gap-space-3">
       <div className="flex items-center justify-between gap-space-2">
-        <div className="flex gap-1 border-b border-border" role="tablist" aria-label="Preview view">
-          {(["operations", "yaml"] as const).map((v) => (
-            <button
-              key={v}
-              type="button"
-              role="tab"
-              aria-selected={view === v}
-              onClick={() => setView(v)}
-              className={`px-space-3 py-1.5 text-body-small border-b-2 transition-colors ${
-                view === v ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {v === "operations" ? "Operations" : "OpenAPI YAML"}
-            </button>
-          ))}
-        </div>
+        <Tabs value={view} onValueChange={(value) => setView(value as View)} className="gap-0">
+          <TabsList variant="line" activateOnFocus aria-label="Preview view" className="border-b border-border">
+            {(["operations", "yaml"] as const).map((v) => (
+              <TabsTrigger key={v} value={v} className="flex-none">
+                {v === "operations" ? "Operations" : "OpenAPI YAML"}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
         <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={loading} data-testid="api-preview-refresh">
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           Refresh
@@ -158,21 +153,21 @@ function OperationCard({ op }: { op: PreviewOperation }) {
         {op.parameters.length ? (
           <section>
             <h4 className="mb-1 font-medium">Parameters</h4>
-            <table className="w-full text-left">
-              <tbody>
+            <Table className="text-caption">
+              <TableBody>
                 {op.parameters.map((p) => (
-                  <tr key={`${p.in}:${p.name}`} className="border-t border-border/50">
-                    <td className="py-1 pr-space-2 font-mono">
+                  <TableRow key={`${p.in}:${p.name}`} className="border-border/50">
+                    <TableCell className="px-0 py-1 pr-space-2 font-mono whitespace-normal">
                       {p.name}
                       {p.required ? <span className="text-destructive">*</span> : null}
-                    </td>
-                    <td className="py-1 pr-space-2 text-muted-foreground">{p.in}</td>
-                    <td className="py-1 pr-space-2 font-mono">{p.type}</td>
-                    <td className="py-1 text-muted-foreground">{p.description}</td>
-                  </tr>
+                    </TableCell>
+                    <TableCell className="px-0 py-1 pr-space-2 text-muted-foreground whitespace-normal">{p.in}</TableCell>
+                    <TableCell className="px-0 py-1 pr-space-2 font-mono whitespace-normal">{p.type}</TableCell>
+                    <TableCell className="px-0 py-1 text-muted-foreground whitespace-normal">{p.description}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </section>
         ) : null}
         {op.requestBody ? (

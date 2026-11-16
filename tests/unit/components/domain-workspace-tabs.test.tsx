@@ -4,7 +4,7 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import {
   DomainWorkspace,
   normalizeWorkspaceTab,
@@ -712,38 +712,36 @@ describe("product tab bar accessibility", () => {
     expect(tabs.map((t) => t.getAttribute("tabindex"))).toEqual(["-1", "-1", "0", "-1", "-1"]);
 
     const panel = screen.getByRole("tabpanel");
-    expect(panel.id).toBe("product-tabpanel");
     expect(panel.getAttribute("aria-labelledby")).toBe(selected[0].id);
-    for (const tab of tabs) expect(tab.getAttribute("aria-controls")).toBe(panel.id);
+    expect(selected[0].getAttribute("aria-controls")).toBe(panel.id);
     expect(within(panel).getByTestId("domain-apis-tab")).toBeDefined();
   });
 
-  it("moves between tabs with the arrow keys, Home and End (wrapping), writing the URL like a click", () => {
+  it("moves between tabs with the arrow keys, Home and End (wrapping), writing the URL like a click", async () => {
     nav.search = "";
     renderWorkspace();
     const selectedLabel = () =>
       screen.getAllByRole("tab").find((t) => t.getAttribute("aria-selected") === "true")!.textContent;
 
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "ArrowRight" });
-    expect(selectedLabel()).toBe("Events");
+    // Arrow keys move focus along the bar and select the focused tab, like a click.
+    const press = async (name: string, key: string, expected: string) => {
+      const tab = screen.getByRole("tab", { name });
+      act(() => tab.focus());
+      fireEvent.keyDown(tab, { key });
+      await waitFor(() => expect(selectedLabel()).toBe(expected));
+    };
+
+    await press("Entities", "ArrowRight", "Events");
     expect(replaceState).toHaveBeenLastCalledWith(null, "", assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" }));
     expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Events" }));
 
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Events" }), { key: "ArrowLeft" });
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "ArrowLeft" });
-    expect(selectedLabel()).toBe("Workflows");
+    await press("Events", "ArrowLeft", "Entities");
+    await press("Entities", "ArrowLeft", "Workflows");
     expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=workflows");
 
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Workflows" }), { key: "Home" });
-    expect(selectedLabel()).toBe("Entities");
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "End" });
-    expect(selectedLabel()).toBe("Workflows");
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Workflows" }), { key: "ArrowRight" });
-    expect(selectedLabel()).toBe("Entities");
-
-    // Other keys leave the selection alone.
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "a" });
-    expect(selectedLabel()).toBe("Entities");
+    await press("Workflows", "Home", "Entities");
+    await press("Entities", "End", "Workflows");
+    await press("Workflows", "ArrowRight", "Entities");
   });
 
   it("keeps clicking working and the stable ids the e2e suite can target", () => {

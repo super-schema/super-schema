@@ -141,7 +141,7 @@ export function AutocompleteInput({
             <button
               key={`${suggestion.value}-${suggestion.source}`}
               type="button"
-              className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors ${
+              className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                 i === selectedIndex ? "bg-accent" : "hover:bg-accent/50"
               }`}
               onMouseDown={(e) => {

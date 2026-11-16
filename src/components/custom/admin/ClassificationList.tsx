@@ -6,6 +6,7 @@ import { SYSTEM_CLASSIFICATION_DEFAULTS } from "@/types/schemas/classification-t
 import { CLASS_SCALE } from "@/lib/classification-scale";
 import type { ClassificationLevel } from "@/types/schemas/classification-taxonomy";
 
+import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/native-select";
 type ClassificationRow = ClassificationLevel;
 
@@ -59,20 +60,19 @@ export function ClassificationList() {
     <div className="space-y-space-4">
       {/* Add button */}
       <div className="flex justify-end">
-        <button
+        <Button
           onClick={() => setShowCreate(true)}
           data-testid="classification-add-open"
-          className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small"
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="size-4" />
           Add Classification
-        </button>
+        </Button>
       </div>
 
       {/* Create dialog */}
       {showCreate && (
         <div data-testid="classification-form" className="border border-border rounded-lg p-space-4 space-y-space-3 bg-muted/30">
-          <h4 className="text-heading-4 text-foreground">New Classification Level</h4>
+          <h4 className="text-heading-3 text-foreground">New Classification Level</h4>
           <div className="grid grid-cols-2 gap-space-3">
             <div className="space-y-space-1">
               <label htmlFor="classification-name" className="text-caption text-muted-foreground">Name</label>
@@ -161,20 +161,20 @@ export function ClassificationList() {
             </p>
           )}
           <div className="flex gap-space-2">
-            <button
+            <Button
               onClick={handleCreate}
               data-testid="classification-create"
               disabled={!newName.trim()}
-              className="px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small disabled:opacity-50"
             >
               Create
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
               onClick={() => { setShowCreate(false); setError(null); }}
-              className="px-space-3 py-1.5 rounded-md text-body-small text-muted-foreground hover:bg-muted"
+              className="text-muted-foreground"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -226,19 +226,25 @@ export function ClassificationList() {
               <span className="text-caption text-muted-foreground">
                 Order: {level.sortOrder}
               </span>
-              <button
-                className="p-1 rounded hover:bg-muted text-muted-foreground"
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="text-muted-foreground"
                 title="Edit classification"
+                aria-label="Edit classification"
               >
-                <Edit2 className="w-3.5 h-3.5" />
-              </button>
+                <Edit2 className="size-3.5" />
+              </Button>
               {!level.isSystem && (
-                <button
-                  className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                   title="Delete classification"
+                  aria-label="Delete classification"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                  <Trash2 className="size-3.5" />
+                </Button>
               )}
             </div>
           </div>

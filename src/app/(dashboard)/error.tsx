@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { HideEmptyRightPanel } from "@/components/layout/HideEmptyRightPanel";
 import { assetHref } from "@/lib/navigation/asset-href";
 
-const buttonClass =
-  "inline-flex h-8 items-center rounded-lg border border-border bg-background px-space-3 text-body-small text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const buttonClass = buttonVariants({ variant: "outline" });
 
 /**
  * Error boundary for every dashboard route. It renders inside the dashboard layout, so the top bar, tenant switcher and
@@ -22,7 +22,7 @@ export default function DashboardError({ error, reset }: { error: Error & { dige
       </p>
       {error.digest && <p className="text-caption text-muted-foreground">Reference: <code className="font-mono">{error.digest}</code></p>}
       <div className="flex flex-wrap gap-space-2">
-        <button type="button" onClick={reset} className={buttonClass} data-testid="dashboard-error-retry">Try again</button>
+        <Button type="button" variant="outline" onClick={reset} data-testid="dashboard-error-retry">Try again</Button>
         <Link href="/schemas" className={buttonClass}>Domains</Link>
         <Link href={assetHref({ kind: "enterprise" })} className={buttonClass}>Enterprise</Link>
       </div>

@@ -51,12 +51,12 @@ export function VersionsTab({ eventId, productId, latestLabel, version, onVersio
 /** The "Retry" link at the end of a load error: asks the same question again (the error clears while it runs). */
 function RetryButton({ testId, onClick }: { testId: string; onClick: () => void }) {
   return (
-    <button
-      type="button" data-testid={testId} onClick={onClick}
-      className="underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+    <Button
+      type="button" variant="link" size="xs" data-testid={testId} onClick={onClick}
+      className="h-auto p-0 align-baseline text-inherit underline"
     >
       Retry
-    </button>
+    </Button>
   );
 }
 

@@ -2,6 +2,8 @@
 
 import { X } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+
 interface RightPanelProps {
   width: number;
   isCollapsed: boolean;
@@ -50,13 +52,14 @@ export function RightPanel({
         <>
           {/* Close button row */}
           <div className="flex items-center justify-end px-space-2 py-space-1 border-b border-border/50">
-            <button
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={onCollapse}
               aria-label="Close panel"
-              className="p-1 rounded-lg hover:bg-accent animate-field-hover"
             >
               <X className="w-4 h-4 text-muted-foreground" />
-            </button>
+            </Button>
           </div>
           {/* Dynamic content */}
           <div className="flex-1 overflow-hidden flex flex-col">
@@ -68,13 +71,14 @@ export function RightPanel({
           {/* Header */}
           <div className="flex items-center justify-between px-space-4 py-space-3 border-b border-border">
             <h3 className="text-heading-3 text-foreground">Detail Panel</h3>
-            <button
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={onCollapse}
               aria-label="Close panel"
-              className="p-1 rounded-lg hover:bg-accent animate-field-hover"
             >
               <X className="w-4 h-4 text-muted-foreground" />
-            </button>
+            </Button>
           </div>
 
           {/* Content placeholder */}

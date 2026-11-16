@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PASSWORD_MAX_BYTES, PASSWORD_MIN_BYTES } from "@/lib/auth/password-limits";
 
@@ -33,15 +34,17 @@ export function NewPasswordFields({ idPrefix, errors }: { idPrefix: string; erro
             aria-describedby={`${passwordId}-hint${errors?.password ? ` ${passwordId}-error` : ""}`}
             data-testid={`${idPrefix}-password`}
           />
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-xs"
             onClick={() => setShow(!show)}
             aria-label={show ? "Hide password" : "Show password"}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:bg-transparent hover:text-foreground"
             tabIndex={-1}
           >
             {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
+          </Button>
         </div>
         <p id={`${passwordId}-hint`} className="text-caption text-muted-foreground mt-space-1">
           At least {PASSWORD_MIN_BYTES} characters, up to {PASSWORD_MAX_BYTES} bytes. A few words make a good passphrase.

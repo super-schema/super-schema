@@ -6,19 +6,20 @@
 // button's description. Escape closes it; hovering the tip keeps it open (WCAG 1.4.13: dismissible, hoverable, persistent).
 import { useState, type ReactNode } from "react";
 import { Info } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export function InfoTip({ id, label, children }: { id: string; label: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <span className="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
-      <button
-        type="button" aria-label={label} aria-describedby={id} data-testid={`${id}-button`}
+      <Button
+        type="button" variant="ghost" size="icon-xs" aria-label={label} aria-describedby={id} data-testid={`${id}-button`}
         onFocus={() => setOpen(true)} onBlur={() => setOpen(false)} onClick={() => setOpen((o) => !o)}
         onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }}
-        className="rounded-full p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+        className="rounded-full text-muted-foreground"
       >
         <Info aria-hidden="true" className="size-3.5" />
-      </button>
+      </Button>
       <span
         id={id} role="tooltip" data-testid={id} hidden={!open}
         className="absolute left-0 top-full z-20 mt-1 w-64 max-w-[80vw] rounded-md bg-foreground px-space-3 py-space-2 text-caption font-normal text-background shadow-md"

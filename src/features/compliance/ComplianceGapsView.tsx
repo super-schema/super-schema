@@ -2,6 +2,14 @@
 
 import { useRouter } from "next/navigation";
 import { ShieldAlert, CheckCircle } from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { assetHref } from "@/lib/navigation/asset-href";
 import type { ComplianceGap, GapSummary } from "@/types/schemas/compliance";
 
@@ -122,65 +130,65 @@ export function ComplianceGapsView({
 
       {/* Gap table */}
       <div className="flex-1 overflow-auto mt-space-4">
-        <table className="w-full text-body-small">
-          <thead className="sticky top-0 surface-1 border-b border-border">
-            <tr>
-              <th className="text-left px-space-3 py-space-2 text-caption text-muted-foreground uppercase tracking-wider">
-                Entity
-              </th>
-              <th className="text-left px-space-3 py-space-2 text-caption text-muted-foreground uppercase tracking-wider">
-                Field
-              </th>
-              <th className="text-left px-space-3 py-space-2 text-caption text-muted-foreground uppercase tracking-wider">
-                Gap Type
-              </th>
-              <th className="text-left px-space-3 py-space-2 text-caption text-muted-foreground uppercase tracking-wider">
-                Severity
-              </th>
-              <th className="text-left px-space-3 py-space-2 text-caption text-muted-foreground uppercase tracking-wider">
-                Suggested Fix
-              </th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table containerProps={{ className: "overflow-visible" }} className="text-body-small">
+          <TableHeader className="sticky top-0 surface-1 border-b border-border">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="text-muted-foreground uppercase tracking-wider">
+                <span className="text-caption">Entity</span>
+              </TableHead>
+              <TableHead className="text-muted-foreground uppercase tracking-wider">
+                <span className="text-caption">Field</span>
+              </TableHead>
+              <TableHead className="text-muted-foreground uppercase tracking-wider">
+                <span className="text-caption">Gap Type</span>
+              </TableHead>
+              <TableHead className="text-muted-foreground uppercase tracking-wider">
+                <span className="text-caption">Severity</span>
+              </TableHead>
+              <TableHead className="text-muted-foreground uppercase tracking-wider">
+                <span className="text-caption">Suggested Fix</span>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {gaps.map((gap, i) => (
-              <tr
+              <TableRow
                 key={`${gap.fieldId}-${gap.gapType}-${i}`}
                 data-testid="compliance-gap-row"
                 data-entity={gap.entityName}
                 data-field={gap.fieldName}
                 data-gap={gap.gapType}
                 data-severity={gap.severity}
-                className="border-b border-border/50 hover:bg-accent/30 cursor-pointer transition-colors"
+                className="border-border/50 hover:bg-accent/30 cursor-pointer"
                 onClick={() => router.push(gapHref(gap))}
               >
-                <td className="px-space-3 py-space-2 font-mono text-primary">
+                <TableCell className="font-mono text-primary">
                   {gap.entityName}
-                </td>
-                <td className="px-space-3 py-space-2 font-mono">
+                </TableCell>
+                <TableCell className="font-mono">
                   {gap.fieldName}
-                </td>
-                <td className="px-space-3 py-space-2">
+                </TableCell>
+                <TableCell>
                   <span
                     className={`inline-block px-1.5 py-0.5 rounded text-caption font-medium ${GAP_TYPE_COLORS[gap.gapType] || "bg-muted text-muted-foreground"}`}
                   >
                     {GAP_TYPE_LABELS[gap.gapType] || gap.gapType}
                   </span>
-                </td>
-                <td className="px-space-3 py-space-2">
+                </TableCell>
+                <TableCell>
                   <span
                     className={`inline-block px-1.5 py-0.5 rounded text-caption font-medium ${SEVERITY_COLORS[gap.severity]}`}
                   >
                     {gap.severity}
                   </span>
-                </td>
-                <td className="px-space-3 py-space-2 text-muted-foreground">
+                </TableCell>
+                <TableCell className="text-muted-foreground whitespace-normal">
                   {gap.suggestedFix}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );

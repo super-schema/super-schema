@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import type { ImportFormat } from "@/lib/importers/types";
@@ -34,22 +35,18 @@ export function VisualSchemaBuilder({
           <span className="text-caption text-muted-foreground">Format:</span>
           <div className="flex items-center border border-border rounded-lg overflow-hidden">
             {VISUAL_FORMATS.map((format) => (
-              <button
+              <Button
                 key={format.id}
+                variant={format.id === activeFormatId ? "secondary" : "ghost"}
                 disabled={!format.enabled}
                 onClick={() => setActiveFormatId(format.id)}
                 title={format.enabled ? undefined : format.comingSoonNote}
-                className={cn(
-                  "px-space-3 py-1.5 text-body-small transition-colors",
-                  format.id === activeFormatId
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                  !format.enabled && "opacity-40 cursor-not-allowed"
-                )}
+                aria-pressed={format.id === activeFormatId}
+                className={cn("rounded-none", format.id !== activeFormatId && "text-muted-foreground")}
               >
                 {format.label}
                 {!format.enabled && " (soon)"}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -101,14 +98,13 @@ export function VisualSchemaBuilder({
 
       {/* Commit */}
       <div className="flex justify-end">
-        <button
+        <Button
           data-testid="visual-review-button"
           disabled={!content}
           onClick={() => content && onImport(content, activeFormatId)}
-          className="px-4 py-1.5 rounded-lg text-body-small bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Review &amp; Import
-        </button>
+        </Button>
       </div>
     </div>
   );

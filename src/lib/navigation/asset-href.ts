@@ -31,19 +31,6 @@ export function normalizeEventTab(value: string | null | undefined): EventTab {
   return EVENT_TAB_ALIASES.get(value) ?? DEFAULT_EVENT_TAB;
 }
 
-/**
- * The tab a key press on the tab list moves to (roving tabindex): ArrowRight / ArrowLeft wrap around, Home and End jump to the
- * ends; any other key is not navigation (null).
- */
-export function nextEventTab(current: EventTab, key: string): EventTab | null {
-  const at = EVENT_TABS.indexOf(current);
-  if (key === "ArrowRight") return EVENT_TABS[(at + 1) % EVENT_TABS.length];
-  if (key === "ArrowLeft") return EVENT_TABS[(at - 1 + EVENT_TABS.length) % EVENT_TABS.length];
-  if (key === "Home") return EVENT_TABS[0];
-  if (key === "End") return EVENT_TABS[EVENT_TABS.length - 1];
-  return null;
-}
-
 /** Sections of the Design tab's builder, in outline order. A value that is none of these (an old link) falls back to "metadata". */
 export const BUILDER_SECTIONS = ["metadata", "servers", "channels", "messages", "operations", "traits", "advanced"] as const;
 export type BuilderSection = (typeof BUILDER_SECTIONS)[number];

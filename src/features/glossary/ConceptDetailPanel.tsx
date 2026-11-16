@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
 import type { BusinessConcept } from "@/generated/prisma/client";
 
 interface LinkedField {
@@ -100,13 +101,15 @@ export function ConceptDetailPanel({
           </p>
         </div>
         {onClose && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="xs"
             onClick={onClose}
-            className="text-muted-foreground hover:text-foreground text-caption"
+            className="text-muted-foreground hover:text-foreground"
           >
             Close
-          </button>
+          </Button>
         )}
       </div>
 
@@ -200,13 +203,15 @@ export function ConceptDetailPanel({
                           {Math.round(f.confidence * 100)}%
                         </span>
                         {onUnlink && (
-                          <button
+                          <Button
                             type="button"
+                            variant="destructive"
+                            size="xs"
                             onClick={() => onUnlink(f.fieldId, concept.id)}
-                            className="text-mono-small text-red-400 hover:text-red-300"
+                            className="font-mono"
                           >
                             unlink
-                          </button>
+                          </Button>
                         )}
                       </div>
                     </div>

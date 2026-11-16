@@ -8,6 +8,7 @@
  */
 
 import { useState } from "react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { GovernanceRequest } from "@/types/schemas/governance";
 import { GovernanceRequestCard } from "../GovernanceRequestCard";
 import { ImpactReportCard } from "../ImpactReportCard";
@@ -60,29 +61,27 @@ export function GovernanceDashboard({
       {/* Left panel: request list */}
       <div className="w-1/2 border-r border-border overflow-y-auto p-4 space-y-4">
         {/* Tabs */}
-        <div className="flex items-center gap-1 border-b border-border pb-2">
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              data-testid={`governance-tab-${tab.key}`}
-              aria-pressed={activeTab === tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`px-3 py-1.5 rounded-t text-caption font-medium transition-colors ${
-                activeTab === tab.key
-                  ? "text-foreground border-b-2 border-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {tab.label}
-              {tab.count > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-mono-small bg-muted">
-                  {tab.count}
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as Tab)}>
+          <TabsList variant="line" aria-label="Governance requests" className="w-full justify-start border-b border-border">
+            {tabs.map((tab) => (
+              <TabsTrigger
+                key={tab.key}
+                value={tab.key}
+                data-testid={`governance-tab-${tab.key}`}
+                className="flex-none px-3"
+              >
+                <span className="text-caption">
+                  {tab.label}
+                  {tab.count > 0 && (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-mono-small bg-muted">
+                      {tab.count}
+                    </span>
+                  )}
                 </span>
-              )}
-            </button>
-          ))}
-        </div>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
 
         {/* Request list */}
         {filteredRequests.length === 0 ? (

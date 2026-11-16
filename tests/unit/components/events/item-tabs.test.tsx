@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ItemTabs } from "@/features/events/builder/sections/ItemTabs";
 
@@ -25,6 +26,12 @@ function setup(items: Item[], extra: Partial<Parameters<typeof ItemTabs>[0]> = {
   return { onSelect, onAdd };
 }
 const tabs = () => within(screen.getByRole("tablist", { name: "Messages" })).getAllByRole("tab");
+/** Focuses tab `from`, presses `key` and waits for focus to arrive on tab `to` (the tabs list moves focus after the key press is handled). */
+async function pressKey(from: number, key: string, to: number) {
+  act(() => tabs()[from].focus());
+  fireEvent.keyDown(tabs()[from], { key });
+  await waitFor(() => expect(document.activeElement).toBe(tabs()[to]));
+}
 const many = (n: number) => Array.from({ length: n }, (_, i) => item(`message-${i}`));
 
 describe("ItemTabs: the strip", () => {
@@ -67,17 +74,20 @@ describe("ItemTabs: the strip", () => {
     expect(onSelect).toHaveBeenCalledWith("b");
   });
 
-  it("moves focus and selection with the arrow keys, Home and End", () => {
-    const { onSelect } = setup([item("a"), item("b"), item("c")]);
-    tabs()[0].focus();
-    fireEvent.keyDown(tabs()[0], { key: "ArrowRight" });
-    expect(document.activeElement).toBe(tabs()[1]);
+  it("moves focus and selection with the arrow keys, Home and End", async () => {
+    // The host keeps the selection, as the sections do: selecting the tab that is already selected is not a change.
+    const onSelect = vi.fn();
+    const items = [item("a"), item("b"), item("c")];
+    function Host() {
+      const [active, setActive] = useState(0);
+      return <ItemTabs label="Messages" prefix="message" items={items} activeIndex={active} onSelect={(key) => { onSelect(key); setActive(items.findIndex((i) => i.key === key)); }} />;
+    }
+    render(<Host />);
+    await pressKey(0, "ArrowRight", 1);
     expect(onSelect).toHaveBeenLastCalledWith("b");
-    fireEvent.keyDown(tabs()[1], { key: "End" });
-    expect(document.activeElement).toBe(tabs()[2]);
+    await pressKey(1, "End", 2);
     expect(onSelect).toHaveBeenLastCalledWith("c");
-    fireEvent.keyDown(tabs()[2], { key: "ArrowRight" });
-    expect(document.activeElement).toBe(tabs()[0]);
+    await pressKey(2, "ArrowRight", 0);
     expect(onSelect).toHaveBeenLastCalledWith("a");
   });
 
@@ -90,23 +100,18 @@ describe("ItemTabs: the strip", () => {
 });
 
 describe("ItemTabs: broken documents", () => {
-  it("shows an item with no key as (no key) and can reach it by keyboard", () => {
+  it("shows an item with no key as (no key) and can reach it by keyboard", async () => {
     const { onSelect } = setup([item("a"), item("")]);
     expect(tabs()[1].textContent).toBe("(no key)");
-    tabs()[0].focus();
-    fireEvent.keyDown(tabs()[0], { key: "ArrowRight" });
-    expect(document.activeElement).toBe(tabs()[1]);
+    await pressKey(0, "ArrowRight", 1);
     expect(onSelect).toHaveBeenLastCalledWith("");
   });
 
-  it("renders two items that share a key, and arrow keys still walk through both", () => {
+  it("renders two items that share a key, and arrow keys still walk through both", async () => {
     setup([item("dup"), item("dup"), item("z")]);
     expect(screen.getAllByTestId("message-row-dup")).toHaveLength(2);
-    tabs()[0].focus();
-    fireEvent.keyDown(tabs()[0], { key: "ArrowRight" });
-    expect(document.activeElement).toBe(tabs()[1]);
-    fireEvent.keyDown(tabs()[1], { key: "ArrowRight" });
-    expect(document.activeElement).toBe(tabs()[2]);
+    await pressKey(0, "ArrowRight", 1);
+    await pressKey(1, "ArrowRight", 2);
   });
 });
 

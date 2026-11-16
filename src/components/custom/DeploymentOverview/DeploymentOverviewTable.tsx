@@ -3,6 +3,14 @@
 import Link from "next/link";
 import { DriftBadge } from "@/components/custom/DriftBadge/DriftBadge";
 import { VersionBadge } from "@/components/custom/DeploymentPanel/VersionBadge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { assetHref } from "@/lib/navigation/asset-href";
 import type { DeploymentOverviewRow } from "@/services/deployment.service";
 
@@ -61,68 +69,65 @@ export function DeploymentOverviewTable({
       data-testid="deployment-overview-table"
       className="border border-border rounded-lg overflow-hidden"
     >
-      <table className="w-full">
-        <thead>
-          <tr className="surface-1 border-b border-border">
-            <th className="text-caption text-muted-foreground text-left px-space-3 py-2">
+      <Table>
+        <TableHeader>
+          <TableRow className="surface-1 hover:bg-transparent">
+            <TableHead className="text-caption text-muted-foreground">
               Entity
-            </th>
-            <th className="text-caption text-muted-foreground text-left px-space-3 py-2">
+            </TableHead>
+            <TableHead className="text-caption text-muted-foreground">
               Domain
-            </th>
-            <th className="text-caption text-muted-foreground text-left px-space-3 py-2">
+            </TableHead>
+            <TableHead className="text-caption text-muted-foreground">
               Version
-            </th>
+            </TableHead>
             {targetFormats.map((format) => (
-              <th
+              <TableHead
                 key={format}
-                className="text-caption text-muted-foreground text-center px-space-3 py-2"
+                className="text-caption text-muted-foreground text-center"
               >
                 {format}
-              </th>
+              </TableHead>
             ))}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map((row) => (
-            <tr
-              key={row.entityId}
-              className="border-b border-border last:border-0 hover:bg-accent/30"
-            >
-              <td className="px-space-3 py-2">
+            <TableRow key={row.entityId}>
+              <TableCell>
                 <EntityName row={row} />
-              </td>
-              <td className="px-space-3 py-2 text-caption text-muted-foreground">
+              </TableCell>
+              <TableCell className="text-caption text-muted-foreground">
                 {row.domain}
-              </td>
-              <td className="px-space-3 py-2">
+              </TableCell>
+              <TableCell>
                 <VersionBadge version={row.currentVersion} />
-              </td>
+              </TableCell>
               {targetFormats.map((format) => {
                 const target = row.targets.find((t) => t.format === format);
                 if (!target) {
                   return (
-                    <td
+                    <TableCell
                       key={format}
-                      className="px-space-3 py-2 text-center text-caption text-muted-foreground"
+                      className="text-center text-caption text-muted-foreground"
                     >
                       -
-                    </td>
+                    </TableCell>
                   );
                 }
                 return (
-                  <td key={format} className="px-space-3 py-2 text-center">
+                  <TableCell key={format} className="text-center">
                     <div className="flex items-center justify-center gap-1">
                       <VersionBadge version={target.deployedVersion} />
                       <DriftBadge status={target.driftStatus} compact />
                     </div>
-                  </td>
+                  </TableCell>
                 );
               })}
-            </tr>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }

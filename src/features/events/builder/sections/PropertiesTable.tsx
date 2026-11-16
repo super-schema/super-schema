@@ -20,6 +20,7 @@ import { Lock, Plus, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { JsonObject } from "@/lib/event-specs/types";
 import type { PropertySummaryRow } from "@/lib/events/bundled-traits";
 import { PINNED_HEADERS_LEAD, PINNED_PROPERTIES_LEAD } from "../labels";
@@ -55,8 +56,8 @@ export interface PropertiesTableProps {
   onValueChange?: (name: string, value: string) => void;
 }
 
-const HEAD = "px-space-2 py-space-1 text-left text-caption font-medium text-muted-foreground";
-const CELL = "px-space-2 py-space-2 align-top text-body-small text-foreground";
+const HEAD = "h-auto px-2 py-1 text-muted-foreground";
+const CELL = "align-top whitespace-normal text-foreground";
 
 export function LockedNote({ id, children }: { id: string; children: ReactNode }) {
   return (
@@ -97,11 +98,11 @@ function AllowedChips({ id, allowed }: { id: string; allowed: DisplayRow["allowe
 const VALUE_KIND_LABEL: Record<PropertyValue["kind"], string> = { fixed: "Fixed", derived: "From this event", example: "Example" };
 
 function ValueCell({ id, name, value, onValueChange }: { id: string; name: string; value?: PropertyValue; onValueChange?: (name: string, value: string) => void }) {
-  if (!value) return <td className={CELL}><span className="text-muted-foreground">—</span></td>;
+  if (!value) return <TableCell className={CELL}><span className="text-muted-foreground">—</span></TableCell>;
   if (value.editable && onValueChange) {
     const custom = value.value !== value.editable.default;
     return (
-      <td className={CELL} data-testid={id}>
+      <TableCell className={CELL} data-testid={id}>
         <Input
           aria-label={`${name} value`} data-testid={`${id}-input`} className="h-8 font-mono text-caption" spellCheck={false}
           value={custom ? value.value : ""} placeholder={value.editable.default || "Set a value"}
@@ -110,19 +111,19 @@ function ValueCell({ id, name, value, onValueChange }: { id: string; name: strin
         <div className="mt-0.5 flex flex-wrap items-center gap-space-1">
           <Badge variant="secondary" data-testid={`${id}-kind`}>{custom ? "Set for this event" : "Default"}</Badge>
           {value.note && <span className="text-caption text-muted-foreground">{value.note}</span>}
-          {custom && <button type="button" className="text-caption text-primary hover:underline" onClick={() => onValueChange(name, "")}>Use default</button>}
+          {custom && <Button type="button" variant="link" size="xs" className="h-auto p-0" onClick={() => onValueChange(name, "")}>Use default</Button>}
         </div>
-      </td>
+      </TableCell>
     );
   }
   return (
-    <td className={CELL} data-testid={id}>
+    <TableCell className={CELL} data-testid={id}>
       <code className={`break-all font-mono text-caption ${value.kind === "example" ? "text-muted-foreground" : "text-foreground"}`}>{value.value}</code>
       <div className="mt-0.5 flex flex-wrap items-center gap-space-1">
         <Badge variant={value.kind === "example" ? "outline" : "secondary"} data-testid={`${id}-kind`}>{VALUE_KIND_LABEL[value.kind]}</Badge>
         {value.note && <span className="text-caption text-muted-foreground">{value.note}</span>}
       </div>
-    </td>
+    </TableCell>
   );
 }
 
@@ -131,35 +132,35 @@ function ReadOnlyTable({ idPrefix, rows, pinned, values, onValueChange }: { idPr
   if (rows.length === 0) return <p data-testid={`${idPrefix}-empty`} className="text-body-small text-muted-foreground">No properties.</p>;
   return (
     <>
-      <div className="overflow-x-auto rounded-md border border-border">
-        <table data-testid={`${idPrefix}-table`} className="w-full min-w-[32rem] border-collapse">
-          <caption className="sr-only">Properties</caption>
-          <thead className="border-b border-border bg-muted/30">
-            <tr>
-              <th scope="col" className={HEAD}>Name</th>
-              <th scope="col" className={HEAD}>Type</th>
-              <th scope="col" className={HEAD}>Required</th>
-              {values && <th scope="col" className={HEAD}>Value for this message</th>}
-              <th scope="col" className={HEAD}>Description</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
+      <div className="overflow-hidden rounded-md border border-border">
+        <Table data-testid={`${idPrefix}-table`} className="min-w-[32rem] border-collapse text-body-small">
+          <TableCaption className="sr-only">Properties</TableCaption>
+          <TableHeader className="border-b border-border bg-muted/30 text-caption">
+            <TableRow className="hover:bg-transparent">
+              <TableHead scope="col" className={HEAD}>Name</TableHead>
+              <TableHead scope="col" className={HEAD}>Type</TableHead>
+              <TableHead scope="col" className={HEAD}>Required</TableHead>
+              {values && <TableHead scope="col" className={HEAD}>Value for this message</TableHead>}
+              <TableHead scope="col" className={HEAD}>Description</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.map((row) => (
-              <tr key={row.name} data-testid={`${idPrefix}-row-${row.name}`}>
-                <th scope="row" className={`${CELL} font-mono font-medium`}>{row.name}</th>
-                <td className={CELL} data-testid={`${idPrefix}-row-${row.name}-type`}>{row.type}</td>
-                <td className={CELL} data-testid={`${idPrefix}-row-${row.name}-required`}>
+              <TableRow key={row.name} data-testid={`${idPrefix}-row-${row.name}`}>
+                <TableHead scope="row" className={`h-auto ${CELL} font-mono font-medium`}>{row.name}</TableHead>
+                <TableCell className={CELL} data-testid={`${idPrefix}-row-${row.name}-type`}>{row.type}</TableCell>
+                <TableCell className={CELL} data-testid={`${idPrefix}-row-${row.name}-required`}>
                   {row.required ? <Badge variant="secondary">Required</Badge> : <span className="text-muted-foreground">Optional</span>}
-                </td>
+                </TableCell>
                 {values && <ValueCell id={`${idPrefix}-row-${row.name}-value`} name={row.name} value={values[row.name]} onValueChange={onValueChange} />}
-                <td className={CELL}>
+                <TableCell className={CELL}>
                   {row.description && <span data-testid={`${idPrefix}-row-${row.name}-description`}>{row.description}</span>}
                   <AllowedChips id={`${idPrefix}-row-${row.name}-allowed`} allowed={row.allowed} />
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
       {pinned && <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={PINNED_HEADERS_LEAD} className={ROWS_NOTE} />}
     </>
@@ -243,19 +244,19 @@ function EditableTable({ idPrefix, headers, onChange, disabled, pinned }: { idPr
           ? <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={PINNED_PROPERTIES_LEAD} className={EMPTY_NOTE} />
           : <p data-testid={`${idPrefix}-empty`} className="text-body-small text-muted-foreground">No properties yet. Add the ones every message carries.</p>
       ) : (
-        <div className="overflow-x-auto rounded-md border border-border">
-          <table data-testid={`${idPrefix}-table`} className="w-full min-w-[40rem] border-collapse">
-            <caption className="sr-only">Properties</caption>
-            <thead className="border-b border-border bg-muted/30">
-              <tr>
-                <th scope="col" className={HEAD}>Name</th>
-                <th scope="col" className={HEAD}>Type</th>
-                <th scope="col" className={HEAD}>Required</th>
-                <th scope="col" className={HEAD}>Description</th>
-                <th scope="col" className={HEAD}><span className="sr-only">Remove</span></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
+        <div className="overflow-hidden rounded-md border border-border">
+          <Table data-testid={`${idPrefix}-table`} className="min-w-[40rem] border-collapse text-body-small">
+            <TableCaption className="sr-only">Properties</TableCaption>
+            <TableHeader className="border-b border-border bg-muted/30 text-caption">
+              <TableRow className="hover:bg-transparent">
+                <TableHead scope="col" className={HEAD}>Name</TableHead>
+                <TableHead scope="col" className={HEAD}>Type</TableHead>
+                <TableHead scope="col" className={HEAD}>Required</TableHead>
+                <TableHead scope="col" className={HEAD}>Description</TableHead>
+                <TableHead scope="col" className={HEAD}><span className="sr-only">Remove</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {rows.map((row, i) => {
                 const n = i + 1;
                 const name = row.name.trim();
@@ -263,8 +264,8 @@ function EditableTable({ idPrefix, headers, onChange, disabled, pinned }: { idPr
                 const friendly = friendlyType(row.schema);
                 const allowed = allowedValues(row.schema);
                 return (
-                  <tr key={row.id} data-testid={`${idPrefix}-row-${i}`}>
-                    <td className={CELL}>
+                  <TableRow key={row.id} data-testid={`${idPrefix}-row-${i}`}>
+                    <TableCell className={CELL}>
                       <Input
                         id={`${idPrefix}-name-${i}`} data-testid={`${idPrefix}-name-${i}`} aria-label={`Property ${n}: name`} value={row.name} disabled={disabled}
                         autoComplete="off" spellCheck={false} aria-invalid={problem ? true : undefined} autoFocus={row.id === justAdded}
@@ -272,8 +273,8 @@ function EditableTable({ idPrefix, headers, onChange, disabled, pinned }: { idPr
                         onChange={(e) => patchRow(i, (r) => ({ ...r, name: e.target.value }))}
                       />
                       {problem && <p id={`${idPrefix}-problem-${i}`} data-testid={`${idPrefix}-problem-${i}`} className="mt-space-1 text-caption text-destructive">{problem}</p>}
-                    </td>
-                    <td className={CELL}>
+                    </TableCell>
+                    <TableCell className={CELL}>
                       <NativeSelect
                         id={`${idPrefix}-type-${i}`} data-testid={`${idPrefix}-type-${i}`} aria-label={`Property ${n}: type`} disabled={disabled}
                         value={friendly ?? "other"} onChange={(e) => patchRow(i, (r) => ({ ...r, schema: setType(r.schema, e.target.value as PropertyType) }))}
@@ -281,14 +282,14 @@ function EditableTable({ idPrefix, headers, onChange, disabled, pinned }: { idPr
                         {friendly === null && <option value="other" disabled>{typeLabel(row.schema)}</option>}
                         {PROPERTY_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                       </NativeSelect>
-                    </td>
-                    <td className={`${CELL} text-center`}>
+                    </TableCell>
+                    <TableCell className={`${CELL} text-center`}>
                       <Checkbox id={`${idPrefix}-required-${i}`} data-testid={`${idPrefix}-required-${i}`} aria-label={`Property ${n}: required`}
                         checked={row.required} disabled={disabled}
                         onChange={(e) => patchRow(i, (r) => ({ ...r, required: e.target.checked }))}
                       />
-                    </td>
-                    <td className={CELL}>
+                    </TableCell>
+                    <TableCell className={CELL}>
                       <Input
                         id={`${idPrefix}-description-${i}`} data-testid={`${idPrefix}-description-${i}`} aria-label={`Property ${n}: description`}
                         value={descriptionOf(row.schema)} disabled={disabled} autoComplete="off" placeholder="What it means"
@@ -298,21 +299,21 @@ function EditableTable({ idPrefix, headers, onChange, disabled, pinned }: { idPr
                         id={`${idPrefix}-allowed-${i}`} label={`Property ${n}: allowed values`} values={allowed?.values ?? []} disabled={disabled}
                         onChange={(values) => patchRow(i, (r) => ({ ...r, schema: setAllowedValues(r.schema, values) }))}
                       />
-                    </td>
-                    <td className={CELL}>
-                      <button
-                        type="button" aria-label={`Remove property ${name || n}`} data-testid={`${idPrefix}-remove-${i}`} disabled={disabled}
+                    </TableCell>
+                    <TableCell className={CELL}>
+                      <Button
+                        type="button" variant="ghost" size="icon-sm" aria-label={`Remove property ${name || n}`} data-testid={`${idPrefix}-remove-${i}`} disabled={disabled}
                         onClick={() => commit(rows.filter((_, k) => k !== i))}
-                        className="rounded-md p-1 text-muted-foreground outline-none hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+                        className="text-muted-foreground hover:text-destructive"
                       >
                         <Trash2 aria-hidden="true" className="size-4" />
-                      </button>
-                    </td>
-                  </tr>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
       <Button type="button" size="sm" variant="outline" onClick={addRow} disabled={disabled} data-testid={`${idPrefix}-add`} className="gap-1.5">

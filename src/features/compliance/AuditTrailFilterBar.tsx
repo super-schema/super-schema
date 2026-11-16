@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Download, X, Search, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { AuditTrailFilter } from "@/types/schemas/compliance";
 import {
   dayAfterStart,
@@ -135,30 +136,32 @@ export function AuditTrailFilterBar({
       />
 
       {/* Clear */}
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => {
           setEntityName("");
           onFilterChange({});
         }}
-        className="flex items-center gap-1 text-body-small text-muted-foreground hover:text-foreground transition-colors"
+        className="text-muted-foreground hover:text-foreground"
       >
         <X className="w-3 h-3" />
         Clear
-      </button>
+      </Button>
 
       {/* Spacer */}
       <div className="flex-1" />
 
       {/* Export */}
-      <button
+      <Button
+        variant="outline"
         data-testid="audit-export"
         onClick={onExport}
         disabled={exporting}
-        className="flex items-center gap-space-2 px-space-3 py-1.5 text-body-small border border-border rounded-lg hover:bg-accent/50 transition-colors disabled:opacity-50"
       >
         {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
         Export Audit Trail
-      </button>
+      </Button>
     </div>
   );
 }

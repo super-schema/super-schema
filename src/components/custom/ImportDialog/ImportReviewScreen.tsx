@@ -6,7 +6,16 @@ import { Trash2 } from "lucide-react";
 import type { ParsedEntity, ParsedField } from "@/lib/importers/types";
 import { ConfidenceBadge } from "./ConfidenceBadge";
 
+import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 interface ImportReviewScreenProps {
   parsedEntity: ParsedEntity;
@@ -129,42 +138,39 @@ export function ImportReviewScreen({
 
       {/* Fields table */}
       <div className="border border-border rounded-lg overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="surface-1 border-b border-border">
-              <th className="text-caption text-muted-foreground text-left px-space-3 py-2">
+        <Table>
+          <TableHeader>
+            <TableRow className="surface-1 hover:bg-transparent">
+              <TableHead className="text-caption text-muted-foreground">
                 Name
-              </th>
-              <th className="text-caption text-muted-foreground text-left px-space-3 py-2">
+              </TableHead>
+              <TableHead className="text-caption text-muted-foreground">
                 Type
-              </th>
-              <th className="text-caption text-muted-foreground text-center px-space-3 py-2">
+              </TableHead>
+              <TableHead className="text-caption text-muted-foreground text-center">
                 Nullable
-              </th>
-              <th className="text-caption text-muted-foreground text-center px-space-3 py-2">
+              </TableHead>
+              <TableHead className="text-caption text-muted-foreground text-center">
                 Confidence
-              </th>
-              <th className="text-caption text-muted-foreground text-left px-space-3 py-2">
+              </TableHead>
+              <TableHead className="text-caption text-muted-foreground">
                 Description
-              </th>
-              <th className="w-10" />
-            </tr>
-          </thead>
-          <tbody>
+              </TableHead>
+              <TableHead className="w-10" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {fields.map((field, index) => (
-              <tr
-                key={index}
-                className="border-b border-border last:border-0 hover:bg-accent/30"
-              >
-                <td className="px-space-3 py-1.5">
+              <TableRow key={index}>
+                <TableCell>
                   <input
                     type="text"
                     value={field.name}
                     onChange={(e) => updateFieldName(index, e.target.value)}
                     className="bg-transparent text-mono-small text-foreground outline-none w-full"
                   />
-                </td>
-                <td className="px-space-3 py-1.5">
+                </TableCell>
+                <TableCell>
                   <input
                     type="text"
                     value={field.type}
@@ -184,57 +190,60 @@ export function ImportReviewScreen({
                           : ""}
                     </span>
                   )}
-                </td>
-                <td className="px-space-3 py-1.5 text-center">
+                </TableCell>
+                <TableCell className="text-center">
                   <Checkbox
                     checked={field.nullable}
                     onChange={(e) =>
                       updateFieldNullable(index, e.target.checked)
                     }
                   />
-                </td>
-                <td className="px-space-3 py-1.5 text-center">
+                </TableCell>
+                <TableCell className="text-center">
                   <ConfidenceBadge
                     confidence={field.confidence}
                     originalType={field.originalType}
                     mappedType={field.type}
                   />
-                </td>
-                <td className="px-space-3 py-1.5">
+                </TableCell>
+                <TableCell>
                   <span className="text-caption text-muted-foreground truncate block max-w-[200px]">
                     {field.description || "-"}
                   </span>
-                </td>
-                <td className="px-space-2 py-1.5">
-                  <button
+                </TableCell>
+                <TableCell>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
                     onClick={() => removeField(index)}
-                    className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
+                    aria-label={`Remove field ${field.name}`}
+                    className="text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
                   >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </td>
-              </tr>
+                    <Trash2 className="size-3" />
+                  </Button>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       {/* Actions */}
       <div className="flex justify-end gap-space-2">
-        <button
+        <Button
+          variant="ghost"
           onClick={onCancel}
-          className="px-4 py-1.5 rounded-lg text-body-small text-muted-foreground hover:bg-accent animate-field-hover"
+          className="text-muted-foreground"
         >
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
           data-testid="confirm-import-button"
           onClick={handleConfirm}
           disabled={!entityName.trim() || fields.length === 0 || !selectedDomainId}
-          className="px-4 py-1.5 rounded-lg text-body-small bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Confirm Import
-        </button>
+        </Button>
       </div>
     </div>
   );

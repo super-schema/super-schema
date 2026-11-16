@@ -257,7 +257,7 @@ function TagList({ label, labelHidden, value, error, disabled, onChange }: { lab
         {value.map((tag, i) => (
           <span key={`${tag}-${i}`} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs">
             {tag}
-            <button type="button" disabled={disabled} aria-label={`Remove ${tag}`} onClick={() => onChange(value.filter((_, j) => j !== i))}>
+            <button type="button" disabled={disabled} aria-label={`Remove ${tag}`} onClick={() => onChange(value.filter((_, j) => j !== i))} className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
               ×
             </button>
           </span>

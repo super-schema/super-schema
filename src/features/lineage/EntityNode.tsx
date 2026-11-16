@@ -3,6 +3,8 @@
 import { memo, useState, useCallback } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { pluralize } from "@/lib/pluralize";
 import { useRouter } from "next/navigation";
 import { assetHref } from "@/lib/navigation/asset-href";
@@ -121,13 +123,15 @@ function EntityNodeInner({ data, id }: NodeProps) {
           onClick={(e) => e.stopPropagation()}
         >
           {/* Close button */}
-          <button
+          <Button
+            variant="ghost"
+            size="icon-xs"
             onClick={() => setShowPopover(false)}
-            className="absolute top-2 right-2 text-muted-foreground hover:text-foreground text-sm"
+            className="absolute top-2 right-2 text-muted-foreground hover:text-foreground"
             aria-label="Close popover"
           >
             &times;
-          </button>
+          </Button>
 
           {/* Entity name */}
           <h2 className="text-[18px] font-medium text-foreground mb-1 pr-6">
@@ -144,24 +148,24 @@ function EntityNodeInner({ data, id }: NodeProps) {
           {/* Field list */}
           {displayFields.length > 0 && (
             <div className="mb-3">
-              <table className="w-full text-[12px]">
-                <thead>
-                  <tr className="text-muted-foreground border-b border-border">
-                    <th className="text-left pb-1 font-medium">Name</th>
-                    <th className="text-left pb-1 font-medium">Type</th>
-                    <th className="text-left pb-1 font-medium">Class.</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table className="text-[12px]">
+                <TableHeader>
+                  <TableRow className="text-muted-foreground hover:bg-transparent">
+                    <TableHead className="h-auto p-0 pb-1 text-muted-foreground">Name</TableHead>
+                    <TableHead className="h-auto p-0 pb-1 text-muted-foreground">Type</TableHead>
+                    <TableHead className="h-auto p-0 pb-1 text-muted-foreground">Class.</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {displayFields.map((f, i) => (
-                    <tr key={i} className="border-b border-border/50">
-                      <td className="py-0.5 font-mono text-foreground">
+                    <TableRow key={i} className="border-border/50">
+                      <TableCell className="p-0 py-0.5 font-mono text-foreground">
                         {f.name}
-                      </td>
-                      <td className="py-0.5 text-muted-foreground">
+                      </TableCell>
+                      <TableCell className="p-0 py-0.5 text-muted-foreground">
                         {f.type}
-                      </td>
-                      <td className="py-0.5">
+                      </TableCell>
+                      <TableCell className="p-0 py-0.5">
                         {f.classification && (
                           <Badge
                             variant={
@@ -176,11 +180,11 @@ function EntityNodeInner({ data, id }: NodeProps) {
                             {f.classification}
                           </Badge>
                         )}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
               {remainingFields > 0 && (
                 <p className="text-[11px] text-muted-foreground mt-1">
                   +{remainingFields} more
@@ -190,13 +194,14 @@ function EntityNodeInner({ data, id }: NodeProps) {
           )}
 
           {/* Open in Editor button */}
-          <button
+          <Button
+            size="lg"
             data-testid={`open-editor-${id}`}
             onClick={handleOpenEditor}
-            className="w-full rounded-lg bg-primary text-primary-foreground text-[14px] font-medium py-2 px-4 hover:bg-primary/90 transition-colors"
+            className="w-full"
           >
             Open in Editor
-          </button>
+          </Button>
         </div>
       )}
     </div>

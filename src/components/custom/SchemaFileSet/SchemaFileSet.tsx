@@ -194,7 +194,7 @@ export function SchemaFileSet({ files, entityName, entities, language = "text", 
                         data-path={file.path}
                         aria-current={isSelected ? "true" : undefined}
                         onClick={() => setSelectedPath(file.path)}
-                        className={`flex w-full items-center gap-1.5 rounded px-space-2 py-1 text-left font-mono text-caption transition-colors ${
+                        className={`flex w-full items-center gap-1.5 rounded px-space-2 py-1 text-left font-mono text-caption transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                           isSelected ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                         }`}
                       >

@@ -184,7 +184,7 @@ function Rows({ rows, depth, collapsed, toggle }: { rows: FieldRow[]; depth: num
               <td role="cell" className="min-w-0 py-1.5 pr-space-2">
                 <div className="flex items-start gap-1" style={{ paddingLeft: `${depth * 0.875}rem` }}>
                   {r.children.length > 0 ? (
-                    <button type="button" aria-expanded={open} aria-label={`${open ? "Collapse" : "Expand"} ${r.path}`} onClick={() => toggle(r.path)} className="mt-0.5 rounded text-muted-foreground hover:text-foreground">
+                    <button type="button" aria-expanded={open} aria-label={`${open ? "Collapse" : "Expand"} ${r.path}`} onClick={() => toggle(r.path)} className="mt-0.5 rounded text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50">
                       <ChevronRight aria-hidden="true" className={cn("size-3.5 transition-transform", open && "rotate-90")} />
                     </button>
                   ) : <span className="w-3.5 shrink-0" />}

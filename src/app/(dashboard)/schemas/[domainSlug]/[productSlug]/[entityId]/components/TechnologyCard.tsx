@@ -237,14 +237,15 @@ function TypeMappingInspector({
               className="grid grid-cols-[minmax(140px,1.2fr)_minmax(120px,0.8fr)_minmax(140px,1fr)_minmax(220px,1.4fr)_minmax(160px,0.9fr)] gap-space-3 px-space-3 py-space-3 text-body-small"
             >
               <div className="min-w-0">
-                <button
+                <Button
                   type="button"
+                  variant="link"
                   onClick={() => setSelectedFieldId(row.fieldId)}
-                  className="font-medium text-foreground underline-offset-2 hover:underline"
+                  className="h-auto p-0 text-foreground"
                   aria-label={`Review ${row.fieldName} mapping`}
                 >
                   {row.fieldName}
-                </button>
+                </Button>
                 {row.comment && (
                   <div className="mt-1 text-caption text-muted-foreground">
                     {row.comment}

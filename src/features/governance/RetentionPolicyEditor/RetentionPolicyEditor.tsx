@@ -172,7 +172,7 @@ function RetentionPolicyForm({
               data-testid={`retention-strategy-${s.value}`}
               aria-pressed={strategy === s.value}
               onClick={() => edited(setStrategy)(s.value)}
-              className={`flex items-start gap-2 p-space-3 rounded-lg border text-left transition-colors ${
+              className={`flex items-start gap-2 p-space-3 rounded-lg border text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                 strategy === s.value
                   ? "border-primary bg-primary/5 text-foreground"
                   : "border-border text-muted-foreground hover:border-foreground/20"
@@ -285,7 +285,7 @@ function RetentionPolicyForm({
               data-testid={`retention-action-${a.value}`}
               aria-pressed={action === a.value}
               onClick={() => edited(setAction)(a.value)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-caption transition-colors ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-caption transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                 action === a.value
                   ? "border-primary bg-primary/5 text-foreground"
                   : "border-border text-muted-foreground hover:border-foreground/20"

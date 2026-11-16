@@ -10,8 +10,9 @@ import { ChevronDown, ChevronLeft, ChevronRight, Pencil, Plus } from "lucide-rea
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Command, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { nextTabIndex, scrollEdges } from "./tab-nav";
+import { scrollEdges } from "./tab-nav";
 import { KeyInput } from "../controls";
 
 export interface ItemTab { key: string; label?: string; subtitle: string; broken: boolean }
@@ -90,77 +91,82 @@ export function ItemTabs({ label, prefix, items, activeIndex, onSelect, onAdd, a
     el?.scrollBy?.({ left: direction * Math.max(120, el.clientWidth * 0.6), behavior: "smooth" });
   }
 
+  // Arrow keys, Home and End are the tabs list's; F2 starts the rename of the active tab.
   function onTabKeyDown(e: React.KeyboardEvent<HTMLButtonElement>, index: number) {
     if (rename && index === activeIndex && e.key === "F2") {
       e.preventDefault();
       setEditingKey(items[index].key);
-      return;
     }
-    const to = nextTabIndex(index, items.length, e.key);
-    if (to === null) return;
-    e.preventDefault();
-    tabs.current[to]?.focus();
-    onSelect(items[to].key);
   }
 
   const needle = query.trim().toLowerCase();
   // A tab shows a name or a title; the key (what problems and links name) is searchable too.
   const matches = items.map((item, index) => ({ item, index })).filter(({ item }) => needle === "" || `${tabName(item)} ${item.key}`.toLowerCase().includes(needle));
-  const edgeButton = "absolute inset-y-0 z-10 flex w-6 items-center justify-center bg-background/90 text-muted-foreground hover:text-foreground";
+  const edgeButton = "absolute inset-y-0 z-10 h-auto w-6 rounded-none bg-background/90 px-0 text-muted-foreground hover:text-foreground";
 
   return (
     <div className="flex items-center gap-space-1 border-b border-border">
       <div className="relative min-w-0 flex-1">
         {edges.start && (
-          <button type="button" aria-label={`Scroll ${label.toLowerCase()} left`} data-testid={`${prefix}-tabs-left`} onClick={() => scrollBy(-1)} className={cn(edgeButton, "left-0")}>
+          <Button type="button" variant="ghost" size="icon-xs" aria-label={`Scroll ${label.toLowerCase()} left`} data-testid={`${prefix}-tabs-left`} onClick={() => scrollBy(-1)} className={cn(edgeButton, "left-0")}>
             <ChevronLeft aria-hidden="true" className="size-4" />
-          </button>
+          </Button>
         )}
         <div ref={scroller} onScroll={measure} className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div ref={strip} role="tablist" aria-label={label} className="flex w-max min-w-full items-center gap-space-1">
-            {items.map((item, index) => {
-              const isActive = index === activeIndex;
-              if (isActive && editing && rename) return (
-                <div
-                  key={index} ref={editor} className="w-64 shrink-0 px-space-2 py-space-1"
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape") { event.preventDefault(); setEditingKey(null); }
-                  }}
-                >
-                  <KeyInput
-                    id={rename.id} label={rename.label} value={item.key} taken={rename.taken} error={rename.error}
-                    onCommit={(next) => { rename.onCommit(next); setEditingKey(null); }}
-                  />
-                </div>
-              );
-              return (
-                <button
-                  key={index} ref={(el) => { tabs.current[index] = el; }} type="button" role="tab"
-                  data-testid={`${prefix}-row-${item.key}`} aria-selected={isActive} aria-current={isActive ? "true" : undefined}
-                  tabIndex={isActive ? 0 : -1} title={`${tabName(item)} — ${item.subtitle}`}
-                  onClick={() => { setEditingKey(null); onSelect(item.key); }} onKeyDown={(e) => onTabKeyDown(e, index)}
-                  onDoubleClick={rename ? () => setEditingKey(item.key) : undefined}
-                  className={cn(
-                    "flex shrink-0 items-center gap-space-2 border-b-2 px-space-3 py-space-2 text-body-small outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
-                    isActive ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  <span data-testid={isActive && rename ? `${rename.id}-value` : undefined} className="max-w-[12rem] truncate">{tabName(item)}</span>
-                  {item.broken && (
-                    <>
-                      <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-destructive" />
-                      <span className="sr-only">has problems</span>
-                    </>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+          <Tabs
+            value={activeIndex} className="gap-0"
+            onValueChange={(value) => {
+              const item = typeof value === "number" ? items[value] : undefined;
+              if (!item) return;
+              setEditingKey(null);
+              onSelect(item.key);
+            }}
+          >
+            <TabsList
+              ref={strip} variant="line" activateOnFocus aria-label={label}
+              className="h-auto w-max min-w-full justify-start gap-space-1 p-0 group-data-horizontal/tabs:h-auto"
+            >
+              {items.map((item, index) => {
+                const isActive = index === activeIndex;
+                if (isActive && editing && rename) return (
+                  <div
+                    key={index} ref={editor} className="w-64 shrink-0 px-space-2 py-space-1"
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") { event.preventDefault(); setEditingKey(null); }
+                    }}
+                  >
+                    <KeyInput
+                      id={rename.id} label={rename.label} value={item.key} taken={rename.taken} error={rename.error}
+                      onCommit={(next) => { rename.onCommit(next); setEditingKey(null); }}
+                    />
+                  </div>
+                );
+                return (
+                  <TabsTrigger
+                    key={index} value={index} ref={(el) => { tabs.current[index] = el; }}
+                    data-testid={`${prefix}-row-${item.key}`} aria-current={isActive ? "true" : undefined}
+                    title={`${tabName(item)} — ${item.subtitle}`}
+                    onKeyDown={(e) => onTabKeyDown(e, index)}
+                    onDoubleClick={rename ? () => setEditingKey(item.key) : undefined}
+                    className="h-auto flex-none shrink-0 gap-space-2 px-3 py-2 group-data-horizontal/tabs:after:bottom-0"
+                  >
+                    <span data-testid={isActive && rename ? `${rename.id}-value` : undefined} className="max-w-[12rem] truncate">{tabName(item)}</span>
+                    {item.broken && (
+                      <>
+                        <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-destructive" />
+                        <span className="sr-only">has problems</span>
+                      </>
+                    )}
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+          </Tabs>
         </div>
         {edges.end && (
-          <button type="button" aria-label={`Scroll ${label.toLowerCase()} right`} data-testid={`${prefix}-tabs-right`} onClick={() => scrollBy(1)} className={cn(edgeButton, "right-0")}>
+          <Button type="button" variant="ghost" size="icon-xs" aria-label={`Scroll ${label.toLowerCase()} right`} data-testid={`${prefix}-tabs-right`} onClick={() => scrollBy(1)} className={cn(edgeButton, "right-0")}>
             <ChevronRight aria-hidden="true" className="size-4" />
-          </button>
+          </Button>
         )}
       </div>
 

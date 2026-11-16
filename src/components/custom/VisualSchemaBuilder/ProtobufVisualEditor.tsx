@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { VisualEditorProps } from "./types";
@@ -140,13 +141,16 @@ export function ProtobufVisualEditor({
                   title="Field number (wire-format identity — keep stable once used)"
                 />
               </label>
-              <button
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={() => setFields((prev) => prev.filter((f) => f.id !== field.id))}
-                className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
+                className="text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
                 title="Remove field"
+                aria-label="Remove field"
               >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+                <Trash2 className="size-3.5" />
+              </Button>
             </div>
 
             {/* Row 2: doc/comment */}
@@ -226,13 +230,14 @@ export function ProtobufVisualEditor({
         ))}
       </div>
 
-      <button
+      <Button
+        variant="secondary"
         onClick={() => setFields((prev) => [...prev, newField(prev)])}
-        className="flex items-center gap-space-1 self-start px-space-3 py-1.5 rounded-lg text-body-small bg-muted hover:bg-accent text-foreground"
+        className="self-start"
       >
-        <Plus className="w-4 h-4" />
+        <Plus />
         Add Field
-      </button>
+      </Button>
     </div>
   );
 }

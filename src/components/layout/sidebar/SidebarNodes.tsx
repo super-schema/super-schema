@@ -109,7 +109,7 @@ export const SidebarNodeRow = memo(function SidebarNodeRow({
         type="button"
         aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
         aria-expanded={expanded}
-        className="shrink-0 rounded hover:bg-accent p-0.5 -m-0.5"
+        className="shrink-0 rounded hover:bg-accent p-0.5 -m-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         onClick={(event) => {
           event.stopPropagation();
           onToggle(nodeKey);
@@ -130,8 +130,9 @@ export const SidebarNodeRow = memo(function SidebarNodeRow({
           event.stopPropagation();
           onNavigate(addHref);
         }}
-        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-accent rounded transition-opacity"
+        className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-0.5 hover:bg-accent rounded transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         title={addTitle}
+        aria-label={addTitle}
       >
         <Plus className="w-3 h-3" />
       </button>
@@ -188,7 +189,7 @@ export const SidebarCategory = memo(function SidebarCategory({
         type="button"
         aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
         aria-expanded={expanded}
-        className="shrink-0 rounded hover:bg-accent p-0.5 -m-0.5"
+        className="shrink-0 rounded hover:bg-accent p-0.5 -m-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         onClick={(event) => {
           event.stopPropagation();
           onToggle(nodeKey);

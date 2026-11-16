@@ -8,6 +8,7 @@
  */
 
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import type { ImpactReport } from "@/types/schemas/governance";
 
 interface ImpactReportCardProps {
@@ -129,14 +130,16 @@ export function ImpactReportCard({ report }: ImpactReportCardProps) {
 
       {/* Migration Artifacts Summary */}
       <div>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           onClick={() => setShowArtifacts(!showArtifacts)}
-          className="text-caption font-semibold text-foreground hover:text-primary transition-colors flex items-center gap-1"
+          className="font-semibold text-foreground hover:text-primary"
         >
           <span>{showArtifacts ? "\u25BC" : "\u25B6"}</span>
           Migration Artifacts
-        </button>
+        </Button>
         {showArtifacts && (
           <div className="mt-2 space-y-1.5 pl-4">
             <div className="text-mono-small text-muted-foreground">

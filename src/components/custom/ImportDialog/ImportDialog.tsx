@@ -2,6 +2,8 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Upload,
   FileText,
@@ -628,27 +630,25 @@ export function ImportDialog({
             {phase === "input" && (
               <>
                 {/* Tabs */}
-                <div className="flex gap-1 mb-space-4 border-b border-border">
-                  {([
-                    { id: "paste" as const, label: "Paste Schema", icon: ClipboardPaste },
-                    { id: "build" as const, label: "Build Visually", icon: Sparkles },
-                    { id: "single" as const, label: "Upload File", icon: FileText },
-                    { id: "bulk" as const, label: "Bulk Import", icon: Upload },
-                  ]).map((tab) => (
-                    <button
-                      key={tab.id}
-                      onClick={() => setActiveTab(tab.id)}
-                      className={`flex items-center gap-space-1 px-space-3 py-2 text-body-small border-b-2 transition-colors ${
-                        activeTab === tab.id
-                          ? "border-primary text-foreground"
-                          : "border-transparent text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <tab.icon className="w-4 h-4" />
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
+                <Tabs
+                  value={activeTab}
+                  onValueChange={(value) => setActiveTab(value as ImportTab)}
+                  className="mb-space-4"
+                >
+                  <TabsList variant="line" className="w-full justify-start border-b border-border">
+                    {([
+                      { id: "paste" as const, label: "Paste Schema", icon: ClipboardPaste },
+                      { id: "build" as const, label: "Build Visually", icon: Sparkles },
+                      { id: "single" as const, label: "Upload File", icon: FileText },
+                      { id: "bulk" as const, label: "Bulk Import", icon: Upload },
+                    ]).map((tab) => (
+                      <TabsTrigger key={tab.id} value={tab.id} className="flex-none px-space-3">
+                        <tab.icon className="size-4" />
+                        {tab.label}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
 
                 {/* Error display */}
                 {error && (
@@ -683,15 +683,17 @@ export function ImportDialog({
                             <Upload className="w-3 h-3" />
                             <span>Drop a .tsp, .avsc, .json, .yaml, .sql, .proto file here</span>
                           </div>
-                          <button
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
                             onClick={(e) => {
                               e.stopPropagation();
                               setIsDropZoneCollapsed(false);
                             }}
-                            className="p-0.5 rounded hover:bg-accent"
+                            aria-label="Expand drop zone"
                           >
-                            <ChevronDown className="w-3 h-3 text-muted-foreground" />
-                          </button>
+                            <ChevronDown className="size-3 text-muted-foreground" />
+                          </Button>
                         </div>
                       ) : (
                         <div className="flex flex-col items-center justify-center gap-space-2">
@@ -717,12 +719,14 @@ export function ImportDialog({
                               />
                             </label>
                             {!isDropZoneCollapsed && pasteContent && (
-                              <button
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
                                 onClick={() => setIsDropZoneCollapsed(true)}
-                                className="p-1 rounded hover:bg-accent"
+                                aria-label="Collapse drop zone"
                               >
-                                <ChevronUp className="w-3 h-3 text-muted-foreground" />
-                              </button>
+                                <ChevronUp className="size-3 text-muted-foreground" />
+                              </Button>
                             )}
                           </div>
                         </div>
@@ -740,17 +744,19 @@ export function ImportDialog({
                             </span>
                           )}
                         </span>
-                        <button
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
                           onClick={() => setIsTextareaExpanded(!isTextareaExpanded)}
-                          className="p-1 rounded hover:bg-accent"
                           title={isTextareaExpanded ? "Collapse editor" : "Expand editor"}
+                          aria-label={isTextareaExpanded ? "Collapse editor" : "Expand editor"}
                         >
                           {isTextareaExpanded ? (
-                            <Minimize2 className="w-3 h-3 text-muted-foreground" />
+                            <Minimize2 className="size-3 text-muted-foreground" />
                           ) : (
-                            <Maximize2 className="w-3 h-3 text-muted-foreground" />
+                            <Maximize2 className="size-3 text-muted-foreground" />
                           )}
-                        </button>
+                        </Button>
                       </div>
                       <textarea
                         ref={textareaRef}
@@ -793,14 +799,13 @@ Example JSON Schema:
                           </span>
                         )}
                       </div>
-                      <button
+                      <Button
                         data-testid="paste-import-button"
                         onClick={handlePasteImport}
                         disabled={!pasteContent.trim()}
-                        className="px-4 py-1.5 rounded-lg text-body-small bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Parse & Review
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 )}

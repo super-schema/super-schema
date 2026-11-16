@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, renderHook, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { PaneRail, usePaneState, type PaneDef } from "@/features/events/builder/sections/PaneRail";
@@ -149,22 +149,22 @@ describe("PaneRail", () => {
     expect(within(tab("details")).queryByText("has problems")).toBeNull();
   });
 
-  it("moves with the arrow keys of either orientation, Home and End", () => {
+  it("moves with the arrow keys of either orientation, Home and End", async () => {
     render(<Rail />);
-    tab("payload").focus();
-    fireEvent.keyDown(tab("payload"), { key: "ArrowDown" });
-    expect(document.activeElement).toBe(tab("details"));
-    expect(tab("details").getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(tab("details"), { key: "ArrowRight" });
-    expect(document.activeElement).toBe(tab("examples"));
-    fireEvent.keyDown(tab("examples"), { key: "ArrowUp" });
-    expect(document.activeElement).toBe(tab("details"));
-    fireEvent.keyDown(tab("details"), { key: "End" });
-    expect(document.activeElement).toBe(tab("more"));
-    fireEvent.keyDown(tab("more"), { key: "ArrowDown" });
-    expect(document.activeElement).toBe(tab("payload"));
-    fireEvent.keyDown(tab("payload"), { key: "Home" });
-    expect(tab("payload").getAttribute("aria-selected")).toBe("true");
+    // Moves focus to the tab and waits for it to arrive: the tabs list moves focus after the key press has been handled.
+    const press = async (from: string, key: string, to: string) => {
+      act(() => tab(from).focus());
+      fireEvent.keyDown(tab(from), { key });
+      await waitFor(() => expect(document.activeElement).toBe(tab(to)));
+      expect(tab(to).getAttribute("aria-selected")).toBe("true");
+    };
+    await press("payload", "ArrowDown", "details");
+    await press("details", "ArrowRight", "examples");
+    await press("examples", "ArrowUp", "details");
+    await press("details", "End", "more");
+    await press("more", "ArrowDown", "payload");
+    await press("payload", "End", "more");
+    await press("more", "Home", "payload");
   });
 
   it("lets a long title wrap inside the rail instead of running into the pane, and keeps it on one line in the pills", () => {
@@ -182,7 +182,7 @@ describe("PaneRail", () => {
   });
 });
 
-it("offers empty optional sections through Add section while keeping populated and invalid ones visible", () => {
+it("offers empty optional sections through Add section while keeping populated and invalid ones visible", async () => {
   function OptionalRail() {
     const [active, setActive] = useState("payload");
     return <PaneRail idPrefix="x-card" panes={PANES} active={active} onSelect={setActive} corePanes={["payload"]} />;
@@ -196,6 +196,7 @@ it("offers empty optional sections through Add section while keeping populated a
   expect(tab("more").getAttribute("aria-selected")).toBe("true");
   fireEvent.click(tab("payload"));
   expect(tab("more")).toBeDefined();
+  act(() => tab("payload").focus());
   fireEvent.keyDown(tab("payload"), { key: "End" });
-  expect(tab("more").getAttribute("aria-selected")).toBe("true");
+  await waitFor(() => expect(tab("more").getAttribute("aria-selected")).toBe("true"));
 });

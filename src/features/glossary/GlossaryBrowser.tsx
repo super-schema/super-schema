@@ -9,6 +9,7 @@
  */
 
 import { useState, useCallback, useEffect } from "react";
+import { Button } from "@/components/ui/button";
 import type { BusinessConcept, FieldConceptLink } from "@/generated/prisma/client";
 import { ConceptCard } from "./ConceptCard";
 import { ConceptDetailPanel } from "./ConceptDetailPanel";
@@ -127,7 +128,7 @@ export function GlossaryBrowser() {
                   data-domain={domain}
                   aria-pressed={activeDomain === domain}
                   onClick={() => setActiveDomain(domain)}
-                  className={`w-full text-left px-3 py-1.5 rounded text-caption transition-colors ${
+                  className={`w-full text-left px-3 py-1.5 rounded text-caption transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                     activeDomain === domain
                       ? "text-foreground bg-primary/10"
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
@@ -158,17 +159,14 @@ export function GlossaryBrowser() {
           />
         </div>
 
-        <button
+        <Button
           type="button"
           data-testid="glossary-new-concept"
           onClick={() => setShowCreateDialog(true)}
-          className="w-full px-3 py-2 rounded text-caption font-medium text-white"
-          style={{
-            background: "linear-gradient(135deg, #A477B2, #8B5CF6)",
-          }}
+          className="w-full"
         >
           + New Concept
-        </button>
+        </Button>
       </div>
 
       {/* Main area: concept grid */}

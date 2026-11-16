@@ -43,16 +43,18 @@ export function ReferencePickDialog({ candidates, onPick, onCancel, field, name,
             const label = `${candidate.domain} / ${candidate.product} / ${candidate.entity}`;
             return (
               <li key={`${index}:${candidate.entityId ?? label}`}>
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   data-testid="reference-pick-candidate"
                   data-entity-id={candidate.entityId}
                   disabled={saving}
-                  className="w-full rounded border border-border/50 px-space-2 py-space-1 text-left font-mono text-body-small hover:bg-accent/30 disabled:opacity-50"
+                  className="w-full justify-start font-mono"
                   onClick={() => onPick(candidate)}
                 >
                   {label}
-                </button>
+                </Button>
               </li>
             );
           })}

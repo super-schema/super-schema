@@ -136,8 +136,10 @@ function VersionEntry({
       {/* Expandable change record */}
       {hasChanges && (
         <div className="mt-space-3">
-          <button
-            className="flex items-center gap-1 text-caption text-muted-foreground hover:text-foreground transition-colors"
+          <Button
+            variant="ghost"
+            size="xs"
+            className="text-muted-foreground"
             onClick={(e) => {
               e.stopPropagation();
               setExpanded(!expanded);
@@ -150,7 +152,7 @@ function VersionEntry({
               <ChevronRight className="w-3 h-3" />
             )}
             {expanded ? "Collapse" : "Expand"} change record
-          </button>
+          </Button>
 
           {expanded && (
             <div

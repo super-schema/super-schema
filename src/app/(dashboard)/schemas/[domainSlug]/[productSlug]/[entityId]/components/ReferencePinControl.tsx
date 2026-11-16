@@ -5,6 +5,8 @@ import { Loader2, Pin } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 import { NativeSelect } from "@/components/ui/native-select";
+import { Button } from "@/components/ui/button";
+
 /**
  * What a reference field's pin control needs of the server, handed in by the workspace so this component (and the field row that
  * hosts it) never import a server action themselves.
@@ -99,17 +101,19 @@ export function ReferencePinControl({ fieldId, referencedEntityId, referenceLabe
     <span className="inline-flex flex-wrap items-center gap-1" data-testid="reference-pin">
       {badge}
       {!open && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           data-testid="reference-pin-open"
           onClick={() => void handleOpen()}
-          className="rounded px-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+          className="text-muted-foreground"
           // The accessible name STARTS with the visible text ("Pin version" / "Change pin") and says which reference it is about.
           aria-label={`${pin ? "Change pin" : "Pin version"} of ${name}`}
           title="Pin a published version of the referenced entity"
         >
           {pin ? "Change pin" : "Pin version"}
-        </button>
+        </Button>
       )}
       {open && (
         <span className="inline-flex flex-wrap items-center gap-1">
@@ -155,15 +159,17 @@ export function ReferencePinControl({ fieldId, referencedEntityId, referenceLabe
               {saveError}
             </span>
           )}
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="xs"
             data-testid="reference-pin-cancel"
             onClick={() => setOpen(false)}
             disabled={saving}
-            className="rounded px-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+            className="text-muted-foreground"
           >
             Close
-          </button>
+          </Button>
         </span>
       )}
     </span>

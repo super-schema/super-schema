@@ -14,6 +14,14 @@ import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attri
 import { PolicyTemplateEditor } from "./PolicyTemplateEditor";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -167,56 +175,54 @@ export function DomainDataTable() {
             />
           </div>
         </div>
-        <button
+        <Button
           onClick={openCreate}
           data-testid="domain-create-open"
-          className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small"
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="size-4" />
           Create Domain
-        </button>
+        </Button>
       </div>
 
       {/* Table */}
       <div className="border border-border rounded-lg overflow-hidden">
-        <table className="w-full text-body-small" data-testid="domain-table">
-          <thead>
-            <tr className="border-b border-border bg-muted/50">
-              <th className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Name</th>
-              <th className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Description</th>
-              <th className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Entities</th>
-              <th className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Policy Template</th>
-              <th className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Created</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table className="text-body-small" data-testid="domain-table">
+          <TableHeader>
+            <TableRow className="bg-muted/50 hover:bg-muted/50">
+              <TableHead className="text-muted-foreground">Name</TableHead>
+              <TableHead className="text-muted-foreground">Description</TableHead>
+              <TableHead className="text-muted-foreground">Entities</TableHead>
+              <TableHead className="text-muted-foreground">Policy Template</TableHead>
+              <TableHead className="text-muted-foreground">Created</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {loading ? (
-              <tr>
-                <td colSpan={5} className="px-space-4 py-space-6 text-center text-muted-foreground">
+              <TableRow>
+                <TableCell colSpan={5} className="py-space-6 text-center text-muted-foreground">
                   <span className="inline-flex items-center gap-space-2">
                     <RefreshCw className="w-4 h-4 animate-spin" />
                     Loading domains…
                   </span>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : filtered.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="px-space-4 py-space-6 text-center text-muted-foreground">
+              <TableRow>
+                <TableCell colSpan={5} className="py-space-6 text-center text-muted-foreground">
                   {search ? "No matching domains" : "No domains yet. Create one to get started."}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : (
               filtered.map((domain) => (
-                <tr
+                <TableRow
                   key={domain.id}
                   data-testid="domain-row"
                   data-name={domain.name}
-                  className="border-b border-border last:border-0 hover:bg-accent/50 transition-colors"
                 >
-                  <td className="px-space-4 py-space-3 text-foreground font-medium">{domain.name}</td>
-                  <td className="px-space-4 py-space-3 text-muted-foreground truncate max-w-xs">{domain.description}</td>
-                  <td className="px-space-4 py-space-3 text-foreground">{domain.entityCount}</td>
-                  <td className="px-space-4 py-space-3">
+                  <TableCell className="text-foreground font-medium">{domain.name}</TableCell>
+                  <TableCell className="text-muted-foreground truncate max-w-xs">{domain.description}</TableCell>
+                  <TableCell className="text-foreground">{domain.entityCount}</TableCell>
+                  <TableCell>
                     <div className="flex flex-wrap items-center gap-space-2">
                     {domain.policyTemplateStatus === "Configured" ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-caption bg-success/20 text-success">
@@ -231,13 +237,13 @@ export function DomainDataTable() {
                     )}
                       <Button type="button" size="sm" variant="outline" aria-label={`Configure policy for ${domain.name}`} onClick={() => { setPolicyError(null); setPolicyDomain(domain); }}>Configure policy</Button>
                     </div>
-                  </td>
-                  <td className="px-space-4 py-space-3 text-muted-foreground">{domain.createdAt}</td>
-                </tr>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{domain.createdAt}</TableCell>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       <Dialog open={policyDomain !== null} onOpenChange={(open) => { if (!open && !policySaving) setPolicyDomain(null); }} disablePointerDismissal={policySaving}>

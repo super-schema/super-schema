@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Database, FlaskConical, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { formatDateOnly } from "@/lib/date-format";
 import { assetHref } from "@/lib/navigation/asset-href";
 
@@ -89,8 +90,10 @@ export function DomainCard({
       </Link>
 
       {canDeleteDomain && !isSystem ? (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-xs"
           onClick={onRequestDelete}
           disabled={!canDelete}
           aria-label={`Delete domain ${name}`}
@@ -100,10 +103,10 @@ export function DomainCard({
               ? `Delete ${name}`
               : "Delete entities in this domain before removing it"
           }
-          className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground transition-all hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+          className="absolute right-3 top-3 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
         >
-          <Trash2 className="w-4 h-4" />
-        </button>
+          <Trash2 className="size-4" />
+        </Button>
       ) : null}
     </div>
   );

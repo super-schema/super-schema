@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Download, FileText, Table, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   exportFieldsToJson,
   exportGapsToCsv,
@@ -93,10 +94,10 @@ export function ComplianceExportPopover({
 
   return (
     <div className="relative" ref={ref}>
-      <button
+      <Button
+        variant="outline"
         onClick={() => setOpen(!open)}
         disabled={externalLoading || exporting}
-        className="flex items-center gap-space-2 px-space-3 py-1.5 text-body-small border border-border rounded-lg hover:bg-accent/50 transition-colors disabled:opacity-50"
       >
         {exporting ? (
           <Loader2 className="w-4 h-4 animate-spin" />
@@ -104,13 +105,14 @@ export function ComplianceExportPopover({
           <Download className="w-4 h-4" />
         )}
         Export
-      </button>
+      </Button>
 
       {open && (
         <div className="absolute right-0 top-full mt-1 w-64 surface-1 border border-border rounded-xl shadow-lg backdrop-blur-sm z-50 overflow-hidden">
           <button
+            type="button"
             onClick={() => runExport("csv")}
-            className="w-full flex items-center gap-space-3 px-space-4 py-space-3 hover:bg-accent/50 transition-colors text-left"
+            className="w-full flex items-center gap-space-3 px-space-4 py-space-3 hover:bg-accent/50 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
           >
             <Table className="w-5 h-5 text-green-400" />
             <div>
@@ -121,8 +123,9 @@ export function ComplianceExportPopover({
             </div>
           </button>
           <button
+            type="button"
             onClick={() => runExport("json")}
-            className="w-full flex items-center gap-space-3 px-space-4 py-space-3 hover:bg-accent/50 transition-colors text-left border-t border-border"
+            className="w-full flex items-center gap-space-3 px-space-4 py-space-3 hover:bg-accent/50 transition-colors text-left border-t border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
           >
             <FileText className="w-5 h-5 text-blue-400" />
             <div>

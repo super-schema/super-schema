@@ -107,7 +107,8 @@ export function DomainModelsTab({ models }: DomainModelsTabProps) {
             <button
               type="button"
               onClick={() => toggle(model.id)}
-              className="flex items-center gap-space-2 w-full px-space-4 py-space-3 hover:bg-muted/30 transition-colors"
+              aria-expanded={isExpanded}
+              className="flex items-center gap-space-2 w-full px-space-4 py-space-3 hover:bg-muted/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
             >
               {isExpanded ? (
                 <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
@@ -168,13 +169,16 @@ export function DomainModelsTab({ models }: DomainModelsTabProps) {
                       {field.isKey && <Badge variant="outline" className="text-[9px] h-3.5 px-1">key</Badge>}
                       {!field.nullable && <Badge variant="outline" className="text-[9px] h-3.5 px-1">required</Badge>}
                       {field.description && <span className="truncate flex-1">{field.description}</span>}
-                      <button
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
                         onClick={() => handleDeleteField(field.id, field.name)}
-                        className="opacity-0 group-hover/field:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+                        className="opacity-0 group-hover/field:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive"
                         title="Remove field"
+                        aria-label="Remove field"
                       >
                         <Trash2 className="w-3 h-3" />
-                      </button>
+                      </Button>
                     </div>
                   ))}
                 </div>
@@ -210,13 +214,15 @@ export function DomainModelsTab({ models }: DomainModelsTabProps) {
                     <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2" onClick={() => { setAddingFieldFor(null); setNewFieldName(""); }}>Cancel</Button>
                   </div>
                 ) : (
-                  <button
+                  <Button
+                    variant="link"
+                    size="xs"
                     onClick={() => setAddingFieldFor(model.id)}
-                    className="flex items-center gap-1 text-[10px] text-primary hover:underline mt-1"
+                    className="mt-1"
                   >
                     <Plus className="w-3 h-3" />
                     Add field
-                  </button>
+                  </Button>
                 )}
               </div>
             )}

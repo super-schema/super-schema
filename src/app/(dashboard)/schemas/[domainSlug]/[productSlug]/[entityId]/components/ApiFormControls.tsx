@@ -120,7 +120,7 @@ export function TagInput({ tags, onChange, disabled, invalid, id }: TagInputProp
         <span key={tag} className="inline-flex items-center gap-0.5 rounded-md bg-muted px-1.5 text-[11px] text-foreground">
           {tag}
           {!disabled && (
-            <button type="button" aria-label={`Remove tag ${tag}`} onClick={() => onChange(tags.filter((t) => t !== tag))} className="text-muted-foreground hover:text-destructive">
+            <button type="button" aria-label={`Remove tag ${tag}`} onClick={() => onChange(tags.filter((t) => t !== tag))} className="rounded-sm text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
               <X className="w-2.5 h-2.5" />
             </button>
           )}

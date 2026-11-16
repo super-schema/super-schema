@@ -96,8 +96,9 @@ export function NotificationItem({
 
   return (
     <button
+      type="button"
       data-testid={`notification-item-${notification.id}`}
-      className={`${className} hover:bg-accent/30 transition-colors`}
+      className={`${className} hover:bg-accent/30 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50`}
       onClick={() => onClick(notification)}
     >
       {content}

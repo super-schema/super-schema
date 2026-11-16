@@ -470,17 +470,19 @@ export function FieldEditor({
             <option value="incomplete">Incomplete</option>
           </NativeSelect>
           {hasActiveFilters && (
-            <button
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => {
                 setSearchQuery("");
                 setTypeFilter("");
                 setClassificationFilter("");
                 setCompletenessFilter("");
               }}
-              className="text-caption text-muted-foreground hover:text-foreground transition-colors"
+              className="text-muted-foreground"
             >
               Clear filters
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -529,12 +531,15 @@ export function FieldEditor({
             <h4 className="text-body-small text-foreground font-medium">
               New Field
             </h4>
-            <button
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={resetDialog}
-              className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded"
+              className="text-muted-foreground"
+              aria-label="Close new field form"
             >
               <X className="w-4 h-4" />
-            </button>
+            </Button>
           </div>
 
           {/* Name + Type row */}
@@ -612,14 +617,16 @@ export function FieldEditor({
 
       {/* Add field button -- opens the inline create dialog */}
       {!isReadOnly && !showCreateDialog && (
-        <button
+        <Button
+          variant="outline"
+          size="lg"
           onClick={() => setShowCreateDialog(true)}
           data-testid="field-add-button"
-          className="mt-space-3 w-full flex items-center justify-center gap-2 py-space-3 rounded-lg border border-dashed border-border hover:border-primary/40 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-body-small"
+          className="mt-space-3 w-full gap-2 border-dashed text-muted-foreground hover:border-primary/40"
         >
           <Plus className="w-4 h-4" />
           Add Field
-        </button>
+        </Button>
       )}
     </div>
   );

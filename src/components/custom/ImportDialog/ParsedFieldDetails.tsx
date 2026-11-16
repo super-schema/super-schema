@@ -11,6 +11,7 @@
 
 import { memo, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ValidationIndicator } from "@/components/custom/ValidationIndicator";
 import { getClassificationConfig } from "@/lib/importers/classification-config";
 import type { ImportConfidence, ParsedEntity, ParsedField } from "@/lib/importers/types";
@@ -142,14 +143,16 @@ function ExtensionValue({ name, value }: { name: string; value: unknown }) {
         {shown}
       </pre>
       {isLong && (
-        <button
+        <Button
           type="button"
+          variant="link"
+          size="xs"
           onClick={() => setExpanded((v) => !v)}
-          className="text-[10px] text-info hover:underline"
+          className="h-auto px-0 text-[10px] text-info"
           aria-expanded={expanded}
         >
           {expanded ? "Collapse value" : `… ${text.length - MAX_VALUE_CHARS} more characters — show all`}
-        </button>
+        </Button>
       )}
     </div>
   );

@@ -69,11 +69,29 @@ function VersionItem({
   const summary =
     version.changeRecord ? summarizeChanges(changes) : "Initial version";
 
+  const canCompare = previousVersion != null && onViewDiff != null;
+
   return (
-    <div className="border-b border-border/50 last:border-b-0">
+    <div className="relative border-b border-border/50 last:border-b-0">
+      {/* A sibling of the row button, not inside it: a button may not contain another one. */}
+      {previousVersion != null && onViewDiff && (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => onViewDiff(version.version, previousVersion)}
+          className="absolute top-2 right-3 z-10 text-muted-foreground"
+          title={`Compare v${previousVersion} → v${version.version}`}
+          aria-label={`Compare v${previousVersion} → v${version.version}`}
+          data-testid={`view-diff-v${version.version}`}
+        >
+          <GitCompare className="size-3.5" />
+        </Button>
+      )}
       <button
+        type="button"
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-accent/30 transition-colors"
+        aria-expanded={expanded}
+        className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-accent/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         <span className="mt-0.5 shrink-0 text-muted-foreground">
           {expanded ? (
@@ -88,21 +106,8 @@ function VersionItem({
               v{version.version}
             </span>
             <div className="flex items-center gap-1.5">
-              {previousVersion != null && onViewDiff && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onViewDiff(version.version, previousVersion);
-                  }}
-                  className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded hover:bg-accent/30"
-                  title={`Compare v${previousVersion} → v${version.version}`}
-                  data-testid={`view-diff-v${version.version}`}
-                >
-                  <GitCompare className="w-3.5 h-3.5" />
-                </button>
-              )}
               <span
-                className="text-caption text-muted-foreground shrink-0"
+                className={`text-caption text-muted-foreground shrink-0 ${canCompare ? "mr-7" : ""}`}
                 title={formatDateTime(version.timestamp)}
               >
                 {relativeTime(version.timestamp)}
@@ -271,12 +276,14 @@ export function VersionHistoryPanel({
               Compare
             </Button>
           )}
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={onClose}
-            className="text-muted-foreground hover:text-foreground transition-colors text-body-small px-1.5 py-0.5 rounded hover:bg-accent/30"
+            className="text-muted-foreground"
           >
             Close
-          </button>
+          </Button>
         </div>
       </div>
 

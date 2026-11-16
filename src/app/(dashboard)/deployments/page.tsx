@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Rocket, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DeploymentOverviewFilters, DeploymentOverviewTable } from "@/components/custom/DeploymentOverview";
 import { getDeploymentOverviewAction } from "./actions";
 import type { DeploymentOverviewFilters as OverviewFilters, DeploymentOverviewRow } from "@/services/deployment.service";
@@ -134,14 +135,14 @@ export default function DeploymentsPage() {
           <section className="space-y-2" aria-label="Recent deliveries">
             <h2 className="text-heading-3">Recent deliveries</h2>
             <p className="text-caption text-muted-foreground">Latest 50 attempts for the selected domain and format. A delivery receipt records the destination&apos;s response.</p>
-            {deliveries.length === 0 ? <p className="text-body-small text-muted-foreground">No delivery attempts yet.</p> : <div className="overflow-x-auto rounded-lg border"><table className="w-full text-left text-body-small">
-              <thead className="bg-muted"><tr>{["Schema", "Version", "Destination", "Environment", "Result"].map((title) => <th key={title} className="px-3 py-2 font-medium">{title}</th>)}</tr></thead>
-              <tbody>{deliveries.map((delivery) => <tr key={delivery.id} className="border-t">
-                <td className="px-3 py-2"><Link className="text-primary hover:underline" href={delivery.href}>{delivery.entityName}</Link></td>
-                <td className="px-3 py-2 whitespace-nowrap">{delivery.format} v{delivery.artifactVersion}</td><td className="px-3 py-2">{delivery.method === "http" ? "API" : delivery.method === "git" ? "Git PR" : "Registry"}</td>
-                <td className="px-3 py-2">{delivery.environment}</td><td className="px-3 py-2">{delivery.url?.startsWith("https://") ? <a className="text-primary hover:underline" href={delivery.url} target="_blank" rel="noreferrer">{delivery.outcome ?? delivery.status}</a> : delivery.outcome ?? delivery.status}</td>
-              </tr>)}</tbody>
-            </table></div>}
+            {deliveries.length === 0 ? <p className="text-body-small text-muted-foreground">No delivery attempts yet.</p> : <div className="overflow-hidden rounded-lg border"><Table className="text-body-small">
+              <TableHeader className="bg-muted"><TableRow className="hover:bg-transparent">{["Schema", "Version", "Destination", "Environment", "Result"].map((title) => <TableHead key={title}>{title}</TableHead>)}</TableRow></TableHeader>
+              <TableBody>{deliveries.map((delivery) => <TableRow key={delivery.id}>
+                <TableCell className="whitespace-normal"><Link className="text-primary hover:underline" href={delivery.href}>{delivery.entityName}</Link></TableCell>
+                <TableCell>{delivery.format} v{delivery.artifactVersion}</TableCell><TableCell className="whitespace-normal">{delivery.method === "http" ? "API" : delivery.method === "git" ? "Git PR" : "Registry"}</TableCell>
+                <TableCell className="whitespace-normal">{delivery.environment}</TableCell><TableCell className="whitespace-normal">{delivery.url?.startsWith("https://") ? <a className="text-primary hover:underline" href={delivery.url} target="_blank" rel="noreferrer">{delivery.outcome ?? delivery.status}</a> : delivery.outcome ?? delivery.status}</TableCell>
+              </TableRow>)}</TableBody>
+            </Table></div>}
           </section>
           <h2 className="text-heading-3">Recorded environments</h2>
           <DeploymentOverviewTable rows={rows} targetFormats={targetFormats} />
@@ -149,24 +150,26 @@ export default function DeploymentsPage() {
             <div className="flex items-center justify-between">
               <span className="text-caption text-muted-foreground">{`Showing ${from}–${to} of ${total}`}</span>
               <div className="flex items-center gap-space-2">
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon-sm"
                   aria-label="Previous page"
                   disabled={page <= 1}
                   onClick={() => setPage(page - 1)}
-                  className="p-1 rounded hover:bg-accent/50 disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   <ChevronLeft className="w-4 h-4" />
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon-sm"
                   aria-label="Next page"
                   disabled={page >= lastPage}
                   onClick={() => setPage(page + 1)}
-                  className="p-1 rounded hover:bg-accent/50 disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   <ChevronRight className="w-4 h-4" />
-                </button>
+                </Button>
               </div>
             </div>
           )}

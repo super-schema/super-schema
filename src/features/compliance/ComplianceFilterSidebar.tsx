@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { Search, X } from "lucide-react";
 import type { ComplianceFilter } from "@/types/schemas/compliance";
 
+import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Checkbox } from "@/components/ui/checkbox";
 const CLASSIFICATIONS = ["PII", "SENSITIVE", "INTERNAL", "PUBLIC"];
@@ -241,14 +242,15 @@ export function ComplianceFilterSidebar({
       </div>
 
       {/* Clear All */}
-      <button
+      <Button
+        variant="outline"
         data-testid="compliance-filter-clear"
         onClick={clearAll}
-        className="flex items-center justify-center gap-space-2 text-body-small text-muted-foreground hover:text-foreground border border-border rounded-lg px-space-3 py-1.5 hover:bg-accent/50 transition-colors mt-auto"
+        className="mt-auto text-muted-foreground hover:text-foreground"
       >
         <X className="w-4 h-4" />
         Clear all filters
-      </button>
+      </Button>
     </div>
   );
 }

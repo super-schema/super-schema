@@ -236,11 +236,12 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
           {subTabs.map((tab) => (
             <button
               key={tab.id}
+              type="button"
               data-testid="data-type-subtab"
               data-subtab={tab.id}
               aria-pressed={activeSubTab === tab.id}
               onClick={() => setActiveSubTab(tab.id)}
-              className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-body-small transition-colors ${
+              className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-body-small transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                 activeSubTab === tab.id
                   ? "bg-accent text-foreground font-medium"
                   : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
@@ -555,22 +556,26 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
         <span className="min-w-0 max-w-full font-mono text-body-small text-foreground font-medium [overflow-wrap:anywhere]">{e.name}</span>
         <Badge variant="secondary" className="text-[10px] h-4 px-1">{pluralize(values.length, "value")}</Badge>
         {described.length > 0 && <Badge variant="outline" className="text-[10px] h-4 px-1" data-testid="enum-described-count">{described.length} described</Badge>}
-        <button
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={startEdit}
           data-testid="data-type-edit"
           aria-label={`Edit ${e.name}`}
-          className="ml-auto opacity-0 group-hover/enum:opacity-100 focus:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+          className="ml-auto opacity-0 group-hover/enum:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-foreground"
         >
           <Pencil className="w-3.5 h-3.5" />
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={() => onDelete(e.name)}
           data-testid="data-type-delete"
           aria-label={`Delete ${e.name}`}
-          className="opacity-0 group-hover/enum:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+          className="opacity-0 group-hover/enum:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive"
         >
           <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        </Button>
       </div>
       {editing ? (
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2 mb-2" data-testid="data-type-edit-form" data-kind="enum">
@@ -611,9 +616,9 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
               <dt data-testid="data-type-member" data-member={v} className="min-w-0 font-mono text-[11px] text-foreground [overflow-wrap:anywhere]">{v}</dt>
               <dd className="flex min-w-0 items-start gap-space-2">
                 <span className="min-w-0 flex-1 text-caption text-muted-foreground [overflow-wrap:anywhere]">{saved.valueDescriptions[v] || "No description"}</span>
-                <button type="button" onClick={() => removeValue(v)} aria-label={`Remove ${v}`} className="shrink-0 p-0.5 text-muted-foreground hover:text-destructive">
+                <Button type="button" variant="ghost" size="icon-xs" onClick={() => removeValue(v)} aria-label={`Remove ${v}`} className="shrink-0 text-muted-foreground hover:text-destructive">
                   <X className="size-3" />
-                </button>
+                </Button>
               </dd>
             </div>
           ))}
@@ -626,7 +631,7 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
             onBlur={() => { if (newValue.trim()) addValue(); else setIsAdding(false); }}
             placeholder="value" aria-label="New value" className="h-5 w-20 rounded border border-input bg-transparent px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-ring" />
         ) : (
-          <button onClick={() => setIsAdding(true)} aria-label="Add value" className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
+          <button type="button" onClick={() => setIsAdding(true)} aria-label="Add value" className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
             <Plus className="w-2.5 h-2.5" />
           </button>
         )}
@@ -673,22 +678,26 @@ function ScalarCard({ s, onDelete }: { s: CustomScalarData; onDelete: (name: str
       <div className="flex items-center gap-space-2 flex-wrap">
         <span className="font-mono text-body-small text-foreground font-medium">{s.name}</span>
         <ScalarTypeBadges s={shown} />
-        <button
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={() => { setForm(scalarFormFrom(shown)); setError(null); }}
           data-testid="data-type-edit"
           aria-label={`Edit ${s.name}`}
-          className="ml-auto opacity-0 group-hover/scalar:opacity-100 focus:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+          className="ml-auto opacity-0 group-hover/scalar:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-foreground"
         >
           <Pencil className="w-3.5 h-3.5" />
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={() => onDelete(s.name)}
           data-testid="data-type-delete"
           aria-label={`Delete ${s.name}`}
-          className="opacity-0 group-hover/scalar:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+          className="opacity-0 group-hover/scalar:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive"
         >
           <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        </Button>
       </div>
       {form ? (
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2 mt-2" data-testid="data-type-edit-form" data-kind="scalar">
@@ -782,14 +791,16 @@ function UnionCard({ u, onDelete }: { u: UnionTypeData; onDelete: (name: string)
       <div className="flex items-center gap-space-2 mb-1">
         <span className="font-mono text-body-small text-foreground font-medium">{u.name}</span>
         <span className="text-caption text-muted-foreground">=</span>
-        <button
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={() => onDelete(u.name)}
           data-testid="data-type-delete"
           aria-label={`Delete ${u.name}`}
-          className="ml-auto opacity-0 group-hover/union:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+          className="ml-auto opacity-0 group-hover/union:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive"
         >
           <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        </Button>
       </div>
       {u.description && <p className="text-caption text-muted-foreground mb-1.5">{u.description}</p>}
       <div className="flex flex-wrap gap-1">
@@ -798,7 +809,7 @@ function UnionCard({ u, onDelete }: { u: UnionTypeData; onDelete: (name: string)
             {i > 0 && <span className="text-[10px] text-muted-foreground mx-0.5">|</span>}
             <Badge variant="outline" data-testid="data-type-member" data-member={m} className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
               {m}
-              <button onClick={() => removeMember(m)} aria-label={`Remove ${m}`} className="hover:text-destructive ml-0.5"><X className="w-2.5 h-2.5" /></button>
+              <button type="button" onClick={() => removeMember(m)} aria-label={`Remove ${m}`} className="ml-0.5 rounded-sm hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"><X className="w-2.5 h-2.5" /></button>
             </Badge>
           </span>
         ))}
@@ -808,7 +819,7 @@ function UnionCard({ u, onDelete }: { u: UnionTypeData; onDelete: (name: string)
             onBlur={() => { if (newMember.trim()) addMember(); else setIsAdding(false); }}
             placeholder="type" aria-label="New member" className="h-5 w-20 rounded border border-input bg-transparent px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-ring" />
         ) : (
-          <button onClick={() => setIsAdding(true)} aria-label="Add member" className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
+          <button type="button" onClick={() => setIsAdding(true)} aria-label="Add member" className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
             <Plus className="w-2.5 h-2.5" />
           </button>
         )}

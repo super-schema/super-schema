@@ -52,13 +52,15 @@ export function ComplexTypePrompt({
 }: ComplexTypePromptProps) {
   return (
     <div className="p-3 space-y-3">
-      <button
+      <Button
+        variant="ghost"
+        size="xs"
         onClick={onBack}
-        className="flex items-center gap-1 text-caption text-muted-foreground hover:text-foreground transition-colors"
+        className="self-start text-muted-foreground"
       >
         <ArrowLeft className="w-3 h-3" />
         Back to types
-      </button>
+      </Button>
 
       {complexType === "array" && (
         <ArrayPrompt onConfirm={onConfirm} />
@@ -125,8 +127,9 @@ function MapPrompt({ onConfirm }: { onConfirm: (config: ComplexTypeConfig) => vo
           {keyTypes.map((kt) => (
             <button
               key={kt.id}
+              type="button"
               onClick={() => setKeyType(kt.id)}
-              className={`px-3 py-1 rounded text-caption border transition-colors ${
+              className={`px-3 py-1 rounded text-caption border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                 keyType === kt.id
                   ? "border-primary bg-primary/10 text-foreground"
                   : "border-border/50 text-muted-foreground hover:border-primary/40"
@@ -222,7 +225,7 @@ function ReferencePrompt({
                   setSearchQuery(e.name);
                   setPicked(e);
                 }}
-                className={`w-full text-left px-2 py-1 text-caption hover:bg-accent/30 transition-colors ${picked?.id === e.id ? "bg-accent/40" : ""}`}
+                className={`w-full text-left px-2 py-1 text-caption hover:bg-accent/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${picked?.id === e.id ? "bg-accent/40" : ""}`}
               >
                 {labelOf(e)}
               </button>
@@ -243,8 +246,9 @@ function ReferencePrompt({
           {cardinalities.map((c) => (
             <button
               key={c.value}
+              type="button"
               onClick={() => setCardinality(c.value)}
-              className={`px-3 py-1 rounded text-caption border transition-colors ${
+              className={`px-3 py-1 rounded text-caption border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                 cardinality === c.value
                   ? "border-primary bg-primary/10 text-foreground"
                   : "border-border/50 text-muted-foreground hover:border-primary/40"
@@ -329,8 +333,10 @@ function EnumPrompt({ onConfirm }: { onConfirm: (config: ComplexTypeConfig) => v
             >
               {v}
               <button
+                type="button"
+                aria-label={`Remove ${v}`}
                 onClick={() => removeValue(v)}
-                className="hover:text-destructive transition-colors"
+                className="hover:text-destructive transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded-sm"
               >
                 <X className="w-2.5 h-2.5" />
               </button>

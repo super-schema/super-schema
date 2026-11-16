@@ -200,12 +200,14 @@ export function LoginForm({
               className="h-10 pr-10"
               data-testid="login-password"
             />
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-xs"
               onClick={() => setShowPassword(!showPassword)}
               aria-label={showPassword ? "Hide password" : "Show password"}
               data-testid="login-password-toggle"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:bg-transparent hover:text-foreground"
               tabIndex={-1}
             >
               {showPassword ? (
@@ -213,7 +215,7 @@ export function LoginForm({
               ) : (
                 <Eye className="w-4 h-4" />
               )}
-            </button>
+            </Button>
           </div>
         </div>
 

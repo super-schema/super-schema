@@ -2,6 +2,7 @@
 
 import type { DeploymentOverviewFilters as OverviewFilters } from "@/services/deployment.service";
 
+import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/native-select";
 const DRIFT_STATUSES: readonly NonNullable<OverviewFilters["driftStatus"]>[] = ["in-sync", "drifted", "unknown"];
 
@@ -97,12 +98,13 @@ export function DeploymentOverviewFilters({
 
       {/* Clear filters */}
       {(filters.domain || filters.driftStatus || filters.targetFormat) && (
-        <button
+        <Button
+          variant="link"
+          size="xs"
           onClick={() => onFilterChange({})}
-          className="text-caption text-primary hover:underline"
         >
           Clear filters
-        </button>
+        </Button>
       )}
     </div>
   );

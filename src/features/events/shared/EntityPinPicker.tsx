@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Check, ChevronsUpDown, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { listPinnableVersionsAction } from "../pin-actions";
 import type { EntityPin } from "@/lib/events/types";
@@ -239,7 +240,7 @@ function EntityCombobox({ id, label, entities, selectedId, optional, disabled, a
             <div role="radiogroup" aria-label="Show entities from" className="flex flex-wrap gap-1">
               {(["product", "domain", "tenant"] as const).map((l) => (
                 <button key={l} type="button" role="radio" aria-checked={level === l} onClick={() => changeLevel(l)}
-                  className={cn("rounded-md px-space-2 py-0.5 text-caption", level === l ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent/50")}>
+                  className={cn("rounded-md px-space-2 py-0.5 text-caption outline-none focus-visible:ring-2 focus-visible:ring-ring/50", level === l ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent/50")}>
                   {SCOPE_LABELS[l]} <span className="tabular-nums text-muted-foreground">{counts[l]}</span>
                 </button>
               ))}
@@ -261,14 +262,14 @@ function EntityCombobox({ id, label, entities, selectedId, optional, disabled, a
             ))}
             {shown.length < results.length && (
               <li ref={sentinel} className="px-space-2 py-1">
-                <button type="button" className="text-caption text-primary hover:underline" onClick={() => setLimit((n) => n + PAGE_SIZE)}>Show more</button>
+                <Button type="button" variant="link" size="xs" className="h-auto p-0" onClick={() => setLimit((n) => n + PAGE_SIZE)}>Show more</Button>
               </li>
             )}
           </ul>
           {results.length === 0 && (
             <p className="px-space-2 text-caption text-muted-foreground">
               {q ? `No entities match “${query.trim()}”${scope && level !== "tenant" ? ` in ${SCOPE_LABELS[level].toLowerCase()}` : ""}.` : "No entities here."}
-              {wider && <> <button type="button" className="text-primary hover:underline" onClick={() => changeLevel(wider)}>{counts[wider]} in {SCOPE_LABELS[wider].toLowerCase()}</button></>}
+              {wider && <> <Button type="button" variant="link" size="xs" className="h-auto p-0 align-baseline" onClick={() => changeLevel(wider)}>{counts[wider]} in {SCOPE_LABELS[wider].toLowerCase()}</Button></>}
             </p>
           )}
           {results.length > 0 && <p className="px-space-2 text-caption text-muted-foreground" data-testid={`${id}-entity-count`}>Showing {Math.min(shown.length, results.length)} of {results.length}</p>}

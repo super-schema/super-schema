@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { AlertCircle, AlertTriangle, ArrowLeft, CheckCircle2, FileCode, Upload } from "lucide-react";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
@@ -421,13 +422,15 @@ export function SchemaWorkbench({
 
   return (
     <div className="flex flex-col gap-space-4" data-testid="schema-workbench">
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={onBack}
-        className="flex items-center gap-1 self-start text-body-small text-muted-foreground hover:text-foreground transition-colors"
+        className="self-start text-muted-foreground"
       >
-        <ArrowLeft className="w-4 h-4" />
+        <ArrowLeft />
         Back
-      </button>
+      </Button>
 
       <div>
         <h3 className="text-heading-2 text-foreground mb-space-2">Import or Build Schema</h3>
@@ -441,19 +444,17 @@ export function SchemaWorkbench({
       {/* Source switcher */}
       <div className="flex items-center border border-border rounded-lg overflow-hidden self-start">
         {MODES.filter((m) => m.id !== "url" || onImportResult).map((m) => (
-          <button
+          <Button
             key={m.id}
             type="button"
+            variant={mode === m.id ? "secondary" : "ghost"}
             data-testid={`workbench-mode-${m.id}`}
             onClick={() => selectMode(m.id)}
             aria-pressed={mode === m.id}
-            className={cn(
-              "px-space-3 py-1.5 text-body-small transition-colors",
-              mode === m.id ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
-            )}
+            className={cn("rounded-none", mode !== m.id && "text-muted-foreground")}
           >
             {m.label}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -465,24 +466,26 @@ export function SchemaWorkbench({
         >
           <span className="text-body-small text-foreground">{pending.message}</span>
           <span className="flex gap-space-2">
-            <button
+            <Button
               type="button"
+              variant="destructive"
+              size="sm"
               onClick={() => {
                 const { run } = pending;
                 setPending(null);
                 run();
               }}
-              className="px-3 py-1 rounded-lg text-body-small bg-destructive text-destructive-foreground"
             >
               {pending.confirmLabel}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="secondary"
+              size="sm"
               onClick={() => setPending(null)}
-              className="px-3 py-1 rounded-lg text-body-small bg-muted hover:bg-accent"
             >
               Cancel
-            </button>
+            </Button>
           </span>
         </div>
       )}
@@ -511,21 +514,23 @@ export function SchemaWorkbench({
               <span className="px-2 py-0.5 rounded border border-border">
                 Format: {shownFormat ?? "unknown"}
               </span>
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="xs"
                 onClick={() => dispatch({ type: "resetToBaseline" })}
                 disabled={state.currentText === state.baselineText}
-                className="px-2 py-0.5 rounded bg-muted hover:bg-accent disabled:opacity-40"
               >
                 Reset to original
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="secondary"
+                size="xs"
                 onClick={startOver}
-                className="px-2 py-0.5 rounded bg-muted hover:bg-accent"
               >
                 Start over
-              </button>
+              </Button>
             </div>
           )}
           {importNotice && mode !== "form" && !pasting && (
@@ -634,15 +639,16 @@ export function SchemaWorkbench({
                 Only https URLs are fetched; relative $ref paths inside the file are resolved against this URL.
                 References that cannot be loaded stay as dangling references and the entity stays in draft.
               </p>
-              <button
+              <Button
                 type="button"
+                variant="secondary"
                 data-testid="workbench-url-fetch-button"
                 disabled={urlLoading}
                 onClick={() => void fetchUrl()}
-                className="self-start px-4 py-1.5 rounded-lg text-body-small bg-muted hover:bg-accent text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+                className="self-start"
               >
                 Fetch and import
-              </button>
+              </Button>
               {urlLoading && (
                 <p data-testid="workbench-url-status" role="status" className="text-caption text-muted-foreground">
                   Fetching and resolving references…
@@ -668,21 +674,16 @@ export function SchemaWorkbench({
                 <span className="text-caption text-muted-foreground">Format:</span>
                 <div className="flex items-center border border-border rounded-lg overflow-hidden">
                   {VISUAL_FORMATS.map((format) => (
-                    <button
+                    <Button
                       key={format.id}
                       type="button"
+                      variant={format.id === formFormat ? "secondary" : "ghost"}
                       disabled={!format.enabled || !isWorkbenchFormat(format.id)}
                       onClick={() => isWorkbenchFormat(format.id) && requestFormat(format.id)}
-                      className={cn(
-                        "px-space-3 py-1.5 text-body-small transition-colors",
-                        format.id === formFormat
-                          ? "bg-accent text-foreground"
-                          : "text-muted-foreground hover:text-foreground",
-                        !format.enabled && "opacity-40 cursor-not-allowed"
-                      )}
+                      className={cn("rounded-none", format.id !== formFormat && "text-muted-foreground")}
                     >
                       {format.label}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </div>
@@ -730,15 +731,14 @@ export function SchemaWorkbench({
       </div>
 
       <div className="flex justify-end">
-        <button
+        <Button
           type="button"
           data-testid="workbench-review-button"
           disabled={!canCommit}
           onClick={commit}
-          className="px-4 py-1.5 rounded-lg text-body-small bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoading ? "Parsing..." : "Review & Import"}
-        </button>
+        </Button>
       </div>
     </div>
   );

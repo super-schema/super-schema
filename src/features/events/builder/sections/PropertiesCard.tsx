@@ -302,11 +302,11 @@ export function PropertiesCard({ kind, draft, options, target, traitKeys, proble
 
 function RemoveButton({ id, label, onClick }: { id: string; label: string; onClick: () => void }) {
   return (
-    <button
-      type="button" aria-label={label} data-testid={id} onClick={onClick}
-      className="shrink-0 rounded-md p-1 text-muted-foreground outline-none hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/50"
+    <Button
+      type="button" variant="ghost" size="icon-sm" aria-label={label} data-testid={id} onClick={onClick}
+      className="shrink-0 text-muted-foreground hover:text-destructive"
     >
       <X aria-hidden="true" className="size-4" />
-    </button>
+    </Button>
   );
 }

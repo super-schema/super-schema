@@ -371,14 +371,14 @@ function ChannelForm({ draft, index, channel, problems, context, definitions, on
           {blocked && <Notice id="channel-messages-blocked">{blocked}</Notice>}
 
           <div className="space-y-space-3">
-            <button
-              type="button" id="channel-advanced-toggle" data-testid="channel-advanced-toggle" aria-expanded={advancedShown} aria-controls="channel-advanced"
+            <Button
+              type="button" variant="ghost" size="sm" id="channel-advanced-toggle" data-testid="channel-advanced-toggle" aria-expanded={advancedShown} aria-controls="channel-advanced"
               onClick={() => setAdvancedOpen(!advancedShown)}
-              className="inline-flex items-center gap-space-1 rounded-md text-body-small font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+              className="text-muted-foreground"
             >
               {advancedShown ? <ChevronDown aria-hidden="true" className="size-4" /> : <ChevronRight aria-hidden="true" className="size-4" />}
               Advanced
-            </button>
+            </Button>
             {advancedShown && (
               <div id="channel-advanced" data-testid="channel-advanced" role="group" aria-labelledby="channel-advanced-toggle" className="space-y-space-3 border-l-2 border-border pl-space-3">
                 <Field

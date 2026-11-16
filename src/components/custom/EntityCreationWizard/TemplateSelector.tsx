@@ -57,9 +57,10 @@ export function TemplateSelector({ onSelect, hiddenMethods = [] }: TemplateSelec
         return (
           <button
             key={method.id}
+            type="button"
             data-testid={`creation-method-${method.id}`}
             onClick={() => onSelect(method.id)}
-            className={`surface-glass rounded-xl border border-border/50 p-space-6 text-left transition-all ${method.borderColor} hover:bg-accent/20 group cursor-pointer`}
+            className={`surface-glass rounded-xl border border-border/50 p-space-6 text-left transition-all ${method.borderColor} hover:bg-accent/20 group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50`}
           >
             <div className="flex items-start gap-space-4">
               <div className={`p-3 rounded-lg bg-accent/30 ${method.color} group-hover:scale-110 transition-transform`}>

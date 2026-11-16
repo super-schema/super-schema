@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { useEffect, useRef } from "react";
 import { CheckCircle, Bell } from "lucide-react";
 import Link from "next/link";
@@ -69,9 +70,11 @@ export function NotificationCenter() {
   return (
     <div className="relative" ref={panelRef}>
       {/* Trigger button */}
-      <button
+      <Button
+        variant="ghost"
+        size="icon"
         data-testid="notification-bell"
-        className="relative p-1.5 rounded-lg hover:bg-accent transition-colors"
+        className="relative"
         onClick={() => setOpen(!open)}
         aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ""}`}
       >
@@ -86,7 +89,7 @@ export function NotificationCenter() {
             </span>
           </span>
         )}
-      </button>
+      </Button>
 
       {/* Dropdown panel */}
       {open && (
@@ -97,13 +100,14 @@ export function NotificationCenter() {
               Notifications
             </h3>
             {unreadCount > 0 && (
-              <button
+              <Button
+                variant="link"
+                size="xs"
                 data-testid="mark-all-read"
                 onClick={markAllAsRead}
-                className="text-xs text-primary hover:text-primary/80 transition-colors"
               >
                 Mark all as read
-              </button>
+              </Button>
             )}
           </div>
 

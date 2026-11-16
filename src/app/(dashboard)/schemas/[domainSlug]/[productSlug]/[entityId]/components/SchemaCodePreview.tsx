@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { Copy, Check } from "lucide-react";
 import { useTransientFlag } from "@/hooks/useTransientFlag";
 import { highlightLine } from "@/lib/syntax-highlight";
+import { Button } from "@/components/ui/button";
 
 interface SchemaCodePreviewProps {
   code: string;
@@ -27,11 +28,13 @@ export function SchemaCodePreview({ code, language = "sql", onCopy, title = "Pre
     <div data-testid="schema-code-preview" className="relative rounded-md border border-border/50 bg-muted/20 overflow-hidden">
       <div className="flex items-center justify-between px-space-3 py-space-1 bg-muted/30 border-b border-border/50">
         <span className={`text-caption text-muted-foreground truncate ${title === "Preview" ? "" : "font-mono"}`} title={title}>{title}</span>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           data-testid="schema-code-copy"
           onClick={handleCopy}
-          className="inline-flex items-center gap-1 text-caption text-muted-foreground hover:text-foreground transition-colors"
+          className="text-muted-foreground"
           title="Copy to clipboard"
         >
           {copied ? (
@@ -45,7 +48,7 @@ export function SchemaCodePreview({ code, language = "sql", onCopy, title = "Pre
               Copy
             </>
           )}
-        </button>
+        </Button>
       </div>
       <pre className="schema-code p-space-3 text-[13px] leading-5 font-mono overflow-x-auto max-h-80 overflow-y-auto">
         <code>

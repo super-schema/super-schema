@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { MessageSquare, CheckCircle, ChevronDown, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { AnnotationInput } from "./AnnotationInput";
 import { AnnotationItem } from "./AnnotationItem";
 import type { Annotation } from "@/types/schemas/compliance";
@@ -74,9 +75,11 @@ export function AnnotationPanel({
         {/* Resolved */}
         {resolved.length > 0 && (
           <div>
-            <button
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => setShowResolved(!showResolved)}
-              className="flex items-center gap-space-1 text-caption text-muted-foreground hover:text-foreground transition-colors mb-space-2"
+              className="mb-space-2 text-muted-foreground hover:text-foreground"
             >
               {showResolved ? (
                 <ChevronDown className="w-3 h-3" />
@@ -84,7 +87,7 @@ export function AnnotationPanel({
                 <ChevronRight className="w-3 h-3" />
               )}
               {resolved.length} resolved
-            </button>
+            </Button>
             {showResolved &&
               resolved.map((annotation) => (
                 <AnnotationItem

@@ -55,7 +55,7 @@ export function ClassificationBadge({
       <button
         type="button"
         data-testid="classification-badge"
-        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-mono-small font-medium cursor-pointer ${style.bg} ${style.text} hover:opacity-80 transition-opacity`}
+        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-mono-small font-medium cursor-pointer ${style.bg} ${style.text} hover:opacity-80 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring/50`}
         onClick={() => setShowReasons(!showReasons)}
       >
         <span

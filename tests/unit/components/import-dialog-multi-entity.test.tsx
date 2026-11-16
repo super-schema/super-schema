@@ -77,7 +77,7 @@ function renderDialog() {
 }
 
 function upload(container: HTMLElement, content: string, filename: string) {
-  fireEvent.click(screen.getByRole("button", { name: "Upload File" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Upload File" }));
   const input = (container.ownerDocument ?? document).querySelector(
     '[data-testid="drop-zone-single"] input[type="file"]'
   ) as HTMLInputElement | null;

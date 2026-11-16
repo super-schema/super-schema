@@ -11,7 +11,16 @@ import {
 import type { ParsedEntity } from "@/lib/importers/types";
 import { ConfidenceBadge } from "./ConfidenceBadge";
 
+import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 interface BulkImportReviewScreenProps {
   parsedEntities: ParsedEntity[];
   errors: { filename: string; error: string }[];
@@ -190,52 +199,49 @@ export function BulkImportReviewScreen({
                 <span className="text-caption bg-muted px-1.5 py-0.5 rounded">
                   {entity.sourceFormat}
                 </span>
-                <button
+                <Button
+                  size="xs"
+                  variant={isSkipped ? "secondary" : "destructive"}
                   onClick={(e) => {
                     e.stopPropagation();
                     toggleSkip(index);
                   }}
-                  className={`text-caption px-2 py-0.5 rounded ${
-                    isSkipped
-                      ? "bg-muted text-foreground"
-                      : "bg-destructive/10 text-destructive hover:bg-destructive/20"
-                  }`}
                 >
                   {isSkipped ? "Include" : "Skip"}
-                </button>
+                </Button>
               </div>
 
               {/* Expanded field details */}
               {isExpanded && !isSkipped && (
                 <div className="px-space-4 pb-space-3">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="text-caption text-muted-foreground">
-                        <th className="text-left py-1">Name</th>
-                        <th className="text-left py-1">Type</th>
-                        <th className="text-center py-1">Nullable</th>
-                        <th className="text-center py-1">Confidence</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="text-caption text-muted-foreground hover:bg-transparent">
+                        <TableHead className="h-auto py-1">Name</TableHead>
+                        <TableHead className="h-auto py-1">Type</TableHead>
+                        <TableHead className="h-auto py-1 text-center">Nullable</TableHead>
+                        <TableHead className="h-auto py-1 text-center">Confidence</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
                       {entity.fields.map((field, fi) => (
-                        <tr key={fi} className="text-mono-small">
-                          <td className="py-0.5">{field.name}</td>
-                          <td className="py-0.5">{field.type}</td>
-                          <td className="py-0.5 text-center">
+                        <TableRow key={fi} className="text-mono-small">
+                          <TableCell>{field.name}</TableCell>
+                          <TableCell>{field.type}</TableCell>
+                          <TableCell className="text-center">
                             {field.nullable ? "Yes" : "No"}
-                          </td>
-                          <td className="py-0.5 text-center">
+                          </TableCell>
+                          <TableCell className="text-center">
                             <ConfidenceBadge
                               confidence={field.confidence}
                               originalType={field.originalType}
                               mappedType={field.type}
                             />
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       ))}
-                    </tbody>
-                  </table>
+                    </TableBody>
+                  </Table>
                 </div>
               )}
             </div>
@@ -245,23 +251,23 @@ export function BulkImportReviewScreen({
 
       {/* Actions */}
       <div className="flex justify-end gap-space-2">
-        <button
+        <Button
+          variant="ghost"
           onClick={onCancel}
           disabled={isConfirming}
-          className="px-4 py-1.5 rounded-lg text-body-small text-muted-foreground hover:bg-accent disabled:opacity-50"
+          className="text-muted-foreground"
         >
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
           data-testid="confirm-bulk-import-button"
           onClick={handleConfirm}
           disabled={isConfirming || activeCount === 0 || !selectedDomainId}
-          className="px-4 py-1.5 rounded-lg text-body-small bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isConfirming
             ? "Importing..."
             : `Confirm Import (${pluralize(activeCount, "entity", "entities")})`}
-        </button>
+        </Button>
       </div>
     </div>
   );

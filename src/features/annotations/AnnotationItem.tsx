@@ -1,6 +1,8 @@
 "use client";
 
 import { CheckCircle } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
 import type { Annotation } from "@/types/schemas/compliance";
 
 interface AnnotationItemProps {
@@ -73,13 +75,15 @@ export function AnnotationItem({
       {/* Resolve button */}
       {canResolve && !annotation.resolved && (
         <div className="flex justify-end mt-space-2">
-          <button
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => onResolve(annotation.id)}
-            className="flex items-center gap-1 text-caption text-muted-foreground hover:text-green-400 transition-colors"
+            className="text-muted-foreground hover:text-green-400"
           >
             <CheckCircle className="w-3 h-3" />
             Resolve
-          </button>
+          </Button>
         </div>
       )}
     </div>

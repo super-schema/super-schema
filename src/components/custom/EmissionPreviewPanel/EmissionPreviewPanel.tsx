@@ -234,7 +234,8 @@ function TargetTabContent({
             return canOpenMappingWarning ? (
               <button
                 key={i}
-                className="w-full text-left text-caption text-muted-foreground pl-5 hover:text-foreground transition-colors cursor-pointer rounded px-1 py-0.5 hover:bg-warning/10"
+                type="button"
+                className="w-full text-left text-caption text-muted-foreground pl-5 hover:text-foreground transition-colors cursor-pointer rounded px-1 py-0.5 hover:bg-warning/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                 onClick={() =>
                   onWarningClick?.({
                     sourceType: w.sourceType ?? "",

@@ -6,6 +6,15 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { assetHref } from "@/lib/navigation/asset-href";
 import type { ComplianceFieldResult } from "@/types/schemas/compliance";
 import { pluralize } from "@/lib/pluralize";
@@ -86,16 +95,16 @@ export function ComplianceResultsTable({
       {/* Table */}
       {/* A scroll area has to be reachable by keyboard to be scrolled by it */}
       <div className="flex-1 overflow-auto" tabIndex={0} role="region" aria-label="Compliance results">
-        <table className="w-full text-body-small">
-          <thead className="sticky top-0 surface-1 border-b border-border">
-            <tr>
+        <Table containerProps={{ className: "overflow-visible" }} className="text-body-small">
+          <TableHeader className="sticky top-0 surface-1 border-b border-border">
+            <TableRow className="hover:bg-transparent">
               {COLUMNS.map((col) => (
-                <th
+                <TableHead
                   key={col.key}
-                  className="text-left px-space-3 py-space-2 text-caption text-muted-foreground uppercase tracking-wider cursor-pointer hover:text-foreground transition-colors select-none"
+                  className="text-muted-foreground uppercase tracking-wider cursor-pointer hover:text-foreground transition-colors select-none"
                   onClick={() => onSort(col.key)}
                 >
-                  <span className="flex items-center gap-1">
+                  <span className="flex items-center gap-1 text-caption">
                     {col.label}
                     <ArrowUpDown
                       className={`w-3 h-3 ${sortBy === col.key ? "text-primary" : "opacity-30"}`}
@@ -106,72 +115,72 @@ export function ComplianceResultsTable({
                       </span>
                     )}
                   </span>
-                </th>
+                </TableHead>
               ))}
-            </tr>
-          </thead>
-          <tbody>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {loading ? (
               Array.from({ length: 5 }).map((_, i) => (
-                <tr
+                <TableRow
                   key={`skeleton-${i}`}
-                  className="border-b border-border/50"
+                  className="border-border/50"
                 >
                   {COLUMNS.map((col) => (
-                    <td key={col.key} className="px-space-3 py-space-2">
+                    <TableCell key={col.key}>
                       <div className="h-4 bg-muted rounded animate-pulse w-20" />
-                    </td>
+                    </TableCell>
                   ))}
-                </tr>
+                </TableRow>
               ))
             ) : fields.length === 0 ? (
-              <tr>
-                <td
+              <TableRow>
+                <TableCell
                   colSpan={COLUMNS.length}
-                  className="text-center py-space-8 text-muted-foreground"
+                  className="text-center py-space-8 text-muted-foreground whitespace-normal"
                 >
                   No fields match the current filters. Try adjusting your filter
                   criteria.
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : (
               fields.map((field) => (
-                <tr
+                <TableRow
                   key={field.fieldId}
                   data-testid="compliance-row"
                   data-entity={field.entityName}
                   data-field={field.fieldName}
-                  className="border-b border-border/50 hover:bg-accent/30 cursor-pointer transition-colors"
+                  className="border-border/50 hover:bg-accent/30 cursor-pointer"
                   onClick={() =>
                     router.push(entityHref(field))
                   }
                 >
-                  <td className="px-space-3 py-space-2 text-primary hover:underline font-mono">
+                  <TableCell className="text-primary hover:underline font-mono">
                     {field.entityName}
-                  </td>
-                  <td className="px-space-3 py-space-2 font-mono">
+                  </TableCell>
+                  <TableCell className="font-mono">
                     {field.fieldName}
-                  </td>
-                  <td className="px-space-3 py-space-2 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
                     {field.fieldType}
-                  </td>
-                  <td className="px-space-3 py-space-2">
+                  </TableCell>
+                  <TableCell>
                     <ClassificationBadge level={field.classification} />
-                  </td>
-                  <td className="px-space-3 py-space-2 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
                     {field.retention || "--"}
-                  </td>
-                  <td className="px-space-3 py-space-2 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
                     {field.anonymization || "--"}
-                  </td>
-                  <td className="px-space-3 py-space-2 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
                     {field.domain}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       {/* Pagination */}
@@ -181,22 +190,24 @@ export function ComplianceResultsTable({
             Page {page} of {totalPages}
           </span>
           <div className="flex items-center gap-space-2">
-            <button
+            <Button
+              variant="ghost"
+              size="icon-sm"
               disabled={page <= 1}
               onClick={() => onPageChange(page - 1)}
               aria-label="Previous page"
-              className="p-1 rounded hover:bg-accent/50 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <ChevronLeft className="w-4 h-4" />
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
               disabled={page >= totalPages}
               onClick={() => onPageChange(page + 1)}
               aria-label="Next page"
-              className="p-1 rounded hover:bg-accent/50 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <ChevronRight className="w-4 h-4" />
-            </button>
+            </Button>
           </div>
         </div>
       )}

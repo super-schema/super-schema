@@ -447,15 +447,17 @@ export function GitOpsWorkspace({ initial }: { initial: Workspace }) {
                     className="flex min-w-0 flex-wrap items-center gap-2 py-3"
                   >
                     <Badge variant="secondary">{entry.kind}</Badge>
-                    <button
+                    <Button
                       type="button"
-                      className="order-first w-full min-w-0 break-all text-left text-sm text-primary hover:underline sm:order-none sm:w-auto sm:flex-1"
+                      variant="link"
+                      size="xs"
+                      className="order-first h-auto w-full min-w-0 justify-start px-0 py-0 text-left text-sm break-all whitespace-normal sm:order-none sm:w-auto sm:flex-1"
                       onClick={() =>
                         setEditor(stringify(local?.document ?? entry.document))
                       }
                     >
                       {entry.path}
-                    </button>
+                    </Button>
                     {entry.stage && (
                       <Badge
                         variant={
@@ -649,12 +651,14 @@ export function GitOpsWorkspace({ initial }: { initial: Workspace }) {
                 </div>
                 {cs.items.map((item) => (
                   <div key={item.id} className="flex min-w-0 flex-col gap-1">
-                    <button
-                      className="break-all text-left text-xs text-primary hover:underline"
+                    <Button
+                      variant="link"
+                      size="xs"
+                      className="h-auto justify-start px-0 py-0 text-left break-all whitespace-normal"
                       onClick={() => setEditor(stringify(item.document))}
                     >
                       {item.path}
-                    </button>
+                    </Button>
                     {item.outOfDate && (
                       <FieldError>
                         Out of date. Refresh the draft, review the conflicts,

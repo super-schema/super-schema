@@ -620,7 +620,7 @@ export function FieldQuickEditPanel({
                   type="button"
                   onClick={() => !isReadOnly && setEditingName(true)}
                   className={cn(
-                    "flex w-full items-center justify-between gap-3 rounded-lg px-0 py-1 text-left",
+                    "flex w-full items-center justify-between gap-3 rounded-lg px-0 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
                     !isReadOnly && "cursor-text hover:text-primary",
                   )}
                 >

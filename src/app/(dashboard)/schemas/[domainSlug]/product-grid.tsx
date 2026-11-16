@@ -438,17 +438,19 @@ export function ProductGrid({
                 </Link>
 
                 {!product.isSystem && (
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="icon-sm"
                     onClick={() => requestDelete(product)}
                     disabled={!canDelete}
                     aria-label={`Delete product ${product.name}`}
                     data-testid="product-card-delete"
                     title={canDelete ? `Delete ${product.name}` : (blocker ?? undefined)}
-                    className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground transition-all hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                    className="absolute right-3 top-3 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                   >
                     <Trash2 className="w-4 h-4" />
-                  </button>
+                  </Button>
                 )}
               </div>
             );

@@ -10,7 +10,9 @@ import {
 import type { NotificationItemData } from "@/components/custom/NotificationCenter/NotificationCenter.types";
 import type { NotificationType } from "@/types/schemas/notification";
 
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { NativeSelect } from "@/components/ui/native-select";
+import { Button } from "@/components/ui/button";
 function getTypeLabel(type: NotificationType): string {
   const labels: Record<NotificationType, string> = {
     APPROVAL_REQUEST: "Approval Request",
@@ -146,54 +148,53 @@ export default function NotificationsPage() {
 
       {/* Table */}
       <div className="border border-border rounded-lg overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-muted/50">
-              <th className="text-left px-4 py-3 font-medium">Type</th>
-              <th className="text-left px-4 py-3 font-medium">Title</th>
-              <th className="text-left px-4 py-3 font-medium">Body</th>
-              <th className="text-left px-4 py-3 font-medium">Date</th>
-              <th className="text-left px-4 py-3 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/50 hover:bg-muted/50">
+              <TableHead>Type</TableHead>
+              <TableHead>Title</TableHead>
+              <TableHead>Body</TableHead>
+              <TableHead>Date</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {loading && (
-              <tr>
-                <td colSpan={5} className="text-center py-8 text-muted-foreground">
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                   Loading...
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             )}
             {!loading && notifications.length === 0 && (
-              <tr>
-                <td colSpan={5} className="text-center py-8 text-muted-foreground">
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                   No notifications found.
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             )}
             {!loading &&
               notifications.map((n) => (
-                <tr
+                <TableRow
                   key={n.id}
                   data-testid="notification-row"
                   data-title={n.title}
                   data-read={n.read ? "true" : "false"}
-                  className="border-t border-border/50 hover:bg-accent/20"
                 >
-                  <td className="px-4 py-3">
+                  <TableCell>
                     <div className="flex items-center gap-2">
                       {getTypeIcon(n.type)}
                       <span>{getTypeLabel(n.type)}</span>
                     </div>
-                  </td>
-                  <td className="px-4 py-3 font-medium">{n.title}</td>
-                  <td className="px-4 py-3 text-muted-foreground max-w-xs truncate">
+                  </TableCell>
+                  <TableCell className="font-medium">{n.title}</TableCell>
+                  <TableCell className="text-muted-foreground max-w-xs truncate">
                     {n.body}
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
                     {n.createdAt.toLocaleString()}
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell>
                     <span
                       className={`inline-block px-2 py-0.5 rounded-full text-xs ${
                         n.read
@@ -203,32 +204,32 @@ export default function NotificationsPage() {
                     >
                       {n.read ? "Read" : "Unread"}
                     </span>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       {/* Pagination */}
       <div className="flex justify-between items-center mt-4">
-        <button
+        <Button
+          variant="outline"
           data-testid="notifications-previous"
           onClick={() => setPage((p) => Math.max(1, p - 1))}
           disabled={page === 1}
-          className="px-3 py-1.5 text-sm border border-border rounded-lg disabled:opacity-50"
         >
           Previous
-        </button>
+        </Button>
         <span data-testid="notifications-page" className="text-sm text-muted-foreground">Page {page}</span>
-        <button
+        <Button
+          variant="outline"
           data-testid="notifications-next"
           onClick={() => setPage((p) => p + 1)}
           disabled={notifications.length < pageSize}
-          className="px-3 py-1.5 text-sm border border-border rounded-lg disabled:opacity-50"
         >
           Next
-        </button>
+        </Button>
       </div>
     </div>
   );

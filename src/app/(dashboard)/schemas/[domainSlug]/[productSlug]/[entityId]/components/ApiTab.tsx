@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { Building2, Globe, Plus, Settings2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { ApiOperation, ApiOperationRecord } from "@/types/schemas/api-operation";
 import type { ApiOperationIssue } from "@/lib/api-operations/validate";
 import {
@@ -321,22 +321,6 @@ export function ApiTab({
     );
   }
 
-  const tabButton = (v: View, label: string, onClick: () => void) => (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={view === v}
-      data-testid={`api-view-${v}`}
-      onClick={onClick}
-      className={cn(
-        "px-2.5 h-7 text-caption rounded-md transition-colors",
-        view === v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-      )}
-    >
-      {label}
-    </button>
-  );
-
   return (
     <div className="space-y-space-4" data-testid="api-tab">
       <div className="flex flex-wrap items-start justify-between gap-space-2">
@@ -351,10 +335,12 @@ export function ApiTab({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <SaveIndicator status={autosave.status} />
-          <div role="tablist" aria-label="API view" className="inline-flex items-center rounded-lg bg-muted p-0.5">
-            {tabButton("operations", "Operations", () => setView("operations"))}
-            {tabButton("preview", "Preview", openPreview)}
-          </div>
+          <Tabs value={view} onValueChange={(value) => (value === "preview" ? openPreview() : setView("operations"))} className="gap-0">
+            <TabsList activateOnFocus aria-label="API view">
+              <TabsTrigger value="operations" data-testid="api-view-operations">Operations</TabsTrigger>
+              <TabsTrigger value="preview" data-testid="api-view-preview">Preview</TabsTrigger>
+            </TabsList>
+          </Tabs>
           {service && (
             <Button variant="ghost" size="sm" className="gap-1" data-testid="api-service-settings-toggle" aria-expanded={showSettings} onClick={() => setShowSettings((s) => !s)}>
               <Settings2 className="w-3.5 h-3.5" />

@@ -3,15 +3,23 @@
 import { ChevronDown, ChevronRight, X, ChevronsUpDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import type { DiffViewerProps } from "./DiffViewer.types";
 import type { DiffField, PropertyChange, FieldSnapshot } from "@/services/version-history/version.types";
 import { useDiffViewer } from "./useDiffViewer";
 
 /** Map change type to row background class */
 const ROW_BG: Record<string, string> = {
-  added: "bg-emerald-500/10",
-  removed: "bg-red-500/10",
-  modified: "bg-amber-500/10",
+  added: "bg-success/10 hover:bg-success/15",
+  removed: "bg-destructive/10 hover:bg-destructive/15",
+  modified: "bg-warning/10 hover:bg-warning/15",
   unchanged: "",
 };
 
@@ -97,20 +105,20 @@ function SummaryBar({ summary }: { summary: DiffViewerProps["diff"]["summary"] }
 
 function PropertyChangeRow({ change }: { change: PropertyChange }) {
   return (
-    <tr className="border-b border-border/20 last:border-b-0">
-      <td className="px-3 py-1.5 text-caption text-muted-foreground font-mono pl-12">
+    <TableRow className="border-b border-border/20 last:border-b-0">
+      <TableCell className="text-caption text-muted-foreground font-mono pl-12">
         {change.property}
-      </td>
-      <td className="px-3 py-1.5 text-caption text-muted-foreground">
+      </TableCell>
+      <TableCell className="text-caption text-muted-foreground">
         {change.category}
-      </td>
-      <td className="px-3 py-1.5 text-caption font-mono text-red-400/80">
+      </TableCell>
+      <TableCell className="whitespace-normal text-caption font-mono text-red-400/80">
         {formatValue(change.before)}
-      </td>
-      <td className="px-3 py-1.5 text-caption font-mono text-emerald-400/80">
+      </TableCell>
+      <TableCell className="whitespace-normal text-caption font-mono text-emerald-400/80">
         {formatValue(change.after)}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -130,16 +138,16 @@ function DiffFieldRow({
 
   return (
     <>
-      <tr
-        className={`border-b border-border/30 transition-colors ${ROW_BG[field.changeType]} ${
-          hasExpandableContent ? "cursor-pointer hover:opacity-80" : ""
+      <TableRow
+        className={`border-border/30 ${ROW_BG[field.changeType]} ${
+          hasExpandableContent ? "cursor-pointer" : ""
         }`}
         onClick={hasExpandableContent ? onToggle : undefined}
         data-testid={`diff-row-${field.fieldName}`}
         data-change-type={field.changeType}
       >
         {/* Expand indicator */}
-        <td className="w-8 px-2 py-2.5 text-center">
+        <TableCell className="w-8 text-center">
           {hasExpandableContent ? (
             <span className="text-muted-foreground">
               {isExpanded ? (
@@ -149,64 +157,64 @@ function DiffFieldRow({
               )}
             </span>
           ) : null}
-        </td>
+        </TableCell>
 
         {/* Field Name */}
-        <td className="px-3 py-2.5">
+        <TableCell>
           <span className="font-mono text-body-small text-foreground">
             {field.fieldName}
           </span>
-        </td>
+        </TableCell>
 
         {/* Change Type Badge */}
-        <td className="px-3 py-2.5">
+        <TableCell>
           <Badge variant={BADGE_VARIANT[field.changeType]}>
             {BADGE_LABEL[field.changeType]}
           </Badge>
-        </td>
+        </TableCell>
 
         {/* Version A Type */}
-        <td className="px-3 py-2.5 font-mono text-body-small text-muted-foreground">
+        <TableCell className="font-mono text-body-small text-muted-foreground">
           {getFieldType(field.versionA)}
-        </td>
+        </TableCell>
 
         {/* Version B Type */}
-        <td className="px-3 py-2.5 font-mono text-body-small text-muted-foreground">
+        <TableCell className="font-mono text-body-small text-muted-foreground">
           {getFieldType(field.versionB)}
-        </td>
-      </tr>
+        </TableCell>
+      </TableRow>
 
       {/* Expanded property changes */}
       {isExpanded && hasExpandableContent && (
         <>
-          <tr className="bg-background/30">
-            <td />
-            <td
+          <TableRow className="bg-background/30">
+            <TableCell />
+            <TableCell
               colSpan={4}
-              className="px-3 py-1 text-caption text-muted-foreground font-medium"
+              className="py-1 text-caption text-muted-foreground font-medium"
             >
               Changed properties:
-            </td>
-          </tr>
+            </TableCell>
+          </TableRow>
           {field.changedProperties!.map((change) => (
-            <tr
+            <TableRow
               key={change.property}
-              className="bg-background/30 border-b border-border/10 last:border-b-0"
+              className="bg-background/30 border-border/10 last:border-b-0"
             >
-              <td />
-              <td className="px-3 py-1.5 text-caption text-muted-foreground font-mono pl-6">
+              <TableCell />
+              <TableCell className="text-caption text-muted-foreground font-mono pl-6">
                 {change.property}
-              </td>
-              <td className="px-3 py-1.5 text-caption text-muted-foreground">
+              </TableCell>
+              <TableCell className="text-caption text-muted-foreground">
                 {change.category}
-              </td>
-              <td className="px-3 py-1.5 text-caption font-mono text-red-400/80">
+              </TableCell>
+              <TableCell className="whitespace-normal text-caption font-mono text-red-400/80">
                 {formatValue(change.before)}
-              </td>
-              <td className="px-3 py-1.5 text-caption font-mono text-emerald-400/80">
+              </TableCell>
+              <TableCell className="whitespace-normal text-caption font-mono text-emerald-400/80">
                 {formatValue(change.after)}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
         </>
       )}
@@ -260,12 +268,12 @@ export function DiffViewer({ diff, onClose }: DiffViewerProps) {
 
       {/* Diff Table */}
       <div className="rounded-xl border border-border/50 overflow-hidden">
-        <table className="w-full text-left" data-testid="diff-table">
-          <thead>
-            <tr className="border-b border-border/50 bg-muted/30">
-              <th className="w-8" />
-              <th
-                className="px-3 py-2 text-caption font-medium text-muted-foreground cursor-pointer select-none"
+        <Table data-testid="diff-table">
+          <TableHeader>
+            <TableRow className="border-border/50 bg-muted/30 hover:bg-muted/30">
+              <TableHead className="w-8" />
+              <TableHead
+                className="text-caption text-muted-foreground cursor-pointer select-none"
                 onClick={() => handleSort("fieldName")}
               >
                 <span className="flex items-center gap-1">
@@ -274,9 +282,9 @@ export function DiffViewer({ diff, onClose }: DiffViewerProps) {
                     <ChevronsUpDown className="w-3 h-3" />
                   )}
                 </span>
-              </th>
-              <th
-                className="px-3 py-2 text-caption font-medium text-muted-foreground cursor-pointer select-none"
+              </TableHead>
+              <TableHead
+                className="text-caption text-muted-foreground cursor-pointer select-none"
                 onClick={() => handleSort("changeType")}
               >
                 <span className="flex items-center gap-1">
@@ -285,25 +293,25 @@ export function DiffViewer({ diff, onClose }: DiffViewerProps) {
                     <ChevronsUpDown className="w-3 h-3" />
                   )}
                 </span>
-              </th>
-              <th className="px-3 py-2 text-caption font-medium text-muted-foreground">
+              </TableHead>
+              <TableHead className="text-caption text-muted-foreground">
                 v{diff.fromVersion}
-              </th>
-              <th className="px-3 py-2 text-caption font-medium text-muted-foreground">
+              </TableHead>
+              <TableHead className="text-caption text-muted-foreground">
                 v{diff.toVersion}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {sortedFields.length === 0 ? (
-              <tr>
-                <td
+              <TableRow>
+                <TableCell
                   colSpan={5}
-                  className="px-3 py-8 text-center text-body-small text-muted-foreground"
+                  className="py-8 text-center text-body-small text-muted-foreground"
                 >
                   No differences found between these versions.
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : (
               sortedFields.map((field) => (
                 <DiffFieldRow
@@ -314,8 +322,8 @@ export function DiffViewer({ diff, onClose }: DiffViewerProps) {
                 />
               ))
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );

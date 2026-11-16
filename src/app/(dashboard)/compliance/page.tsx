@@ -18,6 +18,7 @@ import type {
   AuditTrailFilter,
   AuditTrailEntry,
 } from "@/types/schemas/compliance";
+import { Button } from "@/components/ui/button";
 
 type TabId = "query" | "gaps" | "audit";
 
@@ -243,21 +244,20 @@ export default function CompliancePage() {
         {/* Tabs */}
         <div className="flex items-center gap-space-1 bg-muted rounded-lg p-0.5">
           {TABS.map((tab) => (
-            <button
+            <Button
               key={tab.id}
+              variant={activeTab === tab.id ? "outline" : "ghost"}
+              size="sm"
+              aria-pressed={activeTab === tab.id}
               onClick={() => {
                 // A notice about an export belongs to the tab that made it
                 setExportNotice(null);
                 setActiveTab(tab.id);
               }}
-              className={`px-space-3 py-1 text-body-small rounded-md transition-colors ${
-                activeTab === tab.id
-                  ? "bg-background text-foreground shadow-sm font-medium"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+              className={activeTab === tab.id ? undefined : "text-muted-foreground"}
             >
               {tab.label}
-            </button>
+            </Button>
           ))}
         </div>
 

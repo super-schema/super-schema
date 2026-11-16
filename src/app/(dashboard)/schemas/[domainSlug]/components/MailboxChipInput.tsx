@@ -154,7 +154,7 @@ export function MailboxChipInput({
                     disabled={disabled}
                     aria-label={`Remove ${email}`}
                     data-testid={`${testId}-remove`}
-                    className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                    className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                   >
                     <X className="h-3 w-3" aria-hidden="true" />
                   </button>

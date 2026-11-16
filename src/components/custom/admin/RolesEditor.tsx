@@ -104,18 +104,25 @@ export function RolesEditor({ userId, roles, scopes, onChanged }: RolesEditorPro
                 {removable &&
                   (confirmRemove === r.id ? (
                     <div className="flex items-center gap-1">
-                      <button
+                      <Button
                         type="button"
+                        variant="destructive"
+                        size="xs"
                         onClick={() => handleRemoveRole(r.id as string)}
                         data-testid="role-remove-confirm"
                         disabled={busy}
-                        className="text-caption text-destructive px-2 py-0.5 rounded hover:bg-destructive/10"
                       >
                         Confirm
-                      </button>
-                      <button type="button" onClick={() => setConfirmRemove(null)} className="text-caption text-muted-foreground px-2 py-0.5 rounded hover:bg-muted">
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => setConfirmRemove(null)}
+                        className="text-muted-foreground"
+                      >
                         Cancel
-                      </button>
+                      </Button>
                     </div>
                   ) : (
                     <GuardedButton

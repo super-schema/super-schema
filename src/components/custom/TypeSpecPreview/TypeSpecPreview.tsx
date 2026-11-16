@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Copy, Check, Loader2, RefreshCw, Pencil, Eye, ClipboardPaste, Play, X, AlertTriangle } from "lucide-react";
 import { useTypeSpecGeneration } from "./useTypeSpecGeneration";
@@ -283,51 +284,63 @@ export function TypeSpecPreview({
           )}
 
           {/* Edit / Preview toggle */}
-          <button
+          <Button
+            variant="ghost"
+            size="icon-xs"
             onClick={isEditMode ? exitEditMode : enterEditMode}
-            className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+            className="text-muted-foreground"
             title={isEditMode ? "Back to preview" : "Edit TypeSpec"}
+            aria-label={isEditMode ? "Back to preview" : "Edit TypeSpec"}
             data-testid="typespec-edit-toggle"
           >
             {isEditMode ? (
-              <Eye className="w-3.5 h-3.5" />
+              <Eye className="size-3.5" />
             ) : (
-              <Pencil className="w-3.5 h-3.5" />
+              <Pencil className="size-3.5" />
             )}
-          </button>
+          </Button>
 
           {isEditMode && (
-            <button
+            <Button
+              variant="ghost"
+              size="icon-xs"
               onClick={handlePaste}
-              className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+              className="text-muted-foreground"
               title="Paste TypeSpec from clipboard"
+              aria-label="Paste TypeSpec from clipboard"
               data-testid="typespec-paste-btn"
             >
-              <ClipboardPaste className="w-3.5 h-3.5" />
-            </button>
+              <ClipboardPaste className="size-3.5" />
+            </Button>
           )}
 
           {!isEditMode && (
             <>
-              <button
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={refresh}
-                className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                className="text-muted-foreground"
                 title="Refresh"
+                aria-label="Refresh"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
-              </button>
-              <button
+                <RefreshCw className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={handleCopy}
-                className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                className="text-muted-foreground"
                 title="Copy to clipboard"
+                aria-label="Copy to clipboard"
                 disabled={!source}
               >
                 {copied ? (
-                  <Check className="w-3.5 h-3.5 text-success" />
+                  <Check className="size-3.5 text-success" />
                 ) : (
-                  <Copy className="w-3.5 h-3.5" />
+                  <Copy className="size-3.5" />
                 )}
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -414,27 +427,31 @@ export function TypeSpecPreview({
                     <strong>{diffSummary.toRemove.join(", ")}</strong>
                   </p>
                   <div className="flex gap-2">
-                    <button
+                    <Button
+                      variant="destructive"
+                      size="xs"
                       onClick={() => handleApply(diffSummary.toRemove)}
                       disabled={isApplying}
-                      className="px-2 py-1 rounded bg-destructive text-destructive-foreground text-caption hover:bg-destructive/90 transition-colors disabled:opacity-50"
                       data-testid="typespec-confirm-remove-btn"
                     >
                       {isApplying ? "Applying..." : "Remove & Apply"}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="xs"
                       onClick={() => handleApply()}
                       disabled={isApplying}
-                      className="px-2 py-1 rounded bg-accent text-foreground text-caption hover:bg-accent/80 transition-colors disabled:opacity-50"
                     >
                       {isApplying ? "Applying..." : "Apply Without Removing"}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
                       onClick={() => setShowConfirmRemove(false)}
-                      className="px-2 py-1 rounded hover:bg-accent text-muted-foreground text-caption transition-colors"
+                      className="text-muted-foreground"
                     >
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -444,19 +461,20 @@ export function TypeSpecPreview({
           {/* Action buttons */}
           <div className="flex items-center gap-2 px-space-3 py-space-2 border-t border-border/50">
             {!diffSummary ? (
-              <button
+              <Button
+                size="sm"
                 onClick={handlePreviewChanges}
                 disabled={!editSource.trim()}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-primary text-primary-foreground text-caption font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none"
                 data-testid="typespec-preview-changes-btn"
               >
-                <Eye className="w-3.5 h-3.5" />
+                <Eye />
                 Preview Changes
-              </button>
+              </Button>
             ) : (
               <>
                 {(!diffSummary.toRemove.length || showConfirmRemove) ? null : (
-                  <button
+                  <Button
+                    size="sm"
                     onClick={() => {
                       if (diffSummary.toRemove.length > 0) {
                         setShowConfirmRemove(true);
@@ -465,34 +483,34 @@ export function TypeSpecPreview({
                       }
                     }}
                     disabled={isApplying || (diffSummary.toAdd.length === 0 && diffSummary.toUpdate.length === 0 && diffSummary.toRemove.length === 0)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-primary text-primary-foreground text-caption font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none"
                     data-testid="typespec-apply-btn"
                   >
-                    <Play className="w-3.5 h-3.5" />
+                    <Play />
                     {isApplying ? "Applying..." : "Apply Changes"}
-                  </button>
+                  </Button>
                 )}
                 {diffSummary.toRemove.length === 0 && (
-                  <button
+                  <Button
+                    size="sm"
                     onClick={() => handleApply()}
                     disabled={isApplying || (diffSummary.toAdd.length === 0 && diffSummary.toUpdate.length === 0)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-primary text-primary-foreground text-caption font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none"
                     data-testid="typespec-apply-btn"
                   >
-                    <Play className="w-3.5 h-3.5" />
+                    <Play />
                     {isApplying ? "Applying..." : "Apply Changes"}
-                  </button>
+                  </Button>
                 )}
-                <button
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => {
                     setDiffSummary(null);
                     setShowConfirmRemove(false);
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-accent text-foreground text-caption hover:bg-accent/80 transition-colors"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X />
                   Back to Editor
-                </button>
+                </Button>
               </>
             )}
             <span className="text-caption text-muted-foreground/50 ml-auto">

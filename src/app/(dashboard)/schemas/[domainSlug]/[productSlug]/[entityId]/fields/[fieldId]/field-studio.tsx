@@ -730,13 +730,14 @@ export function FieldStudio({
           className="mb-space-6 max-w-prose whitespace-normal break-words text-body-small text-destructive"
         >
           {saveError}{" "}
-          <button
+          <Button
             type="button"
+            variant="link"
             onClick={saveImmediate}
-            className="underline underline-offset-2"
+            className="h-auto p-0 align-baseline text-inherit"
           >
             Retry
-          </button>
+          </Button>
         </p>
       )}
 

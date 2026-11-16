@@ -6,6 +6,7 @@
 // mutually recursive (an object or list item renders `FieldGroups` again), so they live in one module.
 import { useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { FieldTemplate } from "@/lib/events/templates";
 import { bindingFieldSchema } from "@/lib/events/templates/binding-schemas";
 import { BooleanControl } from "./controls/BooleanControl";
@@ -200,13 +201,13 @@ export function FieldGroups({ fields, value, onChange, idPrefix, errorPrefix, en
       {basics.map(render)}
       {more.length > 0 && (
         <div className="space-y-space-3">
-          <button
-            type="button" id={toggleId} data-testid={toggleId} aria-expanded={open} aria-controls={moreId} onClick={() => setUserOpen(!open)}
-            className="inline-flex items-center gap-space-1 rounded-md text-body-small font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+          <Button
+            type="button" variant="ghost" size="sm" id={toggleId} data-testid={toggleId} aria-expanded={open} aria-controls={moreId} onClick={() => setUserOpen(!open)}
+            className="text-muted-foreground"
           >
             {open ? <ChevronDown aria-hidden="true" className="size-4" /> : <ChevronRight aria-hidden="true" className="size-4" />}
             {`More properties (${setCount} set)`}
-          </button>
+          </Button>
           {open && (
             <div id={moreId} data-testid={moreId} role="group" aria-labelledby={toggleId} className="space-y-space-4 border-l-2 border-border pl-space-3">
               {more.map(render)}

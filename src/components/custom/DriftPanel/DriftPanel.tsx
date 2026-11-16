@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { DriftBadge } from "@/components/custom/DriftBadge/DriftBadge";
 import { DriftDiffView } from "./DriftDiffView";
 import type { DriftReport } from "@/lib/drift/drift-comparator";
@@ -38,17 +39,19 @@ export function DriftPanel({
           Drift Status
         </h4>
         {onCheckDrift && (
-          <button
+          <Button
+            variant="ghost"
+            size="xs"
             data-testid="check-drift-button"
             onClick={onCheckDrift}
             disabled={isChecking}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-caption text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50"
+            className="text-muted-foreground"
           >
             <RefreshCw
               className={`w-3 h-3 ${isChecking ? "animate-spin" : ""}`}
             />
             Check Drift
-          </button>
+          </Button>
         )}
       </div>
 

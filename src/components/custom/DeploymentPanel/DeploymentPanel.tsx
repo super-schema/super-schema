@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { RefreshCw, Rocket } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { DriftBadge } from "@/components/custom/DriftBadge/DriftBadge";
 import { VersionBadge } from "./VersionBadge";
 import { MarkAsDeployedDialog } from "./MarkAsDeployedDialog";
@@ -70,20 +71,25 @@ export function DeploymentPanel({
             </div>
             <div className="flex items-center gap-1">
               {onCheckDrift && (
-                <button
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
                   onClick={() => onCheckDrift(target.targetId)}
                   disabled={isChecking(target.targetId)}
-                  className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-50"
+                  className="text-muted-foreground"
                   title="Check Drift"
+                  aria-label="Check Drift"
                   data-testid="deployment-check-drift"
                 >
                   <RefreshCw
                     className={`w-3 h-3 ${isChecking(target.targetId) ? "animate-spin" : ""}`}
                   />
-                </button>
+                </Button>
               )}
               {onMarkDeployed && (
-                <button
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
                   disabled={(recordVersion !== undefined && recordVersion.targetId !== target.targetId) || (publishedVersions !== undefined && !publishedVersions.find((f) => target.targetId.endsWith(`:${f.key}`))?.versions.length)}
                   onClick={() =>
                     setDeployDialog({
@@ -92,12 +98,13 @@ export function DeploymentPanel({
                       version: recordVersion?.targetId === target.targetId ? `v${recordVersion.version}` : publishedVersions ? `v${publishedVersions.find((f) => target.targetId.endsWith(`:${f.key}`))?.versions[0] ?? 0}` : target.emittedVersion || "v0",
                     })
                   }
-                  className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+                  className="text-muted-foreground"
                   title="Mark as Deployed"
+                  aria-label="Mark as Deployed"
                   data-testid="deployment-mark-deployed"
                 >
                   <Rocket className="w-3 h-3" />
-                </button>
+                </Button>
               )}
             </div>
           </div>

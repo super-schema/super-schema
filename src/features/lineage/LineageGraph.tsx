@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState, useRef } from "react";
+import { Button } from "@/components/ui/button";
 import {
   ReactFlow,
   Background,
@@ -116,15 +117,15 @@ function LineageGraphInner({ entities }: LineageGraphProps) {
         </div>
 
         {/* Fit to view */}
-        <button
+        <Button
+          variant="outline"
           data-testid="fit-to-view"
           onClick={handleFitView}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-card text-[13px] text-foreground hover:bg-card/80 transition-colors"
           title="Fit to view"
         >
           <Maximize2 className="w-3.5 h-3.5" />
           Fit
-        </button>
+        </Button>
       </div>
 
       {/* Large graph warning */}

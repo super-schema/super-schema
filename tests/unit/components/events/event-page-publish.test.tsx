@@ -413,25 +413,24 @@ describe("EventPage: the four tabs", () => {
     }
   });
 
-  it("cycles through all four with the arrow keys, wraps, and jumps with Home and End", () => {
+  it("cycles through all four with the arrow keys, wraps, and jumps with Home and End", async () => {
     renderPage();
     const tab = (name: string) => screen.getByRole("tab", { name });
     const selected = () => screen.getAllByRole("tab").filter((t) => t.getAttribute("aria-selected") === "true").map((t) => t.textContent);
-    fireEvent.keyDown(tab("Design"), { key: "ArrowRight" });
-    expect(selected()).toEqual(["Docs"]);
-    fireEvent.keyDown(tab("Docs"), { key: "ArrowRight" });
-    expect(selected()).toEqual(["Versions"]);
+    // Focuses the tab and presses the key; the tabs list moves focus and selection once the key press has been handled.
+    const press = async (from: string, key: string, expected: string) => {
+      act(() => tab(from).focus());
+      fireEvent.keyDown(tab(from), { key });
+      await waitFor(() => expect(selected()).toEqual([expected]));
+    };
+    await press("Design", "ArrowRight", "Docs");
+    await press("Docs", "ArrowRight", "Versions");
     expect(document.activeElement).toBe(tab("Versions"));
-    fireEvent.keyDown(tab("Versions"), { key: "ArrowRight" });
-    expect(selected()).toEqual(["Used by"]);
-    fireEvent.keyDown(tab("Used by"), { key: "ArrowRight" });
-    expect(selected()).toEqual(["Design"]);
-    fireEvent.keyDown(tab("Design"), { key: "ArrowLeft" });
-    expect(selected()).toEqual(["Used by"]);
-    fireEvent.keyDown(tab("Used by"), { key: "Home" });
-    expect(selected()).toEqual(["Design"]);
-    fireEvent.keyDown(tab("Design"), { key: "End" });
-    expect(selected()).toEqual(["Used by"]);
+    await press("Versions", "ArrowRight", "Used by");
+    await press("Used by", "ArrowRight", "Design");
+    await press("Design", "ArrowLeft", "Used by");
+    await press("Used by", "Home", "Design");
+    await press("Design", "End", "Used by");
     fireEvent.keyDown(tab("Used by"), { key: "a" });
     expect(selected()).toEqual(["Used by"]);
   });

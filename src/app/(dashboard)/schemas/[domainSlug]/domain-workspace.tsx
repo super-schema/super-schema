@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useSyncExternalStore, type KeyboardEvent } from "react";
+import { useState, useMemo, useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import WorkflowIcon from "lucide-react/icons/workflow";
@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { EntityIcon, DataTypeIcon, ApiIcon, EventIcon } from "@/components/icons/feature-icons";
 import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogClose,
@@ -56,8 +58,9 @@ export function normalizeWorkspaceTab(raw: string | null): DomainTab {
   return "entities";
 }
 
+/** TabsContent sets `text-sm`; the old panel inherited the page size. */
+const PANEL_CLASS = "text-[length:inherit]";
 const tabDomId = (id: DomainTab) => `product-tab-${id}`;
-const PANEL_DOM_ID = "product-tabpanel";
 
 const domainTabs: { icon: React.ComponentType<{ className?: string }>; label: string; id: DomainTab }[] = [
   { icon: EntityIcon, label: "Entities", id: "entities" },
@@ -186,18 +189,6 @@ export function DomainWorkspace({
     window.history.replaceState(null, "", tabHref(tab));
   }
 
-  // Roving tabindex: arrows / Home / End move between tabs (same keys as the Events section tabs).
-  function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    let next: number;
-    if (event.key === "ArrowRight") next = (index + 1) % domainTabs.length;
-    else if (event.key === "ArrowLeft") next = (index - 1 + domainTabs.length) % domainTabs.length;
-    else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = domainTabs.length - 1;
-    else return;
-    event.preventDefault();
-    selectTab(domainTabs[next].id);
-    document.getElementById(tabDomId(domainTabs[next].id))?.focus();
-  }
   const viewMode = useSyncExternalStore(
     subscribeToViewMode,
     getViewModeSnapshot,
@@ -352,20 +343,28 @@ export function DomainWorkspace({
         <div className="flex items-center gap-space-2">
           {/* Tile/List toggle */}
           <div className="flex items-center border border-border rounded-lg overflow-hidden">
-            <button
+            <Button
+              variant={viewMode === "tile" ? "secondary" : "ghost"}
+              size="icon-sm"
               onClick={() => toggleView("tile")}
-              className={`p-1.5 transition-colors ${viewMode === "tile" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`}
               title="Tile view"
+              aria-label="Tile view"
+              aria-pressed={viewMode === "tile"}
+              className="rounded-none"
             >
               <LayoutGrid className="w-4 h-4" />
-            </button>
-            <button
+            </Button>
+            <Button
+              variant={viewMode === "list" ? "secondary" : "ghost"}
+              size="icon-sm"
               onClick={() => toggleView("list")}
-              className={`p-1.5 transition-colors ${viewMode === "list" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`}
               title="List view"
+              aria-label="List view"
+              aria-pressed={viewMode === "list"}
+              className="rounded-none"
             >
               <List className="w-4 h-4" />
-            </button>
+            </Button>
           </div>
           <CreateDropdown
             onNewEntity={() => router.push(newEntityHref)}
@@ -391,34 +390,26 @@ export function DomainWorkspace({
       </div>
 
       {/* Domain tabs */}
-      <div role="tablist" aria-label={`${productName} sections`} className="flex flex-wrap items-center gap-space-1 border-b border-border mb-space-6">
-        {domainTabs.map((tab, index) => (
-          <button
-            key={tab.id}
-            id={tabDomId(tab.id)}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === tab.id}
-            aria-controls={PANEL_DOM_ID}
-            tabIndex={activeTab === tab.id ? 0 : -1}
-            onClick={() => selectTab(tab.id)}
-            onKeyDown={(e) => onTabKeyDown(e, index)}
-            className={`flex items-center gap-space-2 px-space-4 py-space-2 text-body-small transition-colors border-b-2 ${
-              activeTab === tab.id
-                ? "border-primary text-primary font-medium"
-                : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
-            }`}
-          >
-            <tab.icon className="w-4 h-4" aria-hidden="true" />
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <Tabs value={activeTab} onValueChange={(value) => selectTab(value as DomainTab)} className="gap-0">
+        <TabsList
+          variant="line"
+          activateOnFocus
+          aria-label={`${productName} sections`}
+          className="mb-space-6 w-full justify-start border-b border-border"
+        >
+          {domainTabs.map((tab) => (
+            <TabsTrigger key={tab.id} id={tabDomId(tab.id)} value={tab.id} className="flex-none">
+              <tab.icon className="w-4 h-4" aria-hidden="true" />
+              {tab.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      <div role="tabpanel" id={PANEL_DOM_ID} aria-labelledby={tabDomId(activeTab)}>
-      {activeTab === "workflows" && <ProductDeploymentWorkflows productId={productId} />}
+      <TabsContent value="workflows" className={PANEL_CLASS}>
+        <ProductDeploymentWorkflows productId={productId} />
+      </TabsContent>
       {/* Data Types tab */}
-      {activeTab === "data-types" && (
+      <TabsContent value="data-types" className={PANEL_CLASS}>
         <DomainTypesTab
           domainId={domainId}
           target={productTarget}
@@ -429,10 +420,10 @@ export function DomainWorkspace({
           createIntent={typeCreateIntent}
           onCreateIntentConsumed={() => setTypeCreateIntent(null)}
         />
-      )}
+      </TabsContent>
 
       {/* APIs tab */}
-      {activeTab === "apis" && (
+      <TabsContent value="apis" className={PANEL_CLASS}>
         <DomainApisTab
           domainId={domainId}
           target={productTarget}
@@ -442,10 +433,10 @@ export function DomainWorkspace({
           createIntent={apiCreateIntent}
           onCreateIntentConsumed={() => setApiCreateIntent(null)}
         />
-      )}
+      </TabsContent>
 
       {/* Events tab */}
-      {activeTab === "events" && (
+      <TabsContent value="events" className={PANEL_CLASS}>
         <EventsList
           productId={productId}
           domainSlug={domainSlug}
@@ -454,10 +445,11 @@ export function DomainWorkspace({
           viewMode={viewMode}
           onCreate={() => setNewEventOpen(true)}
         />
-      )}
+      </TabsContent>
 
       {/* Entity content */}
-      {activeTab === "entities" && (sortedEntities.length === 0 ? (
+      <TabsContent value="entities" className={PANEL_CLASS}>
+      {sortedEntities.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <h2 className="text-heading-1 text-foreground mb-space-2">
             Create your first entity
@@ -487,9 +479,9 @@ export function DomainWorkspace({
       ) : (
         /* List view */
         <div className="surface-glass rounded-xl border border-border overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-border text-caption text-muted-foreground">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-border text-caption text-muted-foreground hover:bg-transparent">
                 {[
                   { key: "name", label: "Name" },
                   { key: "version", label: "Version" },
@@ -498,67 +490,69 @@ export function DomainWorkspace({
                   { key: "updatedAt", label: "Last Modified" },
                   { key: "actions", label: "" },
                 ].map((col) => (
-                  <th
+                  <TableHead
                     key={col.key}
-                    className="text-left px-space-4 py-space-3 font-medium cursor-pointer hover:text-foreground transition-colors"
+                    className="cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
                     onClick={() => toggleSort(col.key)}
                   >
                     {col.label}
                     {sortField === col.key && (
                       <span className="ml-1">{sortDir === "asc" ? "↑" : "↓"}</span>
                     )}
-                  </th>
+                  </TableHead>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {sortedEntities.map((entity) => (
-                <tr
+                <TableRow
                   key={entity.id}
-                  className="border-b border-border/50 hover:bg-accent/30 transition-colors cursor-pointer"
+                  className="border-border/50 cursor-pointer"
                   onClick={() => router.push(assetHref({ kind: "entity", slug: entity.slug, domainSlug, productSlug }))}
                 >
-                  <td className="px-space-4 py-space-3 font-mono text-body-small text-foreground">
+                  <TableCell className="font-mono text-body-small text-foreground">
                     {entity.name}
-                  </td>
-                  <td className="px-space-4 py-space-3 text-body-small text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-body-small text-muted-foreground">
                     v{entity.version}
-                  </td>
-                  <td className="px-space-4 py-space-3">
+                  </TableCell>
+                  <TableCell>
                     <span className="flex items-center gap-space-2">
                       <span className={`w-2 h-2 rounded-full ${
                         entity.status === "ACTIVE" ? "bg-success" : entity.status === "DRAFT" ? "bg-warning" : "bg-muted-foreground"
                       }`} />
                       <span className="text-body-small">{entity.status}</span>
                     </span>
-                  </td>
-                  <td className="px-space-4 py-space-3 text-body-small text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-body-small text-muted-foreground">
                     {entity.fieldCount}
-                  </td>
-                  <td className="px-space-4 py-space-3 text-body-small text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-body-small text-muted-foreground">
                     {formatDateOnly(entity.updatedAt)}
-                  </td>
-                  <td className="px-space-4 py-space-3">
-                    <button
-                      type="button"
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
                       onClick={(e) => {
                         e.stopPropagation();
                         setDeleteConfirm({ id: entity.id, name: entity.name, type: "entity" });
                       }}
-                      className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                      className="text-muted-foreground hover:text-destructive"
                       title={`Delete entity ${entity.name}`}
                       aria-label={`Delete entity ${entity.name}`}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </td>
-                </tr>
+                    </Button>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
-      ))}
-      </div>
+      )}
+      </TabsContent>
+      </Tabs>
 
     </div>
   );

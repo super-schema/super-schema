@@ -1,5 +1,13 @@
 "use client";
 
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import type { DriftDifference } from "@/lib/drift/drift-comparator";
 
 interface DriftDiffViewProps {
@@ -10,12 +18,12 @@ const DIFF_TYPE_CONFIG: Record<
   string,
   { label: string; rowClass: string }
 > = {
-  added: { label: "Added", rowClass: "bg-success/5" },
-  removed: { label: "Removed", rowClass: "bg-destructive/5" },
-  "type-mismatch": { label: "Type Mismatch", rowClass: "bg-warning/5" },
+  added: { label: "Added", rowClass: "bg-success/5 hover:bg-success/10" },
+  removed: { label: "Removed", rowClass: "bg-destructive/5 hover:bg-destructive/10" },
+  "type-mismatch": { label: "Type Mismatch", rowClass: "bg-warning/5 hover:bg-warning/10" },
   "metadata-mismatch": {
     label: "Metadata Mismatch",
-    rowClass: "bg-warning/5",
+    rowClass: "bg-warning/5 hover:bg-warning/10",
   },
 };
 
@@ -33,51 +41,48 @@ export function DriftDiffView({ differences }: DriftDiffViewProps) {
       data-testid="drift-diff-view"
       className="border border-border rounded-lg overflow-hidden"
     >
-      <table className="w-full">
-        <thead>
-          <tr className="surface-1 border-b border-border">
-            <th className="text-caption text-muted-foreground text-left px-space-3 py-1.5">
+      <Table>
+        <TableHeader>
+          <TableRow className="surface-1 hover:bg-transparent">
+            <TableHead className="text-caption text-muted-foreground">
               Field
-            </th>
-            <th className="text-caption text-muted-foreground text-left px-space-3 py-1.5">
+            </TableHead>
+            <TableHead className="text-caption text-muted-foreground">
               Difference
-            </th>
-            <th className="text-caption text-muted-foreground text-left px-space-3 py-1.5">
+            </TableHead>
+            <TableHead className="text-caption text-muted-foreground">
               Logical
-            </th>
-            <th className="text-caption text-muted-foreground text-left px-space-3 py-1.5">
+            </TableHead>
+            <TableHead className="text-caption text-muted-foreground">
               Implementation
-            </th>
-          </tr>
-        </thead>
-        <tbody>
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {differences.map((diff, i) => {
             const config = DIFF_TYPE_CONFIG[diff.type] || {
               label: diff.type,
               rowClass: "",
             };
             return (
-              <tr
-                key={i}
-                className={`border-b border-border last:border-0 ${config.rowClass}`}
-              >
-                <td className="px-space-3 py-1.5 text-mono-small">
+              <TableRow key={i} className={config.rowClass}>
+                <TableCell className="text-mono-small">
                   {diff.fieldName}
-                </td>
-                <td className="px-space-3 py-1.5 text-caption">
+                </TableCell>
+                <TableCell className="text-caption">
                   {config.label}
-                </td>
-                <td className="px-space-3 py-1.5 text-mono-small text-muted-foreground">
+                </TableCell>
+                <TableCell className="whitespace-normal text-mono-small text-muted-foreground">
                   {diff.logicalValue || "-"}
-                </td>
-                <td className="px-space-3 py-1.5 text-mono-small text-muted-foreground">
+                </TableCell>
+                <TableCell className="whitespace-normal text-mono-small text-muted-foreground">
                   {diff.implementationValue || "-"}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             );
           })}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }

@@ -147,9 +147,9 @@ export function EventCodePanel({ eventId, productId, productSlug, doc, problems,
       {code.status === "error" && (
         <p role="status" data-testid="code-error-note" className="shrink-0 border-t border-border/50 px-space-3 py-space-2 text-caption text-muted-foreground">
           Full schemas are unavailable ({code.error}). Showing the draft preview.{" "}
-          <button type="button" data-testid="code-retry" onClick={code.retry} className="underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
+          <Button type="button" variant="link" size="xs" data-testid="code-retry" onClick={code.retry} className="h-auto p-0 align-baseline text-inherit underline">
             Retry
-          </button>
+          </Button>
         </p>
       )}
     </div>

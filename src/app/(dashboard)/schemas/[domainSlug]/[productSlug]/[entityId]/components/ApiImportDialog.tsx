@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import type { OpenApiImportResult } from "@/lib/api-operations/import-openapi";
 import type { ApiOperation, ApiOperationRecord } from "@/types/schemas/api-operation";
@@ -158,29 +159,20 @@ export function ApiImportDialog({ serviceId, domainId, entityId, entityName, onI
             ) : null}
 
             {!found ? (
-              <>
-                <div className="flex gap-1 border-b border-border" role="tablist" aria-label="Document source">
+              <Tabs value={tab} onValueChange={(value) => setTab(value as typeof tab)} className="gap-space-3">
+                <TabsList variant="line" activateOnFocus aria-label="Document source" className="w-full justify-start border-b border-border">
                   {([
                     { id: "paste" as const, label: "Paste", icon: ClipboardPaste },
                     { id: "file" as const, label: "Upload file", icon: FileText },
                     { id: "url" as const, label: "From URL", icon: Link2 },
                   ]).map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={tab === t.id}
-                      onClick={() => setTab(t.id)}
-                      className={`flex items-center gap-space-1 px-space-3 py-2 text-body-small border-b-2 transition-colors ${
-                        tab === t.id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
+                    <TabsTrigger key={t.id} value={t.id} className="flex-none">
                       <t.icon className="w-4 h-4" />
                       {t.label}
-                    </button>
+                    </TabsTrigger>
                   ))}
-                </div>
-                {tab === "paste" ? (
+                </TabsList>
+                <TabsContent value="paste" className="text-[length:inherit]">
                   <Textarea
                     aria-label="OpenAPI document"
                     data-testid="api-import-content"
@@ -190,8 +182,8 @@ export function ApiImportDialog({ serviceId, domainId, entityId, entityName, onI
                     className="min-h-64 max-h-[50vh] font-mono text-[13px]"
                     spellCheck={false}
                   />
-                ) : null}
-                {tab === "file" ? (
+                </TabsContent>
+                <TabsContent value="file" className="text-[length:inherit]">
                   <div
                     className="flex flex-col items-center justify-center gap-space-2 rounded-xl border-2 border-dashed border-border p-space-6"
                     onDragOver={(e) => e.preventDefault()}
@@ -217,8 +209,8 @@ export function ApiImportDialog({ serviceId, domainId, entityId, entityName, onI
                       />
                     </label>
                   </div>
-                ) : null}
-                {tab === "url" ? (
+                </TabsContent>
+                <TabsContent value="url" className="text-[length:inherit]">
                   <div className="flex flex-col gap-space-1">
                     <Input
                       aria-label="OpenAPI document URL"
@@ -230,8 +222,8 @@ export function ApiImportDialog({ serviceId, domainId, entityId, entityName, onI
                     />
                     <p className="text-caption text-muted-foreground">Fetched by the server over https; external $refs in the document are not followed.</p>
                   </div>
-                ) : null}
-              </>
+                </TabsContent>
+              </Tabs>
             ) : (
               <ReviewList found={found} selected={selected} toggle={toggle} />
             )}

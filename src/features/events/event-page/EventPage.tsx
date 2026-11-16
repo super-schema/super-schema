@@ -15,13 +15,14 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   deleteEventAction, previewEventPublishAction, publishEventAction, renameEventAction, updateEventDocumentAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { useRightPanelContent } from "@/hooks/useRightPanelContent";
 import type { PublishInput } from "@/lib/entity-versioning/types";
-import { assetHref, EVENT_TABS, nextEventTab, type BuilderSection, type EventTab } from "@/lib/navigation/asset-href";
+import { assetHref, EVENT_TABS, type BuilderSection, type EventTab } from "@/lib/navigation/asset-href";
 import { instantLibraryTraits } from "@/lib/events/document/instant-asyncapi";
 import { foldPublishBlockers } from "@/lib/events/publish-blockers";
 import { EventBuilder } from "@/features/events/builder/EventBuilder";
@@ -41,7 +42,6 @@ import { VersionsTab } from "./VersionsTab";
 
 const TAB_LABELS: Record<EventTab, string> = { design: "Design", docs: "Docs", versions: "Versions", "used-by": "Used by" };
 const tabDomId = (tab: EventTab) => `event-tab-${tab}`;
-const panelDomId = (tab: EventTab) => `event-panel-${tab}`;
 
 /** "asyncapi@3.0" → "AsyncAPI 3.0"; a spec type this slice has no label for is shown as stored. */
 function specLabel(specType: string): string {
@@ -123,14 +123,6 @@ function EventPageBody({ data }: { data: EventPageData }) {
     );
     if (`${window.location.pathname}${window.location.search}` !== href) window.history.replaceState(null, "", href);
   }, [tab, section, item, version, event.id, domainSlug, productSlug]);
-
-  function onTabKeyDown(e: KeyboardEvent<HTMLButtonElement>, id: EventTab) {
-    const next = nextEventTab(id, e.key);
-    if (next === null) return;
-    e.preventDefault();
-    setTab(next);
-    document.getElementById(tabDomId(next))?.focus();
-  }
 
   // ----- publish -----
   // Publish cuts a version from the SAVED draft, so it waits for a clean save. Problems come first: while the draft has any it cannot
@@ -318,43 +310,40 @@ function EventPageBody({ data }: { data: EventPageData }) {
         <p data-testid="event-delete-error" role="alert" className="text-body-small text-destructive">{deleteError}</p>
       )}
 
-      <div role="tablist" aria-label={`${name} sections`} className="flex items-center gap-space-1 border-b border-border">
-        {EVENT_TABS.map((id) => (
-          <button
-            key={id} id={tabDomId(id)} type="button" role="tab" data-testid={tabDomId(id)}
-            aria-selected={tab === id} aria-controls={panelDomId(id)} tabIndex={tab === id ? 0 : -1}
-            onClick={() => setTab(id)} onKeyDown={(e) => onTabKeyDown(e, id)}
-            className={`-mb-px border-b-2 px-space-4 py-space-2 text-body-small transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${tab === id ? "border-primary font-medium text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-          >
-            {TAB_LABELS[id]}
-          </button>
-        ))}
-      </div>
+      <Tabs value={tab} onValueChange={(next) => setTab(next as EventTab)} className="gap-4">
+        <TabsList variant="line" activateOnFocus aria-label={`${name} sections`} className="w-full justify-start border-b border-border">
+          {EVENT_TABS.map((id) => (
+            <TabsTrigger key={id} value={id} id={tabDomId(id)} data-testid={tabDomId(id)} className="flex-none px-4">
+              {TAB_LABELS[id]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      {/* Every panel exists so every tab's aria-controls resolves. Design is never unmounted (unsaved edits live in its draft); the other tabs' content is. */}
-      <div role="tabpanel" id={panelDomId("design")} aria-labelledby={tabDomId("design")} data-testid="event-panel-design" hidden={tab !== "design"}>
-        <EventBuilder draft={draft} options={builderOptions} section={section} onSectionChange={setSection} item={item} onItemChange={setItem} active={tab === "design"} />
-      </div>
-      <div role="tabpanel" id={panelDomId("docs")} aria-labelledby={tabDomId("docs")} data-testid="event-panel-docs" hidden={tab !== "docs"}>
-        {tab === "docs" && (
-          <div className="space-y-space-3">
-            {draft.dirty && (
-              <p data-testid="preview-unsaved-note" className="text-body-small text-muted-foreground">
-                These docs show your unsaved changes. Go back to Design to save them.
-              </p>
-            )}
-            <EventPreview title={name} state={docs} blocked={draft.problems.length > 0} onBackToDesign={() => setTab("design")} />
-          </div>
-        )}
-      </div>
-      <div role="tabpanel" id={panelDomId("versions")} aria-labelledby={tabDomId("versions")} data-testid="event-panel-versions" hidden={tab !== "versions"}>
-        {tab === "versions" && (
-          <VersionsTab eventId={event.id} productId={productId} latestLabel={event.latestVersionLabel} version={version} onVersionChange={setVersion} />
-        )}
-      </div>
-      <div role="tabpanel" id={panelDomId("used-by")} aria-labelledby={tabDomId("used-by")} data-testid="event-panel-used-by" hidden={tab !== "used-by"}>
-        {tab === "used-by" && <UsedByPanel subject={{ kind: "event", eventId: event.id }} title="Used by" emptyText="No other event references this one." />}
-      </div>
+        {/* Every panel exists so every tab's aria-controls resolves. Design is never unmounted (unsaved edits live in its draft); the other tabs' content is. */}
+        <TabsContent value="design" keepMounted data-testid="event-panel-design" className="flex-none text-[length:inherit]">
+          <EventBuilder draft={draft} options={builderOptions} section={section} onSectionChange={setSection} item={item} onItemChange={setItem} active={tab === "design"} />
+        </TabsContent>
+        <TabsContent value="docs" keepMounted data-testid="event-panel-docs" className="flex-none text-[length:inherit]">
+          {tab === "docs" && (
+            <div className="space-y-space-3">
+              {draft.dirty && (
+                <p data-testid="preview-unsaved-note" className="text-body-small text-muted-foreground">
+                  These docs show your unsaved changes. Go back to Design to save them.
+                </p>
+              )}
+              <EventPreview title={name} state={docs} blocked={draft.problems.length > 0} onBackToDesign={() => setTab("design")} />
+            </div>
+          )}
+        </TabsContent>
+        <TabsContent value="versions" keepMounted data-testid="event-panel-versions" className="flex-none text-[length:inherit]">
+          {tab === "versions" && (
+            <VersionsTab eventId={event.id} productId={productId} latestLabel={event.latestVersionLabel} version={version} onVersionChange={setVersion} />
+          )}
+        </TabsContent>
+        <TabsContent value="used-by" keepMounted data-testid="event-panel-used-by" className="flex-none text-[length:inherit]">
+          {tab === "used-by" && <UsedByPanel subject={{ kind: "event", eventId: event.id }} title="Used by" emptyText="No other event references this one." />}
+        </TabsContent>
+      </Tabs>
 
       <UnsavedChangesDialog
         pending={leave.pending} saving={draft.saving} error={draft.error}

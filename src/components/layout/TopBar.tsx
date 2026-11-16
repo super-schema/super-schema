@@ -42,8 +42,9 @@ export function TopBar() {
       {/* Center: Search — clickable to open command palette */}
       <div className="flex-1 max-w-md mx-space-6">
         <button
+          type="button"
           onClick={openPalette}
-          className="w-full flex items-center gap-space-2 bg-muted rounded-lg px-space-3 py-1.5 border border-border hover:border-primary/40 hover:bg-accent/30 transition-colors text-left"
+          className="w-full flex items-center gap-space-2 bg-muted rounded-lg px-space-3 py-1.5 border border-border hover:border-primary/40 hover:bg-accent/30 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           title={`Search (${mod}+K)`}
         >
           <Search className="w-4 h-4 text-muted-foreground" />

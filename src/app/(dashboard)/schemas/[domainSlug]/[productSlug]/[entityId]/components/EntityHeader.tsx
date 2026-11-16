@@ -180,28 +180,30 @@ export function EntityHeader({
 
             {/* Status dropdown */}
             <div className="relative" ref={statusDropdownRef}>
-              <button
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => !readOnly && setStatusDropdownOpen(!statusDropdownOpen)}
                 disabled={readOnly}
                 data-testid="entity-status-trigger"
-                className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-body-small transition-colors hover:bg-accent/50 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ color: currentStatus.color }}
               >
                 {entity.status}
                 {!readOnly && (
                   <ChevronRight className="w-3 h-3 rotate-90" />
                 )}
-              </button>
+              </Button>
 
               {statusDropdownOpen && (
                 <div className="absolute top-full left-0 mt-1 z-50 min-w-[140px] rounded-lg border border-border bg-popover shadow-md py-1">
                   {STATUS_OPTIONS.map((opt) => (
                     <button
                       key={opt.value}
+                      type="button"
                       onClick={() => handleStatusSelect(opt.value)}
                       disabled={opt.value === entity.status}
                       data-testid={`entity-status-option-${opt.value.toLowerCase()}`}
-                      className="flex items-center gap-2 w-full px-3 py-1.5 text-body-small text-left hover:bg-accent/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      className="flex items-center gap-2 w-full px-3 py-1.5 text-body-small text-left hover:bg-accent/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
                     >
                       <span
                         className="w-2 h-2 rounded-full shrink-0"

@@ -54,7 +54,7 @@ function TargetTypeSelector({
             <button
               key={type}
               type="button"
-              className="w-full text-left px-3 py-1.5 text-body-small hover:bg-accent/50 transition-colors flex items-center gap-2"
+              className="w-full text-left px-3 py-1.5 text-body-small hover:bg-accent/50 transition-colors flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
               onClick={() => {
                 onChange(type);
                 onFilterChange("");
@@ -207,7 +207,7 @@ export function TypeMappingOverrideDialog({
                 <button
                   type="button"
                   onClick={() => setMode("accept")}
-                  className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                  className={`w-full text-left rounded-lg border p-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                     mode === "accept"
                       ? "border-warning bg-warning/10"
                       : "border-border hover:border-warning/50"
@@ -225,7 +225,7 @@ export function TypeMappingOverrideDialog({
                 <button
                   type="button"
                   onClick={() => setMode("per-entity")}
-                  className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                  className={`w-full text-left rounded-lg border p-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                     mode === "per-entity"
                       ? "border-blue-500 bg-blue-500/10"
                       : "border-border hover:border-blue-500/50"
@@ -243,7 +243,7 @@ export function TypeMappingOverrideDialog({
                 <button
                   type="button"
                   onClick={() => setMode("global")}
-                  className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                  className={`w-full text-left rounded-lg border p-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                     mode === "global"
                       ? "border-purple-500 bg-purple-500/10"
                       : "border-border hover:border-purple-500/50"

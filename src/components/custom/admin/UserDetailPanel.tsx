@@ -81,7 +81,7 @@ export function UserDetailPanel({ user, scopes, onClose, onChanged }: UserDetail
     >
       {/* Header */}
       <div className="flex items-center justify-between px-space-4 py-space-3 border-b border-border">
-        <h3 id={titleId} ref={heading} tabIndex={-1} className="text-heading-4 text-foreground outline-none">
+        <h3 id={titleId} ref={heading} tabIndex={-1} className="text-heading-3 text-foreground outline-none">
           User Details
         </h3>
         <Button
@@ -99,7 +99,7 @@ export function UserDetailPanel({ user, scopes, onClose, onChanged }: UserDetail
       <div className="flex-1 overflow-y-auto p-space-4 space-y-space-6">
         {/* User info */}
         <section className="space-y-space-3" aria-label="User info">
-          <h4 className="text-label text-muted-foreground uppercase tracking-wider">User Info</h4>
+          <h4 className="text-caption text-muted-foreground uppercase tracking-wider">User Info</h4>
           <div className="space-y-space-1">
             <p className="block text-body-small text-muted-foreground">Email</p>
             <p className="text-body text-foreground break-all">{user.email}</p>
@@ -142,7 +142,7 @@ export function UserDetailPanel({ user, scopes, onClose, onChanged }: UserDetail
 
         {/* Account */}
         <section className="space-y-space-3" aria-label="Account">
-          <h4 className="text-label text-muted-foreground uppercase tracking-wider">Account</h4>
+          <h4 className="text-caption text-muted-foreground uppercase tracking-wider">Account</h4>
           <div className="flex flex-wrap gap-space-2">
             <UserStatusToggle user={{ userId, email: user.email, status: account, disableBlockedReason: user.disableBlockedReason }} onChanged={onChanged} />
             <GuardedButton type="button" variant="outline" size="sm" data-testid="user-reset-link" blockedReason={resetBlocked} onClick={() => setResetOpen(true)}>
@@ -159,7 +159,7 @@ export function UserDetailPanel({ user, scopes, onClose, onChanged }: UserDetail
 
         {/* Roles */}
         <section className="space-y-space-3" aria-label="Roles">
-          <h4 className="text-label text-muted-foreground uppercase tracking-wider">Roles</h4>
+          <h4 className="text-caption text-muted-foreground uppercase tracking-wider">Roles</h4>
           <RolesEditor userId={userId} roles={user.roles} scopes={scopes} onChanged={onChanged} />
         </section>
       </div>

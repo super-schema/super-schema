@@ -78,7 +78,7 @@ export const ApiOperationRow = memo(function ApiOperationRow({
           type="button"
           onClick={() => onToggle(draft.id)}
           aria-expanded={expanded}
-          className="flex items-center gap-2 flex-1 min-w-0 px-space-4 py-space-3"
+          className="flex items-center gap-2 flex-1 min-w-0 px-space-4 py-space-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
         >
           {expanded ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
           <Badge className={`text-[11px] h-5 font-mono font-bold border ${methodColor}`}>{draft.httpMethod}</Badge>
@@ -230,9 +230,9 @@ function OperationEditor({ draft, issues, warnings, groups, readOnly, definition
         <div className="flex items-center justify-between mb-1">
           <span className={LABEL}>Parameters</span>
           {!readOnly && (
-            <button type="button" data-testid="api-add-param" onClick={() => set({ parameters: [...draft.parameters, { name: "", type: "string", isArray: false, location: "query", required: false, description: "" }] })} className="text-[10px] text-primary hover:underline">
+            <Button type="button" variant="link" size="xs" data-testid="api-add-param" onClick={() => set({ parameters: [...draft.parameters, { name: "", type: "string", isArray: false, location: "query", required: false, description: "" }] })}>
               + Add parameter
-            </button>
+            </Button>
           )}
         </div>
         <FieldError message={err("parameters")} />
@@ -257,9 +257,9 @@ function OperationEditor({ draft, issues, warnings, groups, readOnly, definition
               </label>
               <Input aria-label="Parameter description" value={p.description} onChange={(e) => setParam(i, { description: e.target.value })} placeholder="description" className={INPUT} disabled={readOnly} />
               {!readOnly ? (
-                <button type="button" aria-label={`Remove parameter ${p.name || i + 1}`} onClick={() => set({ parameters: draft.parameters.filter((_, pi) => pi !== i) })} className="h-7 text-muted-foreground hover:text-destructive">
+                <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove parameter ${p.name || i + 1}`} onClick={() => set({ parameters: draft.parameters.filter((_, pi) => pi !== i) })} className="text-muted-foreground hover:text-destructive">
                   <Trash2 className="w-3 h-3" />
-                </button>
+                </Button>
               ) : <span />}
             </div>
           ))}
@@ -272,11 +272,11 @@ function OperationEditor({ draft, issues, warnings, groups, readOnly, definition
           <span className={LABEL}>Request body</span>
           {!readOnly && (
             draft.requestBody ? (
-              <button type="button" data-testid="api-remove-body" onClick={() => set({ requestBody: null })} className="text-[10px] text-muted-foreground hover:text-destructive">Remove body</button>
+              <Button type="button" variant="ghost" size="xs" data-testid="api-remove-body" onClick={() => set({ requestBody: null })} className="text-muted-foreground hover:text-destructive">Remove body</Button>
             ) : (
-              <button type="button" data-testid="api-add-body" onClick={() => set({ requestBody: { type: groups.entity, isArray: false, contentType: "application/json", required: true, description: "" } })} className="text-[10px] text-primary hover:underline">
+              <Button type="button" variant="link" size="xs" data-testid="api-add-body" onClick={() => set({ requestBody: { type: groups.entity, isArray: false, contentType: "application/json", required: true, description: "" } })}>
                 + Add request body
-              </button>
+              </Button>
             )
           )}
         </div>
@@ -307,9 +307,9 @@ function OperationEditor({ draft, issues, warnings, groups, readOnly, definition
         <div className="flex items-center justify-between mb-1">
           <span className={LABEL}>Responses</span>
           {!readOnly && (
-            <button type="button" data-testid="api-add-response" onClick={() => set({ responses: [...draft.responses, { statusCode: nextStatusCode(draft.responses.map((r) => r.statusCode)), type: null, isArray: false, contentType: "application/json", description: "" }] })} className="text-[10px] text-primary hover:underline">
+            <Button type="button" variant="link" size="xs" data-testid="api-add-response" onClick={() => set({ responses: [...draft.responses, { statusCode: nextStatusCode(draft.responses.map((r) => r.statusCode)), type: null, isArray: false, contentType: "application/json", description: "" }] })}>
               + Add response
-            </button>
+            </Button>
           )}
         </div>
         <FieldError message={err("responses")} />
@@ -334,9 +334,9 @@ function OperationEditor({ draft, issues, warnings, groups, readOnly, definition
               </div>
               <Input aria-label="Response description" value={r.description} onChange={(e) => setResponse(i, { description: e.target.value })} placeholder="description" className={INPUT} disabled={readOnly} />
               {!readOnly ? (
-                <button type="button" aria-label={`Remove response ${r.statusCode}`} onClick={() => set({ responses: draft.responses.filter((_, ri) => ri !== i) })} className="h-7 text-muted-foreground hover:text-destructive">
+                <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove response ${r.statusCode}`} onClick={() => set({ responses: draft.responses.filter((_, ri) => ri !== i) })} className="text-muted-foreground hover:text-destructive">
                   <Trash2 className="w-3 h-3" />
-                </button>
+                </Button>
               ) : <span />}
             </div>
           ))}

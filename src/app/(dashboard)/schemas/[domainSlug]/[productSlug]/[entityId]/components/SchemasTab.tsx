@@ -19,6 +19,7 @@ import { GenerationIcon } from "@/components/icons/feature-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { getSchemaVersionsAction, publishSchemaAction, saveSchemaFieldTypeOverrideAction } from "../actions";
@@ -153,17 +154,19 @@ function TargetTypePicker({
 
   return (
     <div className="relative" ref={ref}>
-      <button
+      <Button
         type="button"
+        variant="outline"
+        size="sm"
         aria-haspopup="listbox"
         aria-expanded={open}
         data-testid="override-type-trigger"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 h-7 w-full rounded-lg border border-border bg-popover px-2 text-[11px] font-mono text-primary hover:border-primary/40 transition-colors"
+        className="w-full justify-between gap-1 px-2 font-mono text-[11px] text-primary hover:border-primary/40"
       >
         <span className="truncate flex-1 text-left">{value}</span>
         <ChevronDown className={`w-3 h-3 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
+      </Button>
       {open && (
         <div className="absolute z-50 top-full left-0 mt-1 w-[320px] max-h-[320px] overflow-y-auto bg-popover border border-border rounded-lg shadow-lg py-1" role="listbox" aria-label="Target data types">
           {[...groups.entries()].map(([group, opts]) => (
@@ -178,7 +181,7 @@ function TargetTypePicker({
                   role="option"
                   aria-selected={opt.value === value}
                   onClick={() => { onChange(opt.value); setOpen(false); }}
-                  className={`flex items-start gap-2 w-full text-left px-3 py-1.5 hover:bg-accent transition-colors ${
+                  className={`flex items-start gap-2 w-full text-left px-3 py-1.5 hover:bg-accent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 ${
                     opt.value === value ? "bg-accent/50" : ""
                   }`}
                 >
@@ -229,15 +232,15 @@ function TypeOverrideTable({
         Override the default {targetDisplayName} data type per field. Changes are saved immediately and regenerate this schema.
       </p>
       <div className="rounded-lg border border-border/50 overflow-hidden">
-        <table className="w-full text-caption">
-          <thead>
-            <tr className="bg-muted/30 border-b border-border/50">
-              <th className="text-left px-3 py-2 font-semibold text-foreground/80 uppercase tracking-wider text-[10px] w-[180px]">Field</th>
-              <th className="text-left px-3 py-2 font-semibold text-foreground/80 uppercase tracking-wider text-[10px] w-[120px]">Super Schema Type</th>
-              <th className="text-left px-3 py-2 font-semibold text-foreground/80 uppercase tracking-wider text-[10px]">{targetDisplayName} Data Type</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table className="text-caption">
+          <TableHeader>
+            <TableRow className="border-border/50 bg-muted/30 hover:bg-muted/30">
+              <TableHead className="font-semibold text-foreground/80 uppercase tracking-wider text-[10px] w-[180px]">Field</TableHead>
+              <TableHead className="font-semibold text-foreground/80 uppercase tracking-wider text-[10px] w-[120px]">Super Schema Type</TableHead>
+              <TableHead className="font-semibold text-foreground/80 uppercase tracking-wider text-[10px]">{targetDisplayName} Data Type</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {fields.map((field, i) => {
               // Priority: local override > stored mapping > default engine > raw type
               const localType = localOverrides?.get(field.name);
@@ -246,24 +249,24 @@ function TypeOverrideTable({
               const currentType = localType ?? storedType ?? defaultType ?? field.type;
               const isOverridden = (localType && localType !== defaultType) || (storedType && storedType !== defaultType);
               return (
-                <tr key={field.id} data-testid="override-row" data-field={field.name} data-overridden={isOverridden ? "true" : "false"} className={`${i % 2 === 0 ? "" : "bg-muted/10"} ${isOverridden ? "bg-primary/5" : ""}`}>
-                  <td className="px-3 py-1.5 font-mono text-foreground">
+                <TableRow key={field.id} data-testid="override-row" data-field={field.name} data-overridden={isOverridden ? "true" : "false"} className={`${i % 2 === 0 ? "" : "bg-muted/10"} ${isOverridden ? "bg-primary/5" : ""}`}>
+                  <TableCell className="font-mono text-foreground">
                     {field.name}
                     {isOverridden && <Badge variant="outline" className="text-[8px] h-3 px-1 ml-1">overridden</Badge>}
-                  </td>
-                  <td className="px-3 py-1.5 font-mono text-muted-foreground">{field.type}</td>
-                  <td className="px-3 py-1.5">
+                  </TableCell>
+                  <TableCell className="font-mono text-muted-foreground">{field.type}</TableCell>
+                  <TableCell>
                     <TargetTypePicker
                       value={currentType}
                       options={validTypes}
                       onChange={(newType) => onOverrideChange(field.name, newType)}
                     />
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               );
             })}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );
@@ -315,47 +318,47 @@ function MappingMatrixView({
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border/50">
-        <table className="w-full min-w-[760px] text-caption">
-          <thead>
-            <tr className="bg-muted/30 border-b border-border/50">
-              <th className="sticky left-0 z-10 bg-muted/30 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-foreground/80">
+      <div className="overflow-hidden rounded-lg border border-border/50">
+        <Table className="min-w-[760px] text-caption">
+          <TableHeader>
+            <TableRow className="border-border/50 bg-muted/30 hover:bg-muted/30">
+              <TableHead className="sticky left-0 z-10 bg-muted/30 text-[10px] font-semibold uppercase tracking-wider text-foreground/80">
                 Field
-              </th>
-              <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-foreground/80">
+              </TableHead>
+              <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-foreground/80">
                 Logical
-              </th>
+              </TableHead>
               {targets.map((target) => (
-                <th
+                <TableHead
                   key={target.key}
-                  className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-foreground/80"
+                  className="text-[10px] font-semibold uppercase tracking-wider text-foreground/80"
                 >
                   {target.displayName}
-                </th>
+                </TableHead>
               ))}
-            </tr>
-          </thead>
-          <tbody>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {matrixRows.map((row, index) => (
-              <tr
+              <TableRow
                 key={row.fieldId}
                 className={`${index % 2 === 0 ? "" : "bg-muted/10"}`}
               >
-                <td className="sticky left-0 z-10 bg-background px-3 py-2 font-medium text-foreground">
+                <TableCell className="sticky left-0 z-10 bg-background font-medium text-foreground">
                   {row.fieldName}
-                </td>
-                <td className="px-3 py-2">
+                </TableCell>
+                <TableCell>
                   <div className="font-mono text-foreground">{row.sourceType}</div>
                   {row.sourceExample && (
                     <div className="mt-1 max-w-[180px] truncate text-[10px] text-muted-foreground">
                       {row.sourceExample}
                     </div>
                   )}
-                </td>
+                </TableCell>
                 {targets.map((target) => {
                   const cell = row.cells[target.key];
                   return (
-                    <td key={target.key} className="px-3 py-2 align-top">
+                    <TableCell key={target.key} className="align-top whitespace-normal">
                       <div className="font-mono text-foreground">
                         {cell.mapping.mappedType}
                       </div>
@@ -370,13 +373,13 @@ function MappingMatrixView({
                           Safe mapping
                         </div>
                       )}
-                    </td>
+                    </TableCell>
                   );
                 })}
-              </tr>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );
@@ -596,7 +599,7 @@ export function SchemasTab({ entityId, entityName, fields, entity, onDeploy }: S
                   setContentTab((current) => current === "matrix" ? "matrix" : "schema");
                 }}
                 className={cn(
-                  "flex min-w-0 shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-body-small transition-colors",
+                  "flex min-w-0 shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-body-small transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
                   isSelected
                     ? "bg-accent text-foreground font-medium"
                     : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
@@ -629,43 +632,21 @@ export function SchemasTab({ entityId, entityName, fields, entity, onDeploy }: S
             <>
               {/* Horizontal tabs + actions */}
               <div className="mb-space-3 flex flex-wrap items-center gap-2 border-b border-border/50">
-                <div data-testid="schema-content-tabs" className="flex min-w-0 max-w-full flex-wrap gap-1">
-                  <button
-                    type="button"
-                    data-testid="schema-content-tab-schema"
-                    aria-pressed={contentTab === "schema"}
-                    onClick={() => setContentTab("schema")}
-                    className={`px-3 py-1.5 text-body-small font-medium border-b-2 transition-colors ${
-                      contentTab === "schema" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    Generated Schema
-                  </button>
-                  {selected.supportsFieldOverrides && (
-                    <button
-                      type="button"
-                      data-testid="schema-content-tab-overrides"
-                      aria-pressed={contentTab === "overrides"}
-                      onClick={() => setContentTab("overrides")}
-                      className={`px-3 py-1.5 text-body-small font-medium border-b-2 transition-colors ${
-                        contentTab === "overrides" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      Manual Override
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    data-testid="schema-content-tab-matrix"
-                    aria-pressed={contentTab === "matrix"}
-                    onClick={() => setContentTab("matrix")}
-                    className={`px-3 py-1.5 text-body-small font-medium border-b-2 transition-colors ${
-                      contentTab === "matrix" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    Mapping Matrix
-                  </button>
-                </div>
+                <Tabs value={contentTab} onValueChange={(value) => setContentTab(value as ContentTab)} className="min-w-0 max-w-full gap-0">
+                  <TabsList variant="line" activateOnFocus data-testid="schema-content-tabs" aria-label="Schema views" className="h-auto max-w-full flex-wrap">
+                    <TabsTrigger value="schema" data-testid="schema-content-tab-schema" className="flex-none">
+                      Generated Schema
+                    </TabsTrigger>
+                    {selected.supportsFieldOverrides && (
+                      <TabsTrigger value="overrides" data-testid="schema-content-tab-overrides" className="flex-none">
+                        Manual Override
+                      </TabsTrigger>
+                    )}
+                    <TabsTrigger value="matrix" data-testid="schema-content-tab-matrix" className="flex-none">
+                      Mapping Matrix
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
                 <div className="ml-auto flex shrink-0 items-center gap-2">
                   {/* Generate button */}
                   <Button

@@ -236,46 +236,54 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
           </p>
           <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover/desc:opacity-100 transition-opacity">
             {isDescLong && (
-              <button
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={() => setIsDescExpanded(!isDescExpanded)}
-                className="p-0.5 rounded hover:bg-accent text-muted-foreground"
+                className="text-muted-foreground"
                 title={isDescExpanded ? "Collapse" : "Expand"}
+                aria-label={isDescExpanded ? "Collapse" : "Expand"}
               >
                 {isDescExpanded ? (
                   <ChevronUp className="w-3 h-3" />
                 ) : (
                   <ChevronDown className="w-3 h-3" />
                 )}
-              </button>
+              </Button>
             )}
             {!isReadOnly && (
-              <button
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={() => {
                   setDescInput(description);
                   setIsEditingDesc(true);
                 }}
-                className="p-0.5 rounded hover:bg-accent text-muted-foreground"
+                className="text-muted-foreground"
                 title="Edit description"
+                aria-label="Edit description"
                 data-testid="entity-description-edit"
               >
                 <Pencil className="w-3 h-3" />
-              </button>
+              </Button>
             )}
           </div>
         </div>
       )}
 
       {!hasDescription && !isReadOnly && !isEditingDesc && (
-        <button
+        <Button
+          variant="ghost"
+          size="xs"
           onClick={() => {
             setDescInput("");
             setIsEditingDesc(true);
           }}
-          className="text-caption text-muted-foreground hover:text-foreground transition-colors"
+          className="self-start text-muted-foreground"
           data-testid="entity-add-description"
         >
           + Add description
-        </button>
+        </Button>
       )}
 
       {isEditingDesc && (
@@ -295,20 +303,22 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
             className="w-full rounded-md border border-input bg-transparent px-2 py-1.5 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y"
           />
           <div className="flex justify-end gap-1">
-            <button
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => setIsEditingDesc(false)}
-              className="px-2 py-0.5 text-caption text-muted-foreground hover:text-foreground rounded"
+              className="text-muted-foreground"
               data-testid="entity-description-cancel"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
+              size="xs"
               onClick={() => void saveDescription(descInput)}
-              className="px-2 py-0.5 text-caption text-primary hover:text-primary/80 rounded font-medium"
               data-testid="entity-description-save"
             >
               Save
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -322,8 +332,9 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
               {tag}
               {!isReadOnly && (
                 <button
+                  type="button"
                   onClick={() => removeTag(tag)}
-                  className="hover:text-destructive ml-0.5"
+                  className="ml-0.5 rounded-sm hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                   aria-label={`Remove tag ${tag}`}
                 >
                   <X className="w-2.5 h-2.5" />
@@ -335,8 +346,9 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
           {/* Add tag inline */}
           {!isReadOnly && !isAddingTag && (
             <button
+              type="button"
               onClick={() => setIsAddingTag(true)}
-              className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-caption text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+              className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-caption text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
               data-testid="add-tag-button"
             >
               <Plus className="w-2.5 h-2.5" />
@@ -385,6 +397,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
           <User className="w-3 h-3 text-muted-foreground/50" />
           {!isEditingOwner ? (
             <button
+              type="button"
               onClick={() => {
                 if (!isReadOnly) {
                   setOwnerInput(owner);
@@ -396,7 +409,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
                 owner
                   ? "text-muted-foreground"
                   : "text-muted-foreground italic"
-              } ${!isReadOnly ? "hover:text-foreground cursor-pointer" : "cursor-default"}`}
+              } ${!isReadOnly ? "hover:text-foreground cursor-pointer" : "cursor-default"} rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50`}
             >
               {owner || "Add owner"}
             </button>
@@ -424,8 +437,9 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
 
         {/* Retention — read-only summary, click switches to Governance tab */}
         <button
+          type="button"
           onClick={onGovernanceClick}
-          className="flex items-center gap-1 group/retention"
+          className="flex items-center gap-1 rounded-sm group/retention focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           data-testid="inline-retention"
           title="Edit in Governance tab"
         >

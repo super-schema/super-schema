@@ -137,7 +137,7 @@ export function EmitterCardGrid() {
                   ) : (
                     <ZapOff className="w-5 h-5 text-muted-foreground" />
                   )}
-                  <h3 className="min-w-0 break-words text-heading-4 text-foreground capitalize">
+                  <h3 className="min-w-0 break-words text-heading-3 text-foreground capitalize">
                     {emitter.emitterName}
                   </h3>
                 </div>

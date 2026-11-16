@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ChevronDown, ChevronRight, ChevronLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { AuditDiffViewer } from "./AuditDiffViewer";
 import type { AuditTrailEntry } from "@/types/schemas/compliance";
 
@@ -167,22 +168,24 @@ export function AuditTrailList({
             Page {page} of {totalPages} ({total} entries)
           </span>
           <div className="flex items-center gap-space-2">
-            <button
+            <Button
+              variant="ghost"
+              size="icon-sm"
               disabled={page <= 1}
               onClick={() => onPageChange(page - 1)}
               aria-label="Previous page"
-              className="p-1 rounded hover:bg-accent/50 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <ChevronLeft className="w-4 h-4" />
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
               disabled={page >= totalPages}
               onClick={() => onPageChange(page + 1)}
               aria-label="Next page"
-              className="p-1 rounded hover:bg-accent/50 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <ChevronRight className="w-4 h-4" />
-            </button>
+            </Button>
           </div>
         </div>
       )}

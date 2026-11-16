@@ -6,6 +6,7 @@ import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attri
 import { AttributeValueEditor } from "@/components/custom/metadata/AttributeValueEditor";
 import { FieldCompletenessPolicyEditor } from "./FieldCompletenessPolicyEditor";
 
+import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Checkbox } from "@/components/ui/checkbox";
 type AttributeOverride = NonNullable<PolicyTemplate["metadataAttributes"]>[string];
@@ -260,12 +261,9 @@ export function PolicyTemplateEditor({ value, attributeDefinitions = [], onChang
       {/* Save */}
       <FieldCompletenessPolicyEditor value={draft.fieldCompleteness} onChange={(fieldCompleteness) => setDraft({ ...draft, fieldCompleteness })} />
 
-      <button
-        onClick={handleSave}
-        className="px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small"
-      >
+      <Button onClick={handleSave}>
         Save Template
-      </button>
+      </Button>
 
       {/* Confirmation dialog */}
       {showConfirm && (
@@ -274,18 +272,17 @@ export function PolicyTemplateEditor({ value, attributeDefinitions = [], onChang
             Completeness checks apply to existing and future fields. Other template defaults apply to future entities.
           </p>
           <div className="flex gap-space-2">
-            <button
-              onClick={confirmSave}
-              className="px-space-3 py-1 rounded-md bg-primary text-primary-foreground text-caption"
-            >
+            <Button size="xs" onClick={confirmSave}>
               Confirm
-            </button>
-            <button
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost"
               onClick={() => setShowConfirm(false)}
-              className="px-space-3 py-1 rounded-md text-caption text-muted-foreground hover:bg-muted"
+              className="text-muted-foreground"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}

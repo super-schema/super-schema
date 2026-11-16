@@ -355,22 +355,28 @@ export const FieldCard = memo(function FieldCard({
 
         {/* Expand / actions */}
         <div className="col-start-6 row-start-1 flex shrink-0 items-center gap-1">
-          <button
+          <Button
+            variant="ghost"
+            size="icon-xs"
             onClick={() => onNavigateStudio(field.slug || field.id)}
-            className="p-1 text-muted-foreground/50 hover:text-foreground transition-colors rounded"
+            className="text-muted-foreground/50 hover:text-foreground"
             title="Open Field Studio"
+            aria-label="Open Field Studio"
             data-testid="field-open-studio"
           >
             <Settings2 className="w-3.5 h-3.5" />
-          </button>
+          </Button>
           {!isReadOnly && !description && (
-            <button
+            <Button
+              variant="ghost"
+              size="icon-xs"
               onClick={() => onDeleteField(field.id)}
-              className="p-1 text-muted-foreground/50 hover:text-destructive transition-colors rounded"
+              className="text-muted-foreground/50 hover:text-destructive"
               title="Delete field"
+              aria-label="Delete field"
             >
               <Trash2 className="w-3.5 h-3.5" />
-            </button>
+            </Button>
           )}
         </div>
         {description && (
@@ -395,13 +401,16 @@ export const FieldCard = memo(function FieldCard({
               )}
             </div>
             {!isReadOnly && (
-              <button
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={() => onDeleteField(field.id)}
-                className="shrink-0 p-1 text-muted-foreground/50 hover:text-destructive transition-colors rounded"
+                className="shrink-0 text-muted-foreground/50 hover:text-destructive"
                 title="Delete field"
+                aria-label="Delete field"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-              </button>
+              </Button>
             )}
           </div>
         )}

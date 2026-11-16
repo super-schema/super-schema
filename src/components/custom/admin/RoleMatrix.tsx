@@ -9,6 +9,15 @@ import { UserStatusBadge } from "./UserStatusBadge";
 import { roleLabel } from "./scope-selection";
 
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 interface RoleMatrixProps {
   /** The tenants the caller may look at come from here; with none (it is still loading) the tenant in view is shown. */
   scopes: GrantableScopes | null;
@@ -109,47 +118,56 @@ export function RoleMatrix({ scopes }: RoleMatrixProps) {
           {matrix.truncated && (
             <p role="note" className="text-caption text-muted-foreground">The matrix is cut at its limit: it lists the first people only.</p>
           )}
-          <div role="region" aria-label={`Role matrix of ${matrix.tenantName}`} tabIndex={0} className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full text-body-small" data-testid="role-matrix-table">
-              <caption className="sr-only">
+          <div className="overflow-hidden rounded-lg border border-border">
+            <Table
+              className="text-body-small"
+              data-testid="role-matrix-table"
+              containerProps={{
+                role: "region",
+                "aria-label": `Role matrix of ${matrix.tenantName}`,
+                tabIndex: 0,
+                className: "outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset",
+              }}
+            >
+              <TableCaption className="sr-only">
                 Roles in {matrix.tenantName}: each row is a person, each column a tenant, domain or product, and each cell the highest role they hold there.
-              </caption>
-              <thead>
-                <tr className="border-b border-border bg-muted/50">
-                  <th scope="col" className="sticky left-0 bg-muted/50 px-space-4 py-space-3 text-left font-medium text-muted-foreground">User</th>
+              </TableCaption>
+              <TableHeader>
+                <TableRow className="bg-muted/50 hover:bg-muted/50">
+                  <TableHead scope="col" className="sticky left-0 bg-muted/50 text-muted-foreground">User</TableHead>
                   {matrix.scopes.map((scope) => (
-                    <th key={scope.scopeKey} scope="col" data-scope-key={scope.scopeKey} className="px-space-3 py-space-3 text-left font-medium text-muted-foreground">
+                    <TableHead key={scope.scopeKey} scope="col" data-scope-key={scope.scopeKey} className="text-muted-foreground">
                       <span className="block text-foreground">{scope.productName ?? scope.domainName ?? scope.tenantName}</span>
                       <span className="block text-caption font-normal">{KIND_LABEL[scope.kind]}</span>
-                    </th>
+                    </TableHead>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {matrix.rows.length === 0 ? (
-                  <tr>
-                    <td colSpan={matrix.scopes.length + 1} className="px-space-4 py-space-8 text-center text-muted-foreground">Nobody holds a role in this tenant yet.</td>
-                  </tr>
+                  <TableRow>
+                    <TableCell colSpan={matrix.scopes.length + 1} className="py-space-8 text-center text-muted-foreground">Nobody holds a role in this tenant yet.</TableCell>
+                  </TableRow>
                 ) : (
                   matrix.rows.map((row) => (
-                    <tr key={row.userId} data-testid="matrix-row" data-email={row.email} className="border-b border-border last:border-0">
-                      <th scope="row" className="sticky left-0 bg-background px-space-4 py-space-3 text-left font-normal text-foreground">
+                    <TableRow key={row.userId} data-testid="matrix-row" data-email={row.email}>
+                      <TableHead scope="row" className="sticky left-0 bg-background font-normal whitespace-normal">
                         <span className="break-all">{row.email}</span>
                         {row.status === "disabled" && <span className="ml-space-2 align-middle"><UserStatusBadge status="disabled" /></span>}
-                      </th>
+                      </TableHead>
                       {matrix.scopes.map((scope) => {
                         const cell = row.cells[scope.scopeKey] ?? { direct: null, effective: null };
                         return (
-                          <td key={scope.scopeKey} data-testid="matrix-cell" data-scope-key={scope.scopeKey} className="px-space-3 py-space-3">
+                          <TableCell key={scope.scopeKey} data-testid="matrix-cell" data-scope-key={scope.scopeKey}>
                             <Cell direct={cell.direct} effective={cell.effective} />
-                          </td>
+                          </TableCell>
                         );
                       })}
-                    </tr>
+                    </TableRow>
                   ))
                 )}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         </>
       )}

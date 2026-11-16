@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Database, Search } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { DATA_TYPE_HIERARCHY, getTypesByCategory } from "@/lib/data-types";
@@ -142,7 +143,7 @@ export function TypeMappingReference() {
                       type="button"
                       aria-pressed={selectedType.id === type.id}
                       onClick={() => setSelectedTypeId(type.id)}
-                      className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${
+                      className={`w-full rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                         selectedType.id === type.id
                           ? "bg-accent text-foreground"
                           : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
@@ -189,39 +190,46 @@ export function TypeMappingReference() {
           </section>
 
           <section className="overflow-hidden rounded-xl border border-border/50 bg-background">
-            <div className="overflow-x-auto" tabIndex={0} aria-label="Scrollable type mapping table">
-              <table className="w-full min-w-[820px] text-caption" aria-label={`Type mappings for ${selectedType.label}`}>
-                <thead>
-                  <tr className="border-b border-border/50 bg-muted/30">
-                    <th scope="col" className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-foreground/80">Technology</th>
-                    <th scope="col" className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-foreground/80">Maps to</th>
-                    <th scope="col" className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-foreground/80">Health</th>
-                    <th scope="col" className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-foreground/80">Example / possible problems</th>
-                    <th scope="col" className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-foreground/80">Mitigation</th>
-                </tr>
-              </thead>
-              <tbody>
+              <Table
+                className="min-w-[820px] text-caption"
+                aria-label={`Type mappings for ${selectedType.label}`}
+                containerProps={{
+                  tabIndex: 0,
+                  "aria-label": "Scrollable type mapping table",
+                  className: "outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset",
+                }}
+              >
+                <TableHeader>
+                  <TableRow className="border-border/50 bg-muted/30 hover:bg-muted/30">
+                    <TableHead scope="col" className="text-[10px] font-semibold uppercase tracking-wider text-foreground/80">Technology</TableHead>
+                    <TableHead scope="col" className="text-[10px] font-semibold uppercase tracking-wider text-foreground/80">Maps to</TableHead>
+                    <TableHead scope="col" className="text-[10px] font-semibold uppercase tracking-wider text-foreground/80">Health</TableHead>
+                    <TableHead scope="col" className="text-[10px] font-semibold uppercase tracking-wider text-foreground/80">Example / possible problems</TableHead>
+                    <TableHead scope="col" className="text-[10px] font-semibold uppercase tracking-wider text-foreground/80">Mitigation</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {TARGETS.map((target, index) => {
                   const cell = selectedRow.cells[target.key];
                   const risk = cell.risk;
                   return (
-                    <tr
+                    <TableRow
                       key={target.key}
                       data-testid="type-mapping-row"
                       data-target={target.key}
                       className={index % 2 === 0 ? "" : "bg-muted/10"}
                     >
-                      <td className="px-3 py-3 align-top">
+                      <TableCell className="align-top whitespace-normal">
                         <div className="font-medium text-foreground">{target.displayName}</div>
                         <div className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground">{target.outputLanguage}</div>
-                      </td>
-                      <td className="px-3 py-3 align-top">
+                      </TableCell>
+                      <TableCell className="align-top whitespace-normal">
                         <div className="font-mono text-body-small text-primary" data-testid="mapped-type">{cell.mapping.mappedType}</div>
                         {cell.targetType?.description && (
                           <p className="mt-1 max-w-[220px] text-[10px] text-muted-foreground">{cell.targetType.description}</p>
                         )}
-                      </td>
-                      <td className="px-3 py-3 align-top">
+                      </TableCell>
+                      <TableCell className="align-top whitespace-normal">
                         <Badge variant={RISK_BADGE_VARIANT[risk.severity]} data-testid="mapping-health" data-severity={risk.severity}>
                           {risk.severity === "safe" ? (
                             <CheckCircle2 className={`h-3 w-3 ${RISK_ICON_CLASS[risk.severity]}`} />
@@ -233,8 +241,8 @@ export function TypeMappingReference() {
                         {cell.mapping.lossDescription && (
                           <p className="mt-1 max-w-[220px] text-[10px] text-muted-foreground">{cell.mapping.lossDescription}</p>
                         )}
-                      </td>
-                      <td className="px-3 py-3 align-top">
+                      </TableCell>
+                      <TableCell className="align-top whitespace-normal">
                         {(risk.exampleBefore || risk.exampleAfter) && (
                           <div className="mb-space-2 rounded-md bg-muted/20 px-2 py-1 font-mono text-[10px] text-foreground">
                             {risk.exampleBefore && <div>Logical: {risk.exampleBefore}</div>}
@@ -250,8 +258,8 @@ export function TypeMappingReference() {
                         ) : (
                           <p className="max-w-[320px] text-[10px] text-muted-foreground">Preserves the logical value shape for normal use.</p>
                         )}
-                      </td>
-                      <td className="px-3 py-3 align-top">
+                      </TableCell>
+                      <TableCell className="align-top whitespace-normal">
                         {risk.mitigations.length > 0 ? (
                           <ul className="max-w-[300px] list-disc space-y-1 pl-4 text-[10px] text-muted-foreground">
                             {risk.mitigations.map((mitigation) => (
@@ -261,13 +269,12 @@ export function TypeMappingReference() {
                         ) : (
                           <p className="text-[10px] text-muted-foreground">No action needed.</p>
                         )}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
-            </div>
+              </TableBody>
+            </Table>
           </section>
         </main>
       </div>

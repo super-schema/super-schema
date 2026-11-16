@@ -4,6 +4,14 @@ import { Fragment, useId, useState, useRef, useMemo } from "react";
 import { Plus, Trash2, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
@@ -167,15 +175,17 @@ export function FieldPreview({
 
   return (
     <div className="space-y-space-4">
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         onClick={onBack}
         data-testid="wizard-back"
-        className="flex items-center gap-1 text-body-small text-muted-foreground hover:text-foreground transition-colors"
+        className="text-muted-foreground"
       >
-        <ArrowLeft className="w-4 h-4" />
+        <ArrowLeft className="size-4" />
         Back
-      </button>
+      </Button>
 
       <div>
         <h3 className="text-heading-2 text-foreground mb-space-4">
@@ -234,50 +244,53 @@ export function FieldPreview({
 
       {importedFields.length > 0 && (
         <div className="flex justify-end">
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="xs"
             onClick={toggleExpandAll}
             data-testid="wizard-toggle-details"
-            className="text-caption text-muted-foreground hover:text-foreground transition-colors"
+            className="text-muted-foreground"
           >
             {allExpanded ? "Collapse all imported details" : "Expand all imported details"}
-          </button>
+          </Button>
         </div>
       )}
 
       {/* Fields table */}
       <div className="surface-glass rounded-xl border border-border overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-border text-caption text-muted-foreground">
-              <th className="text-left px-space-3 py-space-2 font-medium">Name</th>
-              <th className="text-left px-space-3 py-space-2 font-medium w-[140px]">Type</th>
-              <th className="text-left px-space-3 py-space-2 font-medium w-[100px]">Classification</th>
-              <th className="text-left px-space-3 py-space-2 font-medium">Description</th>
-              <th className="text-left px-space-3 py-space-2 font-medium w-[60px]">Conf.</th>
-              <th className="w-[40px]" />
-            </tr>
-          </thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow className="border-border text-caption text-muted-foreground hover:bg-transparent">
+              <TableHead className="h-auto py-space-2">Name</TableHead>
+              <TableHead className="h-auto w-[140px] py-space-2">Type</TableHead>
+              <TableHead className="h-auto w-[100px] py-space-2">Classification</TableHead>
+              <TableHead className="h-auto py-space-2">Description</TableHead>
+              <TableHead className="h-auto w-[60px] py-space-2">Conf.</TableHead>
+              <TableHead className="h-auto w-[40px] py-space-2" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {fields.map((field) => (
               <Fragment key={field.tempId}>
-              <tr className="border-b border-border/50 hover:bg-accent/20 transition-colors group" data-testid="wizard-field-row">
-                <td className="px-space-3 py-space-2">
+              <TableRow className="border-border/50 group" data-testid="wizard-field-row">
+                <TableCell>
                   <div className="flex items-center gap-1">
                     {field.parsed && (
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="icon-xs"
                         onClick={() => toggleExpand(field.tempId)}
                         aria-expanded={expandedFields.has(field.tempId)}
                         aria-label={`${expandedFields.has(field.tempId) ? "Hide" : "Show"} import details of ${field.name}`}
-                        className="p-0.5 rounded hover:bg-accent shrink-0"
                       >
                         {expandedFields.has(field.tempId) ? (
-                          <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                          <ChevronDown className="size-3 text-muted-foreground" />
                         ) : (
-                          <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                          <ChevronRight className="size-3 text-muted-foreground" />
                         )}
-                      </button>
+                      </Button>
                     )}
                     <Input
                       value={field.name}
@@ -291,46 +304,49 @@ export function FieldPreview({
                       <ParsedFieldSummaryBadges field={field.parsed} entityNames={entityNames} />
                     </div>
                   )}
-                </td>
-                <td className="px-space-3 py-space-2">
+                </TableCell>
+                <TableCell>
                   <TypePicker
                     value={field.type}
                     onChange={(v) => updateField(field.tempId, { type: v })}
                     compact
                   />
-                </td>
-                <td className="px-space-3 py-space-2">
+                </TableCell>
+                <TableCell>
                   <ClassificationPicker
                     value={field.classification}
                     onChange={(v) => updateField(field.tempId, { classification: v })}
                   />
-                </td>
-                <td className="px-space-3 py-space-2">
+                </TableCell>
+                <TableCell>
                   <Input
                     value={field.description}
                     onChange={(e) => updateField(field.tempId, { description: e.target.value })}
                     className="h-7 text-body-small border-transparent hover:border-border focus:border-primary/40"
                     placeholder="Description..."
                   />
-                </td>
-                <td className="px-space-3 py-space-2 text-center">
+                </TableCell>
+                <TableCell className="text-center">
                   {getConfidenceBadge(field.confidence)}
-                </td>
-                <td className="px-space-2 py-space-2">
-                  <button
+                </TableCell>
+                <TableCell>
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="icon-xs"
                     onClick={() => removeField(field.tempId)}
-                    className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded opacity-0 group-hover:opacity-100"
+                    className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
                     title="Remove field"
+                    aria-label="Remove field"
                     data-testid="wizard-remove-field"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </td>
-              </tr>
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </TableCell>
+              </TableRow>
               {field.parsed && (fields.length <= MOUNT_DETAILS_ONLY_WHEN_EXPANDED_ABOVE || expandedFields.has(field.tempId)) && (
-                <tr hidden={!expandedFields.has(field.tempId)} className="border-b border-border/50">
-                  <td colSpan={6} className="px-space-3 pb-space-2">
+                <TableRow hidden={!expandedFields.has(field.tempId)} className="border-border/50 hover:bg-transparent">
+                  <TableCell colSpan={6} className="whitespace-normal pt-0">
                     <p className="text-[10px] text-muted-foreground">
                       What the import found for this field (as imported; the edits above apply to the field that is created).
                     </p>
@@ -339,16 +355,16 @@ export function FieldPreview({
                       entityNames={entityNames}
                       collapsed={!expandedFields.has(field.tempId)}
                     />
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               )}
               </Fragment>
             ))}
 
             {/* Add row */}
             {showAddRow ? (
-              <tr className="border-b border-border/50 bg-accent/5">
-                <td className="px-space-3 py-space-2">
+              <TableRow className="border-border/50 bg-accent/5">
+                <TableCell>
                   <Input
                     ref={nameInputRef}
                     data-testid="wizard-new-field-name"
@@ -368,30 +384,30 @@ export function FieldPreview({
                       }
                     }}
                   />
-                </td>
-                <td className="px-space-3 py-space-2">
+                </TableCell>
+                <TableCell>
                   <TypePicker
                     value={newType}
                     onChange={setNewType}
                     compact
                   />
-                </td>
-                <td className="px-space-3 py-space-2">
+                </TableCell>
+                <TableCell>
                   <ClassificationPicker
                     value={newClassification}
                     onChange={setNewClassification}
                   />
-                </td>
-                <td className="px-space-3 py-space-2">
+                </TableCell>
+                <TableCell>
                   <Input
                     value={newDescription}
                     onChange={(e) => setNewDescription(e.target.value)}
                     className="h-7 text-body-small"
                     placeholder="Description..."
                   />
-                </td>
-                <td />
-                <td className="px-space-2 py-space-2">
+                </TableCell>
+                <TableCell />
+                <TableCell>
                   <div className="flex gap-1">
                     <Button
                       type="button"
@@ -405,15 +421,17 @@ export function FieldPreview({
                       <CheckCircle2 className="w-3.5 h-3.5 text-success" />
                     </Button>
                   </div>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : null}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
 
         {/* Always visible — opens row when closed, saves field when row is open with a name */}
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           onClick={() => {
             if (showAddRow) {
               if (newName.trim()) addField();
@@ -423,11 +441,11 @@ export function FieldPreview({
           }}
           disabled={showAddRow && !newName.trim()}
           data-testid="wizard-add-field"
-          className="w-full flex items-center justify-center gap-2 py-space-2 border-t border-dashed border-border hover:border-primary/40 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-caption disabled:opacity-40 disabled:cursor-not-allowed"
+          className="h-auto w-full rounded-none border-0 border-t border-dashed border-border py-space-2 text-muted-foreground hover:border-primary/40"
         >
-          <Plus className="w-3.5 h-3.5" />
+          <Plus className="size-3.5" />
           Add Field
-        </button>
+        </Button>
       </div>
 
       {error && <p className="text-body-small text-destructive" data-testid="wizard-error">{error}</p>}

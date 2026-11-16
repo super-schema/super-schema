@@ -11,6 +11,8 @@ import { UserStatusBadge } from "./UserStatusBadge";
 import { listUsersAction, revokeInvitationAction } from "@/app/(dashboard)/admin/actions";
 
 import { NativeSelect } from "@/components/ui/native-select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+
 interface UserDataTableProps {
   /** What the caller may grant: fills the invitation dialog and the role editor. Null while it loads or when it could not be read. */
   scopes: GrantableScopes | null;
@@ -20,6 +22,8 @@ interface UserDataTableProps {
 type StatusFilter = "all" | UserStatus;
 
 const COLUMN_COUNT = 5;
+/** Cell spacing that matches the toolbar and the panel (the primitive's default is tighter). */
+const CELL = "px-space-4 py-space-3";
 
 /** The scope next to a role badge: the platform, or the names of the tenant, domain or product (no ids). */
 const scopeText = (role: ListedRole): string => role.scope.label;
@@ -152,86 +156,88 @@ export function UserDataTable({ scopes, scopesError }: UserDataTableProps) {
       )}
 
       {/* Table */}
-      <div className="border border-border rounded-lg overflow-x-auto">
-        <table className="w-full text-body-small" data-testid="user-table">
-          <thead>
-            <tr className="border-b border-border bg-muted/50">
-              <th scope="col" className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Email</th>
-              <th scope="col" className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Name</th>
-              <th scope="col" className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Status</th>
-              <th scope="col" className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Roles</th>
-              <th scope="col" className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Last sign-in</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div className="border border-border rounded-lg overflow-hidden">
+        <Table className="text-body-small" data-testid="user-table">
+          <TableHeader>
+            <TableRow className="bg-muted/50 hover:bg-muted/50">
+              <TableHead scope="col" className="px-space-4 text-muted-foreground">Email</TableHead>
+              <TableHead scope="col" className="px-space-4 text-muted-foreground">Name</TableHead>
+              <TableHead scope="col" className="px-space-4 text-muted-foreground">Status</TableHead>
+              <TableHead scope="col" className="px-space-4 text-muted-foreground">Roles</TableHead>
+              <TableHead scope="col" className="px-space-4 text-muted-foreground">Last sign-in</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {loading ? (
-              <tr>
-                <td colSpan={COLUMN_COUNT} className="px-space-4 py-space-8 text-center text-muted-foreground">
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={COLUMN_COUNT} className="px-space-4 py-space-8 text-center text-muted-foreground">
                   <Loader2 className="w-4 h-4 animate-spin inline mr-space-2" aria-hidden="true" />
                   Loading users…
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : filtered.length === 0 ? (
-              <tr>
-                <td colSpan={COLUMN_COUNT} className="px-space-4 py-space-8 text-center text-muted-foreground">
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={COLUMN_COUNT} className="px-space-4 py-space-8 text-center text-muted-foreground">
                   {search.trim() || status !== "all" ? "No users match your filter." : "No users found."}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : (
               filtered.map((user) =>
                 user.kind === "invitation" ? (
-                  <tr key={`invitation-${user.id}`} data-testid="invitation-row" data-email={user.email} data-invitation-id={user.id} className="border-b border-border last:border-0">
-                    <td className="px-space-4 py-space-3 text-foreground break-all">{user.email}</td>
-                    <td className="px-space-4 py-space-3 text-foreground">{"—"}</td>
-                    <td className="px-space-4 py-space-3"><UserStatusBadge status="invited" /></td>
-                    <td className="px-space-4 py-space-3"><RoleBadges roles={user.roles} /></td>
-                    <td className="px-space-4 py-space-3 text-muted-foreground">
+                  <TableRow key={`invitation-${user.id}`} data-testid="invitation-row" data-email={user.email} data-invitation-id={user.id}>
+                    <TableCell className={`${CELL} break-all whitespace-normal`}>{user.email}</TableCell>
+                    <TableCell className={CELL}>{"—"}</TableCell>
+                    <TableCell className={CELL}><UserStatusBadge status="invited" /></TableCell>
+                    <TableCell className={`${CELL} whitespace-normal`}><RoleBadges roles={user.roles} /></TableCell>
+                    <TableCell className={`${CELL} text-muted-foreground`}>
                       <div className="flex flex-wrap items-center gap-space-2">
                         <span data-testid="invitation-expiry">Expires {user.expiresAt ? new Date(user.expiresAt).toLocaleString() : "—"}</span>
                         {confirmRevoke === user.id ? (
                           <span className="flex items-center gap-1">
-                            <button
-                              type="button"
+                            <Button
+                              variant="destructive"
+                              size="xs"
                               data-testid="invitation-revoke-confirm"
                               disabled={revoking}
                               onClick={() => revoke(user.id)}
-                              className="text-caption text-destructive px-2 py-0.5 rounded hover:bg-destructive/10"
                             >
                               Confirm revoke
-                            </button>
-                            <button type="button" onClick={() => setConfirmRevoke(null)} className="text-caption text-muted-foreground px-2 py-0.5 rounded hover:bg-muted">
+                            </Button>
+                            <Button variant="ghost" size="xs" onClick={() => setConfirmRevoke(null)}>
                               Cancel
-                            </button>
+                            </Button>
                           </span>
                         ) : (
-                          <button
-                            type="button"
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                             data-testid="invitation-revoke"
                             aria-label={`Revoke the invitation of ${user.email}`}
                             onClick={() => setConfirmRevoke(user.id)}
-                            className="text-caption text-destructive px-2 py-0.5 rounded hover:bg-destructive/10"
                           >
                             Revoke
-                          </button>
+                          </Button>
                         )}
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ) : (
-                  <tr
+                  <TableRow
                     key={user.id}
                     data-testid="user-row"
                     data-email={user.email}
                     data-status={user.status}
-                    className="border-b border-border last:border-0 hover:bg-accent/50 cursor-pointer transition-colors"
+                    data-state={selectedId === user.id ? "selected" : undefined}
+                    className="cursor-pointer"
                     onClick={() => setSelectedId(user.id)}
                   >
-                    <td className="px-space-4 py-space-3 text-foreground break-all">
+                    <TableCell className={`${CELL} break-all whitespace-normal`}>
                       <button
                         type="button"
                         data-testid="user-open"
                         aria-label={`Open ${user.email}`}
-                        className="text-left underline-offset-2 hover:underline focus-visible:underline outline-none focus-visible:ring-1 focus-visible:ring-primary rounded-sm"
+                        className="text-left underline-offset-2 hover:underline focus-visible:underline outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded-sm"
                         onClick={(event) => {
                           event.stopPropagation();
                           setSelectedId(user.id);
@@ -239,17 +245,17 @@ export function UserDataTable({ scopes, scopesError }: UserDataTableProps) {
                       >
                         {user.email}
                       </button>
-                    </td>
-                    <td className="px-space-4 py-space-3 text-foreground">{user.name ?? "—"}</td>
-                    <td className="px-space-4 py-space-3"><UserStatusBadge status={user.status} /></td>
-                    <td className="px-space-4 py-space-3"><RoleBadges roles={user.roles} /></td>
-                    <td className="px-space-4 py-space-3 text-muted-foreground" data-testid="user-last-sign-in-cell">{formatLastSignIn(user.lastLoginAt)}</td>
-                  </tr>
+                    </TableCell>
+                    <TableCell className={CELL}>{user.name ?? "—"}</TableCell>
+                    <TableCell className={CELL}><UserStatusBadge status={user.status} /></TableCell>
+                    <TableCell className={`${CELL} whitespace-normal`}><RoleBadges roles={user.roles} /></TableCell>
+                    <TableCell className={`${CELL} text-muted-foreground`} data-testid="user-last-sign-in-cell">{formatLastSignIn(user.lastLoginAt)}</TableCell>
+                  </TableRow>
                 )
               )
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       {/* User detail panel */}

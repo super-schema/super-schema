@@ -133,8 +133,9 @@ function TypeRow({
 }) {
   return (
     <button
+      type="button"
       onClick={() => onSelect(type.id)}
-      className={`w-full flex items-center gap-2 px-2 py-1 rounded transition-colors text-left ${
+      className={`w-full flex items-center gap-2 px-2 py-1 rounded transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
         isSelected
           ? "bg-primary/15 text-foreground"
           : "hover:bg-accent/40 text-muted-foreground hover:text-foreground"

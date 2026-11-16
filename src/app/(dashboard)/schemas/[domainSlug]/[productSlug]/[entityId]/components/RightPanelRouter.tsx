@@ -7,6 +7,7 @@ import { TypeSpecPreview } from "@/components/custom/TypeSpecPreview";
 import { useRightPanelContent } from "@/hooks/useRightPanelContent";
 import type { ExistingFieldSummary } from "@/lib/compiler/typespec-parser";
 import type { PickableEntity } from "@/lib/references/entity-reference";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type RightPanelTab = "field-edit" | "typespec-preview";
 
@@ -75,23 +76,15 @@ export function RightPanelRouter({
 
   useEffect(() => {
     const rightPanelTabBar = (
-      <div className="flex items-center gap-space-1 px-space-3 border-b border-border/50">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            data-testid={`right-panel-tab-${tab.id}`}
-            aria-pressed={rightPanelTab === tab.id}
-            onClick={() => onTabChange(tab.id)}
-            className={`px-space-2 py-space-2.5 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-              rightPanelTab === tab.id
-                ? "border-foreground text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <Tabs value={rightPanelTab} onValueChange={(value) => onTabChange(value as typeof rightPanelTab)} className="gap-0">
+        <TabsList variant="line" activateOnFocus aria-label="Editor panel" className="w-full justify-start px-space-3 border-b border-border/50">
+          {TABS.map((tab) => (
+            <TabsTrigger key={tab.id} value={tab.id} data-testid={`right-panel-tab-${tab.id}`} className="flex-none">
+              {tab.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
     );
 
     let tabContent: React.ReactNode = null;

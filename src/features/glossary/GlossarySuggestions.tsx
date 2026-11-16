@@ -10,6 +10,7 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
+import { Button } from "@/components/ui/button";
 import {
   suggestConceptsForFieldAction,
   linkFieldToConceptAction,
@@ -106,13 +107,15 @@ export function GlossarySuggestions({
                   {lc.concept.name}
                 </span>
               </div>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="xs"
                 onClick={() => handleUnlink(lc.concept.id)}
-                className="text-mono-small text-muted-foreground hover:text-red-400"
+                className="font-mono text-muted-foreground hover:text-red-400"
               >
                 unlink
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -139,13 +142,15 @@ export function GlossarySuggestions({
                     {Math.round(s.score * 100)}%
                   </span>
                 </div>
-                <button
+                <Button
                   type="button"
+                  variant="link"
+                  size="xs"
                   onClick={() => handleLink(s.concept.id, s.score)}
-                  className="text-mono-small text-primary hover:text-primary/80"
+                  className="font-mono"
                 >
                   link
-                </button>
+                </Button>
               </div>
             ))}
           </div>

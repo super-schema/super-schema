@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChevronRight, Package, Puzzle } from "lucide-react";
 import { DataTypeIcon, ApiIcon } from "@/components/icons/feature-icons";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { PROPERTIES_TAB_LABEL } from "@/features/events/builder/labels";
 import { TraitsTab } from "@/features/events/workspace/TraitsTab";
@@ -42,9 +43,8 @@ function tabDomId(id: DomainPageTab) {
   return `domain-tab-${id}`;
 }
 
-function panelDomId(id: DomainPageTab) {
-  return `domain-tabpanel-${id}`;
-}
+/** TabsContent sets `text-sm`; the old panel inherited the page size. */
+const PANEL_CLASS = "text-[length:inherit]";
 
 export interface DomainTabsProps {
   domain: { id: string; name: string; slug: string; description: string };
@@ -101,18 +101,6 @@ export function DomainTabs({
     window.history.replaceState(null, "", hrefFor(tab));
   }
 
-  function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    let next: number;
-    if (event.key === "ArrowRight") next = (index + 1) % TABS.length;
-    else if (event.key === "ArrowLeft") next = (index - 1 + TABS.length) % TABS.length;
-    else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = TABS.length - 1;
-    else return;
-    event.preventDefault();
-    selectTab(TABS[next].id);
-    document.getElementById(tabDomId(TABS[next].id))?.focus();
-  }
-
   const target = { level: "DOMAIN", domainId: domain.id } as const;
 
   return (
@@ -135,52 +123,31 @@ export function DomainTabs({
       </div>
 
       {/* Tabs */}
-      <div
-        role="tablist"
-        aria-label={`${domain.name} sections`}
-        className="flex items-center gap-space-1 border-b border-border mb-space-6"
-      >
-        {TABS.map((tab, index) => {
-          const selected = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              id={tabDomId(tab.id)}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              aria-controls={panelDomId(tab.id)}
-              tabIndex={selected ? 0 : -1}
-              onClick={() => selectTab(tab.id)}
-              onKeyDown={(e) => onTabKeyDown(e, index)}
-              className={`flex items-center gap-space-2 px-space-4 py-space-2 text-body-small border-b-2 -mb-px transition-colors ${
-                selected
-                  ? "border-primary text-primary font-medium"
-                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
-              }`}
-            >
+      <Tabs value={activeTab} onValueChange={(value) => selectTab(value as DomainPageTab)} className="gap-0">
+        <TabsList
+          variant="line"
+          activateOnFocus
+          aria-label={`${domain.name} sections`}
+          className="mb-space-6 w-full justify-start border-b border-border"
+        >
+          {TABS.map((tab) => (
+            <TabsTrigger key={tab.id} id={tabDomId(tab.id)} value={tab.id} className="flex-none">
               <tab.icon className="w-4 h-4" aria-hidden="true" />
               {tab.label}
-            </button>
-          );
-        })}
-      </div>
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      <div
-        role="tabpanel"
-        id={panelDomId(activeTab)}
-        aria-labelledby={tabDomId(activeTab)}
-      >
-        {activeTab === "products" && (
+        <TabsContent value="products" className={PANEL_CLASS}>
           <ProductGrid
             domainId={domain.id}
             domainName={domain.name}
             domainSlug={domain.slug}
             {...productGridProps}
           />
-        )}
+        </TabsContent>
 
-        {activeTab === "data-types" && (
+        <TabsContent value="data-types" className={PANEL_CLASS}>
           <DomainTypesTab
             domainId={domain.id}
             target={target}
@@ -189,21 +156,21 @@ export function DomainTabs({
             unionTypes={dataTypes.unionTypes}
             inherited={inheritedDataTypes}
           />
-        )}
+        </TabsContent>
 
-        {activeTab === "apis" && (
+        <TabsContent value="apis" className={PANEL_CLASS}>
           <DomainApisTab
             domainId={domain.id}
             target={target}
             services={services}
             entities={[]}
           />
-        )}
+        </TabsContent>
 
-        {activeTab === "traits" && (
+        <TabsContent value="traits" className={PANEL_CLASS}>
           <TraitsTab target={target} domainSlug={domain.slug} data={traits ?? EMPTY_TRAITS_TAB} />
-        )}
-      </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

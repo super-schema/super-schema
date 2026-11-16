@@ -59,7 +59,7 @@ async function importIt() {
       <ImportDialog isOpen onClose={vi.fn()} domains={[{ id: "domain-1", name: "Domain" }]} />
     </QueryClientProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Upload File" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Upload File" }));
   const input = document.querySelector('[data-testid="drop-zone-single"] input[type="file"]') as HTMLInputElement;
   fireEvent.change(input, { target: { files: [new File(["model X { id: string; }"], "x.tsp", { type: "text/plain" })] } });
   await waitFor(() => expect(screen.getByTestId("typespec-import-review")).toBeDefined());

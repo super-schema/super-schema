@@ -19,6 +19,7 @@ import type {
   ActivityMetrics,
   ErrorSummary,
 } from "@/types/schemas/health";
+import { Button } from "@/components/ui/button";
 import { getHealthAction } from "@/app/(dashboard)/admin/actions";
 
 type StatusColor = "green" | "amber" | "red";
@@ -110,28 +111,27 @@ export function HealthDashboard() {
       )}
       {/* Actions */}
       <div className="flex items-center gap-space-3">
-        <button
+        <Button
           onClick={refresh}
           disabled={loading}
           data-testid="health-run-check"
-          className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small disabled:opacity-50"
         >
-          <Activity className="w-4 h-4" />
+          <Activity className="size-4" />
           Run Health Check
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="outline"
           onClick={refresh}
           disabled={loading}
-          className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md border border-border text-body-small text-foreground hover:bg-muted disabled:opacity-50"
         >
-          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
           Refresh
-        </button>
+        </Button>
       </div>
 
       {/* Service Status */}
       <section>
-        <h3 className="text-heading-4 text-foreground mb-space-3">Service Status</h3>
+        <h3 className="text-heading-3 text-foreground mb-space-3">Service Status</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-space-4">
           {[
             { key: "database" as const, icon: Database, label: "Database" },
@@ -172,7 +172,7 @@ export function HealthDashboard() {
 
       {/* Usage Metrics */}
       <section>
-        <h3 className="text-heading-4 text-foreground mb-space-3">Usage Metrics</h3>
+        <h3 className="text-heading-3 text-foreground mb-space-3">Usage Metrics</h3>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-space-4">
           {usageCards.map(({ label, value, icon: Icon }) => (
             <div key={label} data-testid="health-usage" data-metric={label} className="border border-border rounded-lg p-space-4 text-center">
@@ -186,7 +186,7 @@ export function HealthDashboard() {
 
       {/* Activity Metrics */}
       <section>
-        <h3 className="text-heading-4 text-foreground mb-space-3">Activity (24h)</h3>
+        <h3 className="text-heading-3 text-foreground mb-space-3">Activity (24h)</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-space-4">
           {activityCards.map(({ label, value, highlight }) => (
             <div
@@ -206,7 +206,7 @@ export function HealthDashboard() {
 
       {/* Error Summary */}
       <section>
-        <h3 className="text-heading-4 text-foreground mb-space-3">Errors (24h)</h3>
+        <h3 className="text-heading-3 text-foreground mb-space-3">Errors (24h)</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-space-4">
           {errorCards.map(({ label, value }) => (
             <div

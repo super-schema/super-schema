@@ -315,8 +315,10 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
             {/* Service header */}
             <div className="flex items-center gap-space-2 w-full px-space-4 py-space-3 hover:bg-muted/30 transition-colors">
               <button
+                type="button"
                 onClick={() => setExpandedService(isExpanded ? null : service.id)}
-                className="flex items-center gap-space-2 flex-1 min-w-0"
+                aria-expanded={isExpanded}
+                className="flex items-center gap-space-2 flex-1 min-w-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
               >
                 {isExpanded ? (
                   <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
@@ -344,13 +346,16 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
                   {service.operations.length} op{service.operations.length !== 1 ? "s" : ""}
                 </Badge>
               </button>
-              <button
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={() => removeService(service.id)}
                 className="text-muted-foreground hover:text-destructive"
                 title="Delete service"
+                aria-label="Delete service"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-              </button>
+              </Button>
             </div>
 
             {/* Expanded: show operations */}
@@ -363,12 +368,13 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
                 )}
 
                 <div className="flex justify-end px-space-4 py-space-2 border-b border-border/20">
-                  <button
+                  <Button
+                    variant="link"
+                    size="xs"
                     onClick={() => setAddingOpFor(addingOpFor === service.id ? null : service.id)}
-                    className="text-[11px] text-primary hover:underline flex items-center gap-1"
                   >
                     <Plus className="w-3 h-3" /> Add Operation
-                  </button>
+                  </Button>
                 </div>
 
                 {addingOpFor === service.id && (
@@ -412,8 +418,10 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
                         <div key={op.id} className="border-b border-border/20 last:border-b-0">
                           <div className="flex items-center gap-2 w-full px-space-4 py-space-2 hover:bg-muted/20 transition-colors">
                             <button
+                              type="button"
                               onClick={() => setExpandedOp(isOpExpanded ? null : op.id)}
-                              className="flex items-center gap-2 flex-1 min-w-0"
+                              aria-expanded={isOpExpanded}
+                              className="flex items-center gap-2 flex-1 min-w-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                             >
                               {isOpExpanded ? (
                                 <ChevronDown className="w-3 h-3 text-muted-foreground/50" />
@@ -439,13 +447,16 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
                                 {op.parameters.length}p / {op.responses.length}r{op.requestBody ? " / body" : ""}
                               </span>
                             </button>
-                            <button
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
                               onClick={() => removeOperation(op.id)}
                               className="text-muted-foreground hover:text-destructive"
                               title="Delete operation"
+                              aria-label="Delete operation"
                             >
                               <Trash2 className="w-3 h-3" />
-                            </button>
+                            </Button>
                           </div>
 
                           {/* Operation details */}

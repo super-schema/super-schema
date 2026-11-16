@@ -100,7 +100,7 @@ export function AiSettingsForm() {
     <div className="flex max-w-3xl flex-col gap-space-4" data-testid="ai-settings">
       {error && <div role="alert" data-testid="ai-settings-error" className="rounded-md border border-destructive bg-destructive/5 px-space-3 py-space-2 text-body-small text-destructive">{error}</div>}
       <section aria-labelledby="ai-effective-title" data-testid="ai-settings-effective" className="flex flex-col gap-1 rounded-lg border border-border p-space-4">
-        <h3 id="ai-effective-title" className="text-heading-4 text-foreground">In use now</h3>
+        <h3 id="ai-effective-title" className="text-heading-3 text-foreground">In use now</h3>
         {effective ? <p className="break-words text-body-small text-foreground">
           <span data-testid="ai-settings-effective-provider">{PROVIDER_LABEL[effective.provider]}</span> at{" "}
           <code className="text-caption">{effective.baseUrl}</code>, model <code className="text-caption">{effective.model}</code>

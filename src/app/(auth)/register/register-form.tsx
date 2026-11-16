@@ -144,12 +144,14 @@ export function RegisterForm() {
               aria-invalid={!!state?.fieldErrors?.password}
               data-testid="register-password"
             />
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-xs"
               onClick={() => setShowPassword(!showPassword)}
               aria-label={showPassword ? "Hide password" : "Show password"}
               data-testid="register-password-toggle"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:bg-transparent hover:text-foreground"
               tabIndex={-1}
             >
               {showPassword ? (
@@ -157,7 +159,7 @@ export function RegisterForm() {
               ) : (
                 <Eye className="w-4 h-4" />
               )}
-            </button>
+            </Button>
           </div>
           {state?.fieldErrors?.password && (
             <p id={`${passwordId}-error`} className="text-caption text-destructive mt-space-1" data-testid="register-password-error">
@@ -222,12 +224,14 @@ export function RegisterForm() {
               aria-invalid={passwordsMismatch || !!state?.fieldErrors?.confirmPassword}
               data-testid="register-confirm-password"
             />
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-xs"
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
               aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
               data-testid="register-confirm-password-toggle"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:bg-transparent hover:text-foreground"
               tabIndex={-1}
             >
               {showConfirmPassword ? (
@@ -235,7 +239,7 @@ export function RegisterForm() {
               ) : (
                 <Eye className="w-4 h-4" />
               )}
-            </button>
+            </Button>
           </div>
           {/* Real-time match feedback */}
           {confirmPassword.length > 0 && (

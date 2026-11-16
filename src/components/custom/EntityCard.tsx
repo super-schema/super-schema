@@ -4,6 +4,7 @@ import Link from "next/link";
 import { otherClassificationCounts } from "@/lib/classification-counts";
 import { Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { formatDateOnly } from "@/lib/date-format";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { pluralize } from "@/lib/pluralize";
@@ -60,16 +61,18 @@ export function EntityCard({
       className="group relative flex min-w-0 flex-col surface-glass rounded-xl border border-border p-space-6 transition-all duration-200 hover:border-primary/30 hover:shadow-lg"
     >
       {onDelete && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-xs"
           onClick={() => onDelete(id, name)}
-          className="absolute right-space-6 top-space-6 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all"
+          className="absolute right-space-6 top-space-6 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
           title={`Delete entity ${name}`}
           aria-label={`Delete entity ${name}`}
           data-testid="entity-card-delete"
         >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+          <Trash2 className="size-3.5" />
+        </Button>
       )}
 
       <Link href={assetHref({ kind: "entity", slug, domainSlug, productSlug })} className="flex min-w-0 flex-1 flex-col">

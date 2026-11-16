@@ -27,13 +27,15 @@ export function NaturalLanguageInput({
 
   return (
     <div className="space-y-space-4">
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={onBack}
-        className="flex items-center gap-1 text-body-small text-muted-foreground hover:text-foreground transition-colors"
+        className="text-muted-foreground"
       >
-        <ArrowLeft className="w-4 h-4" />
+        <ArrowLeft className="size-4" />
         Back
-      </button>
+      </Button>
 
       <div>
         <h3 className="text-heading-2 text-foreground mb-space-2">

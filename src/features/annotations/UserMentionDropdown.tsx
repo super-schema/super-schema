@@ -39,8 +39,9 @@ export function UserMentionDropdown({
       {users.map((user) => (
         <button
           key={user.id}
+          type="button"
           onClick={() => onSelect(user)}
-          className="w-full flex items-center gap-space-2 px-space-3 py-space-2 hover:bg-accent/50 transition-colors text-left"
+          className="w-full flex items-center gap-space-2 px-space-3 py-space-2 hover:bg-accent/50 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-caption text-primary font-medium shrink-0">
             {(user.name || user.email).charAt(0).toUpperCase()}

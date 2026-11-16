@@ -33,11 +33,12 @@ function ThemeCard({
 }) {
   return (
     <button
+      type="button"
       data-testid={`theme-${value}`}
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        "flex flex-col items-center gap-space-2 rounded-lg border-2 p-space-4 transition-colors cursor-pointer",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 flex flex-col items-center gap-space-2 rounded-lg border-2 p-space-4 transition-colors cursor-pointer",
         active
           ? "border-primary bg-primary/10"
           : "border-border hover:border-primary/40 hover:bg-accent/30"
@@ -80,11 +81,12 @@ function FontScaleButton({
 }) {
   return (
     <button
+      type="button"
       data-testid={`font-${value}`}
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        "flex items-center gap-space-3 rounded-lg border-2 px-space-4 py-space-3 transition-colors cursor-pointer flex-1 min-w-[120px]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 flex items-center gap-space-3 rounded-lg border-2 px-space-4 py-space-3 transition-colors cursor-pointer flex-1 min-w-[120px]",
         active
           ? "border-primary bg-primary/10"
           : "border-border hover:border-primary/40 hover:bg-accent/30"

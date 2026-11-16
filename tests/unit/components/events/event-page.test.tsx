@@ -242,30 +242,33 @@ describe("EventPage: tabs", () => {
     expect(field("server-host").value).toBe("broker.internal:9092");
   });
 
-  it("moves between tabs with ArrowRight / ArrowLeft / Home / End (roving tabindex)", () => {
+  it("moves between tabs with ArrowRight / ArrowLeft / Home / End (roving tabindex)", async () => {
     renderPage();
     const design = screen.getByRole("tab", { name: "Design" });
     const docs = screen.getByRole("tab", { name: "Docs" });
+    const usedBy = () => screen.getByRole("tab", { name: "Used by" });
+    // Focuses the tab and presses the key; the tabs list moves focus and selection once the key press has been handled.
+    const press = (from: HTMLElement, key: string) => { act(() => from.focus()); fireEvent.keyDown(from, { key }); };
     expect(design.getAttribute("tabindex")).toBe("0");
     expect(docs.getAttribute("tabindex")).toBe("-1");
 
-    fireEvent.keyDown(design, { key: "ArrowRight" });
-    expect(docs.getAttribute("aria-selected")).toBe("true");
+    press(design, "ArrowRight");
+    await waitFor(() => expect(docs.getAttribute("aria-selected")).toBe("true"));
     expect(docs.getAttribute("tabindex")).toBe("0");
     expect(design.getAttribute("tabindex")).toBe("-1");
     expect(document.activeElement).toBe(docs);
 
     // The four tabs cycle in full (see event-page-publish.test.tsx); from the last one the arrow wraps to Design.
-    fireEvent.keyDown(docs, { key: "Home" });
-    expect(design.getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(design, { key: "ArrowLeft" });
-    expect(screen.getByRole("tab", { name: "Used by" }).getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Used by" }), { key: "ArrowRight" });
-    expect(design.getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(design, { key: "End" });
-    expect(screen.getByRole("tab", { name: "Used by" }).getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Used by" }), { key: "a" });
-    expect(screen.getByRole("tab", { name: "Used by" }).getAttribute("aria-selected")).toBe("true");
+    press(docs, "Home");
+    await waitFor(() => expect(design.getAttribute("aria-selected")).toBe("true"));
+    press(design, "ArrowLeft");
+    await waitFor(() => expect(usedBy().getAttribute("aria-selected")).toBe("true"));
+    press(usedBy(), "ArrowRight");
+    await waitFor(() => expect(design.getAttribute("aria-selected")).toBe("true"));
+    press(design, "End");
+    await waitFor(() => expect(usedBy().getAttribute("aria-selected")).toBe("true"));
+    press(usedBy(), "a");
+    expect(usedBy().getAttribute("aria-selected")).toBe("true");
   });
 
   it("links every tab to its panel", () => {

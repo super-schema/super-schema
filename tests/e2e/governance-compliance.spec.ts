@@ -81,7 +81,7 @@ const tab = (page: Page, name: "pending" | "all" | "history"): Locator => center
 
 async function chooseTab(page: Page, name: "pending" | "all" | "history"): Promise<void> {
   await tab(page, name).click();
-  await expect(tab(page, name)).toHaveAttribute("aria-pressed", "true");
+  await expect(tab(page, name)).toHaveAttribute("aria-selected", "true");
 }
 
 /**

@@ -274,20 +274,22 @@ export function TypeSpecImportReviewScreen({
                     onChange={() => toggleModel(index)}
                     className="mt-0.5"
                   />
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="icon-xs"
                     onClick={() => toggleModelExpand(index)}
                     data-testid={`import-model-toggle-${model.name}`}
                     aria-expanded={expandedModels.has(index)}
                     aria-label={`${expandedModels.has(index) ? "Hide" : "Show"} fields of ${model.name}`}
-                    className="p-0.5 rounded hover:bg-accent mt-0.5"
+                    className="mt-0.5"
                   >
                     {expandedModels.has(index) ? (
-                      <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                      <ChevronDown className="size-3 text-muted-foreground" />
                     ) : (
-                      <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                      <ChevronRight className="size-3 text-muted-foreground" />
                     )}
-                  </button>
+                  </Button>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-body-small font-medium text-foreground">{model.name}</span>
@@ -343,15 +345,16 @@ export function TypeSpecImportReviewScreen({
                     return (
                       <div key={fieldKey} data-testid={`import-field-${model.name}-${field.name}`}>
                         <div className="text-caption text-muted-foreground flex flex-wrap items-center gap-2">
-                          <button
+                          <Button
                             type="button"
+                            variant="ghost"
+                            size="icon-xs"
                             onClick={() => toggleFieldExpand(fieldKey)}
                             aria-expanded={open}
                             aria-label={`${open ? "Hide" : "Show"} details of ${model.name}.${field.name}`}
-                            className="p-0.5 rounded hover:bg-accent"
                           >
-                            {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                          </button>
+                            {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+                          </Button>
                           <span className="font-mono">{field.name}</span>
                           <span className="text-muted-foreground/50">{field.type}</span>
                           <ParsedFieldSummaryBadges field={field} entityNames={entityNames} />

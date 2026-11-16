@@ -8,6 +8,7 @@
  */
 
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import type { GovernanceRequest } from "@/types/schemas/governance";
 
 interface GovernanceRequestCardProps {
@@ -135,49 +136,43 @@ export function GovernanceRequestCard({
             </div>
           )}
           <div className="flex items-center gap-2">
-            <button
+            <Button
               type="button"
+              size="sm"
               data-testid="governance-approve"
               onClick={() => handleAction("approve")}
-              className="px-4 py-1.5 rounded text-caption font-medium text-white transition-colors"
-              style={{
-                background:
-                  actionType === "approve"
-                    ? "#8B5CF6"
-                    : "linear-gradient(135deg, #A477B2, #8B5CF6)",
-              }}
             >
               {actionType === "approve" && showComment
                 ? "Confirm Approve"
                 : "Approve"}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              size="sm"
+              variant={actionType === "reject" && showComment ? "destructive" : "outline"}
               data-testid="governance-reject"
               onClick={() => handleAction("reject")}
-              className={`px-4 py-1.5 rounded text-caption font-medium transition-colors ${
-                actionType === "reject" && showComment
-                  ? "bg-red-600 text-white"
-                  : "border border-red-500/50 text-red-400 hover:bg-red-500/10"
-              }`}
+              className={actionType === "reject" && showComment ? undefined : "border-destructive/50 text-destructive hover:text-destructive"}
             >
               {actionType === "reject" && showComment
                 ? "Confirm Reject"
                 : "Reject"}
-            </button>
+            </Button>
             {showComment && (
-              <button
+              <Button
                 type="button"
+                size="sm"
+                variant="ghost"
                 data-testid="governance-cancel"
                 onClick={() => {
                   setShowComment(false);
                   setActionType(null);
                   setComment("");
                 }}
-                className="px-3 py-1.5 rounded text-caption text-muted-foreground hover:text-foreground"
+                className="text-muted-foreground hover:text-foreground"
               >
                 Cancel
-              </button>
+              </Button>
             )}
           </div>
         </div>

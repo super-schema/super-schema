@@ -3,6 +3,8 @@
 import { useState, useRef, useCallback } from "react";
 import { Send } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+
 interface AnnotationInputProps {
   onPost: (content: string, taggedUserIds: string[]) => void;
   disabled?: boolean;
@@ -46,14 +48,14 @@ export function AnnotationInput({ onPost, disabled }: AnnotationInputProps) {
         <span className="text-caption text-muted-foreground">
           {content.length > 0 ? `${content.length} chars` : "Cmd+Enter to post"}
         </span>
-        <button
+        <Button
+          size="sm"
           onClick={handleSubmit}
           disabled={!content.trim() || disabled}
-          className="flex items-center gap-space-1 px-space-3 py-1 text-body-small bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Send className="w-3 h-3" />
           Post
-        </button>
+        </Button>
       </div>
     </div>
   );

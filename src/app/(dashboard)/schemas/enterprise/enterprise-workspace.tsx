@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FilePlus2, Puzzle } from "lucide-react";
 import { EntityIcon, DataTypeIcon } from "@/components/icons/feature-icons";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EntityCard } from "@/components/custom/EntityCard";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { PROPERTIES_TAB_LABEL } from "@/features/events/builder/labels";
@@ -43,9 +44,8 @@ function tabDomId(id: EnterpriseTab) {
   return `enterprise-tab-${id}`;
 }
 
-function panelDomId(id: EnterpriseTab) {
-  return `enterprise-tabpanel-${id}`;
-}
+/** TabsContent sets `text-sm`; the old panel inherited the page size. */
+const PANEL_CLASS = "text-[length:inherit]";
 
 /** Every tab writes an explicit `?tab=` so the URL never depends on the default. */
 function tabHref(tab: EnterpriseTab) {
@@ -101,18 +101,6 @@ export function EnterpriseWorkspace({ tenantId, entities, dataTypes, traits }: E
     window.history.replaceState(null, "", tabHref(tab));
   }
 
-  function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    let next: number;
-    if (event.key === "ArrowRight") next = (index + 1) % TABS.length;
-    else if (event.key === "ArrowLeft") next = (index - 1 + TABS.length) % TABS.length;
-    else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = TABS.length - 1;
-    else return;
-    event.preventDefault();
-    selectTab(TABS[next].id);
-    document.getElementById(tabDomId(TABS[next].id))?.focus();
-  }
-
   const newEntityHref = assetHref({ kind: "newEntity", domainSlug: null, productSlug: null });
   const label = levelLabel("TENANT");
 
@@ -140,40 +128,23 @@ export function EnterpriseWorkspace({ tenantId, entities, dataTypes, traits }: E
       </div>
 
       {/* Tabs */}
-      <div
-        role="tablist"
-        aria-label={`${label} sections`}
-        className="flex items-center gap-space-1 border-b border-border mb-space-6"
-      >
-        {TABS.map((tab, index) => {
-          const selected = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              id={tabDomId(tab.id)}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              aria-controls={panelDomId(tab.id)}
-              tabIndex={selected ? 0 : -1}
-              onClick={() => selectTab(tab.id)}
-              onKeyDown={(e) => onTabKeyDown(e, index)}
-              className={`flex items-center gap-space-2 px-space-4 py-space-2 text-body-small border-b-2 -mb-px transition-colors ${
-                selected
-                  ? "border-primary text-primary font-medium"
-                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
-              }`}
-            >
+      <Tabs value={activeTab} onValueChange={(value) => selectTab(value as EnterpriseTab)} className="gap-0">
+        <TabsList
+          variant="line"
+          activateOnFocus
+          aria-label={`${label} sections`}
+          className="mb-space-6 w-full justify-start border-b border-border"
+        >
+          {TABS.map((tab) => (
+            <TabsTrigger key={tab.id} id={tabDomId(tab.id)} value={tab.id} className="flex-none">
               <tab.icon className="w-4 h-4" aria-hidden="true" />
               {tab.label}
-            </button>
-          );
-        })}
-      </div>
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      <div role="tabpanel" id={panelDomId(activeTab)} aria-labelledby={tabDomId(activeTab)}>
-        {activeTab === "entities" &&
-          (entities.length === 0 ? (
+        <TabsContent value="entities" className={PANEL_CLASS}>
+          {entities.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <h2 className="text-heading-1 text-foreground mb-space-2">No Enterprise entities yet</h2>
               <p className="text-body text-muted-foreground mb-space-6 max-w-md">
@@ -197,9 +168,10 @@ export function EnterpriseWorkspace({ tenantId, entities, dataTypes, traits }: E
                 />
               ))}
             </div>
-          ))}
+          )}
+        </TabsContent>
 
-        {activeTab === "data-types" && (
+        <TabsContent value="data-types" className={PANEL_CLASS}>
           <DomainTypesTab
             domainId={null}
             target={{ level: "TENANT", tenantId }}
@@ -209,9 +181,9 @@ export function EnterpriseWorkspace({ tenantId, entities, dataTypes, traits }: E
             createIntent={typeCreateIntent}
             onCreateIntentConsumed={() => setTypeCreateIntent(null)}
           />
-        )}
+        </TabsContent>
 
-        {activeTab === "traits" && (
+        <TabsContent value="traits" className={PANEL_CLASS}>
           <TraitsTab
             target={{ level: "TENANT", tenantId }}
             domainSlug={null}
@@ -219,8 +191,8 @@ export function EnterpriseWorkspace({ tenantId, entities, dataTypes, traits }: E
             createIntent={traitCreateIntent}
             onCreateIntentConsumed={consumeTraitIntent}
           />
-        )}
-      </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

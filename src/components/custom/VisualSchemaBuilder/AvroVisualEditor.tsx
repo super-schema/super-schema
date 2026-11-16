@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import type { VisualEditorProps } from "./types";
@@ -130,18 +131,22 @@ export function AvroVisualEditor({
               className="rounded-lg border border-border p-space-2 flex flex-col gap-space-2"
             >
               <div className="flex items-center gap-space-2">
-                <button
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
                   onClick={() => toggleExpand(field.id)}
                   disabled={field.type === "reference"}
-                  className="p-0.5 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
+                  className="text-muted-foreground"
                   title="Advanced options"
+                  aria-label="Advanced options"
+                  aria-expanded={isOpen}
                 >
                   {isOpen ? (
-                    <ChevronDown className="w-4 h-4" />
+                    <ChevronDown className="size-4" />
                   ) : (
-                    <ChevronRight className="w-4 h-4" />
+                    <ChevronRight className="size-4" />
                   )}
-                </button>
+                </Button>
                 <input
                   type="text"
                   value={field.name}
@@ -166,13 +171,16 @@ export function AvroVisualEditor({
                   />
                   nullable
                 </label>
-                <button
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
                   onClick={() => setFields((prev) => prev.filter((f) => f.id !== field.id))}
-                  className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
+                  className="text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
                   title="Remove field"
+                  aria-label="Remove field"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                  <Trash2 className="size-3.5" />
+                </Button>
               </div>
 
               <input
@@ -202,13 +210,14 @@ export function AvroVisualEditor({
         })}
       </div>
 
-      <button
+      <Button
+        variant="secondary"
         onClick={() => setFields((prev) => [...prev, newField()])}
-        className="flex items-center gap-space-1 self-start px-space-3 py-1.5 rounded-lg text-body-small bg-muted hover:bg-accent text-foreground"
+        className="self-start"
       >
-        <Plus className="w-4 h-4" />
+        <Plus />
         Add Field
-      </button>
+      </Button>
     </div>
   );
 }

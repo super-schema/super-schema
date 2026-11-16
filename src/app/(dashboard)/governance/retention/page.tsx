@@ -180,8 +180,9 @@ function RetentionPoliciesContent() {
               {entities.map((entity) => (
                 <button
                   key={entity.id}
+                  type="button"
                   onClick={() => setSelectedEntityId(entity.id)}
-                  className={`w-full text-left px-4 py-3 transition-colors ${
+                  className={`w-full text-left px-4 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 ${
                     selectedEntityId === entity.id ? "bg-accent" : "hover:bg-muted/50"
                   }`}
                 >
