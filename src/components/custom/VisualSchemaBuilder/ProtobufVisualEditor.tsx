@@ -14,6 +14,8 @@ import {
 } from "./protobuf-serialize";
 import { ReferenceTargetPicker } from "./ReferenceTargetPicker";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 const TYPE_OPTIONS: ProtoFieldShape[] = [...PROTO_FIELD_TYPES, "map"];
 
 function newField(existing: ProtoField[]): ProtoField {
@@ -103,28 +105,25 @@ export function ProtobufVisualEditor({
                 onChange={(e) => update(field.id, { name: e.target.value })}
                 className={`${inputCls} flex-1 text-mono-small`}
               />
-              <select
+              <NativeSelect
                 value={field.type}
                 onChange={(e) => update(field.id, { type: e.target.value as ProtoFieldShape })}
-                className={inputCls}
               >
                 {TYPE_OPTIONS.map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
               <label
                 className={`flex items-center gap-1 text-caption text-muted-foreground ${
                   field.type === "map" ? "opacity-30" : ""
                 }`}
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={field.type !== "map" && field.repeated}
                   disabled={field.type === "map"}
                   onChange={(e) => update(field.id, { repeated: e.target.checked })}
-                  className="accent-primary"
                 />
                 repeated
               </label>
@@ -172,35 +171,35 @@ export function ProtobufVisualEditor({
               <div className="grid grid-cols-2 gap-space-2 text-caption">
                 <label className="flex flex-col gap-0.5 text-muted-foreground">
                   <span>key type</span>
-                  <select
+                  <NativeSelect
                     value={field.mapKeyType ?? "string"}
                     onChange={(e) =>
                       update(field.id, { mapKeyType: e.target.value as ProtoFieldType })
                     }
-                    className={`${inputCls} w-full`}
+                    className="w-full"
                   >
                     {PROTO_MAP_KEY_TYPES.map((t) => (
                       <option key={t} value={t}>
                         {t}
                       </option>
                     ))}
-                  </select>
+                  </NativeSelect>
                 </label>
                 <label className="flex flex-col gap-0.5 text-muted-foreground">
                   <span>value type</span>
-                  <select
+                  <NativeSelect
                     value={field.mapValueType ?? "string"}
                     onChange={(e) =>
                       update(field.id, { mapValueType: e.target.value as ProtoFieldType })
                     }
-                    className={`${inputCls} w-full`}
+                    className="w-full"
                   >
                     {PROTO_FIELD_TYPES.map((t) => (
                       <option key={t} value={t}>
                         {t}
                       </option>
                     ))}
-                  </select>
+                  </NativeSelect>
                 </label>
                 {field.mapValueType === "reference" && (
                   <div className="col-span-2">

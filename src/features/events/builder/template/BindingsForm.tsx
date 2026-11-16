@@ -10,12 +10,12 @@ import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BINDING_PROTOCOLS, bindingProtocolLabel, bindingTemplate, bindingVersion, type BindingTarget, type FieldTemplate } from "@/lib/events/templates";
-import { selectClass } from "../controls";
 import type { FormEnv, FormProblem } from "./controls/types";
 import { FieldControl } from "./FieldControl";
 import { TemplateForm } from "./TemplateForm";
 import { errorsFor, isEmptyValue, omitKey } from "./value";
 
+import { NativeSelect } from "@/components/ui/native-select";
 const OTHER = "__other__";
 const PROTOCOL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const NAME_PROBLEM = "Use letters, digits, dots, dashes and underscores, starting with a letter or digit.";
@@ -120,8 +120,8 @@ export function BindingsForm({ target, value, onChange, idPrefix, suggestedProto
       <div className="flex flex-wrap items-end gap-space-2">
         <div className="space-y-space-1">
           <label htmlFor={`${idPrefix}-protocol`} className="block text-caption text-muted-foreground">Protocol</label>
-          <select
-            id={`${idPrefix}-protocol`} data-testid={`${idPrefix}-protocol`} className={selectClass} value={selected} disabled={disabled}
+          <NativeSelect
+            id={`${idPrefix}-protocol`} data-testid={`${idPrefix}-protocol`} value={selected} disabled={disabled}
             onChange={(e) => setChoice(e.target.value)}
           >
             <option value="">Select a protocol…</option>
@@ -129,7 +129,7 @@ export function BindingsForm({ target, value, onChange, idPrefix, suggestedProto
               <option key={p} value={p}>{bindingTemplate(p, target) ? bindingProtocolLabel(p) : `${bindingProtocolLabel(p)} (no ${target} binding)`}</option>
             ))}
             <option value={OTHER}>Other protocol…</option>
-          </select>
+          </NativeSelect>
         </div>
         {selected === OTHER && (
           <div className="space-y-space-1">

@@ -21,6 +21,7 @@ import {
 } from "./useLineageLayout";
 import { Maximize2 } from "lucide-react";
 
+import { NativeSelect } from "@/components/ui/native-select";
 interface LineageGraphProps {
   entities: EntityData[];
 }
@@ -99,12 +100,11 @@ function LineageGraphInner({ entities }: LineageGraphProps) {
           >
             Domain:
           </label>
-          <select
+          <NativeSelect
             id="domain-filter"
             data-testid="domain-filter"
             value={selectedDomain}
             onChange={(e) => setSelectedDomain(e.target.value)}
-            className="bg-card border border-border rounded-lg px-2 py-1 text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           >
             <option value="all">All Domains</option>
             {domains.map((d) => (
@@ -112,7 +112,7 @@ function LineageGraphInner({ entities }: LineageGraphProps) {
                 {d.name}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
 
         {/* Fit to view */}

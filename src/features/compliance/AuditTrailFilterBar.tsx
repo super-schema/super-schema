@@ -11,6 +11,7 @@ import {
   withDateBound,
 } from "./audit-date-range";
 
+import { NativeSelect } from "@/components/ui/native-select";
 const ACTION_TYPES = [
   "CREATE",
   "UPDATE",
@@ -60,7 +61,7 @@ export function AuditTrailFilterBar({
       data-testid="audit-trail-filter-bar"
     >
       {/* Action type filter */}
-      <select
+      <NativeSelect
         data-testid="audit-filter-action"
         aria-label="Action"
         value={filters.actionTypes?.[0] || ""}
@@ -70,7 +71,6 @@ export function AuditTrailFilterBar({
             actionTypes: e.target.value ? [e.target.value] : [],
           })
         }
-        className="bg-muted text-foreground text-body-small rounded-lg px-space-3 py-1.5 border border-border outline-none"
       >
         <option value="">All Actions</option>
         {ACTION_TYPES.map((a) => (
@@ -78,10 +78,10 @@ export function AuditTrailFilterBar({
             {a}
           </option>
         ))}
-      </select>
+      </NativeSelect>
 
       {/* Entity type filter */}
-      <select
+      <NativeSelect
         data-testid="audit-filter-type"
         aria-label="Entity type"
         value={filters.entityType || ""}
@@ -91,7 +91,6 @@ export function AuditTrailFilterBar({
             entityType: e.target.value || undefined,
           })
         }
-        className="bg-muted text-foreground text-body-small rounded-lg px-space-3 py-1.5 border border-border outline-none"
       >
         <option value="">All Types</option>
         {ENTITY_TYPES.map((t) => (
@@ -99,7 +98,7 @@ export function AuditTrailFilterBar({
             {t}
           </option>
         ))}
-      </select>
+      </NativeSelect>
 
       {/* Entity name search */}
       <div className="flex items-center gap-space-1 bg-muted rounded-lg px-space-3 py-1.5 border border-border">

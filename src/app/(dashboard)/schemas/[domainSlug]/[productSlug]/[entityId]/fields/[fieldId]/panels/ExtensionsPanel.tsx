@@ -8,16 +8,14 @@ import {
   FieldDescription,
   FieldError,
 } from "@/components/ui/field";
-import {
-  AttributeControl,
-  SELECT_CLASS,
-} from "@/components/custom/FieldAttributes/AttributeControl";
+import { AttributeControl } from "@/components/custom/FieldAttributes/AttributeControl";
 import type { Extensions } from "@/types/schemas/typespec-decorator.schema";
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import { writeFieldAttribute } from "@/lib/metadata-attributes/values";
 import { AttributeKeyCombobox } from "@/components/custom/metadata/AttributeKeyCombobox";
 import { AttributeValueEditor, initialAttributeValue } from "@/components/custom/metadata/AttributeValueEditor";
 
+import { NativeSelect } from "@/components/ui/native-select";
 type ValueKind = "string" | "number" | "boolean" | "null" | "json";
 function valueKind(v: unknown): ValueKind {
   return v === null
@@ -205,8 +203,7 @@ export function ExtensionsPanel({
         />
       </AttributeControl>
       <AttributeControl label="Extension value type">
-        <select
-          className={SELECT_CLASS}
+        <NativeSelect
           value={kind}
           onChange={(e) => {
             const value = e.target.value as ValueKind;
@@ -220,19 +217,18 @@ export function ExtensionsPanel({
               {v}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </AttributeControl>
       {kind !== "null" && (
         <AttributeControl label="Extension value">
           {kind === "boolean" ? (
-            <select
-              className={SELECT_CLASS}
+            <NativeSelect
               value={text}
               onChange={(e) => setText(e.target.value)}
             >
               <option value="false">false</option>
               <option value="true">true</option>
-            </select>
+            </NativeSelect>
           ) : (
             <Textarea
               value={text}

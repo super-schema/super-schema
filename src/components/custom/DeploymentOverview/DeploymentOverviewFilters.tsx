@@ -2,6 +2,7 @@
 
 import type { DeploymentOverviewFilters as OverviewFilters } from "@/services/deployment.service";
 
+import { NativeSelect } from "@/components/ui/native-select";
 const DRIFT_STATUSES: readonly NonNullable<OverviewFilters["driftStatus"]>[] = ["in-sync", "drifted", "unknown"];
 
 /** The drift status a Status option stands for; the empty "All" option (and anything else) is no drift filter. */
@@ -30,7 +31,7 @@ export function DeploymentOverviewFilters({
       {/* Domain filter */}
       <div className="flex items-center gap-1">
         <label htmlFor="deployment-filter-domain" className="text-caption text-muted-foreground">Domain:</label>
-        <select
+        <NativeSelect
           id="deployment-filter-domain"
           value={filters.domain || ""}
           onChange={(e) =>
@@ -39,7 +40,7 @@ export function DeploymentOverviewFilters({
               domain: e.target.value || undefined,
             })
           }
-          className="bg-muted rounded-lg px-space-2 py-1 text-caption text-foreground outline-none border border-border"
+          className="text-caption"
         >
           <option value="">All</option>
           {domains.map((d) => (
@@ -47,13 +48,13 @@ export function DeploymentOverviewFilters({
               {d}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
 
       {/* Drift status filter */}
       <div className="flex items-center gap-1">
         <label htmlFor="deployment-filter-status" className="text-caption text-muted-foreground">Status:</label>
-        <select
+        <NativeSelect
           id="deployment-filter-status"
           value={filters.driftStatus || ""}
           onChange={(e) =>
@@ -62,19 +63,19 @@ export function DeploymentOverviewFilters({
               driftStatus: driftStatusOf(e.target.value),
             })
           }
-          className="bg-muted rounded-lg px-space-2 py-1 text-caption text-foreground outline-none border border-border"
+          className="text-caption"
         >
           <option value="">All</option>
           <option value="in-sync">In Sync</option>
           <option value="drifted">Drifted</option>
           <option value="unknown">Unknown</option>
-        </select>
+        </NativeSelect>
       </div>
 
       {/* Target format filter */}
       <div className="flex items-center gap-1">
         <label htmlFor="deployment-filter-target" className="text-caption text-muted-foreground">Target:</label>
-        <select
+        <NativeSelect
           id="deployment-filter-target"
           value={filters.targetFormat || ""}
           onChange={(e) =>
@@ -83,7 +84,7 @@ export function DeploymentOverviewFilters({
               targetFormat: e.target.value || undefined,
             })
           }
-          className="bg-muted rounded-lg px-space-2 py-1 text-caption text-foreground outline-none border border-border"
+          className="text-caption"
         >
           <option value="">All</option>
           {targetFormats.map((f) => (
@@ -91,7 +92,7 @@ export function DeploymentOverviewFilters({
               {f}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
 
       {/* Clear filters */}

@@ -11,8 +11,8 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { nextTabIndex } from "./tab-nav";
-import { selectClass } from "../controls";
 
+import { NativeSelect } from "@/components/ui/native-select";
 export interface PaneState {
   active: string;
   select: (id: string) => void;
@@ -118,9 +118,9 @@ export function PaneRail({ idPrefix, panes, active: requestedActive, onSelect, k
           })}
         </div>
         {corePanes && available.length > 0 && (
-          <select
+          <NativeSelect
             aria-label="Add section" data-testid={idPrefix + "-add-section"} value=""
-            className={cn(selectClass, "ml-auto w-auto max-w-full")}
+            className="ml-auto w-auto max-w-full"
             onChange={(event) => {
               const id = event.target.value;
               if (!id) return;
@@ -130,7 +130,7 @@ export function PaneRail({ idPrefix, panes, active: requestedActive, onSelect, k
           >
             <option value="" disabled>Add section…</option>
             {available.map((pane) => <option key={pane.id} value={pane.id}>{pane.title}</option>)}
-          </select>
+          </NativeSelect>
         )}
         </div>
 

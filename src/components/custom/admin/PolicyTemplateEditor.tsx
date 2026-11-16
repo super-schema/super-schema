@@ -6,6 +6,8 @@ import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attri
 import { AttributeValueEditor } from "@/components/custom/metadata/AttributeValueEditor";
 import { FieldCompletenessPolicyEditor } from "./FieldCompletenessPolicyEditor";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 type AttributeOverride = NonNullable<PolicyTemplate["metadataAttributes"]>[string];
 
 interface PolicyTemplateEditorProps {
@@ -98,7 +100,7 @@ export function PolicyTemplateEditor({ value, attributeDefinitions = [], onChang
         <label className="block text-body-small text-muted-foreground">
           Default Classification
         </label>
-        <select
+        <NativeSelect
           value={draft.classification ?? ""}
           onChange={(e) =>
             setDraft({
@@ -106,13 +108,13 @@ export function PolicyTemplateEditor({ value, attributeDefinitions = [], onChang
               classification: (e.target.value || undefined) as PolicyTemplate["classification"],
             })
           }
-          className="w-full bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none"
+          className="w-full"
         >
           <option value="">None</option>
           {CLASSIFICATION_OPTIONS.map((opt) => (
             <option key={opt} value={opt}>{opt}</option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
 
       {/* Retention */}
@@ -120,18 +122,18 @@ export function PolicyTemplateEditor({ value, attributeDefinitions = [], onChang
         <label className="block text-body-small text-muted-foreground">
           Default Retention Period
         </label>
-        <select
+        <NativeSelect
           value={draft.retention ?? ""}
           onChange={(e) =>
             setDraft({ ...draft, retention: e.target.value || undefined })
           }
-          className="w-full bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none"
+          className="w-full"
         >
           <option value="">None</option>
           {RETENTION_OPTIONS.map((opt) => (
             <option key={opt} value={opt}>{opt}</option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
 
       {/* Naming Conventions */}
@@ -167,13 +169,11 @@ export function PolicyTemplateEditor({ value, attributeDefinitions = [], onChang
                 className="flex items-center gap-space-3 rounded-md border border-border/50 px-space-3 py-space-2"
               >
                 {/* Enable checkbox */}
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={r.enabled}
                   onChange={(e) =>
                     setReq(def.key, { ...r, enabled: e.target.checked })
                   }
-                  className="rounded border-border accent-primary"
                   id={`req-${def.key}`}
                 />
                 <label
@@ -200,7 +200,7 @@ export function PolicyTemplateEditor({ value, attributeDefinitions = [], onChang
                 )}
 
                 {/* Severity dropdown */}
-                <select
+                <NativeSelect
                   value={r.severity}
                   onChange={(e) =>
                     setReq(def.key, {
@@ -209,11 +209,11 @@ export function PolicyTemplateEditor({ value, attributeDefinitions = [], onChang
                     })
                   }
                   disabled={!r.enabled}
-                  className="bg-muted rounded px-space-2 py-0.5 text-caption text-foreground outline-none disabled:opacity-40"
+                  className="text-caption"
                 >
                   <option value="warning">Warning</option>
                   <option value="error">Error</option>
-                </select>
+                </NativeSelect>
               </div>
             );
           })}
@@ -230,17 +230,17 @@ export function PolicyTemplateEditor({ value, attributeDefinitions = [], onChang
               <div key={d.key} className="space-y-space-2 rounded-md border border-border/50 px-space-3 py-space-2">
                 <div className="flex items-center gap-space-3">
                   <span className="flex-1 text-body-small text-foreground">{d.label} <span className="text-caption text-muted-foreground">({d.key})</span></span>
-                  <select
+                  <NativeSelect
                     aria-label={`Required when for ${d.key}`}
                     value={o.requiredWhen ?? ""}
                     onChange={(e) => setAttributeOverride(d.key, { requiredWhen: (e.target.value || undefined) as AttributeOverride["requiredWhen"] })}
-                    className="bg-muted rounded px-space-2 py-0.5 text-caption text-foreground outline-none"
+                    className="text-caption"
                   >
                     <option value="">Dictionary default ({d.requiredWhen})</option>
                     <option value="never">Never required</option>
                     <option value="always">Always required</option>
                     <option value="primitive">Required on primitive fields</option>
-                  </select>
+                  </NativeSelect>
                 </div>
                 {d.valueSchema && d.targets.includes("field") && (
                   <AttributeValueEditor

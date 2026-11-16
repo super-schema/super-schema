@@ -17,7 +17,7 @@ import type { JsonObject, OperationAction } from "@/lib/event-specs/types";
 import type { DocOperation, DocReplyAddress, DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import { TEMPLATES } from "@/lib/events/templates";
 import { autoRenameKey, leftForm, newKey } from "../auto-key";
-import { Field, selectClass } from "../controls";
+import { Field } from "../controls";
 import type { SectionProps } from "../EventBuilder";
 import { AttributesSection } from "@/components/custom/metadata/AttributesSection";
 import { extensionCount, hasAttributes, withExtensions } from "../attributes";
@@ -35,6 +35,8 @@ import { SectionHeading } from "./SectionHeading";
 import { bindingCount, cardsWithProblems, cardTemplate, mergeValue, pickValue, setFieldCount } from "./form-cards";
 import { OperationPropertiesCard } from "./OperationPropertiesCard";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 const ACTIONS: Array<{ value: OperationAction; title: string; description: string }> = [
   { value: "send", title: "Send", description: "This service publishes" },
   { value: "receive", title: "Receive", description: "This service consumes" },
@@ -209,11 +211,11 @@ function ChannelSelect({ id, label, value, choices, error, required, onChange }:
   const known = choices.some((c) => c.key === value);
   return (
     <Field label={label} htmlFor={id} error={error}>
-      <select id={id} data-testid={id} aria-required={required} className={selectClass} value={value} onChange={(e) => onChange(e.target.value)}>
+      <NativeSelect id={id} data-testid={id} aria-required={required} value={value} onChange={(e) => onChange(e.target.value)}>
         {value === "" && <option value="">Select a channel</option>}
         {value !== "" && !known && <option value={value}>{value} (not defined)</option>}
         {choices.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-      </select>
+      </NativeSelect>
     </Field>
   );
 }
@@ -380,8 +382,7 @@ function OperationForm({ draft, options, index, operation, problems, context, pa
     <div data-testid="operation-reply" className="space-y-space-4">
       <>
         <label className="flex items-center gap-space-2 text-body-small text-foreground">
-          <input
-            type="checkbox" data-testid="operation-reply-toggle" className="size-4 shrink-0 accent-primary"
+          <Checkbox data-testid="operation-reply-toggle" className="shrink-0"
             checked={reply !== undefined} aria-describedby={replyError ? "operation-reply-error" : undefined}
             onChange={(e) => toggleReply(e.target.checked)}
           />

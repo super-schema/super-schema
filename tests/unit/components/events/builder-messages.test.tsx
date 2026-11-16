@@ -11,6 +11,7 @@ import { emptyEventDocument, type EventDocument } from "@/lib/events/document/ty
 import { bindingVersion, TEMPLATES } from "@/lib/events/templates";
 import { maximalDocument } from "../../lib/events/document/fixtures/maximal-document";
 import { ENTITY_OPTIONS, PIN, renderBuilder, renderSection, sampleDocument } from "./builder-harness";
+import { expectNoConfirm } from "../../../helpers/confirm-dialog";
 import { entityValue, pickEntity } from "./helpers/pick-entity";
 
 // The picker's default version loader is a server action: keep it out of the test process.
@@ -1100,11 +1101,10 @@ describe("MessagesSection: remove message", () => {
   const undo = () => act(() => { lastToast().options.action.onClick(); });
 
   it("removes a message nothing refers to, without asking, and offers Undo", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = await renderMessages();
     click("message-add");
     click("message-remove");
-    expect(confirm).not.toHaveBeenCalled();
+    expectNoConfirm();
     expect(probe.draft.doc.messages.map((m) => m.key)).toEqual(["OrderCreated"]);
     expect(probe.item).toBeNull();
     expect(lastToast().message).toBe('Removed "message"');
@@ -1112,10 +1112,9 @@ describe("MessagesSection: remove message", () => {
   });
 
   it("removes a message that channels and operations use, and every reference to it, without asking", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = await renderMessages();
     click("message-remove");
-    expect(confirm).not.toHaveBeenCalled();
+    expectNoConfirm();
     expect(probe.draft.doc.messages).toEqual([]);
     expect(probe.draft.doc.channels.map((c) => c.messageKeys)).toEqual([[], []]);
     expect(probe.draft.doc.operations[0].messageKeys).toEqual([]);

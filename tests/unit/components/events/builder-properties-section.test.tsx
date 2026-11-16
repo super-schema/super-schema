@@ -9,6 +9,7 @@ import { parseEventDocument } from "@/lib/events/document/parse";
 import { emptyEventDocument, type DocTrait, type EventDocument } from "@/lib/events/document/types";
 import { bindingVersion, TEMPLATES } from "@/lib/events/templates";
 import { ENTITY_OPTIONS, renderBuilder, renderSection, sampleDocument } from "./builder-harness";
+import { answerConfirm, expectNoConfirm, findConfirm } from "../../../helpers/confirm-dialog";
 
 // The chooser is a popover with a cmdk list: it measures and scrolls, jsdom does neither.
 beforeAll(() => {
@@ -707,63 +708,66 @@ describe("PropertiesSection: used by", () => {
 
 describe("PropertiesSection: removing", () => {
   it("removes a set nothing uses without asking, and selects the first remaining set", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = renderSection(PropertiesSection, { doc: traitsDoc(), options: OPTIONS, item: "retry" });
     expect(text("trait-remove")).toContain("Remove operation properties");
     click("trait-remove");
-    expect(confirm).not.toHaveBeenCalled();
+    expectNoConfirm();
     expect(probe.draft.doc.traits.map((t) => t.key)).toEqual(["idempotent", "audit"]);
     expect(probe.item).toBeNull();
     expect(box("trait-name").value).toBe("Idempotent");
     expect(text("trait-group-operation-empty")).toBe("None yet.");
   });
 
-  it("asks before removing a set that messages use, then takes it off every message", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("asks before removing a set that messages use, then takes it off every message", async () => {
     const doc = traitsDoc();
     doc.messages.push({ key: "OrderUpdated", payload: doc.messages[0].payload, traitKeys: ["idempotent", "audit"] });
     const { probe } = renderSection(PropertiesSection, { doc, options: OPTIONS, item: "idempotent" });
     expect(text("trait-remove")).toContain("Remove message properties");
     click("trait-remove");
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(confirm.mock.calls[0][0]).toContain('Message properties "Idempotent"');
-    expect(confirm.mock.calls[0][0]).toContain("2 messages");
-    expect(confirm.mock.calls[0][0]).toContain("OrderCreated, OrderUpdated");
+    const { title, description } = await findConfirm();
+    expect(title).toBe('Remove message properties "Idempotent"?');
+    expect(description).toContain('Message properties "Idempotent"');
+    expect(description).toContain("2 messages");
+    expect(description).toContain("OrderCreated, OrderUpdated");
+    expect(probe.draft.doc.traits.map((t) => t.key)).toEqual(["idempotent", "audit", "retry"]); // nothing changes until it is confirmed
+    await answerConfirm(true);
     expect(probe.draft.doc.traits.map((t) => t.key)).toEqual(["audit", "retry"]);
     expect(probe.draft.doc.messages.map((m) => m.traitKeys)).toEqual([[], ["audit"]]);
     expect(parseEventDocument(probe.draft.doc).success).toBe(true);
   });
 
-  it("asks before removing an operation set that operations use, then takes it off every operation", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("asks before removing an operation set that operations use, then takes it off every operation", async () => {
     const doc = traitsDoc();
     doc.operations[0] = { ...doc.operations[0], traitKeys: ["retry"] };
     const { probe } = renderSection(PropertiesSection, { doc, options: OPTIONS, item: "retry" });
     click("trait-remove");
-    expect(confirm.mock.calls[0][0]).toContain('Operation properties "Retry"');
-    expect(confirm.mock.calls[0][0]).toContain("1 operation (publishOrder)");
+    const { title, description } = await findConfirm();
+    expect(title).toBe('Remove operation properties "Retry"?');
+    expect(description).toContain('Operation properties "Retry"');
+    expect(description).toContain("1 operation (publishOrder)");
+    await answerConfirm(true);
     expect(probe.draft.doc.traits.map((t) => t.key)).toEqual(["idempotent", "audit"]);
     expect(probe.draft.doc.operations[0].traitKeys).toEqual([]);
     expect(parseEventDocument(probe.draft.doc).success).toBe(true);
   });
 
-  it("changes nothing when the confirmation is declined", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("changes nothing when the confirmation is declined", async () => {
     const { probe } = renderSection(PropertiesSection, { doc: traitsDoc(), options: OPTIONS, item: "idempotent" });
     click("trait-remove");
+    await findConfirm();
+    await answerConfirm(false);
     expect(probe.draft.doc).toEqual(traitsDoc());
     expect(probe.draft.dirty).toBe(false);
   });
 
-  it("removes a library set the same way, with the same propagation, and says it is removed from this event", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("removes a library set the same way, with the same propagation, and says it is removed from this event", async () => {
     const doc = traitsDoc();
     doc.messages[0] = { ...doc.messages[0], traitKeys: ["idempotent", "audit"] };
     const { probe } = renderSection(PropertiesSection, { doc, options: OPTIONS, item: "audit" });
     expect(text("trait-remove")).toContain("Remove from this event");
     click("trait-remove");
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(confirm.mock.calls[0][0]).toContain('"Audit headers"');
+    expect((await findConfirm()).description).toContain('"Audit headers"');
+    await answerConfirm(true);
     expect(probe.draft.doc.traits.map((t) => t.key)).toEqual(["idempotent", "retry"]);
     expect(probe.draft.doc.messages[0].traitKeys).toEqual(["idempotent"]);
   });

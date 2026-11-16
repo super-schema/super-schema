@@ -8,6 +8,7 @@ import { getRoleMatrixAction } from "@/app/(dashboard)/admin/actions";
 import { UserStatusBadge } from "./UserStatusBadge";
 import { roleLabel } from "./scope-selection";
 
+import { NativeSelect } from "@/components/ui/native-select";
 interface RoleMatrixProps {
   /** The tenants the caller may look at come from here; with none (it is still loading) the tenant in view is shown. */
   scopes: GrantableScopes | null;
@@ -77,17 +78,16 @@ export function RoleMatrix({ scopes }: RoleMatrixProps) {
       {tenants.length > 1 && (
         <div className="flex items-center gap-space-2">
           <label htmlFor="role-matrix-tenant" className="text-caption text-muted-foreground">Tenant</label>
-          <select
+          <NativeSelect
             id="role-matrix-tenant"
             data-testid="role-matrix-tenant"
             value={tenantId ?? matrix?.tenantId ?? ""}
             onChange={(event) => setTenantId(event.target.value)}
-            className="bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary"
           >
             {tenants.map((tenant) => (
               <option key={tenant.scopeKey} value={tenant.tenantId ?? ""}>{tenant.tenantName}</option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
       )}
 

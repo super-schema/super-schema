@@ -32,6 +32,7 @@ import { assetHref } from "@/lib/navigation/asset-href";
 import { canNavigate } from "@/lib/navigation/before-navigate";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 import { ENTITY_OPTIONS, makeEvent, sampleDocument } from "./builder-harness";
+import { answerConfirm } from "../../../helpers/confirm-dialog";
 
 // The "+ Add" chooser and the dialogs measure and scroll; jsdom does neither.
 globalThis.ResizeObserver ??= class { observe() { /* no layout */ } unobserve() { /* no layout */ } disconnect() { /* no layout */ } } as unknown as typeof ResizeObserver;
@@ -56,6 +57,10 @@ const button = (testId: string) => screen.getByTestId(testId) as HTMLButtonEleme
 const deleteEvent = () => {
   fireEvent.click(screen.getByTestId("event-actions"));
   fireEvent.click(screen.getByTestId("event-delete"));
+};
+const confirmDelete = async (confirmed = true) => {
+  deleteEvent();
+  await answerConfirm(confirmed);
 };
 const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: { value } });
 const editTitle = () => type(field("metadata-title"), "Orders v2");
@@ -268,10 +273,9 @@ describe("EventPage leave guard: what never asks", () => {
 
 describe("EventPage leave guard: delete", () => {
   it("a deleted event is left without a question, even with unsaved edits", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderPage();
     editTitle();
-    deleteEvent();
+    await confirmDelete();
     await waitFor(() => expect(h.push).toHaveBeenCalledWith(LIST_HREF));
     expect(h.push).toHaveBeenCalledTimes(1);
     expect(dialog()).toBeNull();
@@ -281,11 +285,10 @@ describe("EventPage leave guard: delete", () => {
   });
 
   it("a delete that fails keeps the guard", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     h.remove.mockResolvedValue({ success: false, error: 'Event "orders" is referenced by payments/checkout.', code: "IN_USE" });
     renderPage();
     editTitle();
-    deleteEvent();
+    await confirmDelete();
     await screen.findByTestId("event-delete-error");
     expect(click(eventsCrumb()).prevented).toBe(true);
     expect(dialog()).not.toBeNull();

@@ -8,6 +8,7 @@ import { BUNDLED_TRAITS, propertySummary } from "@/lib/events/bundled-traits";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import type { EventDocument } from "@/lib/events/document/types";
 import { ENTITY_OPTIONS, renderBuilder, renderSection, sampleDocument } from "./builder-harness";
+import { answerConfirm } from "../../../helpers/confirm-dialog";
 
 const h = vi.hoisted(() => ({ listPinnableVersionsAction: vi.fn() }));
 vi.mock("@/features/events/pin-actions", () => ({ listPinnableVersionsAction: h.listPinnableVersionsAction }));
@@ -353,9 +354,9 @@ describe("MessagePropertiesCard: expand, remove", () => {
     const doc = baseDoc();
     doc.traits = [{ key: "idem", kind: "MESSAGE", spec: { name: "Idempotent" } }];
     doc.messages[0] = { ...doc.messages[0], traitKeys: ["idem"] };
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = renderBuilder({ doc, options: OPTIONS, section: "traits" });
     click("trait-remove");
+    await answerConfirm(true);
     expect(probe.draft.doc.messages[0].traitKeys).toEqual([]);
     click("outline-messages");
     await screen.findByLabelText("Payload entity");

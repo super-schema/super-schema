@@ -43,6 +43,7 @@ import { FieldCard } from "./components/FieldCard";
 import type { ReferenceFieldControls } from "./components/ReferencePinControl";
 import { pluralize } from "@/lib/pluralize";
 
+import { NativeSelect } from "@/components/ui/native-select";
 interface FieldData {
   id: string;
   slug?: string;
@@ -436,38 +437,38 @@ export function FieldEditor({
               className="h-7 pl-7 text-body-small"
             />
           </div>
-          <select
+          <NativeSelect
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
             aria-label="Filter by type"
-            className="h-7 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            className="h-7"
           >
             <option value="">All types</option>
             {typeCategories.map(([id, label]) => (
               <option key={id} value={id}>{label}</option>
             ))}
-          </select>
-          <select
+          </NativeSelect>
+          <NativeSelect
             value={classificationFilter}
             onChange={(e) => setClassificationFilter(e.target.value)}
             aria-label="Filter by classification"
-            className="h-7 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            className="h-7"
           >
             <option value="">All classifications</option>
             {classificationOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
-          </select>
-          <select
+          </NativeSelect>
+          <NativeSelect
             value={completenessFilter}
             onChange={(e) => setCompletenessFilter(e.target.value)}
             aria-label="Filter by completeness"
-            className="h-7 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            className="h-7"
           >
             <option value="">All completeness</option>
             <option value="complete">Complete</option>
             <option value="incomplete">Incomplete</option>
-          </select>
+          </NativeSelect>
           {hasActiveFilters && (
             <button
               onClick={() => {

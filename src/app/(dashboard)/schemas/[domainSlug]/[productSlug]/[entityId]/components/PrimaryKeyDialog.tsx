@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { MissingRequirement } from "@/lib/schema-targets/requirements";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface PrimaryKeyDialogProps {
   requirement: MissingRequirement;
@@ -64,8 +65,7 @@ export function PrimaryKeyDialog({ requirement, onConfirm, onCancel }: PrimaryKe
           )}
           {requirement.candidates.map((name) => (
             <label key={name} className="flex items-center gap-space-2 text-body-small">
-              <input
-                type="checkbox"
+              <Checkbox
                 data-testid="primary-key-option"
                 data-field={name}
                 checked={selected.includes(name)}

@@ -6,10 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldGroup, FieldDescription } from "@/components/ui/field";
-import {
-  AttributeControl,
-  SELECT_CLASS,
-} from "@/components/custom/FieldAttributes/AttributeControl";
+import { AttributeControl } from "@/components/custom/FieldAttributes/AttributeControl";
 import { EnumValuesEditor } from "@/components/custom/FieldAttributes/EnumValuesEditor";
 import { JsonObjectControl } from "@/components/custom/FieldAttributes/JsonObjectControl";
 import {
@@ -27,6 +24,7 @@ import {
 } from "@/lib/field-quality-rules";
 import type { Governance } from "@/types/schemas/typespec-decorator.schema";
 
+import { NativeSelect } from "@/components/ui/native-select";
 /**
  * Data quality rules for the field. Each rule is a card: quick-add buttons create it with its parameters, and the card
  * exposes exactly the inputs its type needs. Unknown parameter keys survive every edit.
@@ -278,9 +276,8 @@ function RuleCard({
         label="Severity"
         help="Stored with the rule for the external quality tool to act on."
       >
-        <select
+        <NativeSelect
           aria-label={`${scope} severity`}
-          className={SELECT_CLASS}
           value={qualityRuleSeverity(params)}
           onChange={(e) => setParam("severity", e.target.value)}
         >
@@ -289,7 +286,7 @@ function RuleCard({
               {severity === "error" ? "Error" : "Warning"}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </AttributeControl>
       <details>
         <summary className="cursor-pointer text-xs font-medium">

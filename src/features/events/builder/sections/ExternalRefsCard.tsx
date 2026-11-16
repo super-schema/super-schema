@@ -16,11 +16,12 @@ import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import type { DocExternalRef, DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import type { ExternalItemKind, ExternalRefStatus, ExternalVersionItems } from "@/lib/events/external-refs";
 import {
   ADD_FROM_ANOTHER_EVENT, DETAILS_UNAVAILABLE, EXTERNAL_BADGE, externalRefsEmpty, externalRefsTitle, MAJOR_BADGE, newerVersionText, REMOVE_REFERENCE,
-  removeConfirmText, removeReferenceLabel, updateDuplicateText, updateRefusedText, updateRemovedText, updateToLabel, updateToText, updateUnconfirmedText, usedByText,
+  removeReferenceLabel, updateDuplicateText, updateRefusedText, updateRemovedText, updateToLabel, updateToText, updateUnconfirmedText, usedByText,
 } from "../labels";
 import { problemMessage, problemsByField } from "../problems";
 import type { DraftState } from "../use-event-draft";
@@ -46,6 +47,7 @@ export function ExternalRefsCard({ kind, draft, problems }: {
   problems: DocumentProblem[];
 }) {
   const { doc, update, productId, eventId } = draft;
+  const { confirm, confirmDialog } = useConfirm();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [refusal, setRefusal] = useState<{ key: string; text: string } | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -126,14 +128,20 @@ export function ExternalRefsCard({ kind, draft, problems }: {
     setNote(updateRemovedText(ref.itemKey, status.latestLabel, usage.channels.map((c) => c.key)));
   }
 
-  function removeRef(ref: DocExternalRef) {
+  async function removeRef(ref: DocExternalRef) {
     const usage = externalRefUsage(doc, ref);
     if (usage.channels.length + usage.operations.length > 0) {
       const used = [
         usage.channels.length > 0 ? `${plural(usage.channels.length, "channel")} (${usage.channels.map((c) => c.key).join(", ")})` : null,
         usage.operations.length > 0 ? `${plural(usage.operations.length, "operation")} (${usage.operations.map((o) => o.key).join(", ")})` : null,
       ].filter(Boolean).join(" and ");
-      if (!window.confirm(removeConfirmText(kind, ref.key, used, removeConsequence(ref, usage)))) return;
+      const ok = await confirm({
+        title: `Remove external ${kind} "${ref.key}"?`,
+        description: `External ${kind} "${ref.key}" is used by ${used}. Removing it will ${removeConsequence(ref, usage)}.`,
+        confirmLabel: "Remove",
+        destructive: true,
+      });
+      if (!ok || !mounted.current) return;
     }
     clearMessages();
     update((d) => withoutExternalRef(d, ref.key));
@@ -150,6 +158,7 @@ export function ExternalRefsCard({ kind, draft, problems }: {
 
   return (
     <section aria-label={externalRefsTitle(kind)} data-testid={`external-refs-${kind}`} className="max-w-2xl space-y-space-3">
+      {confirmDialog}
       {note && <Notice id="external-refs-note">{note}</Notice>}
 
       {rows.length === 0 ? (
@@ -174,7 +183,7 @@ export function ExternalRefsCard({ kind, draft, problems }: {
                 detailsSettled={details.settled.has(ref.eventVersionId)}
                 usage={externalRefUsage(doc, ref)} problem={problemMessage(problemsByField(problems, `/externalRefs/${index}`))}
                 refusal={refusal?.key === ref.key ? refusal.text : null} checking={checking !== null}
-                onUpdate={() => { void updateRef(ref); }} onRemove={() => removeRef(ref)}
+                onUpdate={() => { void updateRef(ref); }} onRemove={() => { void removeRef(ref); }}
               />
             ))}
           </ul>

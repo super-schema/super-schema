@@ -17,6 +17,7 @@ import {
   deleteOperationAction,
 } from "../actions";
 
+import { NativeSelect } from "@/components/ui/native-select";
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -246,26 +247,26 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
               autoFocus
             />
             {canScopeToEntity && (
-              <select
+              <NativeSelect
                 value={newServiceScope}
                 onChange={(e) => setNewServiceScope(e.target.value as "DOMAIN" | "ENTITY")}
-                className="h-8 rounded-lg border border-border bg-popover px-2 text-body-small text-foreground"
+                className="h-8"
               >
                 <option value="DOMAIN">{`${noun}-scoped`}</option>
                 <option value="ENTITY">Entity-scoped</option>
-              </select>
+              </NativeSelect>
             )}
           </div>
           {newServiceScope === "ENTITY" && (
-            <select
+            <NativeSelect
               value={newServiceEntityId}
               onChange={(e) => setNewServiceEntityId(e.target.value)}
-              className="h-8 w-full rounded-lg border border-border bg-popover px-2 text-body-small text-foreground"
+              className="h-8 w-full"
             >
               {entities.map((e) => (
                 <option key={e.id} value={e.id}>{e.name}</option>
               ))}
-            </select>
+            </NativeSelect>
           )}
           <Input
             value={newServiceBasePath}
@@ -372,13 +373,13 @@ export function DomainApisTab({ domainId, target, services, entities, inherited,
 
                 {addingOpFor === service.id && (
                   <div className="px-space-4 py-space-2 border-b border-border/20 flex items-center gap-2">
-                    <select
+                    <NativeSelect
                       value={newOpMethod}
                       onChange={(e) => setNewOpMethod(e.target.value)}
-                      className="h-7 rounded border border-border bg-popover px-1 text-[11px] font-mono"
+                      className="h-7 font-mono"
                     >
                       {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
-                    </select>
+                    </NativeSelect>
                     <Input
                       value={newOpPath}
                       onChange={(e) => setNewOpPath(e.target.value)}

@@ -30,6 +30,8 @@ import {
   type DictionariesOverview,
 } from "@/app/(dashboard)/admin/settings/dictionaries/actions";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 type Answer = { data: unknown } | { error: string };
 
 const EMPTY_FIELD = { name: "", aliases: "", type: "", description: "", classification: "", attributes: "{}" };
@@ -60,7 +62,6 @@ export function valueSchemaProblems(text: string): string[] {
   return checkValueSchema(parsed.value);
 }
 
-const selectClass = "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm";
 
 type Run = (c: () => Promise<Answer>) => Promise<boolean>;
 
@@ -369,9 +370,8 @@ function FieldsTab({
         </label>
         <label className="space-y-1 text-body-small" htmlFor={`${id}-class`}>
           Default classification
-          <select
+          <NativeSelect
             id={`${id}-class`}
-            className={selectClass}
             value={known?.name ?? current}
             onChange={(e) => set("classification", e.target.value)}
           >
@@ -381,7 +381,7 @@ function FieldsTab({
                 {l.classNumber === 0 ? l.name : levelOptionLabel(l)}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </label>
         <label className="space-y-1 text-body-small sm:col-span-2" htmlFor={`${id}-desc`}>
           Description
@@ -531,8 +531,7 @@ function AttributesTab({ data, busy, run, confirm }: { data: DictionariesOvervie
             <div className="flex flex-wrap gap-3">
               {METADATA_ATTRIBUTE_TARGETS.map((t) => (
                 <label key={t} className="flex items-center gap-1">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={form.targets.includes(t)}
                     onChange={(e) => setForm((f) => ({ ...f, targets: e.target.checked ? [...f.targets, t] : f.targets.filter((x) => x !== t) }))}
                   />
@@ -543,25 +542,25 @@ function AttributesTab({ data, busy, run, confirm }: { data: DictionariesOvervie
           </fieldset>
           <label className="space-y-1 text-body-small" htmlFor={`${id}-scope`}>
             Scope
-            <select id={`${id}-scope`} className={selectClass} value={form.scope} onChange={(e) => set("scope", e.target.value)}>
+            <NativeSelect id={`${id}-scope`} value={form.scope} onChange={(e) => set("scope", e.target.value)}>
               <option value="schema">schema</option>
               <option value="internal">internal</option>
-            </select>
+            </NativeSelect>
           </label>
           <label className="space-y-1 text-body-small" htmlFor={`${id}-placement`}>
             Placement
-            <select id={`${id}-placement`} className={selectClass} value={form.placement} onChange={(e) => set("placement", e.target.value)}>
+            <NativeSelect id={`${id}-placement`} value={form.placement} onChange={(e) => set("placement", e.target.value)}>
               <option value="field">field</option>
               <option value="abc-primitive">abc-primitive</option>
-            </select>
+            </NativeSelect>
           </label>
           <label className="space-y-1 text-body-small" htmlFor={`${id}-required`}>
             Required when
-            <select id={`${id}-required`} className={selectClass} value={form.requiredWhen} onChange={(e) => set("requiredWhen", e.target.value)}>
+            <NativeSelect id={`${id}-required`} value={form.requiredWhen} onChange={(e) => set("requiredWhen", e.target.value)}>
               <option value="never">never</option>
               <option value="always">always</option>
               <option value="primitive">primitive</option>
-            </select>
+            </NativeSelect>
           </label>
           <label className="space-y-1 text-body-small" htmlFor={`${id}-derive`}>
             Derived members (JSON, optional)

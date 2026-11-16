@@ -32,6 +32,7 @@ import type { EventPageData } from "@/features/events/event-page/load-event-page
 import { assetHref, normalizeEventTab } from "@/lib/navigation/asset-href";
 import { emptyEventDocument } from "@/lib/events/document/types";
 import { ENTITY_OPTIONS, makeEvent } from "./builder-harness";
+import { answerConfirm, findConfirm } from "../../../helpers/confirm-dialog";
 
 // The "+ Add" chooser is a cmdk list inside a popover: it measures and scrolls, jsdom does neither.
 globalThis.ResizeObserver ??= class { observe() { /* no layout */ } unobserve() { /* no layout */ } disconnect() { /* no layout */ } } as unknown as typeof ResizeObserver;
@@ -64,6 +65,10 @@ const button = (testId: string) => screen.getByTestId(testId) as HTMLButtonEleme
 const deleteEvent = () => {
   fireEvent.click(screen.getByTestId("event-actions"));
   fireEvent.click(screen.getByTestId("event-delete"));
+};
+const confirmDelete = async (confirmed = true) => {
+  deleteEvent();
+  await answerConfirm(confirmed);
 };
 const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: { value } });
 const openTab = (name: "Design" | "Docs") => fireEvent.click(screen.getByRole("tab", { name }));
@@ -926,31 +931,30 @@ describe("EventPage: the more-actions menu", () => {
     expect(screen.getByTestId("event-delete").getAttribute("data-variant")).toBe("destructive");
   });
 
-  it("closes after Delete is chosen, and does not delete before the confirmation is answered", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("closes after Delete is chosen, and does not delete before the confirmation is answered", async () => {
     renderPage();
     deleteEvent();
-    expect(confirm).toHaveBeenCalledTimes(1);
+    await findConfirm();
     expect(screen.queryByRole("menu")).toBeNull();
+    expect(h.remove).not.toHaveBeenCalled();
+    await answerConfirm(false);
     expect(h.remove).not.toHaveBeenCalled();
   });
 });
 
 describe("EventPage: delete", () => {
-  it("does nothing when the confirmation is declined", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("does nothing when the confirmation is declined", async () => {
     renderPage();
     deleteEvent();
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(confirm.mock.calls[0][0]).toContain('"orders"');
+    expect((await findConfirm()).title).toContain('"orders"');
+    await answerConfirm(false);
     expect(h.remove).not.toHaveBeenCalled();
     expect(h.push).not.toHaveBeenCalled();
   });
 
   it("after confirming: deletes, invalidates the explorer tree, then goes to the Events list", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderPage();
-    deleteEvent();
+    await confirmDelete();
     await waitFor(() => expect(h.push).toHaveBeenCalledTimes(1));
     expect(h.remove).toHaveBeenCalledWith("ev1", "p1");
     expect(h.invalidate).toHaveBeenCalledTimes(1);
@@ -959,10 +963,9 @@ describe("EventPage: delete", () => {
   });
 
   it("shows an IN_USE refusal inline with its suggested fix, stays on the page and re-enables Delete", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     h.remove.mockResolvedValue({ success: false, error: 'Event "orders" is referenced by payments/checkout.', code: "IN_USE", suggestedFix: "Remove the external reference first." });
     renderPage();
-    deleteEvent();
+    await confirmDelete();
     const error = await screen.findByTestId("event-delete-error");
     expect(error.getAttribute("role")).toBe("alert");
     expect(error.textContent).toContain('Event "orders" is referenced by payments/checkout.');
@@ -973,21 +976,19 @@ describe("EventPage: delete", () => {
   });
 
   it("clears an earlier delete error when the user tries again", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     h.remove.mockResolvedValueOnce({ success: false, error: "Still referenced", code: "IN_USE" });
     renderPage();
-    deleteEvent();
+    await confirmDelete();
     await screen.findByTestId("event-delete-error");
-    deleteEvent();
+    await confirmDelete();
     await waitFor(() => expect(h.push).toHaveBeenCalledWith(LIST_HREF));
     expect(screen.queryByTestId("event-delete-error")).toBeNull();
   });
 
   it("shows a generic message for a rejected action and never the cause", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     h.remove.mockRejectedValue(new Error("connect ECONNREFUSED 10.0.0.5:5432"));
     renderPage();
-    deleteEvent();
+    await confirmDelete();
     const error = await screen.findByTestId("event-delete-error");
     expect(error.textContent).toContain("Something went wrong");
     expect(error.textContent).not.toContain("ECONNREFUSED");
@@ -995,11 +996,10 @@ describe("EventPage: delete", () => {
   });
 
   it("is single-flight and disabled while the delete runs", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const pending = deferred<unknown>();
     h.remove.mockReturnValue(pending.promise);
     renderPage();
-    deleteEvent();
+    await confirmDelete();
     expect(button("event-actions").disabled).toBe(true);
     fireEvent.click(button("event-actions"));
     expect(screen.queryByTestId("event-delete")).toBeNull();

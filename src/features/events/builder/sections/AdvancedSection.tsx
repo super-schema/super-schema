@@ -8,6 +8,7 @@
 import { useMemo, useState, type KeyboardEvent } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { type DocSecurityScheme, type DocumentProblem } from "@/lib/events/document/types";
@@ -184,6 +185,7 @@ function SchemeForm({ draft, name, problems, context, onSelectItem }: {
   onSelectItem: (key: string | null) => void;
 }) {
   const { doc, update } = draft;
+  const { confirm, confirmDialog } = useConfirm();
   const scheme = schemesOf(doc)[name];
   const prefix = `/components/securitySchemes/${pointerSegment(name)}`;
   const refs = schemeReferences(doc, name);
@@ -200,7 +202,7 @@ function SchemeForm({ draft, name, problems, context, onSelectItem }: {
     onSelectItem(to);
   }
 
-  function remove() {
+  async function remove() {
     if (words.length > 0) {
       const where = list([
         refs.servers.length > 0 ? `${plural(refs.servers.length, "server")} (${refs.servers.join(", ")})` : null,
@@ -208,7 +210,13 @@ function SchemeForm({ draft, name, problems, context, onSelectItem }: {
         refs.traits.length > 0 ? `${setsOfProperties(refs.traits.length)} (${refs.traits.join(", ")})` : null,
       ].filter((p): p is string => p !== null));
       const count = refs.servers.length + refs.operations.length + refs.traits.length;
-      if (!window.confirm(`Security scheme "${name}" is used by ${where}. Remove it and take it off ${count === 1 ? "that item" : "those items"}?`)) return;
+      const ok = await confirm({
+        title: `Remove security scheme "${name}"?`,
+        description: `Security scheme "${name}" is used by ${where}. It will be taken off ${count === 1 ? "that item" : "those items"}.`,
+        confirmLabel: "Remove",
+        destructive: true,
+      });
+      if (!ok) return;
     }
     update((d) => removeSecurityScheme(d, name));
     onSelectItem(null);
@@ -216,6 +224,7 @@ function SchemeForm({ draft, name, problems, context, onSelectItem }: {
 
   return (
     <div className="max-w-2xl space-y-space-4" data-testid="scheme-form">
+      {confirmDialog}
       <SchemeNameInput name={name} error={nameError} problemFor={(text) => schemeNameProblem(doc, text, name)} onCommit={rename} />
       <p data-testid="scheme-usage" className="text-body-small text-muted-foreground">
         {words.length > 0 ? `Used by ${list(words)}` : "Not used by any server, operation or set of operation properties yet."}
@@ -225,7 +234,7 @@ function SchemeForm({ draft, name, problems, context, onSelectItem }: {
         onChange={(next) => update((d) => updateSecurityScheme(d, name, next as DocSecurityScheme))}
       />
       <div className="flex justify-end">
-        <Button type="button" variant="outline" onClick={remove} data-testid="scheme-remove" className="gap-1.5 text-muted-foreground hover:text-destructive">
+        <Button type="button" variant="outline" onClick={() => { void remove(); }} data-testid="scheme-remove" className="gap-1.5 text-muted-foreground hover:text-destructive">
           <Trash2 className="size-4" /> Remove scheme
         </Button>
       </div>

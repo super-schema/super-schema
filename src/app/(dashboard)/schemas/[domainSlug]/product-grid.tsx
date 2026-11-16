@@ -34,6 +34,7 @@ import {
 } from "./product-actions";
 import { ProductContactFields } from "./components/ProductContactFields";
 
+import { NativeSelect } from "@/components/ui/native-select";
 export interface ProductGridItem {
   id: string;
   name: string;
@@ -307,10 +308,10 @@ export function ProductGrid({
                 <label className="text-body-small text-foreground mb-space-1 block font-medium">
                   Criticality Tier
                 </label>
-                <select
+                <NativeSelect
                   value={tierId}
                   onChange={(e) => setTierId(e.target.value)}
-                  className="h-9 w-full rounded-md border border-border bg-background px-3 text-body-small text-foreground"
+                  className="h-9 w-full"
                 >
                   <option value="">None</option>
                   {tiers.map((t) => (
@@ -318,7 +319,7 @@ export function ProductGrid({
                       {tierLabel(t.name)}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
               <div className="flex-1 min-w-[180px]">
                 <label className="text-body-small text-foreground mb-space-1 block font-medium">

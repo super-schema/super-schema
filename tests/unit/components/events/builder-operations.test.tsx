@@ -9,6 +9,7 @@ import { emptyEventDocument, type EventDocument } from "@/lib/events/document/ty
 import { bindingVersion, TEMPLATES } from "@/lib/events/templates";
 import { maximalDocument } from "../../lib/events/document/fixtures/maximal-document";
 import { PIN, renderBuilder, renderSection, sampleDocument } from "./builder-harness";
+import { answerConfirm, expectNoConfirm } from "../../../helpers/confirm-dialog";
 
 // Operations render no entity picker, but the builder tests below also open the Messages section.
 const h = vi.hoisted(() => ({ listPinnableVersionsAction: vi.fn() }));
@@ -610,10 +611,9 @@ describe("OperationsSection: identifier, documentation and removal", () => {
   });
 
   it("removes the selected operation without asking and selects the first remaining one", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = renderSection(OperationsSection, { doc: docWithReply(), item: "askRefund" });
     click("operation-remove");
-    expect(confirm).not.toHaveBeenCalled();
+    expectNoConfirm();
     expect(probe.draft.doc.operations.map((o) => o.key)).toEqual(["publishOrder"]);
     expect(probe.item).toBeNull();
     expect(text("operation-key-value")).toBe("publishOrder");
@@ -681,7 +681,6 @@ describe("OperationsSection: pointer errors land under the right field", () => {
 
 describe("Operations stay consistent with the other sections (review focus: references and channel/operation consistency)", () => {
   it("removing a message in Messages empties it from the operation's checklist and leaves the document valid", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = renderBuilder({ doc: richDoc(), section: "messages", item: "OrderCreated" });
     await screen.findByLabelText("Payload entity");
     click("message-remove");
@@ -710,10 +709,10 @@ describe("Operations stay consistent with the other sections (review focus: refe
     expect(probe.draft.problems).toEqual([]);
   });
 
-  it("removing a channel in Channels removes its operations from the Operations list", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("removing a channel in Channels removes its operations from the Operations list", async () => {
     const { probe } = renderBuilder({ doc: docWithReply(), section: "channels", item: "orders" });
     click("channel-remove");
+    await answerConfirm(true);
     click("outline-operations");
     // Both operations sat on "orders": they are gone with it, and the remaining channels are offered to a new one.
     expect(text("operation-empty")).toContain("No operations yet");

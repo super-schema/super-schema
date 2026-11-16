@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   Command,
+  CommandDialog,
   CommandInput,
   CommandList,
   CommandEmpty,
@@ -222,22 +223,15 @@ export function CommandPalette({
     }
   }
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]">
-      {/* Backdrop overlay */}
-      <div
-        className="absolute inset-0 bg-[rgba(0,0,0,0.6)] backdrop-blur-sm"
-        onClick={onClose}
-      />
-
-      {/* Command dialog */}
-      <div
-        className="relative w-full max-w-[640px] bg-[rgba(28,28,38,0.8)] backdrop-blur-[12px] rounded-[12px] border border-border overflow-hidden"
-        style={{ boxShadow: "0 4px 12px rgba(0,0,0,0.4)", maxHeight: 400 }}
-      >
-        <Command className="bg-transparent" loop>
+    <CommandDialog
+      open={isOpen}
+      onOpenChange={(open) => { if (!open) onClose(); }}
+      title="Command palette"
+      description="Search entities, fields and actions"
+      className="top-[20vh] sm:max-w-[640px]"
+    >
+        <Command loop>
           <CommandInput
             autoFocus
             placeholder="Search entities, fields, actions..."
@@ -355,7 +349,6 @@ export function CommandPalette({
             </CommandGroup>
           </CommandList>
         </Command>
-      </div>
-    </div>
+    </CommandDialog>
   );
 }

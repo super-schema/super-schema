@@ -22,7 +22,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { JsonObject } from "@/lib/event-specs/types";
 import type { PropertySummaryRow } from "@/lib/events/bundled-traits";
-import { selectClass } from "../controls";
 import { PINNED_HEADERS_LEAD, PINNED_PROPERTIES_LEAD } from "../labels";
 import {
   allowedValues, descriptionOf, displayRowsFromHeaders, displayRowsFromSummary, duplicateNames, friendlyType, jsonEqual, PROPERTY_TYPES, readRows, setAllowedValues,
@@ -31,6 +30,8 @@ import {
 import type { PinnedHeaders } from "../traits";
 import type { PropertyValue } from "../cloudevents-values";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 export interface PropertiesTableProps {
   /** Prefix of every id and test id. */
   idPrefix: string;
@@ -273,18 +274,17 @@ function EditableTable({ idPrefix, headers, onChange, disabled, pinned }: { idPr
                       {problem && <p id={`${idPrefix}-problem-${i}`} data-testid={`${idPrefix}-problem-${i}`} className="mt-space-1 text-caption text-destructive">{problem}</p>}
                     </td>
                     <td className={CELL}>
-                      <select
-                        id={`${idPrefix}-type-${i}`} data-testid={`${idPrefix}-type-${i}`} aria-label={`Property ${n}: type`} className={selectClass} disabled={disabled}
+                      <NativeSelect
+                        id={`${idPrefix}-type-${i}`} data-testid={`${idPrefix}-type-${i}`} aria-label={`Property ${n}: type`} disabled={disabled}
                         value={friendly ?? "other"} onChange={(e) => patchRow(i, (r) => ({ ...r, schema: setType(r.schema, e.target.value as PropertyType) }))}
                       >
                         {friendly === null && <option value="other" disabled>{typeLabel(row.schema)}</option>}
                         {PROPERTY_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                      </select>
+                      </NativeSelect>
                     </td>
                     <td className={`${CELL} text-center`}>
-                      <input
-                        type="checkbox" id={`${idPrefix}-required-${i}`} data-testid={`${idPrefix}-required-${i}`} aria-label={`Property ${n}: required`}
-                        className="size-4 accent-primary" checked={row.required} disabled={disabled}
+                      <Checkbox id={`${idPrefix}-required-${i}`} data-testid={`${idPrefix}-required-${i}`} aria-label={`Property ${n}: required`}
+                        checked={row.required} disabled={disabled}
                         onChange={(e) => patchRow(i, (r) => ({ ...r, required: e.target.checked }))}
                       />
                     </td>

@@ -4,6 +4,8 @@ import { useState, useCallback, useEffect } from "react";
 import { Search, X } from "lucide-react";
 import type { ComplianceFilter } from "@/types/schemas/compliance";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 const CLASSIFICATIONS = ["PII", "SENSITIVE", "INTERNAL", "PUBLIC"];
 
 const RETENTION_OPTIONS = [
@@ -115,11 +117,9 @@ export function ComplianceFilterSidebar({
               key={cls}
               className="flex items-center gap-space-2 text-body-small cursor-pointer hover:bg-accent/50 rounded px-space-2 py-1"
             >
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={(filters.classifications || []).includes(cls)}
                 onChange={() => toggleClassification(cls)}
-                className="accent-primary"
               />
               <span
                 className={`inline-block px-1.5 py-0.5 rounded text-caption font-medium ${
@@ -144,7 +144,7 @@ export function ComplianceFilterSidebar({
         <label className="text-caption text-muted-foreground uppercase tracking-wider block mb-space-2">
           Retention
         </label>
-        <select
+        <NativeSelect
           data-testid="compliance-filter-retention"
           aria-label="Retention"
           value={filters.retention || "any"}
@@ -154,14 +154,14 @@ export function ComplianceFilterSidebar({
               retention: e.target.value as ComplianceFilter["retention"],
             })
           }
-          className="w-full bg-muted text-foreground text-body-small rounded-lg px-space-3 py-1.5 border border-border outline-none"
+          className="w-full"
         >
           {RETENTION_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
 
       {/* Anonymization */}
@@ -169,7 +169,7 @@ export function ComplianceFilterSidebar({
         <label className="text-caption text-muted-foreground uppercase tracking-wider block mb-space-2">
           Anonymization
         </label>
-        <select
+        <NativeSelect
           data-testid="compliance-filter-anonymization"
           aria-label="Anonymization"
           value={filters.anonymization || "any"}
@@ -179,14 +179,14 @@ export function ComplianceFilterSidebar({
               anonymization: e.target.value as ComplianceFilter["anonymization"],
             })
           }
-          className="w-full bg-muted text-foreground text-body-small rounded-lg px-space-3 py-1.5 border border-border outline-none"
+          className="w-full"
         >
           {ANONYMIZATION_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
 
       {/* Encryption */}
@@ -194,7 +194,7 @@ export function ComplianceFilterSidebar({
         <label className="text-caption text-muted-foreground uppercase tracking-wider block mb-space-2">
           Encryption
         </label>
-        <select
+        <NativeSelect
           data-testid="compliance-filter-encryption"
           aria-label="Encryption"
           value={filters.encryption || "any"}
@@ -204,14 +204,14 @@ export function ComplianceFilterSidebar({
               encryption: e.target.value as ComplianceFilter["encryption"],
             })
           }
-          className="w-full bg-muted text-foreground text-body-small rounded-lg px-space-3 py-1.5 border border-border outline-none"
+          className="w-full"
         >
           {ENCRYPTION_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
 
       {/* Domain */}
@@ -225,11 +225,9 @@ export function ComplianceFilterSidebar({
               key={domain.id}
               className="flex items-center gap-space-2 text-body-small cursor-pointer hover:bg-accent/50 rounded px-space-2 py-1"
             >
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={(filters.domains || []).includes(domain.id)}
                 onChange={() => toggleDomain(domain.id)}
-                className="accent-primary"
               />
               <span>{domain.name}</span>
             </label>

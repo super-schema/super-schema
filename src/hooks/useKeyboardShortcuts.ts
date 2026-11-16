@@ -24,7 +24,8 @@ function isInputFocused(): boolean {
 /**
  * Registers global keyboard shortcuts for the dashboard.
  * Shortcuts are only active when no input element is focused
- * (except Cmd+S and Cmd+E which always fire with preventDefault).
+ * (except Cmd+S, Cmd+N and Cmd+E). Cmd+S always keeps the browser's "Save page" dialog away; Cmd+E is taken from the browser only
+ * when a handler is registered for it.
  */
 export function useKeyboardShortcuts(handlers: KeyboardShortcutHandlers) {
   useEffect(() => {
@@ -45,8 +46,8 @@ export function useKeyboardShortcuts(handlers: KeyboardShortcutHandlers) {
         return;
       }
 
-      // Cmd+E — always prevent
-      if (mod && e.key === "e") {
+      // Cmd+E — only when something here emits
+      if (mod && e.key === "e" && handlers.onEmit) {
         e.preventDefault();
         handlers.onEmit?.();
         return;

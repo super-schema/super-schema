@@ -10,6 +10,7 @@ import { KNOWN_PROTOCOLS } from "@/lib/events/inputs";
 import { bindingVersion, TEMPLATES } from "@/lib/events/templates";
 import { maximalDocument } from "../../lib/events/document/fixtures/maximal-document";
 import { PIN, renderBuilder, renderSection, sampleDocument } from "./builder-harness";
+import { answerConfirm, expectNoConfirm, findConfirm } from "../../../helpers/confirm-dialog";
 
 // The external-reference card asks the server about the references of a document: keep that action module out of the test process.
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({
@@ -844,42 +845,43 @@ describe("ChannelsSection: generated key", () => {
 
 describe("ChannelsSection: remove channel", () => {
   it("removes a channel nothing refers to without asking", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = renderSection(ChannelsSection, { item: "refunds" });
     click("channel-remove");
-    expect(confirm).not.toHaveBeenCalled();
+    expectNoConfirm();
     expect(probe.draft.doc.channels.map((c) => c.key)).toEqual(["orders"]);
     expect(probe.item).toBeNull();
     expect(text("channel-key-value")).toBe("orders");
     expect(probe.draft.problems).toEqual([]);
   });
 
-  it("asks first when operations use the channel, then removes the channel and those operations", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("asks first when operations use the channel, then removes the channel and those operations", async () => {
     const { probe } = renderSection(ChannelsSection, { item: "orders" });
     click("channel-remove");
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(confirm.mock.calls[0][0]).toContain('"orders"');
-    expect(confirm.mock.calls[0][0]).toContain("publishOrder");
+    const { title, description } = await findConfirm();
+    expect(title).toBe('Remove channel "orders"?');
+    expect(description).toContain('"orders"');
+    expect(description).toContain("publishOrder");
+    expect(probe.draft.doc.channels.map((c) => c.key)).toEqual(["orders", "refunds"]); // nothing changes until it is confirmed
+    await answerConfirm(true);
     expect(probe.draft.doc.channels.map((c) => c.key)).toEqual(["refunds"]);
     expect(probe.draft.doc.operations).toEqual([]);
     expect(probe.draft.problems).toEqual([]);
   });
 
-  it("changes nothing when the confirmation is declined", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("changes nothing when the confirmation is declined", async () => {
     const { probe } = renderSection(ChannelsSection, { item: "orders" });
     click("channel-remove");
+    await findConfirm();
+    await answerConfirm(false);
     expect(probe.draft.doc).toEqual(sampleDocument());
     expect(probe.draft.dirty).toBe(false);
   });
 
-  it("never leaves a dangling reply channel: an operation that only replies on the removed channel loses its reply", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("never leaves a dangling reply channel: an operation that only replies on the removed channel loses its reply", async () => {
     const { probe } = renderSection(ChannelsSection, { doc: docWithReply(), item: "refunds" });
     click("channel-remove");
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(confirm.mock.calls[0][0]).toContain("askRefund");
+    expect((await findConfirm()).description).toContain("askRefund");
+    await answerConfirm(true);
     expect(probe.draft.doc.channels.map((c) => c.key)).toEqual(["orders"]);
     expect(probe.draft.doc.operations.map((o) => o.key)).toEqual(["publishOrder", "askRefund"]);
     expect("reply" in probe.draft.doc.operations[1]).toBe(false);
@@ -887,20 +889,20 @@ describe("ChannelsSection: remove channel", () => {
     expect(probe.draft.problems).toEqual([]);
   });
 
-  it("deletes every operation that sits on the removed channel", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("deletes every operation that sits on the removed channel", async () => {
     const { probe } = renderSection(ChannelsSection, { doc: docWithReply(), item: "orders" });
     click("channel-remove");
+    await answerConfirm(true);
     expect(probe.draft.doc.channels.map((c) => c.key)).toEqual(["refunds"]);
     expect(probe.draft.doc.operations).toEqual([]);
     expect(probe.draft.problems).toEqual([]);
     expect(JSON.stringify(probe.draft.doc)).not.toContain('"orders"');
   });
 
-  it("keeps the messages of the removed channel in the document", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("keeps the messages of the removed channel in the document", async () => {
     const { probe } = renderSection(ChannelsSection, { item: "orders" });
     click("channel-remove");
+    await answerConfirm(true);
     expect(probe.draft.doc.messages.map((m) => m.key)).toEqual(["OrderCreated"]);
   });
 });

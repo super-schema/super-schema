@@ -8,6 +8,7 @@ import type { VersionSnapshot, ChangeEntry } from "@/services/version-history/ve
 import { summarizeChanges } from "@/lib/diff/field-diff";
 import { formatDateOnly, formatDateTime } from "@/lib/date-format";
 
+import { NativeSelect } from "@/components/ui/native-select";
 interface VersionHistoryPanelProps {
   versions: VersionSnapshot[];
   open: boolean;
@@ -162,10 +163,10 @@ function ComparisonMode({
       <div className="space-y-space-2">
         <div className="flex items-center gap-2">
           <label className="text-caption text-muted-foreground w-16 shrink-0">Version A</label>
-          <select
+          <NativeSelect
             value={versionA}
             onChange={(e) => setVersionA(e.target.value ? Number(e.target.value) : "")}
-            className="flex-1 rounded-md border border-border bg-transparent px-2 py-1 text-body-small text-foreground focus:outline-none focus:border-ring"
+            className="flex-1"
             data-testid="version-a-select"
           >
             <option value="">Select...</option>
@@ -174,14 +175,14 @@ function ComparisonMode({
                 v{v.version}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
         <div className="flex items-center gap-2">
           <label className="text-caption text-muted-foreground w-16 shrink-0">Version B</label>
-          <select
+          <NativeSelect
             value={versionB}
             onChange={(e) => setVersionB(e.target.value ? Number(e.target.value) : "")}
-            className="flex-1 rounded-md border border-border bg-transparent px-2 py-1 text-body-small text-foreground focus:outline-none focus:border-ring"
+            className="flex-1"
             data-testid="version-b-select"
           >
             <option value="">Select...</option>
@@ -190,7 +191,7 @@ function ComparisonMode({
                 v{v.version}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
         <div className="flex items-center gap-2 pt-1">
           <Button

@@ -18,9 +18,10 @@ import type { ScopeTarget } from "@/lib/asset-scope";
 import type { TraitKind } from "@/lib/events/types";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { BUILT_IN_BADGE, NEW_PROPERTIES_MENU, propertyCountText, PROPERTIES_PAGE_SUBTITLE } from "@/features/events/builder/labels";
-import { Field, FormShell, selectClass, useCreateForm } from "./create-form";
+import { Field, FormShell, useCreateForm } from "./create-form";
 import type { TraitsTabData, TraitTabItem } from "./types";
 
+import { NativeSelect } from "@/components/ui/native-select";
 function TraitCards({ traits }: { traits: TraitTabItem[] }) {
   return (
     <ul className="grid grid-cols-1 gap-space-3 md:grid-cols-2 xl:grid-cols-3">
@@ -61,10 +62,10 @@ function NewTraitForm({ target, onCancel, onCreated }: { target: ScopeTarget; on
           <Input id="new-trait-name" aria-label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Audit headers" required />
         </Field>
         <Field label="Applies to" htmlFor="new-trait-kind">
-          <select id="new-trait-kind" aria-label="Applies to" className={selectClass} value={kind} onChange={(e) => setKind(e.target.value as TraitKind)}>
+          <NativeSelect id="new-trait-kind" aria-label="Applies to" value={kind} onChange={(e) => setKind(e.target.value as TraitKind)}>
             <option value="MESSAGE">Message</option>
             <option value="OPERATION">Operation</option>
-          </select>
+          </NativeSelect>
         </Field>
       </div>
       <Field label="Description (optional)" htmlFor="new-trait-description">

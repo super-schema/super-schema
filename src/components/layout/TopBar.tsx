@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, User, LogOut, Settings } from "lucide-react";
+import { Search, User, LogOut } from "lucide-react";
 import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
 import {
@@ -17,10 +17,10 @@ import { TenantSwitcher } from "@/components/layout/TenantSwitcher";
 import { ProductMark } from "@/components/icons/product-mark";
 
 /**
- * `showAdmin`: the person administers the tenant in view or the platform (the server's reading of the policy, handed down by the dashboard layout), so the
- * Admin link is theirs. Off by default (fail closed). Personal settings stay one click away in the user menu for everybody.
+ * The top bar: product, tenant, search, notifications and the user menu. Administration is reached from the activity bar (its only entry point, shown to
+ * the people who administer something); personal settings stay one click away in the user menu for everybody.
  */
-export function TopBar({ showAdmin = false }: { showAdmin?: boolean } = {}) {
+export function TopBar() {
   const { data: session } = useSession();
   const { open: openPalette } = useCommandPalette();
   const mod = useModKey();
@@ -59,18 +59,6 @@ export function TopBar({ showAdmin = false }: { showAdmin?: boolean } = {}) {
       {/* Right: Bell + User */}
       <div className="flex items-center gap-space-3">
         <NotificationCenter />
-
-        {showAdmin && (
-          <Link
-            href="/admin"
-            data-testid="topbar-admin"
-            aria-label="Administration"
-            className="p-1.5 rounded-lg hover:bg-accent animate-field-hover text-muted-foreground hover:text-foreground"
-            title="Administration"
-          >
-            <Settings className="w-5 h-5" aria-hidden="true" />
-          </Link>
-        )}
 
         <DropdownMenu>
           <DropdownMenuTrigger

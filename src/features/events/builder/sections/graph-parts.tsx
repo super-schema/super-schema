@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { renameKey, type KeyKind } from "@/lib/events/document/keys";
 import type { DocChannel, DocExternalRef, DocMessage, DocOperation, DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import type { DraftState } from "../use-event-draft";
+import { Checkbox } from "@/components/ui/checkbox";
 
 // ── document helpers (pure) ─────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -176,8 +177,7 @@ export function CheckboxGroup({ id, label, options, checked, onToggle, error, hi
           {all.map((o) => (
             <li key={o.value}>
               <label className="flex items-center gap-space-2 text-body-small text-foreground">
-                <input
-                  type="checkbox" data-testid={`${id}-option-${o.value}`} className="size-4 shrink-0 accent-primary"
+                <Checkbox data-testid={`${id}-option-${o.value}`} className="shrink-0"
                   checked={checked.includes(o.value)} onChange={(e) => onToggle(o.value, e.target.checked)}
                 />
                 <span>{o.label}</span>

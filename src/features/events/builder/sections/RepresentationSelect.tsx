@@ -5,9 +5,9 @@
 // what that means for this message right now (what Auto resolved to and why, or what the user chose). Auto is the absence of the
 // property; the sentence comes from `representationNote`, which asks the same resolver the server uses (round-2 R4).
 import type { PayloadFormat } from "@/lib/event-specs/types";
-import { selectClass } from "../controls";
 import type { RepresentationNote } from "./representation-note";
 
+import { NativeSelect } from "@/components/ui/native-select";
 const CHOICES: Array<{ value: "" | PayloadFormat; label: string }> = [
   { value: "", label: "Auto (recommended)" },
   { value: "avro", label: "Avro" },
@@ -27,13 +27,13 @@ export function RepresentationSelect({ id, value, onChange, note, error }: {
   return (
     <div className="space-y-space-1">
       <label htmlFor={id} className="block text-caption text-muted-foreground">Payload representation</label>
-      <select
-        id={id} data-testid={id} className={selectClass} value={value} aria-invalid={error ? true : undefined}
+      <NativeSelect
+        id={id} data-testid={id} value={value} aria-invalid={error ? true : undefined}
         aria-describedby={[error ? errorId : null, noteId].filter(Boolean).join(" ")}
         onChange={(e) => onChange(e.target.value as "" | PayloadFormat)}
       >
         {CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-      </select>
+      </NativeSelect>
       <p
         id={noteId} data-testid={noteId} data-tone={note.tone}
         className="text-[11px] leading-relaxed text-muted-foreground"

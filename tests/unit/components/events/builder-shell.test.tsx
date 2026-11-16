@@ -11,6 +11,7 @@ import { bindingVersion, TEMPLATES } from "@/lib/events/templates";
 import type { ActionResult } from "@/types/action-result";
 import type { EventDetail } from "@/services/events/event.service";
 import { makeEvent, renderBuilder, sampleDocument } from "./builder-harness";
+import { answerConfirm, expectNoConfirm, findConfirm } from "../../../helpers/confirm-dialog";
 
 const HOST_MESSAGE = "host must be host or host:port — no spaces and no scheme";
 
@@ -950,42 +951,44 @@ describe("ServersSection", () => {
 
   describe("removing", () => {
     it("removes a server nothing refers to without asking", () => {
-      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
       const { probe } = renderBuilder({ section: "servers" });
       click("server-add");
       click("server-remove");
-      expect(confirm).not.toHaveBeenCalled();
+      expectNoConfirm();
       expect(probe.draft.doc.servers.map((s) => s.key)).toEqual(["kafka-prod", "kafka-dev"]);
       expect(probe.item).toBeNull();
       expect(box("server-host").value).toBe("prod.internal:9092");
     });
 
-    it("asks before removing a server that channels use, then removes it from every channels[].serverKeys", () => {
-      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    it("asks before removing a server that channels use, then removes it from every channels[].serverKeys", async () => {
       const { probe } = renderBuilder({ section: "servers", item: "kafka-prod" });
       click("server-remove");
-      expect(confirm).toHaveBeenCalledTimes(1);
-      expect(confirm.mock.calls[0][0]).toContain('"kafka-prod"');
-      expect(confirm.mock.calls[0][0]).toContain("2 channels");
-      expect(confirm.mock.calls[0][0]).toContain("orders");
-      expect(confirm.mock.calls[0][0]).toContain("refunds");
+      const { title, description } = await findConfirm();
+      expect(title).toBe('Remove server "kafka-prod"?');
+      expect(description).toContain('"kafka-prod"');
+      expect(description).toContain("2 channels");
+      expect(description).toContain("orders");
+      expect(description).toContain("refunds");
+      expect(probe.draft.doc.servers.map((s) => s.key)).toEqual(["kafka-prod", "kafka-dev"]); // nothing changes until it is confirmed
+      await answerConfirm(true);
       expect(probe.draft.doc.servers.map((s) => s.key)).toEqual(["kafka-dev"]);
       expect(probe.draft.doc.channels.map((c) => c.serverKeys)).toEqual([[], ["kafka-dev"]]);
       expect(probe.draft.problems).toEqual([]);
     });
 
-    it("changes nothing when the confirmation is declined", () => {
-      vi.spyOn(window, "confirm").mockReturnValue(false);
+    it("changes nothing when the confirmation is declined", async () => {
       const { probe } = renderBuilder({ section: "servers", item: "kafka-prod" });
       click("server-remove");
+      await findConfirm();
+      await answerConfirm(false);
       expect(probe.draft.doc).toEqual(sampleDocument());
       expect(probe.draft.dirty).toBe(false);
     });
 
-    it("leaves other servers' references alone when a different server is removed", () => {
-      vi.spyOn(window, "confirm").mockReturnValue(true);
+    it("leaves other servers' references alone when a different server is removed", async () => {
       const { probe } = renderBuilder({ section: "servers", item: "kafka-dev" });
       click("server-remove");
+      await answerConfirm(true);
       expect(probe.draft.doc.servers.map((s) => s.key)).toEqual(["kafka-prod"]);
       expect(probe.draft.doc.channels.map((c) => c.serverKeys)).toEqual([["kafka-prod"], ["kafka-prod"]]);
     });

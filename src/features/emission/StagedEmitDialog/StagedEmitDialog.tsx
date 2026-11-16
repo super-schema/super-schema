@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface TargetRow {
   target: string;
@@ -103,12 +104,11 @@ export function StagedEmitDialog({
                   )}
                 >
                   <label className="flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-3">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={isSelected}
                       onChange={() => toggleTarget(t.target)}
                       aria-label={t.details || t.target}
-                      className="size-4 shrink-0 accent-primary"
+                      className="shrink-0"
                     />
                     <span className="min-w-0 flex-1 basis-24 break-words font-medium">
                       {t.details || t.target}

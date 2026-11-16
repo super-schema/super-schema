@@ -10,9 +10,6 @@ import { reservedKeyMessage } from "@/lib/reserved-field-names";
 import { KEY_MAX_LENGTH, KEY_PATTERN } from "@/lib/events/document/types";
 import { KNOWN_PROTOCOLS } from "@/lib/events/inputs";
 
-/** Native `<select>` styling (slice 1 uses native selects wherever a finite list is picked). */
-export const selectClass = "w-full rounded-md border border-border bg-background px-space-2 py-1.5 text-body-small";
-
 /**
  * Label + control + hint + error. The control is a single child element: Field links it to the hint and error with
  * `aria-describedby` and flags it with `aria-invalid` (the child must pass those props on to its `<input>`; `Input`,

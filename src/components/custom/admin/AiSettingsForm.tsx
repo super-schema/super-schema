@@ -7,6 +7,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { getAiSettingsAction, testAiConnectionAction, updateAiSettingsAction } from "@/app/(dashboard)/admin/actions";
 import type { AiConfigSource, AiSettingsView } from "@/services/ai-config.service";
 
+import { NativeSelect } from "@/components/ui/native-select";
 const FIELD_CLASS = "w-full rounded-md border border-input bg-background px-space-3 py-space-2 text-body-small text-foreground focus-visible:outline-2 focus-visible:outline-ring";
 const SOURCE_LABEL: Record<AiConfigSource, string> = {
   db: "Saved on this page", env: "Server environment (AI_PROVIDER, AI_BASE_URL)",
@@ -111,12 +112,12 @@ export function AiSettingsForm() {
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="ai-provider">Provider</FieldLabel>
-              <select id="ai-provider" data-testid="ai-settings-provider" className={FIELD_CLASS} value={draft.provider} onChange={(e) => change("provider", e.target.value)}>
+              <NativeSelect id="ai-provider" data-testid="ai-settings-provider" value={draft.provider} onChange={(e) => change("provider", e.target.value)}>
                 <option value="">Not set (use the server environment)</option>
                 <option value="ollama">Ollama</option>
                 <option value="vllm">vLLM / OpenAI-compatible</option>
                 <option value="custom">Custom provider (OpenAI-compatible chat)</option>
-              </select>
+              </NativeSelect>
             </Field>
             <Field>
               <FieldLabel htmlFor="ai-base-url">{custom ? "Chat completions endpoint" : "Base URL"}</FieldLabel>

@@ -199,15 +199,11 @@ test.describe("command palette: closing and actions", () => {
     await openPalette(page);
 
     const actions = page.getByRole("group", { name: "Actions" });
-    for (const [label, shortcut] of [
-      ["New Entity", "N"],
-      ["Save", "S"],
-      ["Emit TypeSpec", "E"],
-    ] as const) {
-      await expect(actions.getByRole("option", { name: new RegExp(`^${label}`) })).toContainText(new RegExp(`(Ctrl|⌘)\\+${shortcut}$`));
+    await expect(actions.getByRole("option", { name: /^New Entity/ })).toContainText(/(Ctrl|⌘)\+N$/);
+    // Only actions that do something everywhere are offered: Save and Emit belong to the pages that can save or emit (their own Mod+S/E).
+    for (const gone of ["Save", "Emit TypeSpec", "Show Diff", "Export"]) {
+      await expect(actions.getByRole("option", { name: gone, exact: true })).toHaveCount(0);
     }
-    await expect(actions.getByRole("option", { name: "Show Diff" })).toBeVisible();
-    await expect(actions.getByRole("option", { name: "Export" })).toBeVisible();
 
     await actions.getByRole("option", { name: "Go to Domains" }).click();
     await expect(page).toHaveURL((url) => url.pathname === "/schemas");
@@ -270,24 +266,15 @@ test.describe("keyboard shortcuts", () => {
     await expect(page).toHaveURL((url) => url.pathname === "/schemas");
   });
 
-  test("Mod+S says 'All changes saved' in the status bar for a moment, from the shortcut and from the palette action", { tag: ["@regression"] }, async ({
+  test("Mod+S on a page with nothing to save claims nothing: no 'All changes saved' in the status bar", { tag: ["@regression"] }, async ({
     authedPage: page,
-    workspace,
   }) => {
-    await openDashboard(page, workspace.entities[0].url);
-    await expect(centerPanel(page).getByRole("heading", { level: 1, name: entityName })).toBeVisible();
+    await openDashboard(page, "/glossary");
     const flash = page.getByTestId("status-bar").getByTestId("save-flash");
-    await expect(flash).toHaveCount(0);
-
     await page.keyboard.press(`${MOD}+s`);
-    await expect(flash).toHaveText("All changes saved");
-    // It goes after about two seconds.
-    await expect(flash).toHaveCount(0, { timeout: 10_000 });
-
-    await openPalette(page);
-    await paletteInput(page).fill("Save");
-    await paletteOption(page, /^Save/).click();
-    await expect(flash).toHaveText("All changes saved");
+    // Let the key event and any render it causes settle (two frames), then nothing may claim a save.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(flash).toHaveCount(0);
   });
 
   test("Mod+E emits the entity: a toast says how many targets were generated", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {

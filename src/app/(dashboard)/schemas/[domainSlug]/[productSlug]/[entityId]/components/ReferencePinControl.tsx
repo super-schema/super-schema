@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Loader2, Pin } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
+import { NativeSelect } from "@/components/ui/native-select";
 /**
  * What a reference field's pin control needs of the server, handed in by the workspace so this component (and the field row that
  * hosts it) never import a server action themselves.
@@ -125,13 +126,13 @@ export function ReferencePinControl({ fieldId, referencedEntityId, referenceLabe
           )}
           {versions.state === "ready" && (
             <>
-              <select
+              <NativeSelect
                 data-testid="reference-pin-control"
                 aria-label={`Pinned version of ${name}`}
                 value={pin ?? ""}
                 disabled={saving}
                 onChange={(e) => void handleChange(e.target.value)}
-                className="h-5 rounded border border-input bg-background px-1 text-[10px] text-foreground"
+                className="h-5"
               >
                 <option value="">Latest published (no pin)</option>
                 {versions.labels.map((label) => (
@@ -141,7 +142,7 @@ export function ReferencePinControl({ fieldId, referencedEntityId, referenceLabe
                 ))}
                 {/* A pin to a version that is gone stays selectable only as what it is, so the select never lies about the field. */}
                 {pin && !versions.labels.includes(pin) && <option value={pin}>v{pin} (not found)</option>}
-              </select>
+              </NativeSelect>
               {versions.labels.length === 0 && (
                 <span data-testid="reference-pin-none-published" className="text-[10px] text-muted-foreground">
                   {name} has never been published, so there is no version to pin.

@@ -25,6 +25,7 @@ import {
   type PeriodUnit,
 } from "@/types/schemas/retention-policy.schema";
 
+import { NativeSelect } from "@/components/ui/native-select";
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
@@ -204,16 +205,16 @@ function RetentionPolicyForm({
                   onChange={(e) => edited(setPeriod)(parseInt(e.target.value) || 1)}
                   className="h-8 w-20"
                 />
-                <select
+                <NativeSelect
                   data-testid="retention-period-unit"
                   value={periodUnit}
                   onChange={(e) => edited(setPeriodUnit)(e.target.value as PeriodUnit)}
-                  className="h-8 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  className="h-8"
                 >
                   {PERIOD_UNITS.map((u) => (
                     <option key={u.value} value={u.value}>{u.label}</option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
             </div>
 
@@ -221,11 +222,11 @@ function RetentionPolicyForm({
               <label className="text-caption text-muted-foreground mb-1 block">
                 Reference Field
               </label>
-              <select
+              <NativeSelect
                 data-testid="retention-reference-field"
                 value={referenceField}
                 onChange={(e) => edited(setReferenceField)(e.target.value)}
-                className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                className="h-8 w-full"
               >
                 <option value="">Select a date field...</option>
                 {dateFields.map((f) => (
@@ -237,7 +238,7 @@ function RetentionPolicyForm({
                   .map((f) => (
                     <option key={f.name} value={f.name}>{f.name} ({f.type})</option>
                   ))}
-              </select>
+              </NativeSelect>
             </div>
           </div>
         </div>

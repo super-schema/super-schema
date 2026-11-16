@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Lock, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm, type ConfirmOptions } from "@/components/ui/confirm-dialog";
 import { cn } from "@/lib/utils";
 import type { JsonObject, TraitKind } from "@/lib/event-specs/types";
 import { renameKey } from "@/lib/events/document/keys";
@@ -197,7 +198,10 @@ function UsageLine({ doc, trait }: { doc: EventDocument; trait: DocTrait }) {
 }
 
 /** Remove the set at `index`. A set in use asks first, then leaves the messages and operations that carried it. */
-function removeWithConfirm(draft: DraftState, index: number, label: string, onSelectItem: (key: string | null) => void) {
+async function removeWithConfirm(
+  draft: DraftState, index: number, label: string, onSelectItem: (key: string | null) => void,
+  confirm: (options: ConfirmOptions) => Promise<boolean>,
+) {
   const trait = draft.doc.traits[index];
   if (!trait) return;
   const usage = traitUsage(draft.doc, trait.key);
@@ -207,9 +211,19 @@ function removeWithConfirm(draft: DraftState, index: number, label: string, onSe
       usage.messages.length > 0 ? `${plural(usage.messages.length, "message")} (${usage.messages.join(", ")})` : null,
       usage.operations.length > 0 ? `${plural(usage.operations.length, "operation")} (${usage.operations.join(", ")})` : null,
     ].filter(Boolean).join(" and ");
-    if (!window.confirm(`${propertiesName(trait.kind)} "${label}" is used by ${where}. Remove it and take it off ${count === 1 ? "that item" : "those items"}?`)) return;
+    const ok = await confirm({
+      title: `Remove ${propertiesNameLower(trait.kind)} "${label}"?`,
+      description: `${propertiesName(trait.kind)} "${label}" is used by ${where}. It will be taken off ${count === 1 ? "that item" : "those items"}.`,
+      confirmLabel: "Remove",
+      destructive: true,
+    });
+    if (!ok) return;
   }
-  draft.update((d) => removeTrait(d, index));
+  // The dialog is modal, but find the set by key again so a draft that moved meanwhile never removes the wrong one.
+  draft.update((d) => {
+    const at = d.traits.findIndex((t) => t.key === trait.key);
+    return at < 0 ? d : removeTrait(d, at);
+  });
   onSelectItem(null);
 }
 
@@ -228,6 +242,7 @@ function LocalForm({ draft, index, trait, problems, context, entityOptions, focu
   entityOptions: SectionProps["options"]["entityOptions"]; focusName: boolean; onFocused: () => void; onSelectItem: (key: string | null) => void;
 }) {
   const { doc, update } = draft;
+  const { confirm, confirmDialog } = useConfirm();
   const kind = trait.kind;
   const template = templateOf(kind);
   const primary = PRIMARY_KEYS[kind];
@@ -288,6 +303,7 @@ function LocalForm({ draft, index, trait, problems, context, entityOptions, focu
 
   return (
     <div className="max-w-2xl space-y-space-4" data-testid="trait-form">
+      {confirmDialog}
       <div className="flex flex-wrap items-center justify-between gap-space-2">
         <Badge variant="outline" data-testid="trait-kind">{propertiesTitle(kind)}</Badge>
         <UsageLine doc={doc} trait={trait} />
@@ -337,7 +353,7 @@ function LocalForm({ draft, index, trait, problems, context, entityOptions, focu
         id="trait-key" value={trait.key} error={errorAt("/key")}
         taken={doc.traits.filter((_, i) => i !== index).map((t) => t.key)} onRename={renameActive}
       />
-      <RemoveButton kind={kind} onClick={() => removeWithConfirm(draft, index, label, onSelectItem)} />
+      <RemoveButton kind={kind} onClick={() => void removeWithConfirm(draft, index, label, onSelectItem, confirm)} />
     </div>
   );
 }
@@ -347,6 +363,7 @@ function LibraryItem({ draft, index, trait, library, problems, onSelectItem }: {
   onSelectItem: (key: string | null) => void;
 }) {
   const { doc } = draft;
+  const { confirm, confirmDialog } = useConfirm();
   const found = optionOf(trait, library);
   const errorAt = (suffix: string) => problemMessage(problemsByField(problems, `/traits/${index}${suffix}`));
   const keyError = errorAt("/key");
@@ -355,6 +372,7 @@ function LibraryItem({ draft, index, trait, library, problems, onSelectItem }: {
   const builtIn = found?.bundled === true;
   return (
     <div className="max-w-2xl space-y-space-4" data-testid="trait-library-form">
+      {confirmDialog}
       <div className="flex flex-wrap items-center justify-between gap-space-2">
         <div className="flex flex-wrap items-center gap-space-2">
           <h3 data-testid="trait-library-name" className="text-heading-3 text-foreground">{label}</h3>
@@ -400,7 +418,7 @@ function LibraryItem({ draft, index, trait, library, problems, onSelectItem }: {
           }}
         />
       )}
-      <RemoveButton kind={trait.kind} library onClick={() => removeWithConfirm(draft, index, label, onSelectItem)} />
+      <RemoveButton kind={trait.kind} library onClick={() => void removeWithConfirm(draft, index, label, onSelectItem, confirm)} />
     </div>
   );
 }

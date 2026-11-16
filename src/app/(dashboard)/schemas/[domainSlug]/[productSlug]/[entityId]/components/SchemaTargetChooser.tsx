@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useGenerateWithInputs } from "./useGenerateWithInputs";
 import type { TargetInfo } from "./TechnologyCard";
 
+import { NativeSelect } from "@/components/ui/native-select";
 interface SchemaTargetChooserProps {
   entityId: string;
   fieldsCount: number;
@@ -100,11 +101,11 @@ export function SchemaTargetChooser({
           >
             Technology
           </label>
-          <select
+          <NativeSelect
             id="schema-target-select"
             value={selectedTargetKey}
             onChange={(event) => setSelectedTargetKey(event.target.value)}
-            className="flex h-9 w-full rounded-lg border border-input bg-background px-space-3 text-body-small text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            className="flex h-9 w-full"
             data-testid="schema-target-select"
           >
             {availableTargets.length > 0 && (
@@ -134,7 +135,7 @@ export function SchemaTargetChooser({
                 ))}
               </optgroup>
             )}
-          </select>
+          </NativeSelect>
         </div>
 
         <Button

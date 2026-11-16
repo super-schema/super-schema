@@ -586,7 +586,7 @@ test.describe("health", () => {
 test.describe("tenant configuration", () => {
   test("tenant configuration has dedicated domains, storage, dictionary, and attribute sections", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     await page.goto("/admin/tenant");
-    await expect(centerPanel(page).getByTestId("admin-tab-tenant")).toHaveAttribute("aria-selected", "true");
+    await expect(centerPanel(page).getByTestId("admin-tab-tenant")).toHaveAttribute("aria-current", "page");
     const navigation = page.getByRole("navigation", { name: "Tenant configuration" });
     for (const name of ["Domains", "Storage & onboarding", "Dictionaries", "Custom attributes"]) {
       await expect(navigation.getByRole("link", { name, exact: true })).toBeVisible();

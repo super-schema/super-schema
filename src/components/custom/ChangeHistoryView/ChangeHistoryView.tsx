@@ -10,6 +10,7 @@ import type {
   ChangeHistoryFilters,
 } from "@/types/schemas/change-history";
 
+import { NativeSelect } from "@/components/ui/native-select";
 // --- Filter bar types ---
 
 const CHANGE_TYPE_OPTIONS: { value: ChangeType | "all"; label: string }[] = [
@@ -185,12 +186,12 @@ export function ChangeHistoryView({
             <label className="text-caption text-muted-foreground whitespace-nowrap">
               Type:
             </label>
-            <select
+            <NativeSelect
               value={selectedChangeType}
               onChange={(e) =>
                 setSelectedChangeType(e.target.value as ChangeType | "all")
               }
-              className="h-8 rounded-md border border-border bg-background px-2 text-body-small text-foreground focus:outline-none focus:border-ring"
+              className="h-8"
               data-testid="filter-change-type"
             >
               {CHANGE_TYPE_OPTIONS.map((opt) => (
@@ -198,7 +199,7 @@ export function ChangeHistoryView({
                   {opt.label}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
 
           {/* Date From filter */}

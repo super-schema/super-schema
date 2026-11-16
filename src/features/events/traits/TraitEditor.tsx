@@ -16,6 +16,7 @@ import { ChevronDown, ChevronRight, Loader2, Lock, Puzzle, Save, Trash2 } from "
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { HideEmptyRightPanel } from "@/components/layout/HideEmptyRightPanel";
 import { deleteTraitAction, updateTraitAction } from "@/app/(dashboard)/schemas/trait-actions";
@@ -56,6 +57,7 @@ const omit = (spec: JsonObject, key: string): JsonObject => {
 export function TraitEditor({ trait, owner, crumbs, listHref, entityOptions }: TraitPageData) {
   const router = useRouter();
   const invalidateDomainsTree = useInvalidateDomainsTree();
+  const { confirm, confirmDialog } = useConfirm();
   const builtIn = isBundledTrait(trait.spec);
   const kind = trait.kind;
   const [name, setName] = useState(trait.name);
@@ -90,7 +92,12 @@ export function TraitEditor({ trait, owner, crumbs, listHref, entityOptions }: T
   }
 
   async function remove() {
-    if (!window.confirm(`Delete ${propertiesNameLower(kind)} "${trait.name}"?`)) return;
+    const ok = await confirm({
+      title: `Delete ${propertiesNameLower(kind)} "${trait.name}"?`,
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy(true);
     setNotice(null);
     const deleted = await settleAction(() => deleteTraitAction(trait.id, owner));
@@ -116,6 +123,7 @@ export function TraitEditor({ trait, owner, crumbs, listHref, entityOptions }: T
 
   return (
     <div className="animate-auth-fade-up space-y-space-6">
+      {confirmDialog}
       <HideEmptyRightPanel />
       <EventBreadcrumb crumbs={crumbs} />
       <div className="flex flex-wrap items-center justify-between gap-space-3">
@@ -130,7 +138,7 @@ export function TraitEditor({ trait, owner, crumbs, listHref, entityOptions }: T
         </div>
         {!builtIn && (
           <div className="flex gap-space-2">
-            <Button variant="outline" onClick={remove} disabled={busy} data-testid="trait-delete" className="gap-1.5 text-muted-foreground hover:text-destructive"><Trash2 className="w-4 h-4" /> Delete</Button>
+            <Button variant="outline" onClick={() => { void remove(); }} disabled={busy} data-testid="trait-delete" className="gap-1.5 text-muted-foreground hover:text-destructive"><Trash2 className="w-4 h-4" /> Delete</Button>
             <Button onClick={save} disabled={busy} data-testid="trait-save" className="gap-1.5">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save</Button>
           </div>
         )}

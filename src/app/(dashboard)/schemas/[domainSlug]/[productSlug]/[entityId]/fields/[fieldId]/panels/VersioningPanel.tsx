@@ -7,6 +7,7 @@ import type {
   Documentation,
   Versioning,
 } from "@/types/schemas/typespec-decorator.schema";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export function VersioningPanel({
   versioning: v,
@@ -129,9 +130,8 @@ export function VersioningPanel({
       {onDocumentationChange && (
         <>
           <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-1 accent-primary"
+            <Checkbox
+              className="mt-1"
               checked={documentation.deprecated != null}
               onChange={(e) =>
                 onDocumentationChange({
@@ -159,9 +159,8 @@ export function VersioningPanel({
       )}
       {onDiscriminatorChange && (
         <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="mt-1 accent-primary"
+          <Checkbox
+            className="mt-1"
             checked={discriminator ?? false}
             onChange={(e) => onDiscriminatorChange(e.target.checked)}
           />

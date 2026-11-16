@@ -21,6 +21,7 @@ import { emptyEventDocument } from "@/lib/events/document/types";
 import type { ObjectKind, CanonicalDocument } from "@/lib/gitops/contracts";
 import type { getGitOpsWorkspace } from "@/services/gitops/workspace";
 import * as actions from "@/app/(dashboard)/gitops/actions";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type Workspace = Awaited<ReturnType<typeof getGitOpsWorkspace>>;
 type Reply<T> = { data: T; error?: never } | { error: string; data?: never };
@@ -1069,8 +1070,7 @@ function ProductSettings({
           </FieldDescription>
         </Field>
         <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={override}
             onChange={(e) => setOverride(e.target.checked)}
           />

@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { WorkflowSettingsSchema, workflowTargets, type DeploymentMethod, type ProductDeploymentConfiguration, type WorkflowSettings, type WorkflowView } from "@/lib/deployments/contracts";
 import { getProductDeploymentConfigurationAction, saveProductDeploymentWorkflowAction } from "@/app/(dashboard)/deployments/settings-actions";
 import { DeploymentField as Field, DeploymentChoice as Choice, DEPLOYMENT_METHODS, targetOptions, targetLabel, WorkflowVariablesFields } from "./DeploymentFields";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export function ProductDeploymentWorkflows({ productId }: { productId: string }) {
   const [data, setData] = useState<ProductDeploymentConfiguration | null>(null);
@@ -92,9 +93,9 @@ function DefinitionEditor({ productId, method, data, workflow, saved }: { produc
       <Field id="workflow-environment" label="Default environment"><Choice id="workflow-environment" value={environment} options={data.environments.map((value) => ({ value, label: value }))} onChange={setEnvironment} /></Field>
       <Field id="workflow-connection" label={method === "registry" ? "Default schema registry" : method === "git" ? "Git repository" : "Default API endpoint"}><Choice id="workflow-connection" value={connectionId} options={data.connections.filter((c) => c.active && c.method === method).map((c) => ({ value: c.id, label: c.name }))} onChange={setConnectionId} /></Field>
     </FieldGroup>
-    <fieldset className="min-w-0 rounded-md border border-border p-3"><legend className="px-1 text-sm font-medium">Supported targets</legend><FieldGroup className="grid gap-3 sm:grid-cols-2">{targets.map((target) => <label key={target.value} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={supportedTargets.includes(target.value)} onChange={(e) => setSupportedTargets((current) => e.target.checked ? [...current, target.value] : current.filter((key) => key !== target.value))} />{target.label}</label>)}</FieldGroup>{!supportedTargets.length && <p className="mt-2 text-xs text-muted-foreground">Select at least one target. Each deployment chooses one target and published version.</p>}</fieldset>
+    <fieldset className="min-w-0 rounded-md border border-border p-3"><legend className="px-1 text-sm font-medium">Supported targets</legend><FieldGroup className="grid gap-3 sm:grid-cols-2">{targets.map((target) => <label key={target.value} className="flex items-center gap-2 text-sm"><Checkbox checked={supportedTargets.includes(target.value)} onChange={(e) => setSupportedTargets((current) => e.target.checked ? [...current, target.value] : current.filter((key) => key !== target.value))} />{target.label}</label>)}</FieldGroup>{!supportedTargets.length && <p className="mt-2 text-xs text-muted-foreground">Select at least one target. Each deployment chooses one target and published version.</p>}</fieldset>
     {method === "git" && <FieldGroup>
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={settings.eventContract} onChange={(e) => setSettings((s) => ({ ...s, eventContract: e.target.checked }))} />Prepare an Event Schema Central contract bundle</label>
+      <label className="flex items-center gap-2 text-sm"><Checkbox checked={settings.eventContract} onChange={(e) => setSettings((s) => ({ ...s, eventContract: e.target.checked }))} />Prepare an Event Schema Central contract bundle</label>
       {settings.eventContract && <FieldGroup className="grid sm:grid-cols-2">
         <Field id="workflow-kind" label="Contract kind"><Choice id="workflow-kind" value={settings.contractKind} options={[{ value: "Topic", label: "Event topic" }, { value: "Entity", label: "Reusable entity" }]} onChange={(v) => setSettings((s) => ({ ...s, contractKind: v as "Topic" | "Entity" }))} /></Field>
         <Field id="workflow-change" label="Contract change"><Choice id="workflow-change" value={settings.change} options={[{ value: "create", label: "Create contract" }, { value: "new-version", label: "Add snapshot version" }, { value: "update-snapshot", label: "Update snapshot" }]} onChange={(v) => setSettings((s) => ({ ...s, change: v as WorkflowSettings["change"] }))} /></Field>
@@ -102,7 +103,7 @@ function DefinitionEditor({ productId, method, data, workflow, saved }: { produc
     </FieldGroup>}
     <p className="text-sm text-muted-foreground">Optional default variables can be overridden for each deployment.</p>
     <WorkflowVariablesFields method={method} settings={settings} onChange={setSettings} referenceJson={referenceJson} onReferenceChange={setReferenceJson} />
-    <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />Workflow enabled</label>
+    <label className="flex items-center gap-2 text-sm"><Checkbox checked={active} onChange={(e) => setActive(e.target.checked)} />Workflow enabled</label>
     <Button className="self-end" disabled={!name.trim() || !connectionId || !supportedTargets.length || !environment} onClick={() => void save()}>Save workflow</Button>
   </fieldset>;
 }

@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { FieldGroup, FieldDescription } from "@/components/ui/field";
 import { LIFECYCLE_PHASES } from "@/lib/field-attributes";
 import type { Visibility } from "@/types/schemas/typespec-decorator.schema";
+import { Checkbox } from "@/components/ui/checkbox";
 export function VisibilityPanel({
   visibility: v,
   onChange,
@@ -32,9 +33,7 @@ export function VisibilityPanel({
         </legend>
         {LIFECYCLE_PHASES.map((phase) => (
           <label key={phase} className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="accent-primary"
+            <Checkbox
               checked={phases.includes(phase)}
               onChange={() =>
                 set(
@@ -72,10 +71,8 @@ export function VisibilityPanel({
           Advanced visibility syntax
         </summary>
         <label className="mt-2 flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={v.removeVisibility ?? false}
-            className="accent-primary"
             onChange={(e) =>
               onChange({ ...v, removeVisibility: e.target.checked })
             }

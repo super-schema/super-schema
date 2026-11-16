@@ -9,6 +9,7 @@ import type { ApiOperationIssue } from "@/lib/api-operations/validate";
 import { collectionPath, issuesByPath, recordFromOperation, syncPathParameters, validateDraft, type OperationDraft } from "./api-tab-model";
 import { FieldError, LABEL } from "./ApiFormControls";
 
+import { NativeSelect } from "@/components/ui/native-select";
 interface ApiNewOperationFormProps {
   entityName: string;
   siblings: readonly OperationDraft[];
@@ -73,15 +74,15 @@ export function ApiNewOperationForm({ entityName, siblings, onCreate, onCancel }
         </div>
         <div>
           <label htmlFor="api-new-method" className={LABEL}>Method</label>
-          <select
+          <NativeSelect
             id="api-new-method"
             data-testid="api-op-method"
             value={method}
             onChange={(e) => { setMethod(e.target.value as ApiOperation["httpMethod"]); setServerIssues([]); }}
-            className="h-8 w-full rounded-lg border border-border bg-popover px-2 text-body-small text-foreground"
+            className="h-8 w-full"
           >
             {HTTP_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
+          </NativeSelect>
         </div>
       </div>
       <div>

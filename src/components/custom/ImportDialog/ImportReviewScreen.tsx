@@ -6,6 +6,8 @@ import { Trash2 } from "lucide-react";
 import type { ParsedEntity, ParsedField } from "@/lib/importers/types";
 import { ConfidenceBadge } from "./ConfidenceBadge";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 interface ImportReviewScreenProps {
   parsedEntity: ParsedEntity;
   warnings: string[];
@@ -83,18 +85,18 @@ export function ImportReviewScreen({
           <label className="text-caption text-muted-foreground block mb-1">
             Domain
           </label>
-          <select
+          <NativeSelect
             data-testid="import-domain-selector"
             value={selectedDomainId}
             onChange={(e) => setSelectedDomainId(e.target.value)}
-            className="w-full bg-muted rounded-lg px-space-3 py-1.5 text-body-small text-foreground outline-none border border-border focus:border-primary"
+            className="w-full"
           >
             {domains.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
       </div>
 
@@ -184,13 +186,11 @@ export function ImportReviewScreen({
                   )}
                 </td>
                 <td className="px-space-3 py-1.5 text-center">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={field.nullable}
                     onChange={(e) =>
                       updateFieldNullable(index, e.target.checked)
                     }
-                    className="accent-primary"
                   />
                 </td>
                 <td className="px-space-3 py-1.5 text-center">

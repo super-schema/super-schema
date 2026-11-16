@@ -9,6 +9,7 @@ import { parseEventDocument } from "@/lib/events/document/parse";
 import { emptyEventDocument, SECURITY_SCHEME_TYPES, type DocSecurityScheme, type EventDocument } from "@/lib/events/document/types";
 import { TEMPLATES } from "@/lib/events/templates";
 import { ENTITY_OPTIONS, renderBuilder, renderSection, sampleDocument } from "./builder-harness";
+import { answerConfirm, expectNoConfirm, findConfirm } from "../../../helpers/confirm-dialog";
 
 // The Messages section (opened by one shell test) draws entity pickers whose version list goes through a server action.
 const h = vi.hoisted(() => ({ listPinnableVersionsAction: vi.fn() }));
@@ -449,27 +450,27 @@ describe("AdvancedSection: used by", () => {
 
 describe("AdvancedSection: removing", () => {
   it("removes a scheme nothing uses without asking and selects the first remaining one", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const doc = schemesDoc();
     doc.components!.securitySchemes!.spare = { type: "plain" };
     const { probe } = renderSection(AdvancedSection, { doc, options: OPTIONS, item: "spare" });
     click("scheme-remove");
-    expect(confirm).not.toHaveBeenCalled();
+    expectNoConfirm();
     expect(names(probe.draft.doc)).toEqual(["api-key", "basic"]);
     expect(probe.item).toBeNull();
     expect(box("scheme-key").value).toBe("api-key");
   });
 
-  it("asks before removing a scheme that is used, naming who uses it, then removes the references", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("asks before removing a scheme that is used, naming who uses it, then removes the references", async () => {
     const { probe } = renderSection(AdvancedSection, { doc: schemesDoc(), options: OPTIONS });
     click("scheme-remove");
-    expect(confirm).toHaveBeenCalledTimes(1);
-    const message = confirm.mock.calls[0][0] as string;
-    expect(message).toContain('"api-key"');
-    expect(message).toContain("1 server (kafka-prod)");
-    expect(message).toContain("1 operation (publishOrder)");
-    expect(message).toContain("1 set of operation properties (secured)");
+    const { title, description } = await findConfirm();
+    expect(title).toBe('Remove security scheme "api-key"?');
+    expect(description).toContain('"api-key"');
+    expect(description).toContain("1 server (kafka-prod)");
+    expect(description).toContain("1 operation (publishOrder)");
+    expect(description).toContain("1 set of operation properties (secured)");
+    expect(names(probe.draft.doc)).toEqual(["api-key", "basic"]); // nothing changes until it is confirmed
+    await answerConfirm(true);
     expect(names(probe.draft.doc)).toEqual(["basic"]);
     expect(probe.draft.doc.servers.map((s) => s.security)).toEqual([undefined, ["basic"]]);
     expect("security" in probe.draft.doc.operations[0]).toBe(false);
@@ -478,26 +479,26 @@ describe("AdvancedSection: removing", () => {
     expect(parseEventDocument(probe.draft.doc).success).toBe(true);
   });
 
-  it("only takes the removed scheme out of a list that names others too", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("only takes the removed scheme out of a list that names others too", async () => {
     const doc = schemesDoc();
     doc.servers[0] = { ...doc.servers[0], security: ["api-key", "basic"] };
     const { probe } = renderSection(AdvancedSection, { doc, options: OPTIONS, item: "basic" });
     click("scheme-remove");
+    await answerConfirm(true);
     expect(probe.draft.doc.servers.map((s) => s.security)).toEqual([["api-key"], undefined]);
     expect(parseEventDocument(probe.draft.doc).success).toBe(true);
   });
 
-  it("changes nothing when the confirmation is declined", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("changes nothing when the confirmation is declined", async () => {
     const { probe } = renderSection(AdvancedSection, { doc: schemesDoc(), options: OPTIONS });
     click("scheme-remove");
+    await findConfirm();
+    await answerConfirm(false);
     expect(probe.draft.doc).toEqual(schemesDoc());
     expect(probe.draft.dirty).toBe(false);
   });
 
   it("drops securitySchemes and components when the last scheme is removed, so the saved document has neither", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const doc = sampleDocument();
     doc.components = { securitySchemes: { only: { type: "plain" } } };
     const { probe } = renderSection(AdvancedSection, { doc, options: OPTIONS });
@@ -511,7 +512,6 @@ describe("AdvancedSection: removing", () => {
   });
 
   it("drops securitySchemes but keeps the other components when the last scheme is removed", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const doc = sampleDocument();
     doc.components = { parameters: { id: {} }, securitySchemes: { only: { type: "plain" } } };
     const { probe } = renderSection(AdvancedSection, { doc, options: OPTIONS });
@@ -604,7 +604,6 @@ describe("EventBuilder: the Advanced section in the shell", () => {
     type(select("scheme-type"), "plain");
     await act(async () => { fireEvent.click(button("builder-save")); });
     expect(probe.saveDocument.mock.calls[0][2]).toMatchObject({ components: { securitySchemes: { scheme: { type: "plain" } } } });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     click("scheme-remove");
     await act(async () => { fireEvent.click(button("builder-save")); });
     expect(probe.saveDocument).toHaveBeenCalledTimes(2);

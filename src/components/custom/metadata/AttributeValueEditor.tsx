@@ -4,10 +4,12 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field";
-import { AttributeControl, SELECT_CLASS } from "@/components/custom/FieldAttributes/AttributeControl";
+import { AttributeControl } from "@/components/custom/FieldAttributes/AttributeControl";
 import { validateValue, type ValueProblem, type ValueSchema } from "@/lib/metadata-attributes/value-schema";
 import { CLASS_SCALE } from "@/lib/classification-scale";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 export const DERIVED_NOTE = "Follows the field's classification";
 
 interface Props {
@@ -127,8 +129,7 @@ function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disa
     const selected = options.find((o) => o === value);
     return (
       <AttributeControl label={label} labelHidden={labelHidden} error={error}>
-        <select
-          className={SELECT_CLASS}
+        <NativeSelect
           disabled={disabled}
           value={selected === undefined ? "" : String(selected)}
           onChange={(e) => onChange(e.target.value === "" ? undefined : options.find((o) => String(o) === e.target.value))}
@@ -141,7 +142,7 @@ function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disa
               {String(o)}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </AttributeControl>
     );
   }
@@ -149,7 +150,7 @@ function Node({ schema, value, derivedKeys = [], onChange, label = "Value", disa
   if (schema.type === "boolean") {
     return (
       <AttributeControl label={label} labelHidden={labelHidden} error={error}>
-        <input type="checkbox" disabled={disabled} checked={value === true} onChange={(e) => onChange(e.target.checked)} />
+        <Checkbox disabled={disabled} checked={value === true} onChange={(e) => onChange(e.target.checked)} />
       </AttributeControl>
     );
   }

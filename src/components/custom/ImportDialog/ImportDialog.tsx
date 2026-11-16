@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Upload,
   FileText,
   ClipboardPaste,
-  X,
   AlertTriangle,
   AlertCircle,
   CheckCircle2,
@@ -570,32 +570,25 @@ export function ImportDialog({
     }
   }
 
-  if (!isOpen) return null;
-
   const hasErrors = diagnostics.some((d) => d.type === "error");
   const hasWarnings = diagnostics.some((d) => d.type === "warning");
   const hasDiagnostics = diagnostics.length > 0;
 
   // Determine dialog width based on whether side panel is shown
   const showSidePanel = activeTab === "paste" && hasDiagnostics;
-  const dialogWidth = showSidePanel ? "w-[1000px]" : "w-[700px]";
+  const dialogWidth = showSidePanel ? "sm:max-w-[1000px]" : "sm:max-w-[700px]";
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div
+    // A stray click outside must not throw away a pasted schema: only Escape, the close button and Cancel close it.
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) handleClose(); }} disablePointerDismissal>
+      <DialogContent
         data-testid="import-dialog"
-        className={`bg-background border border-border rounded-xl shadow-xl ${dialogWidth} max-h-[85vh] flex flex-col transition-all duration-200`}
+        className={`flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 transition-[max-width] duration-200 ${dialogWidth}`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-space-4 py-space-3 border-b border-border">
-          <h2 className="text-heading-3 text-foreground">Import Schema</h2>
-          <button
-            onClick={handleClose}
-            className="p-1 rounded-lg hover:bg-accent"
-          >
-            <X className="w-4 h-4 text-muted-foreground" />
-          </button>
-        </div>
+        <DialogHeader className="border-b border-border px-space-4 py-space-3 pr-12">
+          <DialogTitle>Import Schema</DialogTitle>
+        </DialogHeader>
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto flex">
@@ -946,7 +939,7 @@ Example JSON Schema:
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

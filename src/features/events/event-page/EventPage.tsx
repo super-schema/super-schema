@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import {
   deleteEventAction, previewEventPublishAction, publishEventAction, renameEventAction, updateEventDocumentAction,
@@ -208,11 +209,18 @@ function EventPageBody({ data }: { data: EventPageData }) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const deleteInFlight = useRef(false);
+  const { confirm, confirmDialog } = useConfirm();
 
   async function remove() {
     if (deleteInFlight.current) return;
     const removed = event.latestVersionLabel ? "Its draft and its published versions are" : "Its draft is";
-    if (!window.confirm(`Delete event "${name}"? ${removed} removed with it.`)) return;
+    const ok = await confirm({
+      title: `Delete event "${name}"?`,
+      description: `${removed} removed with it.`,
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok || deleteInFlight.current) return;
     deleteInFlight.current = true;
     setDeleting(true);
     setDeleteError(null);
@@ -238,6 +246,7 @@ function EventPageBody({ data }: { data: EventPageData }) {
 
   return (
     <div data-testid="event-page" className="animate-auth-fade-up space-y-space-4">
+      {confirmDialog}
       <EventBreadcrumb crumbs={crumbs} />
 
       <div className="flex flex-wrap items-start justify-between gap-space-3">

@@ -6,7 +6,7 @@
  */
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { adminCapabilities } from "@/lib/access/capabilities";
 import { assign } from "../../helpers/access-mocks";
 import type { Assignment } from "@/lib/access";
@@ -34,7 +34,8 @@ const renderShell = (assignments: Assignment[], path: string) => {
     </AdminShell>
   );
 };
-const tabIds = () => screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-testid")?.replace("admin-tab-", ""));
+const adminLinks = () => Array.from(screen.getByRole("navigation", { name: "Administration" }).querySelectorAll("a"));
+const tabIds = () => adminLinks().map((tab) => tab.getAttribute("data-testid")?.replace("admin-tab-", ""));
 
 beforeEach(() => vi.clearAllMocks());
 afterEach(cleanup);
@@ -51,12 +52,11 @@ describe("the tabs are the ones the person may use", () => {
     for (const id of ["emitters", "health", "ai"]) expect(screen.queryByTestId(`admin-tab-${id}`)).toBeNull();
   });
 
-  it("marks the tab of the page the person is on, and routes a click to the tab's address", () => {
+  it("marks the link of the page the person is on as the current page, and each link goes to its section's address", () => {
     renderShell([assign.global()], "/admin/emitters");
-    expect(screen.getByTestId("admin-tab-emitters").getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByTestId("admin-tab-users").getAttribute("aria-selected")).toBe("false");
-    fireEvent.click(screen.getByTestId("admin-tab-health"));
-    expect(nav.push).toHaveBeenCalledWith("/admin/health");
+    expect(screen.getByTestId("admin-tab-emitters").getAttribute("aria-current")).toBe("page");
+    expect(screen.getByTestId("admin-tab-users").getAttribute("aria-current")).toBeNull();
+    expect(screen.getByTestId("admin-tab-health").getAttribute("href")).toBe("/admin/health");
   });
 });
 
@@ -66,8 +66,8 @@ describe("a page the person may not use is the no-permission screen", () => {
     expect(screen.getByTestId("admin-no-permission")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "You do not have permission to use this page" })).toBeTruthy();
     expect(screen.queryByTestId("page")).toBeNull();
-    // no tab is selected (the Users tab is not theirs), and the way back to their settings is offered
-    expect(screen.getAllByRole("tab").every((tab) => tab.getAttribute("aria-selected") === "false")).toBe(true);
+    // no section is marked current (the Users section is not theirs), and the way back to their settings is offered
+    expect(adminLinks().every((tab) => !tab.hasAttribute("aria-current"))).toBe(true);
     expect(screen.getByRole("link", { name: "Go to your settings" }).getAttribute("href")).toBe("/admin/settings");
   });
 

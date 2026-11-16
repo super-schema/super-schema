@@ -14,6 +14,7 @@ import { environmentBranchSlug } from "@/lib/deployments/git-branch";
 import type { EnvironmentDefinition, EnvironmentDetails, EnvironmentWorkflowUsage } from "@/lib/deployments/contracts";
 import { cn } from "@/lib/utils";
 
+import { NativeSelect } from "@/components/ui/native-select";
 /** `original` is the saved name a row was loaded with; new rows have none. */
 export type EnvironmentRow = EnvironmentDefinition & { key: string; original?: string };
 let next = 0;
@@ -138,10 +139,10 @@ export function EnvironmentWorkflowChanges({ saved, rows, usage, reassign, onRea
       return <div key={name} className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span><span className="font-mono">{name}</span> is removed. Its {usage[name].length === 1 ? "workflow" : `${usage[name].length} workflows`}:</span>
-          <select aria-label={`Workflows of ${name}`} className="h-8 rounded-md border border-input bg-background px-2 text-sm" value={choice ?? "__disable"} onChange={(e) => onReassign(name, e.target.value === "__disable" ? null : e.target.value)}>
+          <NativeSelect aria-label={`Workflows of ${name}`} className="h-8" value={choice ?? "__disable"} onChange={(e) => onReassign(name, e.target.value === "__disable" ? null : e.target.value)}>
             {targets.map((t) => <option key={t} value={t}>Move to {t}</option>)}
             <option value="__disable">Disable</option>
-          </select>
+          </NativeSelect>
         </div>
         {list(usage[name])}
       </div>;

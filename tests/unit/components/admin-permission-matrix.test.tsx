@@ -65,7 +65,7 @@ describe.each(PERSONAS)("$who on /admin", ({ assignments, scopes, sees, tabs }) 
   });
 
   it("is shown the tabs they may use, and the right screen", async () => {
-    expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-testid")?.replace("admin-tab-", ""))).toEqual(tabs);
+    expect(Array.from(screen.getByRole("navigation", { name: "Administration" }).querySelectorAll("a")).map((tab) => tab.getAttribute("data-testid")?.replace("admin-tab-", ""))).toEqual(tabs);
     if (sees === "users") {
       expect(await screen.findByTestId("user-table")).toBeTruthy();
       expect(screen.queryByTestId("admin-no-permission")).toBeNull();

@@ -13,6 +13,8 @@ import {
 } from "./avro-serialize";
 import { ReferenceTargetPicker } from "./ReferenceTargetPicker";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 function newField(): AvroField {
   return {
     id: crypto.randomUUID(),
@@ -147,23 +149,20 @@ export function AvroVisualEditor({
                   onChange={(e) => update(field.id, { name: e.target.value })}
                   className={`${inputCls} flex-1 text-mono-small`}
                 />
-                <select
+                <NativeSelect
                   value={field.type}
                   onChange={(e) => update(field.id, { type: e.target.value as AvroFieldType })}
-                  className={inputCls}
                 >
                   {AVRO_FIELD_TYPES.map((t) => (
                     <option key={t} value={t}>
                       {t}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
                 <label className="flex items-center gap-1 text-caption text-muted-foreground">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={field.nullable}
                     onChange={(e) => update(field.id, { nullable: e.target.checked })}
-                    className="accent-primary"
                   />
                   nullable
                 </label>
@@ -310,17 +309,17 @@ function AdvancedFields({
       {field.type === "array" && (
         <>
           <Labeled label="items type">
-            <select
+            <NativeSelect
               value={field.itemsType ?? "string"}
               onChange={(e) => set({ itemsType: e.target.value as AvroFieldType })}
-              className={`${inputCls} w-full`}
+              className="w-full"
             >
               {AVRO_ELEMENT_TYPES.map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </Labeled>
           {field.itemsType === "reference" && (
             <div className="col-span-2">
@@ -339,17 +338,17 @@ function AdvancedFields({
       {field.type === "map" && (
         <>
           <Labeled label="values type">
-            <select
+            <NativeSelect
               value={field.valuesType ?? "string"}
               onChange={(e) => set({ valuesType: e.target.value as AvroFieldType })}
-              className={`${inputCls} w-full`}
+              className="w-full"
             >
               {AVRO_ELEMENT_TYPES.map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </Labeled>
           {field.valuesType === "reference" && (
             <div className="col-span-2">
@@ -386,10 +385,10 @@ function AdvancedFields({
         />
       </Labeled>
       <Labeled label="order">
-        <select
+        <NativeSelect
           value={field.order ?? ""}
           onChange={(e) => set({ order: (e.target.value || undefined) as AvroField["order"] })}
-          className={`${inputCls} w-full`}
+          className="w-full"
         >
           <option value="">(default)</option>
           {AVRO_ORDERS.map((o) => (
@@ -397,7 +396,7 @@ function AdvancedFields({
               {o}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </Labeled>
     </div>
   );

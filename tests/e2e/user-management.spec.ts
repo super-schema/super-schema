@@ -145,7 +145,6 @@ test.describe("invitations", () => {
 
         // No Admin link (an AUTHOR administers nothing), and /admin says so instead of showing an empty shell.
         await expect(invitee.getByTestId("nav-admin")).toHaveCount(0);
-        await expect(invitee.getByTestId("topbar-admin")).toHaveCount(0);
         await invitee.goto("/admin");
         await expect(invitee.getByTestId("admin-no-permission")).toBeVisible();
         await expect(invitee.getByTestId("user-table")).toHaveCount(0);
@@ -422,7 +421,6 @@ test.describe("who sees what", () => {
           const page = await context.newPage();
           await signInThroughLoginPage(page, adminEmail, GOOD_PASSWORD);
           await expect(page.getByTestId("nav-admin")).toBeVisible();
-          await expect(page.getByTestId("topbar-admin")).toBeVisible();
           await openUsersPage(page);
 
           // The tabs: the tenant's own, no platform ones.
@@ -483,7 +481,6 @@ test.describe("who sees what", () => {
         await expect(page.getByTestId("topbar")).toBeVisible();
         await expect(page.getByTestId("nav-schemas")).toBeVisible();
         await expect(page.getByTestId("nav-admin")).toHaveCount(0);
-        await expect(page.getByTestId("topbar-admin")).toHaveCount(0);
 
         await page.goto("/admin");
         await expect(page.getByTestId("admin-no-permission")).toBeVisible();

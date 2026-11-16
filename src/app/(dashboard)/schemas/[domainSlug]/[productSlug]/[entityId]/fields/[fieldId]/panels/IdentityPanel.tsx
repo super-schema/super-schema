@@ -2,10 +2,7 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { FieldGroup, FieldDescription } from "@/components/ui/field";
-import {
-  AttributeControl,
-  SELECT_CLASS,
-} from "@/components/custom/FieldAttributes/AttributeControl";
+import { AttributeControl } from "@/components/custom/FieldAttributes/AttributeControl";
 import {
   defaultInput,
   storedDefaultText,
@@ -16,6 +13,8 @@ import type {
   ValidationConstraints,
 } from "@/types/schemas/typespec-decorator.schema";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 interface Props {
   validation?: ValidationConstraints;
   identity: Identity;
@@ -72,12 +71,11 @@ export function IdentityPanel({
       <fieldset className="flex min-w-0 flex-col gap-3">
         <legend className="mb-2 text-sm font-medium">Presence and value</legend>
         <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={!isOptional}
             disabled={isKey}
             onChange={(e) => onOptionalChange(!e.target.checked)}
-            className="mt-1 accent-primary"
+            className="mt-1"
           />
           <span>
             Required
@@ -89,12 +87,11 @@ export function IdentityPanel({
         </label>
         {onAllowNullChange && (
           <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={allowNull}
               disabled={isKey}
               onChange={(e) => onAllowNullChange(e.target.checked)}
-              className="mt-1 accent-primary"
+              className="mt-1"
             />
             <span>
               Allow null
@@ -120,9 +117,8 @@ export function IdentityPanel({
         }
       >
         {fieldType === "boolean" ? (
-          <select
+          <NativeSelect
             data-testid="field-default-value"
-            className={SELECT_CLASS}
             value={
               identity.defaultValue == null ? "" : String(identity.defaultValue)
             }
@@ -136,7 +132,7 @@ export function IdentityPanel({
             <option value="">No default</option>
             <option value="true">true</option>
             <option value="false">false</option>
-          </select>
+          </NativeSelect>
         ) : (
           <Input
             data-testid="field-default-value"
@@ -158,8 +154,7 @@ export function IdentityPanel({
         )}
       </AttributeControl>
       <label className="flex items-start gap-2 text-sm">
-        <input
-          type="checkbox"
+        <Checkbox
           checked={isKey}
           onChange={(e) => {
             if (e.target.checked) {
@@ -168,7 +163,7 @@ export function IdentityPanel({
             }
             update({ key: e.target.checked });
           }}
-          className="mt-1 accent-primary"
+          className="mt-1"
         />
         <span>
           Key

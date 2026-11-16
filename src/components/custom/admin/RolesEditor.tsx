@@ -10,6 +10,7 @@ import { GuardedButton } from "./GuardedButton";
 import { ScopePicker } from "./ScopePicker";
 import { ASSIGNABLE_ROLES, defaultSelection, reconcileSelection, roleLabel, selectionToInput, type ScopeSelection } from "./scope-selection";
 
+import { NativeSelect } from "@/components/ui/native-select";
 interface RolesEditorProps {
   userId: string;
   roles: ListedRole[];
@@ -18,7 +19,6 @@ interface RolesEditorProps {
   onChanged?: () => void;
 }
 
-const FIELD_CLASS = "w-full bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary";
 
 /**
  * The roles of one person, and assigning more: a role is granted AT a scope (the platform, a tenant, a domain or a product), chosen with the scope picker
@@ -150,7 +150,7 @@ export function RolesEditor({ userId, roles, scopes, onChanged }: RolesEditorPro
         <div data-testid="role-add-form" className="p-space-3 rounded-md border border-border space-y-space-3">
           <div className="space-y-space-1">
             <label htmlFor="role-add-select" className="block text-caption text-muted-foreground">Role</label>
-            <select
+            <NativeSelect
               id="role-add-select"
               data-testid="role-add-select"
               value={newRole}
@@ -159,12 +159,11 @@ export function RolesEditor({ userId, roles, scopes, onChanged }: RolesEditorPro
                 setNewRole(role);
                 setSelection((current) => reconcileSelection(current, scopes.scopes, scopes.canGrantPlatform, role));
               }}
-              className={FIELD_CLASS}
             >
               {ASSIGNABLE_ROLES.map((role) => (
                 <option key={role} value={role}>{role}</option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
 
           <ScopePicker scopes={scopes} role={newRole} value={selection} onChange={setSelection} idPrefix={`role-add-${userId}`} />

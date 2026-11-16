@@ -26,6 +26,8 @@ import {
   ParsedFieldSummaryBadges,
 } from "./ParsedFieldDetails";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 /**
  * Multi-asset import review, shared by every format that can define several
  * assets in one document (TypeSpec, OpenAPI, Protobuf, Avro, JSON Schema).
@@ -224,10 +226,10 @@ export function TypeSpecImportReviewScreen({
 
       <div>
         <label className="text-caption text-muted-foreground mb-1 block">Target Domain</label>
-        <select
+        <NativeSelect
           value={selectedDomainId}
           onChange={(event) => setSelectedDomainId(event.target.value)}
-          className="w-full h-8 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          className="w-full h-8"
         >
           {domains.map((domain) => (
             <option key={domain.id} value={domain.id}>
@@ -235,7 +237,7 @@ export function TypeSpecImportReviewScreen({
               {suggestedDomain?.id === domain.id ? " (from namespace)" : ""}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
 
       {danglingCount > 0 && (
@@ -266,12 +268,11 @@ export function TypeSpecImportReviewScreen({
             {importResult.models.map((model, index) => (
               <div key={model.name} className="rounded-lg border border-border/50" data-testid={`import-model-${model.name}`}>
                 <div className="flex items-start gap-2 px-3 py-2">
-                  <input
+                  <Checkbox
                     aria-label={`${model.name} model`}
-                    type="checkbox"
                     checked={selectedModels.has(index)}
                     onChange={() => toggleModel(index)}
-                    className="rounded mt-0.5"
+                    className="mt-0.5"
                   />
                   <button
                     type="button"
@@ -323,13 +324,11 @@ export function TypeSpecImportReviewScreen({
                     )}
                   </div>
                   <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap pt-0.5">
-                    <input
+                    <Checkbox
                       aria-label={`${model.name} entity`}
-                      type="checkbox"
                       checked={selectedEntities.has(index)}
                       disabled={!selectedModels.has(index)}
                       onChange={() => toggleEntity(index)}
-                      className="rounded"
                     />
                     Register as entity
                   </label>
@@ -379,12 +378,10 @@ export function TypeSpecImportReviewScreen({
             {importResult.sharedEnums.map((sharedEnum, index) => (
               <div key={sharedEnum.name} className="rounded-lg border border-border/50 px-3 py-2" data-testid={`import-enum-${sharedEnum.name}`}>
                 <div className="flex items-center gap-2">
-                  <input
+                  <Checkbox
                     aria-label={`${sharedEnum.name} enum`}
-                    type="checkbox"
                     checked={selectedEnums.has(index)}
                     onChange={() => toggleSelection(index, selectedEnums, setSelectedEnums)}
-                    className="rounded"
                   />
                   <span className="text-body-small font-medium text-foreground">{sharedEnum.name}</span>
                   <span className="text-caption text-muted-foreground">{sharedEnum.values.join(", ")}</span>
@@ -405,12 +402,10 @@ export function TypeSpecImportReviewScreen({
             {importResult.customScalars.map((scalar, index) => (
               <div key={scalar.name} className="rounded-lg border border-border/50 px-3 py-2">
                 <div className="flex items-center gap-2">
-                  <input
+                  <Checkbox
                     aria-label={`${scalar.name} scalar`}
-                    type="checkbox"
                     checked={selectedScalars.has(index)}
                     onChange={() => toggleSelection(index, selectedScalars, setSelectedScalars)}
-                    className="rounded"
                   />
                   <span className="text-body-small font-medium text-foreground">{scalar.name}</span>
                   <span className="text-caption text-muted-foreground">extends {scalar.baseType}</span>
@@ -441,12 +436,10 @@ export function TypeSpecImportReviewScreen({
             {importResult.unions.map((unionType, index) => (
               <div key={unionType.name} className="rounded-lg border border-border/50 px-3 py-2">
                 <div className="flex items-center gap-2">
-                  <input
+                  <Checkbox
                     aria-label={`${unionType.name} union`}
-                    type="checkbox"
                     checked={selectedUnions.has(index)}
                     onChange={() => toggleSelection(index, selectedUnions, setSelectedUnions)}
-                    className="rounded"
                   />
                   <span className="text-body-small font-medium text-foreground">{unionType.name}</span>
                   <span className="text-caption text-muted-foreground">{unionType.memberTypes.join(" | ")}</span>
@@ -467,12 +460,10 @@ export function TypeSpecImportReviewScreen({
             {importResult.services.map((service, index) => (
               <div key={service.name} className="rounded-lg border border-border/50 px-3 py-2">
                 <div className="flex items-center gap-2">
-                  <input
+                  <Checkbox
                     aria-label={`${service.name} api`}
-                    type="checkbox"
                     checked={selectedServices.has(index)}
                     onChange={() => toggleSelection(index, selectedServices, setSelectedServices)}
-                    className="rounded"
                   />
                   <span className="text-body-small font-medium text-foreground">{service.name}</span>
                   <Badge variant="secondary" className="text-[10px] h-4">
@@ -499,14 +490,12 @@ export function TypeSpecImportReviewScreen({
             {importResult.decoratorDefinitions.map((decorator, index) => (
               <div key={decorator.name} className="rounded-lg border border-border/50 px-3 py-2">
                 <div className="flex items-center gap-2">
-                  <input
+                  <Checkbox
                     aria-label={`${decorator.name} decorator`}
-                    type="checkbox"
                     checked={selectedDecorators.has(index)}
                     onChange={() =>
                       toggleSelection(index, selectedDecorators, setSelectedDecorators)
                     }
-                    className="rounded"
                   />
                   <span className="text-body-small font-medium text-foreground">{decorator.name}</span>
                   {decorator.targetTypes.length > 0 && (

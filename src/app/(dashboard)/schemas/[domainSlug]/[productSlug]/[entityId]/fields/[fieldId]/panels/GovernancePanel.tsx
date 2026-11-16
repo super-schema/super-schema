@@ -2,13 +2,12 @@
 import { Input } from "@/components/ui/input";
 import { FieldGroup, FieldDescription } from "@/components/ui/field";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
-import {
-  AttributeControl,
-  SELECT_CLASS,
-} from "@/components/custom/FieldAttributes/AttributeControl";
+import { AttributeControl } from "@/components/custom/FieldAttributes/AttributeControl";
 import { JsonObjectControl } from "@/components/custom/FieldAttributes/JsonObjectControl";
 import type { Governance } from "@/types/schemas/typespec-decorator.schema";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 export interface PolicyContext {
   source: string;
   retention?: string;
@@ -60,11 +59,10 @@ export function GovernancePanel({
       </AttributeControl>
       {onSecretChange && (
         <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={secret ?? false}
             onChange={(e) => onSecretChange(e.target.checked)}
-            className="mt-1 accent-primary"
+            className="mt-1"
           />
           <span>
             Secret
@@ -120,8 +118,7 @@ export function GovernancePanel({
         label="Data treatment"
         help="A required treatment policy. Masking, hashing, and pseudonymization do not by themselves guarantee anonymity."
       >
-        <select
-          className={SELECT_CLASS}
+        <NativeSelect
           value={
             Object.hasOwn(g, "anonymization")
               ? (g.anonymization ?? "none")
@@ -151,7 +148,7 @@ export function GovernancePanel({
             !["mask", "hash", "redact", "pseudonymize"].includes(
               g.anonymization,
             ) && <option>{g.anonymization}</option>}
-        </select>
+        </NativeSelect>
       </AttributeControl>
       <fieldset className="flex min-w-0 flex-col gap-3">
         <legend className="mb-2 text-sm font-medium">
@@ -164,8 +161,7 @@ export function GovernancePanel({
           </FieldDescription>
         )}
         <AttributeControl label="Encryption scope">
-          <select
-            className={SELECT_CLASS}
+          <NativeSelect
             value={encryption.scope ?? ""}
             onChange={(e) =>
               updateEncryption({ scope: e.target.value || null })
@@ -175,7 +171,7 @@ export function GovernancePanel({
             <option value="field-level">Field-level</option>
             <option value="at-rest">At rest</option>
             <option value="in-transit">In transit</option>
-          </select>
+          </NativeSelect>
         </AttributeControl>
         <AttributeControl label="Encryption algorithm">
           <Input
@@ -241,8 +237,7 @@ export function StorageHintsPanel({
       </FieldDescription>
       {(["partition", "index", "cluster"] as const).map((key) => (
         <label key={key} className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={g.operationalHints?.[key] ?? false}
             onChange={(e) =>
               onChange({
@@ -253,7 +248,7 @@ export function StorageHintsPanel({
                 },
               })
             }
-            className="mt-1 accent-primary"
+            className="mt-1"
           />
           <span>
             {

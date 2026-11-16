@@ -61,14 +61,10 @@ describe("TopBar navigation", () => {
     expect(profileLink.getAttribute("href")).toBe("/admin/settings");
   });
 
-  it("shows the Admin link only when the person has an admin right (off by default, personal settings stay in the user menu)", () => {
+  it("has no Administration link of its own (the activity bar is the one way in), and keeps Profile in the user menu", () => {
     render(<TopBar />);
     expect(screen.queryByTestId("topbar-admin")).toBeNull();
     expect(screen.queryByRole("link", { name: "Administration" })).toBeNull();
-    cleanup();
-
-    render(<TopBar showAdmin />);
-    expect(screen.getByRole("link", { name: "Administration" }).getAttribute("href")).toBe("/admin");
     expect(screen.getByRole("link", { name: "Profile" }).getAttribute("href")).toBe("/admin/settings");
   });
 });

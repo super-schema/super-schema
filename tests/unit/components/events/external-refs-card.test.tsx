@@ -19,6 +19,7 @@ import { updateDuplicateText } from "@/features/events/builder/labels";
 import type { DocExternalRef, DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import type { ExternalItemKind, ExternalRefInput, ExternalRefStatus, ExternalVersionItems } from "@/lib/events/external-refs";
 import { renderSection, sampleDocument } from "./builder-harness";
+import { answerConfirm, expectNoConfirm, findConfirm } from "../../../helpers/confirm-dialog";
 
 beforeAll(() => {
   globalThis.ResizeObserver ??= class { observe() { /* no layout */ } unobserve() { /* no layout */ } disconnect() { /* no layout */ } } as unknown as typeof ResizeObserver;
@@ -436,8 +437,8 @@ describe("ExternalRefsCard: Update", () => {
     await statusOf("Order-placed");
     click("external-ref-update-Order-placed");
     await screen.findByTestId("external-ref-refused-Order-placed");
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     click("external-ref-remove-Order-placed");
+    await answerConfirm(true);
     expect(missing("external-ref-refused-Order-placed")).toBe(true);
   });
 
@@ -539,27 +540,27 @@ describe("ExternalRefsCard: Update", () => {
 
 describe("ExternalRefsCard: Remove", () => {
   it("removes a reference nothing uses at once, without asking", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = renderCard("message", docWith([MSG, CHAN]));
     await screen.findByTestId("external-ref-row-Order-placed");
     expect(missing("external-ref-usage-Order-placed")).toBe(true);
     click("external-ref-remove-Order-placed");
-    expect(confirm).not.toHaveBeenCalled();
+    expectNoConfirm();
     expect(probe.draft.doc.externalRefs).toEqual([CHAN]);
     expect(probe.draft.dirty).toBe(true);
   });
 
   it("shows what uses a reference, and asks first with the impact before removing it from the channels and operations that use it", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = renderCard("message", docWith([MSG], { message: true }));
     await screen.findByTestId("external-ref-row-Order-placed");
     expect(text("external-ref-usage-Order-placed")).toBe("Used by 1 channel and 2 operations");
     click("external-ref-remove-Order-placed");
-    expect(confirm).toHaveBeenCalledTimes(1);
-    const question = String(confirm.mock.calls[0][0]);
-    expect(question).toContain('"Order-placed"');
-    expect(question).toContain("2 operations (receivePlaced, auditPlaced)");
-    expect(question).toContain("1 channel (orders)");
+    const { title, description } = await findConfirm();
+    expect(title).toBe('Remove external message "Order-placed"?');
+    expect(description).toContain('"Order-placed"');
+    expect(description).toContain("2 operations (receivePlaced, auditPlaced)");
+    expect(description).toContain("1 channel (orders)");
+    expect(probe.draft.doc.externalRefs).toEqual([MSG]); // nothing changes until it is confirmed
+    await answerConfirm(true);
     expect(probe.draft.doc.externalRefs).toEqual([]);
     expect(probe.draft.doc.channels[0].messageKeys).toEqual(["OrderCreated"]);
     expect(probe.draft.doc.operations.map((o) => o.messageKeys)).toEqual([["OrderCreated"], [], []]);
@@ -567,24 +568,26 @@ describe("ExternalRefsCard: Remove", () => {
   });
 
   it("changes nothing when the confirmation is declined", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     const doc = docWith([MSG], { message: true });
     const { probe } = renderCard("message", doc);
     await screen.findByTestId("external-ref-row-Order-placed");
     click("external-ref-remove-Order-placed");
+    await findConfirm();
+    await answerConfirm(false);
     expect(probe.draft.doc).toEqual(doc);
     expect(probe.draft.dirty).toBe(false);
   });
 
   it("removing a channel reference an operation uses deletes those operations, as removing a local channel does", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { probe } = renderCard("channel", docWith([CHAN], { channel: true }));
     await screen.findByTestId("external-ref-row-billing-topic");
     expect(text("external-ref-usage-billing-topic")).toBe("Used by 1 operation");
     click("external-ref-remove-billing-topic");
-    const question = String(confirm.mock.calls[0][0]);
-    expect(question).toContain("delete");
-    expect(question).toContain("receiveBilling");
+    const { title, description } = await findConfirm();
+    expect(title).toBe('Remove external channel "billing-topic"?');
+    expect(description).toContain("delete");
+    expect(description).toContain("receiveBilling");
+    await answerConfirm(true);
     expect(probe.draft.doc.externalRefs).toEqual([]);
     expect(probe.draft.doc.operations.map((o) => o.key)).toEqual(["publishOrder"]);
     expect(probe.draft.problems).toEqual([]);

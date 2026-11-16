@@ -5,9 +5,9 @@ import type { Role } from "@/types/schemas/rbac";
 import type { GrantableScopes } from "@/types/schemas/user-admin";
 import { EMPTY_SCOPE, describeSelection, domainOptions, platformOffered, productOptions, tenantOptions, type ScopeSelection } from "./scope-selection";
 
+import { NativeSelect } from "@/components/ui/native-select";
 const PLATFORM_VALUE = "__platform__";
 
-const SELECT_CLASS = "w-full bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary";
 const LABEL_CLASS = "block text-caption text-muted-foreground";
 
 interface ScopePickerProps {
@@ -43,10 +43,9 @@ export function ScopePicker({ scopes, role, value, onChange, disabled, idPrefix 
 
       <div className="space-y-space-1">
         <label htmlFor={`${id}-tenant`} className={LABEL_CLASS}>Tenant</label>
-        <select
+        <NativeSelect
           id={`${id}-tenant`}
           data-testid="scope-tenant"
-          className={SELECT_CLASS}
           value={value.platform ? PLATFORM_VALUE : value.tenantId}
           onChange={(event) => {
             const next = event.target.value;
@@ -59,16 +58,15 @@ export function ScopePicker({ scopes, role, value, onChange, disabled, idPrefix 
           {tenants.map((tenant) => (
             <option key={tenant.scopeKey} value={tenant.tenantId ?? ""}>{tenant.tenantName}</option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
 
       {!value.platform && value.tenantId && domains.length > 0 && (
         <div className="space-y-space-1">
           <label htmlFor={`${id}-domain`} className={LABEL_CLASS}>Domain</label>
-          <select
+          <NativeSelect
             id={`${id}-domain`}
             data-testid="scope-domain"
-            className={SELECT_CLASS}
             value={value.domainId}
             onChange={(event) => onChange({ platform: false, tenantId: value.tenantId, domainId: event.target.value, productId: "" })}
           >
@@ -76,17 +74,16 @@ export function ScopePicker({ scopes, role, value, onChange, disabled, idPrefix 
             {domains.map((domain) => (
               <option key={domain.scopeKey} value={domain.domainId ?? ""}>{domain.domainName}</option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
       )}
 
       {!value.platform && value.domainId && products.length > 0 && (
         <div className="space-y-space-1">
           <label htmlFor={`${id}-product`} className={LABEL_CLASS}>Product</label>
-          <select
+          <NativeSelect
             id={`${id}-product`}
             data-testid="scope-product"
-            className={SELECT_CLASS}
             value={value.productId}
             onChange={(event) => onChange({ ...value, productId: event.target.value })}
           >
@@ -94,7 +91,7 @@ export function ScopePicker({ scopes, role, value, onChange, disabled, idPrefix 
             {products.map((product) => (
               <option key={product.scopeKey} value={product.productId ?? ""}>{product.productName}</option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
       )}
 

@@ -12,12 +12,13 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import type { JsonObject, JsonSchemaDialect, PayloadFormat } from "@/lib/event-specs/types";
 import type { DocChannel, DocChannelParameter, DocServer, DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import { JSON_SCHEMA_DIALECTS } from "@/lib/events/inputs";
 import { TEMPLATES } from "@/lib/events/templates";
 import { autoRenameKey, leftForm, newKey } from "../auto-key";
-import { Field, ProtocolInput, selectClass } from "../controls";
+import { Field, ProtocolInput } from "../controls";
 import type { SectionProps } from "../EventBuilder";
 import { AttributesSection } from "@/components/custom/metadata/AttributesSection";
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
@@ -37,6 +38,7 @@ import {
   renameAndSelect, setMessageAllowed, withoutChannel,
 } from "./graph-parts";
 
+import { NativeSelect } from "@/components/ui/native-select";
 export {
   allChannelKeys, allMessageKeys, blockedText, CheckboxGroup, Notice, operationsUsingMessage, plural, renameAndSelect, setMessageAllowed,
 } from "./graph-parts";
@@ -203,6 +205,7 @@ function ChannelForm({ draft, index, channel, problems, context, definitions, on
   context: TemplateFormContext; definitions: readonly MetadataAttributeDefinition[]; onSelectItem: (key: string | null) => void;
 }) {
   const { doc, update } = draft;
+  const { confirm, confirmDialog } = useConfirm();
   const [blocked, setBlocked] = useState<string | null>(null);
   const prefix = `/channels/${index}`;
   const errorAt = (suffix: string) => problemMessage(problemsByField(problems, `${prefix}${suffix}`));
@@ -276,7 +279,7 @@ function ChannelForm({ draft, index, channel, problems, context, definitions, on
     });
   }
 
-  function remove() {
+  async function remove() {
     const key = channel.key;
     const onIt = doc.operations.filter((o) => o.channelKey === key);
     const replyingOnIt = doc.operations.filter((o) => o.channelKey !== key && o.reply?.channelKey === key);
@@ -285,7 +288,13 @@ function ChannelForm({ draft, index, channel, problems, context, definitions, on
         onIt.length > 0 ? `delete ${plural(onIt.length, "operation")} (${onIt.map((o) => o.key).join(", ")})` : null,
         replyingOnIt.length > 0 ? `remove the reply of ${plural(replyingOnIt.length, "operation")} (${replyingOnIt.map((o) => o.key).join(", ")})` : null,
       ].filter(Boolean).join(" and ");
-      if (!window.confirm(`Channel "${key}" is used by operations. Removing it will ${consequences}. Remove it?`)) return;
+      const ok = await confirm({
+        title: `Remove channel "${key}"?`,
+        description: `Channel "${key}" is used by operations. Removing it will ${consequences}.`,
+        confirmLabel: "Remove",
+        destructive: true,
+      });
+      if (!ok) return;
     }
     update((d) => {
       const channelsLeft = d.channels.filter((_, i) => i !== index);
@@ -303,6 +312,7 @@ function ChannelForm({ draft, index, channel, problems, context, definitions, on
 
   return (
     <div className="max-w-2xl space-y-space-4" data-testid="channel-form">
+      {confirmDialog}
       <div onBlur={(e) => { if (leftForm(e)) nameKeyFromContent(); }} className="space-y-space-6">
         <section aria-labelledby="channel-lives-heading" className="space-y-space-4 rounded-lg border border-border p-space-4">
           <h3 id="channel-lives-heading" className="text-body font-medium text-foreground">Where it lives</h3>
@@ -375,21 +385,21 @@ function ChannelForm({ draft, index, channel, problems, context, definitions, on
                   label="Override the payload format for every message on this channel" htmlFor="channel-format-override" error={formatProblem}
                   hint="Leave on Auto: each message then uses its own representation. Choose a format only to force all of this channel's messages into it."
                 >
-                  <select
-                    id="channel-format-override" data-testid="channel-format-override" className={selectClass} value={channel.format ?? ""}
+                  <NativeSelect
+                    id="channel-format-override" data-testid="channel-format-override" value={channel.format ?? ""}
                     onChange={(e) => setFormat(e.target.value)}
                   >
                     {FORMAT_CHOICES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
-                  </select>
+                  </NativeSelect>
                 </Field>
                 {channel.format === "json-schema" && (
                   <Field label="JSON Schema dialect" htmlFor="channel-dialect" error={dialectProblem}>
-                    <select
-                      id="channel-dialect" data-testid="channel-dialect" className={selectClass} value={dialect}
+                    <NativeSelect
+                      id="channel-dialect" data-testid="channel-dialect" value={dialect}
                       onChange={(e) => patch((c) => ({ ...c, formatDialect: e.target.value as JsonSchemaDialect }))}
                     >
                       {JSON_SCHEMA_DIALECTS.map((d) => <option key={d} value={d}>{d}</option>)}
-                    </select>
+                    </NativeSelect>
                   </Field>
                 )}
               </div>
@@ -410,7 +420,7 @@ function ChannelForm({ draft, index, channel, problems, context, definitions, on
       />
 
       <div className="flex justify-end">
-        <Button type="button" variant="outline" onClick={remove} data-testid="channel-remove" className="gap-space-2 text-muted-foreground hover:text-destructive">
+        <Button type="button" variant="outline" onClick={() => { void remove(); }} data-testid="channel-remove" className="gap-space-2 text-muted-foreground hover:text-destructive">
           <Trash2 className="size-4" /> Remove channel
         </Button>
       </div>

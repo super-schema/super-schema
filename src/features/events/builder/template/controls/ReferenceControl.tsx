@@ -4,9 +4,10 @@
 // kind "reference": a select (one) or a checkbox list (`multiple`) over `context.references[field.refersTo]`. The value is the chosen
 // option's `value` (a string, or an array of strings). A value that is no longer offered stays visible and is flagged "unavailable",
 // so the user can see it and remove it.
-import { selectClass } from "../../controls";
 import type { ControlProps } from "./types";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 const NOUNS: Record<string, string> = {
   server: "servers", channel: "channels", message: "messages", securityScheme: "security schemes",
   messageTrait: "message properties", operationTrait: "operation properties",
@@ -30,8 +31,7 @@ export function ReferenceControl({ field, id, value, onChange, disabled, require
             {all.map((o) => (
               <li key={o.value}>
                 <label className="flex items-center gap-space-2 text-body-small text-foreground" title={o.hint}>
-                  <input
-                    type="checkbox" data-testid={`${id}-option-${o.value}`} className="size-4 shrink-0 accent-primary" disabled={disabled}
+                  <Checkbox data-testid={`${id}-option-${o.value}`} className="shrink-0" disabled={disabled}
                     checked={current.includes(o.value)}
                     onChange={(e) => onChange(e.target.checked ? [...current, o.value] : current.filter((v) => v !== o.value))}
                   />
@@ -54,15 +54,15 @@ export function ReferenceControl({ field, id, value, onChange, disabled, require
   const unavailable = current !== "" && !options.some((o) => o.value === current);
   return (
     <>
-      <select
-        id={id} data-testid={id} className={selectClass} value={current} disabled={disabled}
+      <NativeSelect
+        id={id} data-testid={id} value={current} disabled={disabled}
         aria-required={required || undefined} aria-invalid={invalid ? true : undefined} aria-describedby={describedBy}
         onChange={(e) => onChange(e.target.value)}
       >
         <option value="">{required ? "Select…" : "— none —"}</option>
         {options.map((o) => <option key={o.value} value={o.value} title={o.hint}>{o.label}</option>)}
         {unavailable && <option value={current}>{`${current} (unavailable)`}</option>}
-      </select>
+      </NativeSelect>
       {empty}
       {unavailable && (
         <p id={`${id}-unavailable`} data-testid={`${id}-unavailable`} className="text-caption text-warning">

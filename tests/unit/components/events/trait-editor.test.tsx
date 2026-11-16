@@ -12,6 +12,7 @@ vi.mock("@/app/(dashboard)/schemas/trait-actions", () => ({ updateTraitAction: h
 import { TraitEditor } from "@/features/events/traits/TraitEditor";
 import { GENERIC_ACTION_ERROR } from "@/lib/action-error";
 import { BUNDLED_TRAITS } from "@/lib/events/bundled-traits";
+import { answerConfirm, findConfirm } from "../../../helpers/confirm-dialog";
 
 const base = {
   owner: { level: "TENANT" as const, tenantId: "t" },
@@ -255,20 +256,21 @@ describe("TraitEditor: errors and delete", () => {
   });
 
   it("deletes after confirmation, naming the message properties, and returns to the list; declining or failing leaves the page alone", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<TraitEditor {...base} trait={messageTrait} />);
     fireEvent.click(id("trait-delete"));
-    expect(confirm).toHaveBeenCalledWith('Delete message properties "AuditHeaders"?');
+    expect((await findConfirm()).title).toBe('Delete message properties "AuditHeaders"?');
+    await answerConfirm(false);
     expect(h.deleteTraitAction).not.toHaveBeenCalled();
-    confirm.mockReturnValue(true);
     h.deleteTraitAction.mockResolvedValueOnce({ success: false, error: "Trait is in use", code: "IN_USE" });
     fireEvent.click(id("trait-delete"));
+    await answerConfirm(true);
     expect((await screen.findByTestId("trait-error")).textContent).toMatch(/in use/);
     expect(h.push).not.toHaveBeenCalled();
     // Neither a declined confirmation nor a refused delete refreshes the explorer: nothing was deleted.
     expect(h.invalidate).not.toHaveBeenCalled();
     h.deleteTraitAction.mockResolvedValueOnce({ success: true, data: { id: "t1" } });
     fireEvent.click(id("trait-delete"));
+    await answerConfirm(true);
     await waitFor(() => expect(h.push).toHaveBeenCalledWith(base.listHref));
     expect(h.deleteTraitAction).toHaveBeenLastCalledWith("t1", base.owner);
     expect((id("trait-delete") as HTMLButtonElement).disabled).toBe(true);
@@ -276,10 +278,11 @@ describe("TraitEditor: errors and delete", () => {
     expect(h.invalidate).toHaveBeenCalledTimes(1);
   });
 
-  it("names operation properties in the delete confirmation of an operation set", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("names operation properties in the delete confirmation of an operation set", async () => {
     render(<TraitEditor {...base} trait={operationTrait} />);
     fireEvent.click(id("trait-delete"));
-    expect(confirm).toHaveBeenCalledWith('Delete operation properties "Retry"?');
+    expect((await findConfirm()).title).toBe('Delete operation properties "Retry"?');
+    await answerConfirm(false);
+    expect(h.deleteTraitAction).not.toHaveBeenCalled();
   });
 });

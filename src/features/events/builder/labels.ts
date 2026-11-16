@@ -138,9 +138,6 @@ export const updateRemovedText = (itemKey: string, latest: string, channels: str
     : ` It was also taken out of the allowed messages of ${channels.length} ${channels.length === 1 ? "channel" : "channels"} (${channels.join(", ")}).`;
   return `Removed "${itemKey}": v${latest} no longer has it and no operation used it.${alsoTaken}`;
 };
-/** The question asked before removing a reference that is in use. `used` is what uses it ("2 operations (a, b)"), `consequence` what removing does. */
-export const removeConfirmText = (kind: ExternalItemKind, key: string, used: string, consequence: string): string =>
-  `External ${kind} "${key}" is used by ${used}. Removing it will ${consequence}. Remove it?`;
 
 /** The picker dialog: event → version → item. */
 export const addExternalTitle = (kind: ExternalItemKind): string => `Add a ${kind} from another event`;

@@ -13,6 +13,7 @@ import {
   deleteModelFieldAction,
 } from "../actions";
 
+import { NativeSelect } from "@/components/ui/native-select";
 export interface DomainModelFieldData {
   id: string;
   name: string;
@@ -192,10 +193,10 @@ export function DomainModelsTab({ models }: DomainModelsTabProps) {
                       placeholder="field name"
                       className="h-6 w-28 font-mono text-[11px]"
                     />
-                    <select
+                    <NativeSelect
                       value={newFieldType}
                       onChange={(e) => setNewFieldType(e.target.value)}
-                      className="h-6 rounded border border-border bg-popover px-1 text-[10px] font-mono"
+                      className="h-6 font-mono"
                     >
                       <option value="string">string</option>
                       <option value="int32">int32</option>
@@ -204,7 +205,7 @@ export function DomainModelsTab({ models }: DomainModelsTabProps) {
                       <option value="boolean">boolean</option>
                       <option value="utcDateTime">utcDateTime</option>
                       <option value="bytes">bytes</option>
-                    </select>
+                    </NativeSelect>
                     <Button size="sm" className="h-6 text-[10px] px-2" onClick={() => handleAddField(model.id)}>Add</Button>
                     <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2" onClick={() => { setAddingFieldFor(null); setNewFieldName(""); }}>Cancel</Button>
                   </div>

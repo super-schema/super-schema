@@ -11,6 +11,7 @@ import { CopyableLink } from "./CopyableLink";
 import { ScopePicker } from "./ScopePicker";
 import { ASSIGNABLE_ROLES, defaultSelection, reconcileSelection, roleLabel, selectionToInput, type ScopeSelection } from "./scope-selection";
 
+import { NativeSelect } from "@/components/ui/native-select";
 /** The most roles one invitation carries from this screen (the service allows more; a person with this many needs an administrator's attention). */
 export const MAX_INVITE_ROLES = 10;
 
@@ -146,10 +147,9 @@ function InviteContent({ scopes, scopesError, onClose, onInvited }: { scopes: Gr
           <div className="flex items-end gap-space-2">
             <div className="min-w-0 flex-1 space-y-space-1">
               <label htmlFor={`invite-role-${row.key}`} className="block text-caption text-muted-foreground">{rows.length > 1 ? `Role ${index + 1}` : "Role"}</label>
-              <select
+              <NativeSelect
                 id={`invite-role-${row.key}`}
                 data-testid="invite-role"
-                className={FIELD_CLASS}
                 value={row.role}
                 onChange={(event) => {
                   const role = event.target.value as Role;
@@ -159,7 +159,7 @@ function InviteContent({ scopes, scopesError, onClose, onInvited }: { scopes: Gr
                 {ASSIGNABLE_ROLES.map((role) => (
                   <option key={role} value={role}>{roleLabel(role)}</option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
             {rows.length > 1 && (
               <Button type="button" variant="ghost" size="icon" aria-label={`Remove role ${index + 1}`} data-testid="invite-role-remove" onClick={() => setRows((current) => current.filter((r) => r.key !== row.key))}>

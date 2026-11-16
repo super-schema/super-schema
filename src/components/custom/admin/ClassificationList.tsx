@@ -6,6 +6,7 @@ import { SYSTEM_CLASSIFICATION_DEFAULTS } from "@/types/schemas/classification-t
 import { CLASS_SCALE } from "@/lib/classification-scale";
 import type { ClassificationLevel } from "@/types/schemas/classification-taxonomy";
 
+import { NativeSelect } from "@/components/ui/native-select";
 type ClassificationRow = ClassificationLevel;
 
 export function ClassificationList() {
@@ -125,20 +126,20 @@ export function ClassificationList() {
             </div>
             <div className="space-y-space-1">
               <label htmlFor="classification-class" className="text-caption text-muted-foreground">Class</label>
-              <select
+              <NativeSelect
                 id="classification-class"
                 data-testid="classification-class"
                 required
                 value={newClassNumber}
                 onChange={(e) => setNewClassNumber(parseInt(e.target.value))}
-                className="w-full bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none"
+                className="w-full"
               >
                 {CLASS_SCALE.map((c) => (
                   <option key={c.classNumber} value={c.classNumber}>
                     Class {c.classNumber} — {c.label}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
           </div>
           {/* Preview */}

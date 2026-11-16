@@ -10,6 +10,7 @@ import {
 import type { NotificationItemData } from "@/components/custom/NotificationCenter/NotificationCenter.types";
 import type { NotificationType } from "@/types/schemas/notification";
 
+import { NativeSelect } from "@/components/ui/native-select";
 function getTypeLabel(type: NotificationType): string {
   const labels: Record<NotificationType, string> = {
     APPROVAL_REQUEST: "Approval Request",
@@ -109,7 +110,7 @@ export default function NotificationsPage() {
 
       {/* Filters */}
       <div className="flex gap-4 mb-4">
-        <select
+        <NativeSelect
           data-testid="notification-filter-type"
           aria-label="Type"
           value={filterType}
@@ -117,7 +118,6 @@ export default function NotificationsPage() {
             setFilterType(e.target.value);
             setPage(1);
           }}
-          className="bg-muted border border-border rounded-lg px-3 py-1.5 text-sm"
         >
           <option value="">All Types</option>
           <option value="APPROVAL_REQUEST">Approval Request</option>
@@ -127,9 +127,9 @@ export default function NotificationsPage() {
           <option value="ANNOTATION_TAG">Mention</option>
           <option value="ANNOTATION_REPLY">Reply</option>
           <option value="COMPLIANCE_GAP">Compliance Gap</option>
-        </select>
+        </NativeSelect>
 
-        <select
+        <NativeSelect
           data-testid="notification-filter-read"
           aria-label="Status"
           value={filterRead}
@@ -137,12 +137,11 @@ export default function NotificationsPage() {
             setFilterRead(e.target.value);
             setPage(1);
           }}
-          className="bg-muted border border-border rounded-lg px-3 py-1.5 text-sm"
         >
           <option value="">All Status</option>
           <option value="false">Unread</option>
           <option value="true">Read</option>
-        </select>
+        </NativeSelect>
       </div>
 
       {/* Table */}

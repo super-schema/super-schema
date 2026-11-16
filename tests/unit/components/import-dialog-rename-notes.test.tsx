@@ -54,13 +54,13 @@ function fixtureResult(): TypeSpecImportResult {
 async function importIt() {
   importTypeSpecDocumentActionMock.mockResolvedValue({ success: true, data: fixtureResult() });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const { container } = render(
+  render(
     <QueryClientProvider client={queryClient}>
       <ImportDialog isOpen onClose={vi.fn()} domains={[{ id: "domain-1", name: "Domain" }]} />
     </QueryClientProvider>,
   );
   fireEvent.click(screen.getByRole("button", { name: "Upload File" }));
-  const input = container.querySelector('[data-testid="drop-zone-single"] input[type="file"]') as HTMLInputElement;
+  const input = document.querySelector('[data-testid="drop-zone-single"] input[type="file"]') as HTMLInputElement;
   fireEvent.change(input, { target: { files: [new File(["model X { id: string; }"], "x.tsp", { type: "text/plain" })] } });
   await waitFor(() => expect(screen.getByTestId("typespec-import-review")).toBeDefined());
   fireEvent.click(screen.getByRole("button", { name: /Import \d+ Asset\(s\)/ }));

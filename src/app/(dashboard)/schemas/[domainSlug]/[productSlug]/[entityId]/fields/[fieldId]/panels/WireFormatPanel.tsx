@@ -7,11 +7,9 @@ import {
   FieldDescription,
   FieldError,
 } from "@/components/ui/field";
-import {
-  AttributeControl,
-  SELECT_CLASS,
-} from "@/components/custom/FieldAttributes/AttributeControl";
+import { AttributeControl } from "@/components/custom/FieldAttributes/AttributeControl";
 import type { WireFormat } from "@/types/schemas/typespec-decorator.schema";
+import { NativeSelect } from "@/components/ui/native-select";
 const ENCODINGS: Record<string, string[]> = {
   utcDateTime: ["rfc3339", "rfc7231", "unixTimestamp"],
   offsetDateTime: ["rfc3339", "rfc7231", "unixTimestamp"],
@@ -52,8 +50,7 @@ export function WireFormatPanel({
       </FieldDescription>
       {encodings.length > 0 && (
         <AttributeControl label="Encoding">
-          <select
-            className={SELECT_CLASS}
+          <NativeSelect
             value={w.encode ?? ""}
             onChange={(e) =>
               update({
@@ -73,20 +70,19 @@ export function WireFormatPanel({
             {w.encode && !encodings.includes(w.encode) && (
               <option>{w.encode}</option>
             )}
-          </select>
+          </NativeSelect>
         </AttributeControl>
       )}
       {subtype && (
         <AttributeControl label="Encoded numeric type">
-          <select
-            className={SELECT_CLASS}
+          <NativeSelect
             value={w.encodeSubType ?? "int64"}
             onChange={(e) => update({ encodeSubType: e.target.value })}
           >
             {["int32", "int64", "float64"].map((type) => (
               <option key={type}>{type}</option>
             ))}
-          </select>
+          </NativeSelect>
         </AttributeControl>
       )}
       {w.encode && (

@@ -1,5 +1,7 @@
 "use client";
 
+import { NativeSelect } from "@/components/ui/native-select";
+
 /**
  * Entity reference picker shared by every format's visual editor — JSON
  * Schema's `$ref`, Avro's named-type reference, Protobuf's message reference.
@@ -27,10 +29,10 @@ export function ReferenceTargetPicker({
     <label className="flex flex-col gap-0.5 text-caption text-muted-foreground">
       <span>{label}</span>
       {targets.length > 0 ? (
-        <select
+        <NativeSelect
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className={`${inputCls} w-full`}
+          className="w-full"
         >
           <option value="">(select an entity)</option>
           {targets.map((t) => (
@@ -38,7 +40,7 @@ export function ReferenceTargetPicker({
               {t.name}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       ) : (
         <input
           type="text"

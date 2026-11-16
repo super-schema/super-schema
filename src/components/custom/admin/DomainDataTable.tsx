@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Search, Plus, CheckCircle, Circle, RefreshCw, X } from "lucide-react";
+import { Search, Plus, CheckCircle, Circle, RefreshCw } from "lucide-react";
 import {
   getDomainsAdminAction,
   createDomainAdminAction,
@@ -13,7 +13,10 @@ import type { PolicyTemplate } from "@/types/schemas/domain-policy";
 import type { MetadataAttributeDefinition } from "@/types/schemas/metadata-attribute";
 import { PolicyTemplateEditor } from "./PolicyTemplateEditor";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 interface DomainRow {
   id: string;
@@ -254,94 +257,68 @@ export function DomainDataTable() {
       </Dialog>
 
       {/* Create dialog */}
-      {showCreateDialog && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-space-4"
-          role="dialog"
-          aria-modal="true"
-          data-testid="domain-create-dialog"
-          aria-labelledby="create-domain-title"
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setShowCreateDialog(false);
-          }}
-        >
-          <div className="w-full max-w-md rounded-lg border border-border bg-background p-space-5 shadow-lg">
-            <div className="flex items-center justify-between mb-space-4">
-              <h3 id="create-domain-title" className="text-heading-4 text-foreground">
-                Create Domain
-              </h3>
-              <button
-                onClick={() => setShowCreateDialog(false)}
-                className="text-muted-foreground hover:text-foreground"
-                aria-label="Close"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      <Dialog open={showCreateDialog} onOpenChange={(open) => { if (!open && !creating) setShowCreateDialog(false); }} disablePointerDismissal={creating}>
+        <DialogContent data-testid="domain-create-dialog" className="sm:max-w-md" showCloseButton={!creating}>
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleCreate();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Create Domain</DialogTitle>
+              <DialogDescription>A domain groups the data products, entities and types one team owns.</DialogDescription>
+            </DialogHeader>
 
             {createError && (
               <div
                 role="alert"
                 data-testid="domain-create-error"
-                className="mb-space-3 rounded-md border border-destructive bg-destructive/5 px-space-3 py-space-2 text-body-small text-destructive"
+                className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
               >
                 {createError}
               </div>
             )}
 
-            <div className="space-y-space-3">
-              <div>
-                <label className="block text-body-small text-foreground mb-1" htmlFor="domain-name">
-                  Name
-                </label>
-                <input
+            <FieldGroup className="gap-3">
+              <Field>
+                <FieldLabel htmlFor="domain-name">Name</FieldLabel>
+                <Input
                   id="domain-name"
                   data-testid="domain-create-name"
                   type="text"
                   autoFocus
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  className="w-full rounded-md border border-border bg-background px-space-3 py-1.5 text-body-small text-foreground outline-none focus:border-primary"
                   placeholder="e.g. Payments"
                 />
-              </div>
-              <div>
-                <label className="block text-body-small text-foreground mb-1" htmlFor="domain-description">
-                  Description
-                </label>
-                <textarea
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="domain-description">Description</FieldLabel>
+                <Textarea
                   id="domain-description"
                   data-testid="domain-create-description"
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
                   rows={3}
-                  className="w-full rounded-md border border-border bg-background px-space-3 py-1.5 text-body-small text-foreground outline-none focus:border-primary"
                   placeholder="Optional description"
                 />
-              </div>
-            </div>
+              </Field>
+            </FieldGroup>
 
-            <div className="mt-space-5 flex items-center justify-end gap-space-2">
-              <button
-                onClick={() => setShowCreateDialog(false)}
-                disabled={creating}
-                className="px-space-3 py-1.5 rounded-md border border-border text-body-small text-foreground hover:bg-muted disabled:opacity-50"
-              >
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowCreateDialog(false)} disabled={creating}>
                 Cancel
-              </button>
-              <button
-                onClick={handleCreate}
-                data-testid="domain-create-submit"
-                disabled={creating}
-                className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small disabled:opacity-50"
-              >
-                {creating && <RefreshCw className="w-4 h-4 animate-spin" />}
+              </Button>
+              <Button type="submit" data-testid="domain-create-submit" disabled={creating}>
+                {creating && <RefreshCw className="animate-spin" aria-hidden="true" />}
                 Create
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

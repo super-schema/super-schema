@@ -440,12 +440,14 @@ test.describe("properties of a domain", () => {
     await card.click();
     await expect(page).toHaveURL(new RegExp(`/traits/${id}$`));
 
-    // Delete asks first (a browser confirm): dismissing it keeps the set.
-    page.once("dialog", (dialog) => void dialog.dismiss());
+    // Delete asks first (the in-app confirm dialog): cancelling it keeps the set.
     await centerPanel(page).getByTestId("trait-delete").click();
+    await expect(page.getByTestId("confirm-dialog")).toContainText(`Delete message properties "${renamed}"?`);
+    await page.getByTestId("confirm-dialog-cancel").click();
+    await expect(page.getByTestId("confirm-dialog")).toHaveCount(0);
     await expect(centerPanel(page).getByTestId("trait-editor-name")).toHaveValue(renamed);
-    page.once("dialog", (dialog) => void dialog.accept());
     await centerPanel(page).getByTestId("trait-delete").click();
+    await page.getByTestId("confirm-dialog-confirm").click();
     await expect(page).toHaveURL(new RegExp(`/schemas/${workspace.domainSlug}\\?tab=traits`));
     await expect(centerPanel(page).getByTestId("traits-empty")).toBeVisible();
   });
@@ -505,8 +507,8 @@ test.describe("Enterprise properties", () => {
     await card.click();
     await expect(page).toHaveURL(new RegExp(`/schemas/enterprise/traits/${id}$`));
 
-    page.once("dialog", (dialog) => void dialog.accept());
     await centerPanel(page).getByTestId("trait-delete").click();
+    await page.getByTestId("confirm-dialog-confirm").click();
     await expect(page).toHaveURL(/\/schemas\/enterprise\?tab=traits/);
     await expect(centerPanel(page).getByTestId(`trait-card-${id}`)).toHaveCount(0);
   });

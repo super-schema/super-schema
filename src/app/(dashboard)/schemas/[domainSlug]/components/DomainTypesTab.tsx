@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Hash, Sigma, GitMerge, Plus, X, Trash2, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogClose, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -34,6 +35,7 @@ import {
   type ScalarFormValue,
 } from "./data-type-edit";
 
+import { NativeSelect } from "@/components/ui/native-select";
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -215,18 +217,18 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
   return (
     <div data-testid="domain-types-tab">
       {/* Delete confirmation dialog */}
-      {deleteDialog.pending && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div role="dialog" aria-modal="true" data-testid="data-type-delete-dialog" className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm">
-            <h3 className="text-heading-3 text-foreground mb-2">Delete "{deleteDialog.pending.name}"?</h3>
-            <p className="text-body-small text-muted-foreground mb-4">This action cannot be undone.</p>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" data-testid="data-type-delete-cancel" onClick={deleteDialog.cancel}>Cancel</Button>
-              <Button variant="destructive" size="sm" data-testid="data-type-delete-confirm" onClick={deleteDialog.confirm}>Delete</Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AlertDialog open={deleteDialog.pending !== null} onOpenChange={(open) => { if (!open) deleteDialog.cancel(); }}>
+        <AlertDialogContent data-testid="data-type-delete-dialog" className="sm:max-w-sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete &quot;{deleteDialog.pending?.name}&quot;?</AlertDialogTitle>
+            <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" data-testid="data-type-delete-cancel" />}>Cancel</AlertDialogClose>
+            <Button variant="destructive" data-testid="data-type-delete-confirm" onClick={deleteDialog.confirm}>Delete</Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="flex flex-col gap-space-4 sm:flex-row">
         {/* Sub-tabs stack above the mappings on narrow screens. */}
@@ -344,7 +346,7 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
               {showCreateScalar && (
                 <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2" data-testid="data-type-form-scalar">
                   <Input value={newScalarName} onChange={(e) => setNewScalarName(e.target.value)} placeholder="ScalarName" aria-label="Scalar name" data-testid="data-type-name" className="h-7 font-mono text-caption" autoFocus />
-                  <select value={newScalarBase} onChange={(e) => setNewScalarBase(e.target.value)} aria-label="Scalar base type" data-testid="data-type-base" className="h-7 w-full rounded-lg border border-border bg-popover px-2 text-caption">
+                  <NativeSelect value={newScalarBase} onChange={(e) => setNewScalarBase(e.target.value)} aria-label="Scalar base type" data-testid="data-type-base" className="h-7 w-full text-caption">
                     <option value="string">extends string</option>
                     <option value="int32">extends int32</option>
                     <option value="int64">extends int64</option>
@@ -352,7 +354,7 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
                     <option value="decimal">extends decimal</option>
                     <option value="utcDateTime">extends utcDateTime</option>
                     <option value="bytes">extends bytes</option>
-                  </select>
+                  </NativeSelect>
                   <div className="flex justify-end gap-1">
                     <Button variant="ghost" size="sm" className="h-6 text-[10px]" data-testid="data-type-cancel" onClick={() => setShowCreateScalar(false)}>Cancel</Button>
                     <Button size="sm" className="h-6 text-[10px]" data-testid="data-type-create" onClick={handleCreateScalar} disabled={!newScalarName.trim()}>Create</Button>
@@ -693,9 +695,9 @@ function ScalarCard({ s, onDelete }: { s: CustomScalarData; onDelete: (name: str
           {field("Description", <Textarea value={form.description} onChange={(ev) => setForm({ ...form, description: ev.target.value })} aria-label="Scalar description" data-testid="data-type-edit-description" className="min-h-14 text-caption" />)}
           <div className="grid grid-cols-2 gap-2">
             {field("Extends", (
-              <select value={form.baseType} onChange={(ev) => setForm({ ...form, baseType: ev.target.value })} aria-label="Scalar base type" data-testid="scalar-edit-base" className="h-7 w-full rounded-lg border border-border bg-popover px-2 text-caption font-mono">
+              <NativeSelect value={form.baseType} onChange={(ev) => setForm({ ...form, baseType: ev.target.value })} aria-label="Scalar base type" data-testid="scalar-edit-base" className="h-7 w-full text-caption font-mono">
                 {baseTypeOptions(shown.baseType).map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
+              </NativeSelect>
             ))}
             {field("Format", <Input value={form.format} onChange={(ev) => setForm({ ...form, format: ev.target.value })} placeholder="e.g. email, uuid" aria-label="Scalar format" data-testid="scalar-edit-format" className="h-7 font-mono text-caption" />)}
           </div>

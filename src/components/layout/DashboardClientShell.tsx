@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { SessionProvider } from "next-auth/react";
-import { Download, FileCode, Plus, Save, Zap } from "lucide-react";
+import { Plus } from "lucide-react";
 import { CommandPalette } from "@/components/custom/CommandPalette/CommandPalette";
 import { ActivityBar } from "@/components/layout/ActivityBar";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
@@ -65,10 +65,6 @@ export function DashboardClientShell({ children, adminArea = false }: { children
 
   const mod = useModKey();
 
-  const handleSave = useCallback(() => {
-    document.dispatchEvent(new CustomEvent("super-schema:save-flash"));
-  }, []);
-
   const handleNewEntity = useCallback(() => {
     const target = newEntityHrefForPath(pathname);
 
@@ -89,10 +85,6 @@ export function DashboardClientShell({ children, adminArea = false }: { children
     }
   }, [pathname, router, palette]);
 
-  const handleEmit = useCallback(() => {
-    document.dispatchEvent(new CustomEvent("super-schema:emit"));
-  }, []);
-
   const handleSlashCommand = useCallback(() => {
     document.dispatchEvent(new CustomEvent("super-schema:slash-command"));
   }, []);
@@ -103,10 +95,10 @@ export function DashboardClientShell({ children, adminArea = false }: { children
     }
   }, [palette.isOpen]);
 
+  // Mod+S and Mod+E belong to the pages that can save or emit (they register their own handlers); the shell only keeps the browser's
+  // "Save page" dialog away. It never claims a save happened: the status bar's "All changes saved" comes from a page that saved.
   useKeyboardShortcuts({
-    onSave: handleSave,
     onNewEntity: handleNewEntity,
-    onEmit: handleEmit,
     onSlashCommand: handleSlashCommand,
     onEscape: handleEscape,
   });
@@ -120,38 +112,8 @@ export function DashboardClientShell({ children, adminArea = false }: { children
         shortcut: `${mod}+N`,
         onSelect: handleNewEntity,
       },
-      {
-        id: "save",
-        label: "Save",
-        icon: <Save className="w-4 h-4 text-muted-foreground" />,
-        shortcut: `${mod}+S`,
-        onSelect: handleSave,
-      },
-      {
-        id: "emit",
-        label: "Emit TypeSpec",
-        icon: <Zap className="w-4 h-4 text-muted-foreground" />,
-        shortcut: `${mod}+E`,
-        onSelect: handleEmit,
-      },
-      {
-        id: "show-diff",
-        label: "Show Diff",
-        icon: <FileCode className="w-4 h-4 text-muted-foreground" />,
-        onSelect: () => {
-          document.dispatchEvent(new CustomEvent("super-schema:show-diff"));
-        },
-      },
-      {
-        id: "export",
-        label: "Export",
-        icon: <Download className="w-4 h-4 text-muted-foreground" />,
-        onSelect: () => {
-          document.dispatchEvent(new CustomEvent("super-schema:export"));
-        },
-      },
     ],
-    [mod, handleNewEntity, handleSave, handleEmit]
+    [mod, handleNewEntity]
   );
 
   return (
@@ -225,7 +187,7 @@ function DashboardShell({
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
-      <TopBar showAdmin={adminArea} />
+      <TopBar />
 
       {responsive.autoCollapse && (
         <div
@@ -244,16 +206,15 @@ function DashboardShell({
           onMouseDown={sidebar.handleMouseDown}
           onDoubleClick={sidebar.handleDoubleClick}
         />
+        {/* The center panel always fills the space between the side panels (no gutters beside them); on wide screens its content is
+            held to a readable measure and centered inside it. */}
         <main
           data-testid="center-panel"
-          className="flex-1 surface-base p-space-6 overflow-auto"
-          style={
-            responsive.breakpoint === "spacious"
-              ? { maxWidth: 1200, margin: "0 auto" }
-              : undefined
-          }
+          className="min-w-0 flex-1 surface-base p-space-6 overflow-auto"
         >
-          {children}
+          <div className={responsive.breakpoint === "spacious" ? "mx-auto w-full max-w-[1200px]" : "w-full"}>
+            {children}
+          </div>
         </main>
 
         <RightPanel

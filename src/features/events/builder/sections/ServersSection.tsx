@@ -7,6 +7,7 @@
 import { useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import type { JsonObject } from "@/lib/event-specs/types";
 import { renameKey } from "@/lib/events/document/keys";
 import type { DocServer, EventDocument } from "@/lib/events/document/types";
@@ -53,6 +54,7 @@ function withBindings(server: DocServer, bindings: Record<string, unknown>): Doc
 
 export function ServersSection({ draft, options, selectedItem, onSelectItem }: SectionProps) {
   const { doc, update } = draft;
+  const { confirm, confirmDialog } = useConfirm();
   const servers = doc.servers;
   // The client parse and a failed save usually report the same problems: show each once.
   const problems = uniqueProblems(draft.problems.concat(draft.serverProblems));
@@ -103,15 +105,18 @@ export function ServersSection({ draft, options, selectedItem, onSelectItem }: S
     onSelectItem(to);
   }
 
-  function removeActive() {
+  async function removeActive() {
     if (!active) return;
     const key = active.key;
     const users = doc.channels.filter((c) => c.serverKeys.includes(key));
     if (users.length > 0) {
       const names = users.map((c) => c.key).join(", ");
-      const ok = window.confirm(
-        `Server "${key}" is used by ${users.length} channel${users.length === 1 ? "" : "s"} (${names}). Remove it and unlink it from ${users.length === 1 ? "that channel" : "those channels"}?`,
-      );
+      const ok = await confirm({
+        title: `Remove server "${key}"?`,
+        description: `Server "${key}" is used by ${users.length} channel${users.length === 1 ? "" : "s"} (${names}). It will be unlinked from ${users.length === 1 ? "that channel" : "those channels"}.`,
+        confirmLabel: "Remove",
+        destructive: true,
+      });
       if (!ok) return;
     }
     update((d) => {
@@ -127,6 +132,7 @@ export function ServersSection({ draft, options, selectedItem, onSelectItem }: S
 
   return (
     <section aria-labelledby="servers-heading" data-testid="section-servers" className="space-y-space-6">
+      {confirmDialog}
       <SectionHeading section="servers" title="Servers">
         Where the brokers run. Channels pick the servers they are available on.
       </SectionHeading>
@@ -163,7 +169,7 @@ export function ServersSection({ draft, options, selectedItem, onSelectItem }: S
               taken={servers.filter((_, i) => i !== activeIndex).map((s) => s.key)} onRename={renameActive}
             />
             <div className="flex justify-end">
-              <Button type="button" variant="outline" onClick={removeActive} data-testid="server-remove" className="gap-1.5 text-muted-foreground hover:text-destructive">
+              <Button type="button" variant="outline" onClick={() => { void removeActive(); }} data-testid="server-remove" className="gap-1.5 text-muted-foreground hover:text-destructive">
                 <Trash2 className="size-4" /> Remove server
               </Button>
             </div>

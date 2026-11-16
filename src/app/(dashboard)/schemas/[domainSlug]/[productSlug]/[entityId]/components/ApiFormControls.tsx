@@ -7,14 +7,14 @@ import { cn } from "@/lib/utils";
 import type { SaveStatus } from "./useOperationAutosave";
 import type { TypeOptionGroups } from "./api-tab-model";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 /**
  * Small controls of the entity API tab: labels, inline field errors, the type picker, the tag chip input and the save
- * indicator. Native <select>s on purpose: compact, keyboard-friendly, and what the e2e specs drive with selectOption.
+ * indicator. Native <NativeSelect>s on purpose: compact, keyboard-friendly, and what the e2e specs drive with selectOption.
  */
 
 export const LABEL = "text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5";
-export const SELECT =
-  "h-7 w-full rounded-lg border border-border bg-popover px-1.5 text-caption text-foreground disabled:opacity-50 aria-invalid:border-destructive";
 
 export function FieldLabel({ htmlFor, children }: { htmlFor?: string; children: ReactNode }) {
   return <label htmlFor={htmlFor} className={LABEL}>{children}</label>;
@@ -48,14 +48,14 @@ export function TypePicker({ value, isArray, groups, onChange, allowNone, disabl
   const known = value === null || value === "" || groups.primitives.includes(value) || value === groups.entity || groups.others.includes(value);
   return (
     <div className="flex items-center gap-1 min-w-0">
-      <select
+      <NativeSelect
         aria-label={label}
         data-testid={testId}
         value={value ?? ""}
         disabled={disabled}
         aria-invalid={invalid || undefined}
         onChange={(e) => onChange({ type: e.target.value === "" ? null : e.target.value, isArray: e.target.value === "" ? false : isArray })}
-        className={cn(SELECT, "font-mono min-w-0 flex-1")}
+        className="h-7 text-caption font-mono min-w-0 flex-1"
       >
         {allowNone && <option value="">(no body)</option>}
         {!known && value && <option value={value}>{value}</option>}
@@ -70,16 +70,14 @@ export function TypePicker({ value, isArray, groups, onChange, allowNone, disabl
             {groups.others.map((t) => <option key={t} value={t}>{t}</option>)}
           </optgroup>
         )}
-      </select>
+      </NativeSelect>
       <label htmlFor={arrayId} className="flex items-center gap-0.5 text-[10px] text-muted-foreground whitespace-nowrap" title="Array of this type">
-        <input
+        <Checkbox
           id={arrayId}
-          type="checkbox"
           aria-label={`${label}: array`}
           checked={isArray}
           disabled={disabled || (allowNone && !value)}
           onChange={(e) => onChange({ type: value, isArray: e.target.checked })}
-          className="accent-primary"
         />
         []
       </label>

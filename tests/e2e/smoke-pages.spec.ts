@@ -119,7 +119,7 @@ const headingOf = (page: Page, route: DashboardRoute) =>
 
 async function expectRoutePage(page: Page, route: DashboardRoute): Promise<void> {
   await expect(headingOf(page, route), `${route.path}: the heading "${route.heading}" is not on the page`).toBeVisible();
-  if (route.adminTab) await expect(page.getByTestId(route.adminTab.testId)).toHaveAttribute("aria-selected", "true");
+  if (route.adminTab) await expect(page.getByTestId(route.adminTab.testId)).toHaveAttribute("aria-current", "page");
 }
 
 async function expectHealthyPage(page: Page, route: DashboardRoute, baseURL: string): Promise<void> {
@@ -225,7 +225,7 @@ test.describe("the shell leads to those pages", () => {
       await expect(page, `${route.adminTab!.testId} did not lead to ${route.path}`).toHaveURL((url) => url.pathname === route.path);
       await expectRoutePage(page, route);
       // One tab is selected at a time.
-      await expect(page.locator('[data-testid^="admin-tab-"][aria-selected="true"]')).toHaveCount(1);
+      await expect(page.locator('[data-testid^="admin-tab-"][aria-current="page"]')).toHaveCount(1);
     }
   });
 });

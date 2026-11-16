@@ -10,6 +10,7 @@ import { InviteUserDialog } from "./InviteUserDialog";
 import { UserStatusBadge } from "./UserStatusBadge";
 import { listUsersAction, revokeInvitationAction } from "@/app/(dashboard)/admin/actions";
 
+import { NativeSelect } from "@/components/ui/native-select";
 interface UserDataTableProps {
   /** What the caller may grant: fills the invitation dialog and the role editor. Null while it loads or when it could not be read. */
   scopes: GrantableScopes | null;
@@ -121,18 +122,17 @@ export function UserDataTable({ scopes, scopesError }: UserDataTableProps) {
         </div>
         <div className="flex items-center gap-space-2">
           <label htmlFor="user-status-filter" className="text-caption text-muted-foreground">Status</label>
-          <select
+          <NativeSelect
             id="user-status-filter"
             data-testid="user-status-filter"
             value={status}
             onChange={(e) => setStatus(e.target.value as StatusFilter)}
-            className="bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none focus-visible:ring-1 focus-visible:ring-primary"
           >
             <option value="all">All</option>
             <option value="active">Active</option>
             <option value="disabled">Disabled</option>
             <option value="invited">Invited</option>
-          </select>
+          </NativeSelect>
         </div>
         <Button type="button" size="sm" className="ml-auto" data-testid="invite-user-open" onClick={() => setInviteOpen(true)}>
           <UserPlus aria-hidden="true" />

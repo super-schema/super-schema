@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { OpenApiImportResult } from "@/lib/api-operations/import-openapi";
 import type { ApiOperation, ApiOperationRecord } from "@/types/schemas/api-operation";
 import { importOpenApiOperationsAction, previewOpenApiOperationsAction, type OpenApiSource } from "@/app/(dashboard)/schemas/[domainSlug]/api-import-actions";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export interface ApiImportDialogProps {
   serviceId: string | null;
@@ -281,7 +282,7 @@ function ReviewList({ found, selected, toggle }: { found: OpenApiImportResult; s
           return (
             <li key={key}>
               <label className="flex cursor-pointer items-start gap-space-2 px-space-3 py-space-2 hover:bg-muted/40">
-                <input type="checkbox" className="mt-1" checked={selected.has(key)} onChange={() => toggle(key)} aria-label={key} />
+                <Checkbox className="mt-1" checked={selected.has(key)} onChange={() => toggle(key)} aria-label={key} />
                 <span className="flex min-w-0 flex-col gap-0.5">
                   <span className="flex items-center gap-space-2 text-body-small">
                     <span className="inline-block min-w-14 rounded bg-muted px-1.5 py-0.5 text-center font-mono text-caption font-semibold">{op.httpMethod}</span>

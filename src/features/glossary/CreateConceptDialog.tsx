@@ -9,6 +9,12 @@
  */
 
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { Textarea } from "@/components/ui/textarea";
 import type { CreateBusinessConceptInput } from "@/types/schemas/business-concept";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
@@ -32,8 +38,6 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
   const [tagsText, setTagsText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  if (!open) return null;
 
   const reset = () => {
     setName("");
@@ -93,180 +97,134 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-label="Create Business Concept" data-testid="concept-dialog">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
-      />
-
-      {/* Dialog */}
-      <div
-        className="relative w-full max-w-lg rounded-xl border border-border p-6 space-y-4"
-        style={{
-          background: "rgba(28, 28, 38, 0.95)",
-          backdropFilter: "blur(16px)",
-        }}
-      >
-        <h2 className="text-heading-2 text-foreground">Create Business Concept</h2>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent data-testid="concept-dialog" className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Create Business Concept</DialogTitle>
+          <DialogDescription>A shared business meaning that fields across domains can be linked to.</DialogDescription>
+        </DialogHeader>
 
         {error && (
-          <div role="alert" data-testid="concept-error" className="px-3 py-2 rounded bg-red-500/10 border border-red-500/30 text-caption text-red-400">
+          <div role="alert" data-testid="concept-error" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3">
-          {/* Name */}
-          <div>
-            <label htmlFor="concept-name" className="block text-caption font-medium text-foreground mb-1">
-              Name <span className="text-red-400">*</span>
-            </label>
-            <input
-              id="concept-name"
-              data-testid="concept-name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Customer Identifier"
-              className="w-full px-3 py-2 rounded border border-border bg-transparent text-caption text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-            />
-          </div>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <FieldGroup className="gap-3">
+            <Field>
+              <FieldLabel htmlFor="concept-name">
+                Name <span className="text-destructive" aria-hidden="true">*</span>
+              </FieldLabel>
+              <Input
+                id="concept-name"
+                data-testid="concept-name"
+                type="text"
+                aria-required="true"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Customer Identifier"
+              />
+            </Field>
 
-          {/* Domain */}
-          <div>
-            <label htmlFor="concept-domain" className="block text-caption font-medium text-foreground mb-1">
-              Domain
-            </label>
-            <select
-              id="concept-domain"
-              data-testid="concept-domain"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              className="w-full px-3 py-2 rounded border border-border bg-transparent text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-            >
-              {DOMAIN_OPTIONS.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Definition */}
-          <div>
-            <label htmlFor="concept-definition" className="block text-caption font-medium text-foreground mb-1">
-              Definition
-            </label>
-            <textarea
-              id="concept-definition"
-              data-testid="concept-definition"
-              value={definition}
-              onChange={(e) => setDefinition(e.target.value)}
-              placeholder="Human-readable definition of this business concept..."
-              rows={2}
-              className="w-full px-3 py-2 rounded border border-border bg-transparent text-caption text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
-            />
-          </div>
-
-          {/* Synonyms */}
-          <div>
-            <label htmlFor="concept-synonyms" className="block text-caption font-medium text-foreground mb-1">
-              Synonyms <span className="text-muted-foreground">(comma-separated)</span>
-            </label>
-            <input
-              id="concept-synonyms"
-              data-testid="concept-synonyms"
-              type="text"
-              value={synonymsText}
-              onChange={(e) => setSynonymsText(e.target.value)}
-              placeholder="cust_id, customer_number, CustomerNo"
-              className="w-full px-3 py-2 rounded border border-border bg-transparent text-caption text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-            />
-          </div>
-
-          {/* Canonical Type + Classification in a row */}
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label htmlFor="concept-type" className="block text-caption font-medium text-foreground mb-1">
-                Canonical Type
-              </label>
-              <select
-                id="concept-type"
-                data-testid="concept-type"
-                value={canonicalType}
-                onChange={(e) => setCanonicalType(e.target.value)}
-                className="w-full px-3 py-2 rounded border border-border bg-transparent text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-              >
-                {TYPE_OPTIONS.map((t) => (
-                  <option key={t} value={t}>
-                    {t || "None"}
+            <Field>
+              <FieldLabel htmlFor="concept-domain">Domain</FieldLabel>
+              <NativeSelect id="concept-domain" data-testid="concept-domain" value={domain} onChange={(e) => setDomain(e.target.value)}>
+                {DOMAIN_OPTIONS.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
                   </option>
                 ))}
-              </select>
-            </div>
-            <div className="flex-1">
-              <label htmlFor="concept-classification" className="block text-caption font-medium text-foreground mb-1">
-                Classification
-              </label>
-              <select
-                id="concept-classification"
-                data-testid="concept-classification"
-                value={classification}
-                onChange={(e) => setClassification(e.target.value)}
-                className="w-full px-3 py-2 rounded border border-border bg-transparent text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-              >
-                {CLASSIFICATION_OPTIONS.map((c) => (
-                  <option key={c} value={c}>
-                    {c || "None"}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+              </NativeSelect>
+            </Field>
 
-          {/* Tags */}
-          <div>
-            <label htmlFor="concept-tags" className="block text-caption font-medium text-foreground mb-1">
-              Tags <span className="text-muted-foreground">(comma-separated)</span>
-            </label>
-            <input
-              id="concept-tags"
-              data-testid="concept-tags"
-              type="text"
-              value={tagsText}
-              onChange={(e) => setTagsText(e.target.value)}
-              placeholder="financial, identity, temporal"
-              className="w-full px-3 py-2 rounded border border-border bg-transparent text-caption text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-            />
-          </div>
+            <Field>
+              <FieldLabel htmlFor="concept-definition">Definition</FieldLabel>
+              <Textarea
+                id="concept-definition"
+                data-testid="concept-definition"
+                value={definition}
+                onChange={(e) => setDefinition(e.target.value)}
+                placeholder="Human-readable definition of this business concept..."
+                rows={2}
+                className="resize-none"
+              />
+            </Field>
 
-          {/* Actions */}
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => {
-                reset();
-                onClose();
-              }}
-              className="px-4 py-2 rounded text-caption text-muted-foreground hover:text-foreground"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              data-testid="concept-submit"
-              disabled={submitting}
-              className="px-4 py-2 rounded text-caption font-medium text-white disabled:opacity-50"
-              style={{
-                background: "linear-gradient(135deg, #A477B2, #8B5CF6)",
-              }}
-            >
-              {submitting ? "Creating..." : "Create Concept"}
-            </button>
-          </div>
+            <Field>
+              <FieldLabel htmlFor="concept-synonyms">
+                Synonyms <span className="font-normal text-muted-foreground">(comma-separated)</span>
+              </FieldLabel>
+              <Input
+                id="concept-synonyms"
+                data-testid="concept-synonyms"
+                type="text"
+                value={synonymsText}
+                onChange={(e) => setSynonymsText(e.target.value)}
+                placeholder="cust_id, customer_number, CustomerNo"
+              />
+            </Field>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="concept-type">Canonical Type</FieldLabel>
+                <NativeSelect id="concept-type" data-testid="concept-type" value={canonicalType} onChange={(e) => setCanonicalType(e.target.value)}>
+                  {TYPE_OPTIONS.map((t) => (
+                    <option key={t} value={t}>
+                      {t || "None"}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="concept-classification">Classification</FieldLabel>
+                <NativeSelect
+                  id="concept-classification"
+                  data-testid="concept-classification"
+                  value={classification}
+                  onChange={(e) => setClassification(e.target.value)}
+                >
+                  {CLASSIFICATION_OPTIONS.map((c) => (
+                    <option key={c} value={c}>
+                      {c || "None"}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </Field>
+            </div>
+
+            <Field>
+              <FieldLabel htmlFor="concept-tags">
+                Tags <span className="font-normal text-muted-foreground">(comma-separated)</span>
+              </FieldLabel>
+              <Input
+                id="concept-tags"
+                data-testid="concept-tags"
+                type="text"
+                value={tagsText}
+                onChange={(e) => setTagsText(e.target.value)}
+                placeholder="financial, identity, temporal"
+              />
+            </Field>
+          </FieldGroup>
+
+          <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              reset();
+              onClose();
+            }}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" data-testid="concept-submit" disabled={submitting}>
+            {submitting ? "Creating..." : "Create Concept"}
+          </Button>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

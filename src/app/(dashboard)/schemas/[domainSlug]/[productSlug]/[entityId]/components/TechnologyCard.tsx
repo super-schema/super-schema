@@ -36,6 +36,7 @@ import {
   type MappingIntelligence,
 } from "@/lib/type-mapping/mapping-intelligence";
 
+import { NativeSelect } from "@/components/ui/native-select";
 function StatusDot({ status }: { status: SchemaVersion["status"] }) {
   const colors: Record<string, string> = {
     draft: "bg-amber-500",
@@ -256,12 +257,12 @@ function TypeMappingInspector({
               </div>
               <div className="min-w-0">
                 <div className="relative">
-                  <select
+                  <NativeSelect
                     value={row.overrideSource === "field" ? row.effectiveMappedType : row.defaultMappedType ?? row.effectiveMappedType}
                     onChange={(event) =>
                       onChangeType(row.fieldId, event.target.value)
                     }
-                    className="w-full rounded-md border border-border/50 bg-background px-space-3 py-space-2 pr-10 text-body-small text-foreground"
+                    className="w-full"
                     data-testid={`type-override-select-${row.fieldId}`}
                     disabled={pendingFieldId === row.fieldId}
                   >
@@ -277,7 +278,7 @@ function TypeMappingInspector({
                         ))}
                       </optgroup>
                     ))}
-                  </select>
+                  </NativeSelect>
                   {pendingFieldId === row.fieldId && (
                     <Loader2 className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
                   )}

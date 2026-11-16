@@ -4,6 +4,8 @@ import { Input } from "@/components/ui/input";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { getTypeInfo } from "@/lib/data-types";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 interface IdentitySectionProps {
   name: string;
   type: string;
@@ -83,28 +85,23 @@ export function IdentitySection({
       {/* Checkboxes row */}
       <div className="flex items-center gap-space-4 flex-wrap">
         <label className="flex items-center gap-1.5 text-caption text-muted-foreground">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={nullable}
             onChange={(e) => onChange("nullable", e.target.checked)}
-            className="accent-primary"
             disabled={isReadOnly || isKey}
           />
           Optional
         </label>
         <label className="flex items-center gap-1.5 text-caption text-muted-foreground">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={secret}
             onChange={(e) => onChange("secret", e.target.checked)}
-            className="accent-primary"
             disabled={isReadOnly}
           />
           Secret
         </label>
         <label className="flex items-center gap-1.5 text-caption text-muted-foreground">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={isKey}
             onChange={(e) => {
               onChange("isKey", e.target.checked);
@@ -112,7 +109,6 @@ export function IdentitySection({
                 onChange("nullable", false);
               }
             }}
-            className="accent-primary"
             disabled={isReadOnly}
           />
           Key
@@ -124,16 +120,16 @@ export function IdentitySection({
         {isStringType(type) && (
           <div>
             <label className="text-caption text-muted-foreground mb-1 block">Format</label>
-            <select
+            <NativeSelect
               value={format}
               onChange={(e) => onChange("format", e.target.value)}
               disabled={isReadOnly}
-              className="h-8 w-full rounded-lg border border-border bg-popover px-2 text-body-small text-foreground disabled:opacity-50"
+              className="h-8 w-full"
             >
               {FORMAT_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
         )}
         <div>

@@ -3,10 +3,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FieldGroup, FieldDescription } from "@/components/ui/field";
-import {
-  AttributeControl,
-  SELECT_CLASS,
-} from "@/components/custom/FieldAttributes/AttributeControl";
+import { AttributeControl } from "@/components/custom/FieldAttributes/AttributeControl";
 import { isConstraintWithheld } from "@/lib/compiler/constraint-targets";
 import {
   VALIDATION_DECORATORS,
@@ -17,6 +14,7 @@ import {
 } from "@/lib/field-attributes";
 import type { ValidationConstraints } from "@/types/schemas/typespec-decorator.schema";
 
+import { NativeSelect } from "@/components/ui/native-select";
 /**
  * Payload constraints TypeSpec allows for the field's logical type, and that the emitter writes. Which controls appear is
  * decided by the same rule the generator uses (constraintAppliesTo), so the panel, the summary and the TypeSpec agree.
@@ -135,8 +133,7 @@ export function ValidationPanel({
                     : "Inclusive: the value itself is allowed."
                 }
               >
-                <select
-                  className={SELECT_CLASS}
+                <NativeSelect
                   value={exclusive ? "exclusive" : "inclusive"}
                   onChange={(e) => {
                     const next = e.target.value === "exclusive";
@@ -150,7 +147,7 @@ export function ValidationPanel({
                 >
                   <option value="inclusive">Inclusive</option>
                   <option value="exclusive">Exclusive</option>
-                </select>
+                </NativeSelect>
               </AttributeControl>
             </fieldset>
           );

@@ -11,6 +11,7 @@ import {
 import type { ParsedEntity } from "@/lib/importers/types";
 import { ConfidenceBadge } from "./ConfidenceBadge";
 
+import { NativeSelect } from "@/components/ui/native-select";
 interface BulkImportReviewScreenProps {
   parsedEntities: ParsedEntity[];
   errors: { filename: string; error: string }[];
@@ -94,17 +95,16 @@ export function BulkImportReviewScreen({
         </div>
         <div className="flex items-center gap-space-2">
           <label className="text-caption text-muted-foreground">Domain:</label>
-          <select
+          <NativeSelect
             value={selectedDomainId}
             onChange={(e) => setSelectedDomainId(e.target.value)}
-            className="bg-muted rounded-lg px-space-3 py-1 text-body-small text-foreground outline-none border border-border"
           >
             {domains.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
       </div>
 

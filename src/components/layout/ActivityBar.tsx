@@ -61,11 +61,8 @@ export function ActivityBar({ showAdmin = false }: { showAdmin?: boolean } = {})
                   >
                     {isActive && (
                       <span
-                        className="absolute left-0 top-1 bottom-1 w-[3px] rounded-r-full"
-                        style={{
-                          background:
-                            "linear-gradient(135deg, #A477B2, #F5C0C0)",
-                        }}
+                        aria-hidden="true"
+                        className="absolute left-0 top-1 bottom-1 w-[3px] rounded-r-full [background:var(--gradient-border)]"
                       />
                     )}
                     <item.icon className="w-5 h-5" />

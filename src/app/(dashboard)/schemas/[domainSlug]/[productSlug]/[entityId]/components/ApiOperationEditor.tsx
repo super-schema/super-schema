@@ -20,8 +20,10 @@ import {
   type OperationDraft,
   type TypeOptionGroups,
 } from "./api-tab-model";
-import { FieldError, FieldLabel, LABEL, SELECT, TagInput, TypePicker } from "./ApiFormControls";
+import { FieldError, FieldLabel, LABEL, TagInput, TypePicker } from "./ApiFormControls";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 export const METHOD_COLORS: Record<string, string> = {
   GET: "bg-green-500/15 text-green-600 border-green-500/30",
   POST: "bg-blue-500/15 text-blue-600 border-blue-500/30",
@@ -181,9 +183,9 @@ function OperationEditor({ draft, issues, warnings, groups, readOnly, definition
         </div>
         <div>
           <FieldLabel htmlFor={id("method")}>Method</FieldLabel>
-          <select id={id("method")} data-testid="api-edit-method" value={draft.httpMethod} onChange={(e) => set({ httpMethod: e.target.value as OperationDraft["httpMethod"] })} aria-invalid={invalid("httpMethod")} className={SELECT} disabled={readOnly}>
+          <NativeSelect id={id("method")} data-testid="api-edit-method" value={draft.httpMethod} onChange={(e) => set({ httpMethod: e.target.value as OperationDraft["httpMethod"] })} aria-invalid={invalid("httpMethod")} className="h-7 text-caption" disabled={readOnly}>
             {HTTP_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
+          </NativeSelect>
           <FieldError message={err("httpMethod")} />
         </div>
         <div>
@@ -213,7 +215,7 @@ function OperationEditor({ draft, issues, warnings, groups, readOnly, definition
           <FieldError message={err("tags") ?? Object.entries(errors).find(([k]) => k.startsWith("tags."))?.[1]} />
         </div>
         <label className="flex items-center gap-1.5 text-caption text-muted-foreground h-7">
-          <input type="checkbox" data-testid="api-edit-deprecated" checked={draft.deprecated} onChange={(e) => set({ deprecated: e.target.checked })} disabled={readOnly} className="accent-primary" />
+          <Checkbox data-testid="api-edit-deprecated" checked={draft.deprecated} onChange={(e) => set({ deprecated: e.target.checked })} disabled={readOnly} />
           Deprecated
         </label>
       </div>
@@ -238,9 +240,9 @@ function OperationEditor({ draft, issues, warnings, groups, readOnly, definition
         <div className="space-y-1">
           {draft.parameters.map((p, i) => (
             <div key={i} data-testid="api-param" data-name={p.name} data-location={p.location} className="grid grid-cols-[5.5rem_minmax(6rem,1fr)_minmax(8rem,1.4fr)_auto_minmax(6rem,1fr)_auto] gap-1 items-start">
-              <select aria-label="Parameter location" value={p.location} onChange={(e) => setParam(i, { location: e.target.value as ApiParameter["location"] })} disabled={readOnly} aria-invalid={invalid(`parameters.${i}.location`)} className={cn(SELECT, "font-mono")}>
+              <NativeSelect aria-label="Parameter location" value={p.location} onChange={(e) => setParam(i, { location: e.target.value as ApiParameter["location"] })} disabled={readOnly} aria-invalid={invalid(`parameters.${i}.location`)} className="h-7 text-caption font-mono">
                 {PARAM_LOCATIONS.map((l) => <option key={l} value={l}>@{l}</option>)}
-              </select>
+              </NativeSelect>
               <div>
                 <Input aria-label="Parameter name" value={p.name} onChange={(e) => setParam(i, { name: e.target.value })} placeholder="name" aria-invalid={invalid(`parameters.${i}.name`)} className={cn(INPUT, "font-mono")} disabled={readOnly} />
                 <FieldError message={err(`parameters.${i}.name`)} />
@@ -250,7 +252,7 @@ function OperationEditor({ draft, issues, warnings, groups, readOnly, definition
                 <FieldError message={err(`parameters.${i}.type`)} />
               </div>
               <label className="flex items-center gap-0.5 h-7 text-[10px] text-muted-foreground" title={p.location === "path" ? "Path parameters are always required" : undefined}>
-                <input type="checkbox" aria-label="Parameter required" checked={p.location === "path" ? true : p.required} onChange={(e) => setParam(i, { required: e.target.checked })} disabled={readOnly || p.location === "path"} className="accent-primary" />
+                <Checkbox aria-label="Parameter required" checked={p.location === "path" ? true : p.required} onChange={(e) => setParam(i, { required: e.target.checked })} disabled={readOnly || p.location === "path"} />
                 req
               </label>
               <Input aria-label="Parameter description" value={p.description} onChange={(e) => setParam(i, { description: e.target.value })} placeholder="description" className={INPUT} disabled={readOnly} />
@@ -291,7 +293,7 @@ function OperationEditor({ draft, issues, warnings, groups, readOnly, definition
               <FieldError message={err("requestBody.type")} />
             </div>
             <label className="flex items-center gap-0.5 h-7 text-[10px] text-muted-foreground">
-              <input type="checkbox" aria-label="Request body required" checked={draft.requestBody.required} onChange={(e) => setBody({ required: e.target.checked })} disabled={readOnly} className="accent-primary" />
+              <Checkbox aria-label="Request body required" checked={draft.requestBody.required} onChange={(e) => setBody({ required: e.target.checked })} disabled={readOnly} />
               req
             </label>
             <Input aria-label="Request body description" value={draft.requestBody.description} onChange={(e) => setBody({ description: e.target.value })} placeholder="description" className={INPUT} disabled={readOnly} />
@@ -316,10 +318,10 @@ function OperationEditor({ draft, issues, warnings, groups, readOnly, definition
           {draft.responses.map((r, i) => (
             <div key={i} data-testid="api-response" data-status={r.statusCode} className="grid grid-cols-[minmax(7rem,0.9fr)_minmax(8rem,1.3fr)_minmax(8rem,1fr)_minmax(6rem,1fr)_auto] gap-1 items-start">
               <div>
-                <select aria-label="Response status" value={r.statusCode} onChange={(e) => setResponse(i, { statusCode: Number(e.target.value) })} disabled={readOnly} aria-invalid={invalid(`responses.${i}.statusCode`)} className={cn(SELECT, "font-mono")}>
+                <NativeSelect aria-label="Response status" value={r.statusCode} onChange={(e) => setResponse(i, { statusCode: Number(e.target.value) })} disabled={readOnly} aria-invalid={invalid(`responses.${i}.statusCode`)} className="h-7 text-caption font-mono">
                   {!HTTP_STATUS_CODES.some((s) => s.code === r.statusCode) && <option value={r.statusCode}>{r.statusCode}</option>}
                   {HTTP_STATUS_CODES.map((s) => <option key={s.code} value={s.code}>{s.code} {s.label}</option>)}
-                </select>
+                </NativeSelect>
                 <FieldError message={err(`responses.${i}.statusCode`)} />
               </div>
               <div>

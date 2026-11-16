@@ -13,6 +13,8 @@ import {
 } from "./serialize";
 import { ReferenceTargetPicker } from "./ReferenceTargetPicker";
 
+import { NativeSelect } from "@/components/ui/native-select";
+import { Checkbox } from "@/components/ui/checkbox";
 /** Field-type options for the selector: JSON types + reference. */
 const FIELD_TYPES: FieldType[] = [...JSON_TYPES, "reference"];
 
@@ -137,7 +139,7 @@ export function JsonSchemaVisualEditor({
                   onChange={(e) => update(field.id, { name: e.target.value })}
                   className={`${inputCls} flex-1 text-mono-small`}
                 />
-                <select
+                <NativeSelect
                   value={field.type}
                   onChange={(e) => {
                     // enum, const and default were written for the type the field had: a new type starts without them.
@@ -148,20 +150,17 @@ export function JsonSchemaVisualEditor({
                       defaultValue: undefined,
                     });
                   }}
-                  className={inputCls}
                 >
                   {FIELD_TYPES.map((t) => (
                     <option key={t} value={t}>
                       {t}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
                 <label className="flex items-center gap-1 text-caption text-muted-foreground">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={field.required}
                     onChange={(e) => update(field.id, { required: e.target.checked })}
-                    className="accent-primary"
                   />
                   required
                 </label>
@@ -250,17 +249,17 @@ function AdvancedFields({
       {field.type === "string" && (
         <>
           <Labeled label="format">
-            <select
+            <NativeSelect
               value={field.format ?? ""}
               onChange={(e) => set({ format: e.target.value || undefined })}
-              className={`${inputCls} w-full`}
+              className="w-full"
             >
               {STRING_FORMATS_2020_12.map((f) => (
                 <option key={f} value={f}>
                   {f === "" ? "(none)" : f}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </Labeled>
           <Labeled label="pattern (regex)">
             <input
@@ -338,17 +337,17 @@ function AdvancedFields({
       {field.type === "array" && (
         <>
           <Labeled label="items type">
-            <select
+            <NativeSelect
               value={field.itemsType ?? "string"}
               onChange={(e) => set({ itemsType: e.target.value as FieldType })}
-              className={`${inputCls} w-full`}
+              className="w-full"
             >
               {FIELD_TYPES.map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </Labeled>
           {field.itemsType === "reference" && (
             <div className="col-span-2">
@@ -361,11 +360,9 @@ function AdvancedFields({
             </div>
           )}
           <Labeled label="uniqueItems">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={field.uniqueItems ?? false}
               onChange={(e) => set({ uniqueItems: e.target.checked || undefined })}
-              className="accent-primary"
             />
           </Labeled>
           <Labeled label="minItems">
@@ -417,29 +414,23 @@ function AdvancedFields({
       </Labeled>
       <div className="flex items-center gap-space-3 col-span-2">
         <label className="flex items-center gap-1 text-muted-foreground">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={field.deprecated ?? false}
             onChange={(e) => set({ deprecated: e.target.checked || undefined })}
-            className="accent-primary"
           />
           deprecated
         </label>
         <label className="flex items-center gap-1 text-muted-foreground">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={field.readOnly ?? false}
             onChange={(e) => set({ readOnly: e.target.checked || undefined })}
-            className="accent-primary"
           />
           readOnly
         </label>
         <label className="flex items-center gap-1 text-muted-foreground">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={field.writeOnly ?? false}
             onChange={(e) => set({ writeOnly: e.target.checked || undefined })}
-            className="accent-primary"
           />
           writeOnly
         </label>

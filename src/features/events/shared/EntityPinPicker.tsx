@@ -8,6 +8,7 @@ import { listPinnableVersionsAction } from "../pin-actions";
 import type { EntityPin } from "@/lib/events/types";
 import type { PayloadFormat } from "@/lib/event-specs/types";
 
+import { NativeSelect } from "@/components/ui/native-select";
 export interface EntityOption {
   id: string;
   name: string;
@@ -103,9 +104,9 @@ export function EntityPinPicker({
           onSelect={(next) => onChange(next ? { entityId: next.id, entityVersionId: next.latestVersionId } : null)}
         />
         {entityId && (
-          <select
+          <NativeSelect
             aria-label={`${label} version`}
-            className={cn(selectClass, "min-w-0 max-w-full flex-1 basis-40")}
+            className="min-w-0 max-w-full flex-1 basis-40"
             value={pinned ?? ""}
             disabled={disabled}
             onChange={(e) => onChange({ entityId, entityVersionId: e.target.value || null })}
@@ -115,7 +116,7 @@ export function EntityPinPicker({
             {options.map((v) => (
               <option key={v.id} value={v.id}>v{v.label}{v.id === pinned ? " (pinned)" : ""}</option>
             ))}
-          </select>
+          </NativeSelect>
         )}
       </div>
       {loadError && (

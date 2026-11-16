@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { Users, Building2, Zap, Activity, Settings, ShieldOff, Sparkles, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AdminCapabilities } from "@/lib/access/capabilities";
@@ -63,7 +63,6 @@ export function AdminNoPermission({ settingsHref }: { settingsHref: string | nul
  */
 export function AdminShell({ capabilities, children }: { capabilities: AdminCapabilities; children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
   const tabs = allowedTabs(capabilities);
   const activeTab = tabOfPath(pathname);
   const allowed = tabs.some((tab) => tab.id === activeTab);
@@ -75,27 +74,25 @@ export function AdminShell({ capabilities, children }: { capabilities: AdminCapa
       <div className="border-b border-border px-space-6 py-space-3">
         <h1 className="text-heading-2 text-foreground mb-space-3">Administration</h1>
 
-        {/* Tab navigation */}
-        <nav aria-label="Administration" className="flex flex-wrap gap-space-1" role="tablist">
+        {/* Section navigation: these are pages, so they are links (open in a new tab, prefetch, history) marked with aria-current. */}
+        <nav aria-label="Administration" className="flex flex-wrap gap-space-1">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = allowed && activeTab === tab.id;
             return (
-              <button
+              <Link
                 key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
+                href={tab.href}
+                aria-current={isActive ? "page" : undefined}
                 data-testid={`admin-tab-${tab.id}`}
-                onClick={() => router.push(tab.href)}
                 className={cn(
-                  "flex shrink-0 items-center gap-space-2 px-space-3 py-space-2 rounded-md text-body-small transition-colors",
+                  "flex shrink-0 items-center gap-space-2 rounded-md px-space-3 py-space-2 text-body-small transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                   isActive ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
                 )}
               >
                 <Icon className="w-4 h-4" aria-hidden="true" />
                 {tab.label}
-              </button>
+              </Link>
             );
           })}
         </nav>
